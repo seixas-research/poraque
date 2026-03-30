@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "poraque"
-version = "0.0.3"
+version = "0.0.5"
 authors = [
-  { name="Leandro Seixas", email="leandro.fisica@gmail.com" },
+  { name="Leandro Seixas", email="leandro.rocha@ilum.cnpem.br" },
 ]
-description = "Electronic structure with graph neural networks"
+description = "For electronic structure calculations."
 readme = "README.md"
 license = {file = "LICENSE"} 
 requires-python = ">=3.10"
@@ -16,8 +16,6 @@ dependencies = [
     'numpy',
     'pandas',
     'ase',
-    'torch',
-    'networkx',
     'scipy',
     'matplotlib'
 ]

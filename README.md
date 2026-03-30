@@ -23,6 +23,3 @@
 
 This is an open source code under [MIT License](LICENSE).
 
-# Acknowledgements
-
-We thank financial support from FAPESP (Grant No. 2022/14549-3), INCT Materials Informatics (Grant No. 406447/2022-5), and CNPq (Grant No. 311324/2020-7).
