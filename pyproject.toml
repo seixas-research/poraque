@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "poraque"
-version = "0.0.5"
+version = "26.4.0"
 authors = [
   { name="Leandro Seixas", email="leandro.rocha@ilum.cnpem.br" },
 ]

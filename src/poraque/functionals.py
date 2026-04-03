@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# file: _version.py
+# file: functionals.py
 
 # This code is part of Poraquê.
 # MIT License
@@ -24,4 +24,35 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-__version__ ="26.4.0"
+class KineticEnergyFunctional:
+    def __init__(self, grid):
+        self.grid = grid
+
+    def thomas_fermi(self, density):
+        pass
+
+
+    def von_weizsacker(self, density):
+        pass
+
+
+    def gamma_lambda(self, density, lamb: float = 0.5, gam: float = 0.5):
+        pass
+
+
+    def get_energy(self, density):
+        pass
+
+
+    def get_potential(self, density):
+        pass
+
+
+class XCFunctional:
+    def __init__(self, grid):
+        self.grid = grid
+
+    def get_energy(self, density):
+        pass
+
+

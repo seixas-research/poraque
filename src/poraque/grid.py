@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# file: _version.py
+# file: grid.py
 
 # This code is part of Poraquê.
 # MIT License
@@ -24,4 +24,25 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-__version__ ="26.4.0"
+class Grid:
+    def __init__(self, Nx, Ny, Nz):
+        self.Nx = Nx
+        self.Ny = Ny
+        self.Nz = Nz
+        self.N = Nx * Ny * Nz
+
+    def index(self, i, j, k):
+        return i + self.Nx * (j + self.Ny * k)
+    
+    def indices(self, idx):
+        i = idx % self.Nx
+        j = (idx // self.Nx) % self.Ny
+        k = idx // (self.Nx * self.Ny)
+        return i, j, k
+    
+    def get_laplacian(self):
+        # Placeholder for Laplacian matrix construction
+        # In a real implementation, this would return a sparse matrix
+        # representing the discrete Laplacian operator on the grid.
+        pass
+
