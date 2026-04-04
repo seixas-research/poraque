@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "poraque"
 version = "26.4.0"
 authors = [
-  { name="Leandro Seixas", email="leandro.rocha@ilum.cnpem.br" },
+  { name="Leandro Seixas Rocha", email="leandro.rocha@ilum.cnpem.br" },
 ]
 description = "For electronic structure calculations."
 readme = "README.md"
@@ -28,4 +28,4 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/seixasgroup/poraque"
+"Homepage" = "https://github.com/seixas-research/poraque"
