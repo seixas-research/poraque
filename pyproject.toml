@@ -31,5 +31,5 @@ classifiers = [
 "Homepage" = "https://github.com/seixas-research/poraque"
 
 [tool.hatch.version]
-path = "src/poraque/_version.py"
+path = "src/poraque/version.py"
 

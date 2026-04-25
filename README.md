@@ -21,6 +21,70 @@ density functionals (ML-KEDFs).
 At the moment, the repository is still mostly a scaffold, so the roadmap below is
 organized as an implementation sequence rather than only a list of methods.
 
+# Documentation
+
+- [Project strategy](docs/strategy.md)
+- [Software architecture](docs/software_architecture.md)
+
+# Software Architecture
+
+Poraquê is planned as a layered codebase so that scientific workflows can stay in
+Python while performance-critical kernels can later move to compiled and MPI-enabled
+backends without redesigning the whole program.
+
+## Main layers
+
+* [ ] Frontend and workflow layer
+  - [ ] user-facing calculator API
+  - [ ] ASE integration
+  - [ ] examples, benchmarks, and workflow helpers
+* [ ] Scientific engine layer
+  - [ ] OF-DFT minimization
+  - [ ] KS-DFT SCF drivers later
+  - [ ] FDE drivers later
+  - [ ] convergence control and diagnostics
+* [ ] Physics model layer
+  - [ ] kinetic, Hartree, exchange-correlation, and embedding functionals
+  - [ ] external and pseudopotential models
+* [ ] Numerical backend layer
+  - [ ] finite-difference and FFT operators
+  - [ ] Poisson solvers
+  - [ ] Hartree and nonlocal KEDF kernels
+  - [ ] future MPI/OpenMPI domain decomposition and halo exchange
+
+## Package direction
+
+The codebase should evolve toward the following responsibilities:
+
+* [ ] `src/poraque/core/`
+  - [ ] `grid.py`: grid geometry, reciprocal-space data, indexing, domain metadata
+  - [ ] `system.py`: atomic structure, electrons, spin, boundary conditions, ASE conversion
+  - [ ] future density, result, units, and validation objects
+* [ ] `src/poraque/functionals/`
+  - [ ] common functional interface
+  - [ ] kinetic, Hartree, XC, nonlocal KEDF, and ML-KEDF models
+* [ ] `src/poraque/potentials/`
+  - [ ] ionic, external, local pseudopotential, and embedding-related potentials
+* [ ] `src/poraque/engine.py`
+  - [ ] method drivers and convergence logic
+* [ ] `src/poraque/calculator.py`
+  - [ ] main public API and ASE bridge
+* [ ] future `src/poraque/backends/`
+  - [ ] NumPy reference backend
+  - [ ] native accelerated kernels
+  - [ ] MPI-aware distributed backend
+* [ ] future `src/poraque/ml/`
+  - [ ] datasets, preprocessing, symbolic regression, CNN models, and inference wrappers
+
+## Near-term architectural priorities
+
+* [ ] Define stable `Grid`, `System`, `Density`, and `Result` objects
+* [ ] Introduce a `NumpyBackend` as the reference implementation
+* [ ] Standardize functional interfaces: energy, potential, and later forces/stress
+* [ ] Keep ASE logic isolated in a dedicated namespace
+* [ ] Design MPI around domain decomposition, not ad hoc communication calls
+* [ ] Replace hotspots with compiled kernels only after profiling the reference path
+
 # Roadmap
 
 ## 1. Numerical Core and Data Model
