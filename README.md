@@ -14,7 +14,9 @@
 # Poraquê
 
 Poraquê is intended to grow into a research code for orbital-free density functional
-theory (OF-DFT), Kohn-Sham DFT (KS-DFT), and frozen-density embedding (FDE).
+theory (OF-DFT), Kohn-Sham DFT (KS-DFT), frozen-density embedding (FDE), integration
+with the Atomic Simulation Environment (ASE), and machine-learned kinetic energy
+density functionals (ML-KEDFs).
 
 At the moment, the repository is still mostly a scaffold, so the roadmap below is
 organized as an implementation sequence rather than only a list of methods.
@@ -30,6 +32,7 @@ Build the numerical foundation first. Everything else depends on this being stab
   - [ ] `System`: ions, charges, electron count, spin setting, boundary conditions
   - [ ] `Density`: storage, normalization, positivity checks, integration utilities
   - [ ] Units and conventions: Hartree atomic units, sign conventions, energy decomposition
+  - [ ] Conversion helpers between internal objects and ASE `Atoms`
 * [ ] Implement differential operators
   - [ ] Finite-difference gradient and Laplacian on the real-space grid
   - [ ] FFT-based reciprocal-space operators for periodic systems
@@ -48,7 +51,32 @@ Tests to add:
 * [ ] Poisson solver reproduces known simple charge distributions
 * [ ] All energies and potentials use consistent units and array shapes
 
-## 2. Minimal OF-DFT Solver
+## 2. ASE Integration Layer
+
+Add ASE early so structures, workflows, and future geometry optimization can reuse a
+standard ecosystem instead of a custom one.
+
+* [ ] ASE interoperability
+  - [ ] Read atomic structures from ASE `Atoms`
+  - [ ] Export internal structures back to ASE `Atoms`
+  - [ ] Preserve cell, periodic boundary conditions, positions, species, and charges
+* [ ] ASE calculator interface
+  - [ ] Implement a Poraquê ASE `Calculator`
+  - [ ] Return total energy, forces, and stress when available
+  - [ ] Expose OF-DFT and later KS-DFT through the same interface
+* [ ] ASE workflows
+  - [ ] Single-point energy calculations
+  - [ ] Geometry optimization hooks
+  - [ ] Molecular dynamics compatibility as a future extension
+
+Tests to add:
+
+* [ ] Round-trip conversion between internal `System` objects and ASE `Atoms`
+* [ ] Correct handling of periodic and nonperiodic boundary conditions
+* [ ] ASE single-point calls return energies in expected units
+* [ ] Basic force-consistency checks when forces are implemented
+
+## 3. Minimal OF-DFT Solver
 
 Start with the simplest end-to-end OF-DFT calculation and make it robust.
 
@@ -76,7 +104,7 @@ Tests to add:
 * [ ] Total energy decreases or stabilizes under controlled minimization steps
 * [ ] Uniform-density limit reproduces the expected Thomas-Fermi behavior
 
-## 3. Improved OF-DFT Functionals
+## 4. Improved OF-DFT Functionals
 
 Once the minimal solver works, add the first useful physical corrections.
 
@@ -101,7 +129,7 @@ Tests to add:
 * [ ] Energies converge with grid refinement
 * [ ] Reference calculations for simple atoms or jellium-like model systems
 
-## 4. Nonlocal OF-DFT and Periodic Infrastructure
+## 5. Nonlocal OF-DFT and Periodic Infrastructure
 
 This is where OF-DFT becomes more useful for realistic condensed-phase systems.
 
@@ -126,7 +154,49 @@ Tests to add:
 * [ ] Convergence with respect to grid density and FFT cutoff
 * [ ] Benchmark on a simple metallic solid or jellium reference
 
-## 5. KS-DFT Infrastructure
+## 6. Machine-Learned KEDFs (ML-KEDFs)
+
+Use ML-KEDF as a parallel research track after the basic OF-DFT infrastructure is
+stable enough to generate descriptors, evaluate energies, and compare against
+reference data.
+
+* [ ] Dataset pipeline
+  - [ ] Define a dataset format for molecules, geometries, densities, and reference kinetic energies
+  - [ ] Collect electron-density data for many molecules
+  - [ ] Store metadata: composition, charge, spin, geometry, grid, reference method
+  - [ ] Split data into training, validation, and test sets without leakage
+* [ ] Density preprocessing
+  - [ ] Normalize densities and align grids or resample onto a standard representation
+  - [ ] Build local descriptors based on density, gradients, and Laplacians
+  - [ ] Generate 2D slices of the 3D electron density for image-like CNN inputs
+  - [ ] Evaluate whether multi-slice, orthogonal-slice, or full 3D tensor inputs are best
+* [ ] Symbolic-regression ML-KEDF
+  - [ ] Fit interpretable formulas for kinetic energy density or enhancement factors
+  - [ ] Constrain candidate expressions to respect positivity, scaling, and known limits
+  - [ ] Compare learned formulas against TF, TFvW, and other baseline KEDFs
+* [ ] CNN-based ML-KEDF
+  - [ ] Train CNN models on density slices treated as images
+  - [ ] Predict local kinetic energy density, nonlocal corrections, or total kinetic energy
+  - [ ] Study transferability across molecule sizes and chemical compositions
+* [ ] Physics-informed constraints
+  - [ ] Enforce electron-number consistency where relevant
+  - [ ] Penalize violations of exact constraints and asymptotic behavior
+  - [ ] Ensure the model produces a usable functional derivative or a differentiable surrogate
+* [ ] Integration into the OF-DFT engine
+  - [ ] Wrap symbolic-regression models as analytic KEDFs
+  - [ ] Wrap CNN models as differentiable learned functionals
+  - [ ] Support inference inside self-consistent minimization loops
+
+Tests to add:
+
+* [ ] Dataset loading is deterministic and reproducible
+* [ ] No train/validation/test leakage across related molecular geometries
+* [ ] Learned models outperform simple baselines on held-out data
+* [ ] Predictions are smooth enough for stable minimization
+* [ ] Functional derivatives from the ML-KEDF are numerically consistent
+* [ ] OF-DFT calculations with ML-KEDF remain stable on small benchmark molecules
+
+## 7. KS-DFT Infrastructure
 
 Do not start KS-DFT until the numerical core, Hartree solver, XC interface, and
 minimization/SCF diagnostics are already reliable.
@@ -161,7 +231,7 @@ Tests to add:
 * [ ] One-electron test problem reproduces the expected exact limit
 * [ ] Small-system benchmarks against trusted reference data
 
-## 6. Pseudopotentials and Basis Extensions for KS-DFT
+## 8. Pseudopotentials and Basis Extensions for KS-DFT
 
 Only add this after basic KS-DFT is working for toy systems.
 
@@ -183,7 +253,7 @@ Tests to add:
 * [ ] Total energies converge with basis/grid cutoff
 * [ ] Agreement with published reference values for small atoms or solids
 
-## 7. Frozen-Density Embedding (FDE)
+## 9. Frozen-Density Embedding (FDE)
 
 Introduce FDE only after both subsystem density handling and KS/OF total-energy
 machinery are already dependable.
@@ -211,7 +281,7 @@ Tests to add:
 * [ ] Numerical derivatives of nonadditive terms match embedding potentials
 * [ ] Small dimer or weakly interacting benchmark systems against literature data
 
-## 8. Validation, Performance, and Research Readiness
+## 10. Validation, Performance, and Research Readiness
 
 These should evolve in parallel with the physics, not only at the end.
 
@@ -225,12 +295,13 @@ These should evolve in parallel with the physics, not only at the end.
   - [ ] Profiling of Hartree, nonlocal kernels, and eigensolvers
 * [ ] Usability
   - [ ] Input file format or Python API examples
-  - [ ] Reproducible examples for OF-DFT, KS-DFT, and FDE
+  - [ ] Reproducible examples for OF-DFT, KS-DFT, FDE, ASE workflows, and ML-KEDFs
   - [ ] Error messages for invalid densities, missing parameters, and nonconvergence
 * [ ] Documentation
   - [ ] Theory notes for each functional and approximation
   - [ ] Developer notes describing the code architecture
   - [ ] Benchmark notebook or script collection
+  - [ ] Training notes and model cards for ML-KEDF experiments
 
 ## Suggested Implementation Order in This Repository
 
@@ -239,19 +310,24 @@ Map the roadmap to the current package structure so the code grows coherently.
 * [ ] `src/poraque/core/grid.py`
   - [ ] grid geometry, spacing, integration weights, Laplacian/gradient, FFT helpers
 * [ ] `src/poraque/core/system.py`
-  - [ ] ions, electron counts, spin, cell, pseudopotential references
+  - [ ] ions, electron counts, spin, cell, pseudopotential references, ASE conversion hooks
 * [ ] `src/poraque/functionals/`
   - [ ] base functional API
-  - [ ] Hartree, TF, vW, XC, nonlocal KEDF implementations
+  - [ ] Hartree, TF, vW, XC, nonlocal KEDF, and ML-KEDF implementations
 * [ ] `src/poraque/potentials/`
   - [ ] external potentials and pseudopotential library
 * [ ] `src/poraque/engine.py`
   - [ ] OF minimizer, KS SCF driver, convergence control
 * [ ] `src/poraque/calculator.py`
-  - [ ] high-level user-facing API
+  - [ ] high-level user-facing API and ASE calculator bridge
+* [ ] `src/poraque/ml/`
+  - [ ] dataset loading, preprocessing, symbolic regression, CNN training, inference wrappers
+* [ ] `examples/`
+  - [ ] ASE single-point and geometry-optimization examples
+  - [ ] ML-KEDF data-preparation and training examples
 * [ ] `tests/`
   - [ ] unit tests for operators and functionals
-  - [ ] regression tests for total energies
+  - [ ] regression tests for total energies and ASE calculator behavior
   - [ ] integration tests for complete workflows
 
 ## Practical Milestones
@@ -259,12 +335,15 @@ Map the roadmap to the current package structure so the code grows coherently.
 If the goal is to reach working science quickly, a good milestone sequence is:
 
 * [ ] Milestone 1: 3D grid + external potential + Hartree + Thomas-Fermi + minimizer
-* [ ] Milestone 2: TFvW + Dirac exchange + stable OF-DFT examples
-* [ ] Milestone 3: local pseudopotentials + periodic real-space OF-DFT
-* [ ] Milestone 4: nonlocal KEDFs
-* [ ] Milestone 5: minimal KS-DFT on the same grid
-* [ ] Milestone 6: norm-conserving pseudopotentials
-* [ ] Milestone 7: frozen-density embedding
+* [ ] Milestone 2: ASE structure I/O + ASE calculator for OF-DFT single points
+* [ ] Milestone 3: TFvW + Dirac exchange + stable OF-DFT examples
+* [ ] Milestone 4: local pseudopotentials + periodic real-space OF-DFT
+* [ ] Milestone 5: nonlocal KEDFs
+* [ ] Milestone 6: ML-KEDF dataset pipeline + symbolic-regression baseline
+* [ ] Milestone 7: CNN-based ML-KEDF on electron-density slices
+* [ ] Milestone 8: minimal KS-DFT on the same grid
+* [ ] Milestone 9: norm-conserving pseudopotentials
+* [ ] Milestone 10: frozen-density embedding
 
 This order keeps the hardest abstractions until the shared numerical core is already
 tested and reusable.
