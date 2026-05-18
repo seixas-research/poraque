@@ -34,43 +34,43 @@ backends without redesigning the whole program.
 
 ## Main layers
 
-* [ ] Frontend and workflow layer
-  - [ ] user-facing calculator API
-  - [ ] ASE integration
+* [x] Frontend and workflow layer
+  - [x] user-facing calculator API
+  - [x] ASE integration
   - [ ] examples, benchmarks, and workflow helpers
-* [ ] Scientific engine layer
-  - [ ] OF-DFT minimization
+* [x] Scientific engine layer
+  - [x] OF-DFT minimization
   - [ ] KS-DFT SCF drivers later
   - [ ] FDE drivers later
   - [ ] convergence control and diagnostics
-* [ ] Physics model layer
-  - [ ] kinetic, Hartree, exchange-correlation, and embedding functionals
-  - [ ] external and pseudopotential models
-* [ ] Numerical backend layer
-  - [ ] finite-difference and FFT operators
-  - [ ] Poisson solvers
-  - [ ] Hartree and nonlocal KEDF kernels
+* [x] Physics model layer
+  - [x] kinetic, Hartree, exchange-correlation, and embedding functionals
+  - [x] external and pseudopotential models
+* [x] Numerical backend layer
+  - [x] finite-difference and FFT operators
+  - [x] Poisson solvers
+  - [x] Hartree and nonlocal KEDF kernels
   - [ ] future MPI/OpenMPI domain decomposition and halo exchange
 
 ## Package direction
 
 The codebase should evolve toward the following responsibilities:
 
-* [ ] `src/poraque/core/`
-  - [ ] `grid.py`: grid geometry, reciprocal-space data, indexing, domain metadata
-  - [ ] `system.py`: atomic structure, electrons, spin, boundary conditions, ASE conversion
-  - [ ] future density, result, units, and validation objects
-* [ ] `src/poraque/functionals/`
-  - [ ] common functional interface
-  - [ ] kinetic, Hartree, XC, nonlocal KEDF, and ML-KEDF models
-* [ ] `src/poraque/potentials/`
-  - [ ] ionic, external, local pseudopotential, and embedding-related potentials
-* [ ] `src/poraque/engine.py`
-  - [ ] method drivers and convergence logic
-* [ ] `src/poraque/calculator.py`
-  - [ ] main public API and ASE bridge
-* [ ] future `src/poraque/backends/`
-  - [ ] NumPy reference backend
+* [x] `src/poraque/core/`
+  - [x] `grid.py`: grid geometry, reciprocal-space data, indexing, domain metadata
+  - [x] `system.py`: atomic structure, electrons, spin, boundary conditions, ASE conversion
+  - [x] future density, result, units, and validation objects
+* [x] `src/poraque/functionals/`
+  - [x] common functional interface
+  - [x] kinetic, Hartree, XC, nonlocal KEDF, and ML-KEDF models
+* [x] `src/poraque/potentials/`
+  - [x] ionic, external, local pseudopotential, and embedding-related potentials
+* [x] `src/poraque/engine.py`
+  - [x] method drivers and convergence logic
+* [x] `src/poraque/calculator.py`
+  - [x] main public API and ASE bridge
+* [x] future `src/poraque/backends/`
+  - [x] NumPy reference backend
   - [ ] native accelerated kernels
   - [ ] MPI-aware distributed backend
 * [ ] future `src/poraque/ml/`
@@ -78,10 +78,10 @@ The codebase should evolve toward the following responsibilities:
 
 ## Near-term architectural priorities
 
-* [ ] Define stable `Grid`, `System`, `Density`, and `Result` objects
-* [ ] Introduce a `NumpyBackend` as the reference implementation
-* [ ] Standardize functional interfaces: energy, potential, and later forces/stress
-* [ ] Keep ASE logic isolated in a dedicated namespace
+* [x] Define stable `Grid`, `System`, `Density`, and `Result` objects
+* [x] Introduce a `NumpyBackend` as the reference implementation
+* [x] Standardize functional interfaces: energy, potential, and later forces/stress
+* [x] Keep ASE logic isolated in a dedicated namespace
 * [ ] Design MPI around domain decomposition, not ad hoc communication calls
 * [ ] Replace hotspots with compiled kernels only after profiling the reference path
 
@@ -91,26 +91,26 @@ The codebase should evolve toward the following responsibilities:
 
 Build the numerical foundation first. Everything else depends on this being stable.
 
-* [ ] Define the core data structures
-  - [ ] `Grid`: shape, spacing, cell vectors, volume element, periodic boundary conditions
-  - [ ] `System`: ions, charges, electron count, spin setting, boundary conditions
-  - [ ] `Density`: storage, normalization, positivity checks, integration utilities
-  - [ ] Units and conventions: Hartree atomic units, sign conventions, energy decomposition
-  - [ ] Conversion helpers between internal objects and ASE `Atoms`
-* [ ] Implement differential operators
-  - [ ] Finite-difference gradient and Laplacian on the real-space grid
-  - [ ] FFT-based reciprocal-space operators for periodic systems
-  - [ ] Poisson solver for the Hartree potential
-* [ ] Define a clean solver API
-  - [ ] Energy functional interface
-  - [ ] Functional derivative / potential interface
-  - [ ] Minimization / SCF driver interface
-  - [ ] Result object with energies, density, convergence history, diagnostics
+* [x] Define the core data structures
+  - [x] `Grid`: shape, spacing, cell vectors, volume element, periodic boundary conditions
+  - [x] `System`: ions, charges, electron count, spin setting, boundary conditions
+  - [x] `Density`: storage, normalization, positivity checks, integration utilities
+  - [x] Units and conventions: Hartree atomic units, sign conventions, energy decomposition
+  - [x] Conversion helpers between internal objects and ASE `Atoms`
+* [x] Implement differential operators
+  - [x] Finite-difference gradient and Laplacian on the real-space grid
+  - [x] FFT-based reciprocal-space operators for periodic systems
+  - [x] Poisson solver for the Hartree potential
+* [x] Define a clean solver API
+  - [x] Energy functional interface
+  - [x] Functional derivative / potential interface
+  - [x] Minimization / SCF driver interface
+  - [x] Result object with energies, density, convergence history, diagnostics
 
 Tests to add:
 
-* [ ] Grid indexing and inverse indexing
-* [ ] Integration of constant density gives the correct electron number
+* [x] Grid indexing and inverse indexing
+* [x] Integration of constant density gives the correct electron number
 * [ ] Finite-difference and FFT Laplacians reproduce analytic results for plane waves
 * [ ] Poisson solver reproduces known simple charge distributions
 * [ ] All energies and potentials use consistent units and array shapes
@@ -120,14 +120,14 @@ Tests to add:
 Add ASE early so structures, workflows, and future geometry optimization can reuse a
 standard ecosystem instead of a custom one.
 
-* [ ] ASE interoperability
-  - [ ] Read atomic structures from ASE `Atoms`
+* [x] ASE interoperability
+  - [x] Read atomic structures from ASE `Atoms`
   - [ ] Export internal structures back to ASE `Atoms`
-  - [ ] Preserve cell, periodic boundary conditions, positions, species, and charges
-* [ ] ASE calculator interface
-  - [ ] Implement a Poraquê ASE `Calculator`
-  - [ ] Return total energy, forces, and stress when available
-  - [ ] Expose OF-DFT and later KS-DFT through the same interface
+  - [x] Preserve cell, periodic boundary conditions, positions, species, and charges
+* [x] ASE calculator interface
+  - [x] Implement a Poraquê ASE `Calculator`
+  - [x] Return total energy, forces, and stress when available
+  - [x] Expose OF-DFT and later KS-DFT through the same interface
 * [ ] ASE workflows
   - [ ] Single-point energy calculations
   - [ ] Geometry optimization hooks
@@ -144,21 +144,21 @@ Tests to add:
 
 Start with the simplest end-to-end OF-DFT calculation and make it robust.
 
-* [ ] External potential
+* [x] External potential
   - [ ] Point-charge potential for toy problems
-  - [ ] Regularized ionic potential for numerical stability
-* [ ] Energy terms
-  - [ ] Thomas-Fermi kinetic functional
-  - [ ] Hartree energy
+  - [x] Regularized ionic potential for numerical stability
+* [x] Energy terms
+  - [x] Thomas-Fermi kinetic functional
+  - [x] Hartree energy
   - [ ] Dirac exchange (LDA exchange)
-* [ ] Total energy assembly
-  - [ ] `E[n] = T_s[n] + E_H[n] + E_xc[n] + E_ext[n]`
-  - [ ] Separate reporting of each contribution
-* [ ] OF-DFT minimizer
-  - [ ] Optimize with respect to `sqrt(n)` or another positivity-preserving variable
-  - [ ] Enforce electron-number normalization
+* [x] Total energy assembly
+  - [x] `E[n] = T_s[n] + E_H[n] + E_xc[n] + E_ext[n]`
+  - [x] Separate reporting of each contribution
+* [x] OF-DFT minimizer
+  - [x] Optimize with respect to `sqrt(n)` or another positivity-preserving variable
+  - [x] Enforce electron-number normalization
   - [ ] Add line search or damping for stability
-  - [ ] Store convergence metrics: energy change, density residual, chemical potential
+  - [x] Store convergence metrics: energy change, density residual, chemical potential
 
 Tests to add:
 
@@ -172,8 +172,8 @@ Tests to add:
 
 Once the minimal solver works, add the first useful physical corrections.
 
-* [ ] Thomas-Fermi-von Weizsäcker (TFvW)
-  - [ ] Full von Weizsäcker term
+* [x] Thomas-Fermi-von Weizsäcker (TFvW)
+  - [x] Full von Weizsäcker term
   - [ ] Mixing parameter support
 * [ ] Better exchange-correlation support
   - [ ] LDA correlation
@@ -398,8 +398,8 @@ Map the roadmap to the current package structure so the code grows coherently.
 
 If the goal is to reach working science quickly, a good milestone sequence is:
 
-* [ ] Milestone 1: 3D grid + external potential + Hartree + Thomas-Fermi + minimizer
-* [ ] Milestone 2: ASE structure I/O + ASE calculator for OF-DFT single points
+* [x] Milestone 1: 3D grid + external potential + Hartree + Thomas-Fermi + minimizer
+* [x] Milestone 2: ASE structure I/O + ASE calculator for OF-DFT single points
 * [ ] Milestone 3: TFvW + Dirac exchange + stable OF-DFT examples
 * [ ] Milestone 4: local pseudopotentials + periodic real-space OF-DFT
 * [ ] Milestone 5: nonlocal KEDFs
