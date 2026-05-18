@@ -1,0 +1,72 @@
+# -*- coding: utf-8 -*-
+# file: operators.py
+
+# This code is part of Poraquê.
+# MIT License
+#
+# Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br> 
+
+import numpy as np
+from ..base import Backend
+
+class NumpyBackend(Backend):
+    """
+    NumPy-based reference implementation of the Backend.
+    """
+
+    def integrate(self, field, grid):
+        return np.sum(field) * grid.volume_element
+
+    def gradient(self, field, grid):
+        """
+        Compute gradient using central finite differences.
+        """
+        # This is a basic implementation assuming PBC.
+        # np.gradient handles spacing and PBC if 'edge_order' is used, 
+        # but for DFT we typically want periodic wrap-around.
+        grad = []
+        for axis in range(3):
+            g = (np.roll(field, -1, axis=axis) - np.roll(field, 1, axis=axis)) / (2 * grid.h[axis])
+            grad.append(g)
+        return np.array(grad)
+
+    def laplacian(self, field, grid):
+        """
+        Compute Laplacian using 2nd order central finite differences.
+        """
+        lap = np.zeros_like(field)
+        for axis in range(3):
+            lap += (np.roll(field, -1, axis=axis) - 2 * field + np.roll(field, 1, axis=axis)) / (grid.h[axis]**2)
+        return lap
+
+    def poisson(self, charge_density, grid):
+        """
+        Solve Poisson equation via FFT: V(G) = 4 * pi * n(G) / G^2
+        """
+        n_g = np.fft.fftn(charge_density)
+        
+        # Get G vectors
+        kx = 2 * np.pi * np.fft.fftfreq(grid.Nx, grid.h[0])
+        ky = 2 * np.pi * np.fft.fftfreq(grid.Ny, grid.h[1])
+        kz = 2 * np.pi * np.fft.fftfreq(grid.Nz, grid.h[2])
+        
+        KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
+        G2 = KX**2 + KY**2 + KZ**2
+        G2[0, 0, 0] = 1.0 # Avoid division by zero
+        
+        v_g = 4 * np.pi * n_g / G2
+        v_g[0, 0, 0] = 0.0 # Set average potential to zero
+        
+        return np.real(np.fft.ifftn(v_g))
+
+    def fft(self, field):
+        return np.fft.fftn(field)
+
+    def ifft(self, field):
+        return np.fft.ifftn(field)
+
+    def dot(self, a, b):
+        return np.sum(a * b)
+
+    def norm(self, a):
+        return np.sqrt(np.sum(np.abs(a)**2))

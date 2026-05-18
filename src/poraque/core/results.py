@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# file: solver.py
+# file: results.py
 
 # This code is part of Poraquê.
 # MIT License
@@ -24,29 +24,40 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-class SolverSettings:
+class Result:
     """
-    Generic solver configuration and utilities.
+    Represents the output of a calculation.
     """
-    def __init__(self, max_iter=100, tolerance=1e-6, mixing=0.5, algorithm='scf'):
+    def __init__(self, energy, components, density, state=None, converged=False, iterations=0, history=None):
         """
-        Initialize SolverSettings.
+        Initialize the Result.
 
         Parameters
         ----------
-        max_iter : int
-            Maximum number of iterations.
-        tolerance : float
-            Convergence tolerance (energy or density residual).
-        mixing : float
-            Mixing parameter (linear mixing, DIIS, etc.).
-        algorithm : str
-            Optimization algorithm ('scf', 'minimization', etc.).
+        energy : float
+            Total energy.
+        components : dict
+            Energy components (kinetic, Hartree, XC, external, etc.).
+        density : Density
+            Converged electron density.
+        state : State, optional
+            Converged electronic state (orbitals, occupations).
+        converged : bool
+            Whether the calculation converged.
+        iterations : int
+            Number of iterations performed.
+        history : dict, optional
+            Convergence history (energy, residuals, etc.).
         """
-        self.max_iter = max_iter
-        self.tolerance = tolerance
-        self.mixing = mixing
-        self.algorithm = algorithm
+        self.total_energy = energy
+        self.energy_components = components
+        self.density = density
+        self.state = state
+        self.converged = converged
+        self.iterations = iterations
+        self.history = history if history is not None else {}
 
     def __repr__(self):
-        return f"SolverSettings(max_iter={self.max_iter}, tolerance={self.tolerance})"
+        return (f"Result(energy={self.total_energy:.6f}, "
+                f"converged={self.converged}, "
+                f"iterations={self.iterations})")

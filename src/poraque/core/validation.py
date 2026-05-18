@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# file: solver.py
+# file: validation.py
 
 # This code is part of Poraquê.
 # MIT License
@@ -24,29 +24,26 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-class SolverSettings:
+def validate_consistency(grid, system=None, density=None, state=None):
     """
-    Generic solver configuration and utilities.
+    Check consistency between core objects.
     """
-    def __init__(self, max_iter=100, tolerance=1e-6, mixing=0.5, algorithm='scf'):
-        """
-        Initialize SolverSettings.
+    if system is not None:
+        # Check if cell in system and grid match
+        import numpy as np
+        if not np.allclose(grid.cell, system.cell):
+            raise ValueError("Grid and System cells are not consistent.")
+            
+    if density is not None:
+        # Check if density grid and grid match
+        if density.grid is not grid:
+            if density.data.shape != grid.shape:
+                 raise ValueError("Density data shape does not match grid shape.")
 
-        Parameters
-        ----------
-        max_iter : int
-            Maximum number of iterations.
-        tolerance : float
-            Convergence tolerance (energy or density residual).
-        mixing : float
-            Mixing parameter (linear mixing, DIIS, etc.).
-        algorithm : str
-            Optimization algorithm ('scf', 'minimization', etc.).
-        """
-        self.max_iter = max_iter
-        self.tolerance = tolerance
-        self.mixing = mixing
-        self.algorithm = algorithm
+    if state is not None:
+        # Check if state grid and grid match
+        if state.grid is not grid:
+            if state.orbitals.shape[1:] != grid.shape:
+                raise ValueError("State orbitals shape does not match grid shape.")
 
-    def __repr__(self):
-        return f"SolverSettings(max_iter={self.max_iter}, tolerance={self.tolerance})"
+    return True
