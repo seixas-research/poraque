@@ -43,7 +43,7 @@ def ewald_potential(grid, positions, charges, cell, alpha=None, r_cut=None, k_cu
     - grid: Object with get_xyz() returning an array of coordinates
     - positions: Array of point charge coordinates (N, 3)
     - charges: Array of charge magnitudes (N,)
-    - cell: (3, 3) array where ROWS are the lattice vectors a, b, c
+    - cell: (3, 3) array where ROWS are the lattice vectors a1, a2, a3
     - alpha: Ewald splitting parameter
     - r_cut: Real-space cutoff distance
     - k_cut: Reciprocal-space cutoff (maximum k-vector magnitude)
@@ -52,7 +52,7 @@ def ewald_potential(grid, positions, charges, cell, alpha=None, r_cut=None, k_cu
     v_total = np.zeros(grid.shape)
     
     # --- 1. Cell Geometry & Reciprocal Space Setup ---
-    # H matrix: rows are real-space lattice vectors (a, b, c)
+    # H matrix: rows are real-space lattice vectors (a1, a2, a3)
     H = np.array(cell, dtype=float)
     V_box = np.abs(np.linalg.det(H))
     H_inv = np.linalg.inv(H)
@@ -81,7 +81,7 @@ def ewald_potential(grid, positions, charges, cell, alpha=None, r_cut=None, k_cu
         # Raw displacement
         dr = coords - pos
         
-        # Transform to fractional (crystal) coordinates
+        # Transform to fractional coordinates
         s = np.dot(dr, H_inv)
         
         # Apply Minimum Image Convention in fractional space
