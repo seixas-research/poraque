@@ -35,86 +35,101 @@ def point_charge_potential(grid, positions, charges, rc=0.1):
     return v_ext
 
 
-def ewald_potential(grid, positions, charges, L, alpha=None, r_cut=None, k_cut=None):
+def ewald_potential(grid, positions, charges, cell, alpha=None, r_cut=None, k_cut=None):
     """
-    Compute the electrostatic potential on a grid using Ewald summation 
-    for a cubic periodic box.
+    Compute the electrostatic potential on a grid using Ewald summation.
     
     Parameters:
-    - grid: Object with get_xyz() returning an (Nx, Ny, Nz, 3) array of coordinates
+    - grid: Object with get_xyz() returning an array of coordinates
     - positions: Array of point charge coordinates (N, 3)
     - charges: Array of charge magnitudes (N,)
-    - L: Length of the cubic box (scalar)
-    - alpha: Ewald splitting parameter (controls width of Gaussian clouds)
+    - cell: (3, 3) array where ROWS are the lattice vectors a, b, c
+    - alpha: Ewald splitting parameter
     - r_cut: Real-space cutoff distance
     - k_cut: Reciprocal-space cutoff (maximum k-vector magnitude)
     """
     coords = grid.get_xyz()
     v_total = np.zeros(grid.shape)
-    V_box = L**3
     
-    # --- 1. Parameter Setup ---
-    # Heuristics if parameters are not provided
+    # --- 1. Cell Geometry & Reciprocal Space Setup ---
+    # H matrix: rows are real-space lattice vectors (a, b, c)
+    H = np.array(cell, dtype=float)
+    V_box = np.abs(np.linalg.det(H))
+    H_inv = np.linalg.inv(H)
+    
+    # B matrix: rows are reciprocal lattice vectors (b1, b2, b3)
+    # Defined such that H @ B.T = 2 * pi * Identity
+    B = 2 * np.pi * H_inv.T
+    
+    # --- 2. Parameter Heuristics ---
     if alpha is None:
-        alpha = 5.0 / L  
+        # Scale based on the equivalent volumetric length
+        alpha = 5.0 / (V_box**(1/3.0)) 
+        
     if r_cut is None:
-        r_cut = L / 2.0  # Minimum image convention max distance
+        # The maximum safe cutoff for the minimum image convention without looping
+        # over neighboring cells is half the shortest perpendicular height of the cell.
+        # The heights can be found via the magnitudes of the reciprocal vectors.
+        perpendicular_heights = 2 * np.pi / np.linalg.norm(B, axis=1)
+        r_cut = np.min(perpendicular_heights) / 2.0
+        
     if k_cut is None:
-        k_cut = 5.0 * alpha * 2 * np.pi # Standard k-space convergence heuristic
-        
-    # --- 2. Real-Space Summation ---
-    # In a full MD code, we loop over adjacent periodic cells (n_x, n_y, n_z).
-    # For a minimum image convention (assuming r_cut <= L/2), n=0 is sufficient.
+        k_cut = 5.0 * alpha * 2 * np.pi
+
+    # --- 3. Real-Space Summation ---
     for pos, q in zip(positions, charges):
-        # Displacement with Minimum Image Convention
+        # Raw displacement
         dr = coords - pos
-        dr = dr - L * np.round(dr / L)
         
-        r = np.linalg.norm(dr, axis=-1)
+        # Transform to fractional (crystal) coordinates
+        s = np.dot(dr, H_inv)
         
-        # Avoid division by zero exactly at point charge locations
-        r_safe = np.maximum(r, 1e-12)
+        # Apply Minimum Image Convention in fractional space
+        # (Rounding to nearest integer gives the closest periodic image)
+        s_mic = s - np.round(s)
         
-        # Real-space term using erfc
+        # Transform back to Cartesian coordinates
+        dr_mic = np.dot(s_mic, H)
+        
+        r = np.linalg.norm(dr_mic, axis=-1)
+        r_safe = np.maximum(r, 1e-12) # Prevent division by zero
+        
         mask = r_safe < r_cut
         v_total[mask] += q * erfc(alpha * r_safe[mask]) / r_safe[mask]
 
-    # --- 3. Reciprocal-Space Summation ---
-    # Generate k-vectors for the cubic box: k = (2*pi/L) * (nx, ny, nz)
-    n_max = int(np.ceil(k_cut * L / (2 * np.pi)))
-    n_range = np.arange(-n_max, n_max + 1)
+    # --- 4. Reciprocal-Space Summation ---
+    # Determine the maximum integer multiplier needed along each reciprocal axis
+    # to guarantee we encompass the k_cut sphere
+    n_max = np.ceil(k_cut / np.linalg.norm(B, axis=1)).astype(int)
     
-    # Create a grid of k-vectors
-    kx, ky, kz = np.meshgrid(n_range, n_range, n_range, indexing='ij')
-    k_vectors = (2 * np.pi / L) * np.stack((kx, ky, kz), axis=-1).reshape(-1, 3)
+    # Generate meshgrid of integer indices (n_x, n_y, n_z)
+    nx = np.arange(-n_max[0], n_max[0] + 1)
+    ny = np.arange(-n_max[1], n_max[1] + 1)
+    nz = np.arange(-n_max[2], n_max[2] + 1)
+    
+    # Create an array of all (nx, ny, nz) combinations
+    mesh_n = np.array(np.meshgrid(nx, ny, nz, indexing='ij')).reshape(3, -1).T
+    
+    # Calculate all physical k-vectors: k = n @ B
+    k_vectors = np.dot(mesh_n, B)
     
     for k in k_vectors:
         k_sq = np.dot(k, k)
-        if k_sq == 0 or np.sqrt(k_sq) > k_cut:
-            continue  # Skip k=0 term and vectors outside the spherical cutoff
-            
-        # Structure factor: sum_i q_i * exp(-i * k * r_i)
-        S_k = np.sum(charges * np.exp(-1j * np.dot(positions, k)))
         
-        # Potential evaluation at all grid coords: exp(i * k * r_grid)
+        # Skip the k=0 singularity and anything outside the spherical cutoff
+        if k_sq == 0 or np.sqrt(k_sq) > k_cut:
+            continue
+            
+        S_k = np.sum(charges * np.exp(-1j * np.dot(positions, k)))
         grid_phase = np.exp(1j * np.dot(coords, k))
         
-        # Prefactor
         prefactor = (4 * np.pi / V_box) * np.exp(-k_sq / (4 * alpha**2)) / k_sq
-        
-        # Add the real part of the Fourier term to the potential
         v_total += np.real(prefactor * S_k * grid_phase)
         
-    # --- 4. Constant / Background Terms ---
-    # Shift to account for the uniform neutralizing background if net charge != 0
+    # --- 5. Constant / Background Terms ---
     net_charge = np.sum(charges)
     if not np.isclose(net_charge, 0.0):
         v_bg = - (np.pi / (alpha**2 * V_box)) * net_charge
         v_total += v_bg
         
-    # Note: If evaluating total energy, we would subtract the self-interaction term:
-    # E_self = (alpha / sqrt(pi)) * sum(q_i**2). 
-    # Because we are evaluating the potential on a grid, self-interaction only applies 
-    # if evaluating exactly ON the charge coordinates, which we typically don't do on a mesh.
-
     return v_total
