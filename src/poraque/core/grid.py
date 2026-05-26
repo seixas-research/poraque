@@ -92,3 +92,4 @@ class Grid:
 
     def __repr__(self):
         return f"Grid(shape={self.shape}, volume={self.volume:.4f}, pbc={self.pbc})"
+
