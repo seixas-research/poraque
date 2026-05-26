@@ -9,6 +9,7 @@
 from .core import Grid, System, Density, SolverSettings
 from .backends.numpy import NumpyBackend
 from .engine import OFDFTEngine
+import numpy as np
 
 class Poraque:
     """
@@ -44,5 +45,3 @@ class Poraque:
         )
         
         return engine.run(initial_density)
-
-import numpy as np # Needed for the uniform density guess

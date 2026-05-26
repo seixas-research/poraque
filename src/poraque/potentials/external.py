@@ -10,7 +10,7 @@ import numpy as np
 from scipy.special import erfc
 import warnings
 
-def point_charge_potential(grid, positions, charges, rc=0.1):
+def point_charge_potential(grid, positions, charges, rc=1e-6):
     """
     Compute the electrostatic potential of point charges on a grid.
     To avoid singularities, a regularized form can be used 1/r with a cutoff.
