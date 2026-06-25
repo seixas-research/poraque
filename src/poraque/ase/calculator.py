@@ -89,6 +89,13 @@ class Poraque(Calculator):
         Solver configuration.
     fd_step : float, optional
         Finite-difference displacement (Å) for numerical forces.
+    verbose : bool, optional
+        Write the full calculation log to standard output (default ``True``).
+        The log reports the generated grid, the material structure, the
+        step-by-step SCF convergence, and the final energy decomposition. Set
+        ``verbose=False`` to silence it. The numerical-force displacements never
+        print, regardless of this flag, so a single ``get_potential_energy()`` /
+        ``get_forces()`` call produces exactly one structured log.
     """
 
     implemented_properties = ["energy", "free_energy", "forces"]
@@ -98,7 +105,7 @@ class Poraque(Calculator):
                  xc="lda", hartree=True,
                  kinetic=None, external_kind="soft", external_kwargs=None,
                  charge=0, backend="numpy", settings=None, fd_step=0.01,
-                 verbose=False, **kwargs):
+                 verbose=True, **kwargs):
         Calculator.__init__(self, **kwargs)
         mode = mode.lower()
         if mode not in ("ks", "of"):

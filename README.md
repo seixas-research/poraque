@@ -121,7 +121,14 @@ pytest
 ## Quick start
 
 The calculator is a drop-in ASE `Calculator`: attach it to an `Atoms` object and
-ask for energies or forces.
+ask for energies or forces. The full calculation log — generated grid, material
+structure, step-by-step SCF convergence, and the final energy decomposition — is
+**printed to standard output by default** (pass `verbose=False` to silence it).
+
+You control the plane-wave grid in one of two equivalent ways: pass an explicit
+`grid_shape=(Nx, Ny, Nz)`, or pass a plane-wave kinetic-energy cutoff `ecut`
+(Hartree) and let Poraquê size the grid automatically. `Grid.from_ecut` exposes
+the exact mapping so you can see the dimensions a cutoff produces.
 
 ### 1. Gas-phase molecule — an H₂ molecule (orbital-free DFT)
 
@@ -129,7 +136,7 @@ ask for energies or forces.
 from ase import Atoms
 
 from poraque.ase import Poraque
-from poraque.core import SolverSettings
+from poraque.core import Grid, SolverSettings, System
 
 # H2 molecule in a non-periodic box (Ångström).
 h2 = Atoms(
@@ -139,14 +146,21 @@ h2 = Atoms(
     pbc=False,
 )
 
+# A user-supplied kinetic-energy cutoff dynamically determines the grid.
+ecut = 8.0  # Hartree
+system = System.from_ase(h2)
+derived = Grid.from_ecut(system.cell, ecut, pbc=system.pbc)
+print(f"Ecut = {ecut} Ha  ->  grid_shape = {derived.shape}")  # e.g. (26, 26, 26)
+
 h2.calc = Poraque(
     mode="of",                       # orbital-free DFT
-    grid_shape=(24, 24, 24),         # real-space / plane-wave grid
+    ecut=ecut,                       # grid generated automatically from the cutoff
     external_kwargs={"a": 0.8},      # softening of the nuclear potential
     settings=SolverSettings(max_iter=80, mixing=0.1),
 )
+# Equivalent explicit form: Poraque(mode="of", grid_shape=(26, 26, 26), ...)
 
-print(f"Total energy: {h2.get_potential_energy():.6f} eV")
+print(f"Total energy: {h2.get_potential_energy():.6f} eV")  # also prints the log
 print("Forces (eV/Å):")
 print(h2.get_forces())
 ```
@@ -157,22 +171,31 @@ print(h2.get_forces())
 from ase.build import bulk
 
 from poraque.ase import Poraque
-from poraque.core import SolverSettings
+from poraque.core import Grid, SolverSettings, System
 
 # Diamond-structure silicon (2-atom primitive cell).
 si = bulk("Si", "diamond", a=5.43)
 
+# Size the plane-wave grid from a cutoff (KS-DFT always uses the plane-wave basis).
+ecut = 6.0  # Hartree
+derived = Grid.from_ecut(System.from_ase(si).cell, ecut)
+print(f"Ecut = {ecut} Ha  ->  grid_shape = {derived.shape}")
+
 si.calc = Poraque(
-    mode="ks",                       # Kohn-Sham DFT
-    grid_shape=(16, 16, 16),
+    mode="ks",                       # Kohn-Sham DFT (plane-wave basis, mandatory)
+    ecut=ecut,                       # grid_shape derived automatically; see above
     kpts=(4, 4, 4),                  # Monkhorst-Pack Brillouin-zone sampling
     pseudopotentials="auto",         # 4 valence electrons per Si atom
     settings=SolverSettings(max_iter=40, mixing=0.5, tolerance=1e-5),
 )
+# Or specify the grid directly: Poraque(mode="ks", grid_shape=(16, 16, 16), ...)
 
 print(f"Total energy: {si.get_potential_energy():.6f} eV")
 print(f"Valence electrons: {si.calc.results['density'].integrate():.4f}")
 ```
+
+> If you pass **both** `ecut` and `grid_shape`, the cutoff wins: the manual grid
+> is overridden by the automatically optimized one and a warning is logged.
 
 More runnable scripts live in [`examples/`](examples/).
 
