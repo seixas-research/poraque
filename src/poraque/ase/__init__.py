@@ -6,4 +6,4 @@
 #
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br> 
 
-from .calculator import PoraqueASE
+from .calculator import Poraque

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # file: test_ase.py
-"""Integration tests for the ASE interoperability layer."""
+"""Integration tests for the unified Poraque ASE calculator."""
 
 import numpy as np
 import pytest
@@ -8,10 +8,9 @@ import pytest
 ase = pytest.importorskip("ase")
 from ase import Atoms
 
-from poraque.ase import PoraqueASE
+from poraque.ase import Poraque
 from poraque.core import System, SolverSettings
 from poraque.core.units import ANGSTROM
-from poraque.ofdft import run_ofdft
 
 
 @pytest.fixture
@@ -58,22 +57,33 @@ class TestPBC:
 class TestCalculator:
     def test_is_ase_calculator(self):
         from ase.calculators.calculator import Calculator
-        assert issubclass(PoraqueASE, Calculator)
+        assert issubclass(Poraque, Calculator)
 
-    def test_single_point_energy_in_eV(self, h_atoms):
+    def test_invalid_mode_raises(self):
+        with pytest.raises(ValueError):
+            Poraque(mode="dmrg")
+
+    def test_of_single_point_energy_in_eV(self, h_atoms):
         settings = SolverSettings(max_iter=40, mixing=0.1, tolerance=1e-6)
-        calc = PoraqueASE(grid_shape=(16, 16, 16), settings=settings,
-                          external_kwargs={"a": 0.8})
+        calc = Poraque(mode="of", grid_shape=(16, 16, 16), settings=settings,
+                       external_kwargs={"a": 0.8})
         h_atoms.calc = calc
         energy = h_atoms.get_potential_energy()
-        # Energy is a finite float reported in eV.
         assert np.isfinite(energy)
         assert isinstance(float(energy), float)
 
+    def test_ks_single_point_energy_in_eV(self, h_atoms):
+        settings = SolverSettings(max_iter=40, mixing=0.3, tolerance=1e-5)
+        calc = Poraque(mode="ks", grid_shape=(16, 16, 16), settings=settings,
+                       external_kwargs={"a": 0.8})
+        h_atoms.calc = calc
+        energy = h_atoms.get_potential_energy()
+        assert np.isfinite(energy)
+
     def test_forces_shape_and_symmetry(self, h_atoms):
         settings = SolverSettings(max_iter=30, mixing=0.1, tolerance=1e-5)
-        calc = PoraqueASE(grid_shape=(16, 16, 16), settings=settings,
-                          external_kwargs={"a": 0.8}, fd_step=0.02)
+        calc = Poraque(mode="of", grid_shape=(16, 16, 16), settings=settings,
+                       external_kwargs={"a": 0.8}, fd_step=0.02)
         h_atoms.calc = calc
         forces = h_atoms.get_forces()
         assert forces.shape == (1, 3)
@@ -81,8 +91,15 @@ class TestCalculator:
         assert np.linalg.norm(forces) < 0.5  # eV/Å
 
 
-def test_run_ofdft_convenience(h_atoms):
-    result = run_ofdft(h_atoms, grid_shape=(16, 16, 16), max_iter=40,
-                       external_kwargs={"a": 0.8})
-    assert np.isfinite(result.total_energy)
-    assert result.density.integrate() == pytest.approx(1.0, rel=1e-5)
+class TestPeriodicKpoints:
+    def test_mp_grid_runs_with_pseudopotentials(self):
+        """A periodic KS-DFT run with k-points and a local pseudopotential."""
+        atoms = Atoms("Si", positions=[[0, 0, 0]], cell=[5.4, 5.4, 5.4], pbc=True)
+        settings = SolverSettings(max_iter=8, mixing=0.4, tolerance=1e-4)
+        calc = Poraque(mode="ks", grid_shape=(18, 18, 18), kpts=(2, 2, 2),
+                       pseudopotentials="auto", settings=settings)
+        atoms.calc = calc
+        energy = atoms.get_potential_energy()
+        assert np.isfinite(energy)
+        # Only the 4 valence electrons of Si are treated explicitly.
+        assert calc.results["density"].integrate() == pytest.approx(4.0, rel=1e-5)

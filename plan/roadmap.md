@@ -1,8 +1,25 @@
 
+## Architecture notes (2026-06 refactor)
+
+The user-facing API is now a single **unified ASE calculator**,
+`poraque.ase.Poraque`, that selects the method dynamically via `mode='ks'` or
+`mode='of'`. The previous `run_ksdft` / `run_ofdft` top-level drivers and the
+`PoraqueASE` class have been removed; low-level `KSDFTCalculator` /
+`OFDFTCalculator` drivers remain in `poraque.calculator` for direct use. New
+foundational capabilities landed alongside the rename:
+
+* plane-wave/real-space basis is documented on `Grid`, with `Grid.from_ecut`
+  sizing the grid from a plane-wave cutoff and `Grid.kinetic_g2` building the
+  `½|G+k|²` operator;
+* a modular `poraque.pseudopotentials` package (core–valence split, analytic
+  local pseudopotentials, and a standard-format reader);
+* periodic k-point sampling in `KSDFTEngine` (Bloch states, BZ-weighted Fermi
+  filling) with Monkhorst–Pack grids from `ase.dft.kpoints`.
+
 ## Main layers
 
 * [x] Frontend and workflow layer
-  - [x] user-facing calculator API
+  - [x] unified user-facing calculator API (`mode='ks'`/`mode='of'`)
   - [x] ASE integration
   - [x] examples and workflow helpers (benchmarks pending)
 * [x] Scientific engine layer
@@ -94,7 +111,7 @@ standard ecosystem instead of a custom one.
 * [x] ASE calculator interface
   - [x] Implement a Poraquê ASE `Calculator`
   - [x] Return total energy, forces, and stress when available
-  - [x] Expose OF-DFT and later KS-DFT through the same interface
+  - [x] Expose OF-DFT and KS-DFT through one unified `Poraque(mode=...)` interface
 * [x] ASE workflows
   - [x] Single-point energy calculations
   - [x] Geometry optimization hooks
@@ -148,9 +165,9 @@ Once the minimal solver works, add the first useful physical corrections.
 * [ ] Pauli enhancement factor models
   - [ ] Base class for generalized kinetic energy density functionals
   - [ ] Local and semilocal enhancement-factor implementations
-* [ ] Local pseudopotentials (LPP)
-  - [ ] Library of simple analytic local pseudopotentials
-  - [ ] Input format for tabulated local pseudopotentials
+* [x] Local pseudopotentials (LPP)
+  - [x] Library of simple analytic local pseudopotentials (`SoftCoulombPP`, `GaussianCorePP`)
+  - [x] Input format for tabulated local pseudopotentials (`read_pseudopotential`)
 
 Tests to add (with pytest):
 
@@ -164,18 +181,18 @@ Tests to add (with pytest):
 
 This is where OF-DFT becomes more useful for realistic condensed-phase systems.
 
-* [ ] Reciprocal-space infrastructure
-  - [ ] FFT wrappers
-  - [ ] Reciprocal lattice vectors and kinetic cutoffs
+* [x] Reciprocal-space infrastructure
+  - [x] FFT wrappers
+  - [x] Reciprocal lattice vectors and kinetic cutoffs (`Grid.from_ecut`, `Grid.kinetic_g2`)
   - [ ] Convolution operators
 * [ ] Nonlocal kinetic energy functionals
   - [ ] Kernel-based functional framework
   - [ ] At least one nonlocal KEDF implementation
   - [ ] Efficient evaluation in reciprocal space
-* [ ] Periodic solids workflow
+* [x] Periodic solids workflow
+  - [x] k-point sampling across the Brillouin zone (`monkhorst_pack_kpoints`, ASE-backed)
   - [ ] Cell optimization hooks
-  - [ ] Bravais lattice helpers
-  - [ ] Structure input/output
+  - [x] Structure input/output (via ASE `Atoms`)
 
 Tests to add (with pytest):
 
@@ -266,14 +283,15 @@ Tests to add (with pytest):
 
 Only add this after basic KS-DFT is working for toy systems.
 
-* [ ] Pseudopotentials for KS-DFT
+* [~] Pseudopotentials for KS-DFT
   - [ ] Norm-conserving pseudopotentials
+  - [x] Local pseudopotential structure (`poraque.pseudopotentials`)
+  - [x] Parser for a standard local pseudopotential format (`read_pseudopotential`)
   - [ ] Local + nonlocal projector structure
-  - [ ] Parser for standard pseudopotential formats
-* [ ] Optional planewave basis
-  - [ ] Reciprocal-space orbital representation
-  - [ ] Kinetic cutoff handling
-  - [ ] FFT transfer between real and reciprocal space
+* [x] Plane-wave basis on the real-space grid
+  - [x] Reciprocal-space (FFT) orbital representation with Bloch k-points
+  - [x] Kinetic cutoff handling (`Grid.from_ecut`)
+  - [x] FFT transfer between real and reciprocal space
 * [ ] PAW method
   - [ ] Treat this as a later-generation milestone, not a first implementation target
 
@@ -346,7 +364,9 @@ Map the roadmap to the current package structure so the code grows coherently.
   - [x] base functional API
   - [x] Hartree, TF, vW, XC implementations (nonlocal KEDF and ML-KEDF pending)
 * [x] `src/poraque/potentials/`
-  - [x] external potentials (pseudopotential library pending)
+  - [x] external potentials
+* [x] `src/poraque/pseudopotentials/`
+  - [x] core-valence split, analytic local pseudopotentials, standard-format reader
 * [x] `src/poraque/engine.py`
   - [x] OF minimizer, KS SCF driver, convergence control
 * [x] `src/poraque/calculator.py`
@@ -366,9 +386,9 @@ Map the roadmap to the current package structure so the code grows coherently.
 If the goal is to reach working science quickly, a good milestone sequence is:
 
 * [x] Milestone 1: 3D grid + external potential + Hartree + Thomas-Fermi + minimizer
-* [x] Milestone 2: ASE structure I/O + ASE calculator for OF-DFT single points
-* [ ] Milestone 3: TFvW + Dirac exchange + stable OF-DFT examples
-* [ ] Milestone 4: local pseudopotentials + periodic real-space OF-DFT
+* [x] Milestone 2: unified ASE calculator (`Poraque(mode=...)`) for OF/KS single points
+* [x] Milestone 3: TFvW + Dirac exchange + stable OF-DFT examples
+* [x] Milestone 4: local pseudopotentials + periodic KS-DFT with k-point sampling
 * [ ] Milestone 5: nonlocal KEDFs
 * [ ] Milestone 6: ML-KEDF dataset pipeline + symbolic-regression baseline
 * [ ] Milestone 7: CNN-based ML-KEDF on electron-density slices

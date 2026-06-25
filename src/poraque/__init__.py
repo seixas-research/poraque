@@ -2,7 +2,13 @@
 # file: __init__.py
 
 from .version import __version__
-from .calculator import Poraque
-from .ofdft import run_ofdft
-from .ksdft import run_ksdft
+from .calculator import KSDFTCalculator, OFDFTCalculator
 from .fde import FDEEngine, Subsystem
+
+__all__ = [
+    "__version__",
+    "KSDFTCalculator",
+    "OFDFTCalculator",
+    "FDEEngine",
+    "Subsystem",
+]

@@ -5,7 +5,7 @@
 import numpy as np
 import pytest
 
-from poraque.calculator import Poraque
+from poraque.calculator import OFDFTCalculator
 from poraque.core import Density, SolverSettings
 from poraque.engine import OFDFTEngine
 from poraque.functionals import External, Hartree, LDA, TFvW, ThomasFermi
@@ -23,7 +23,7 @@ def ofdft_calc(coarse_grid, hydrogen_system):
         External(v_ext),
     ]
     settings = SolverSettings(max_iter=60, tolerance=1e-6, mixing=0.1)
-    return Poraque(hydrogen_system, coarse_grid, functionals, settings=settings)
+    return OFDFTCalculator(hydrogen_system, coarse_grid, functionals, settings=settings)
 
 
 def test_runs_and_returns_result(ofdft_calc):
@@ -71,7 +71,7 @@ def test_cg_converges_to_tolerance(coarse_grid, hydrogen_system):
     v_ext = build_external_potential(coarse_grid, hydrogen_system, kind="soft", a=0.8)
     functionals = [TFvW(lambda_vw=1.0), Hartree(), LDA(), External(v_ext)]
     settings = SolverSettings(max_iter=300, tolerance=1e-6, mixing=0.1)
-    result = Poraque(hydrogen_system, coarse_grid, functionals,
+    result = OFDFTCalculator(hydrogen_system, coarse_grid, functionals,
                      settings=settings).calculate()
     assert result.converged
     assert result.history["residual"][-1] < 1e-6
@@ -85,7 +85,7 @@ def test_cg_beats_steepest_descent(coarse_grid, hydrogen_system):
     def run(cg_restart):
         settings = SolverSettings(max_iter=500, tolerance=1e-5, mixing=0.1,
                                   cg_restart=cg_restart)
-        return Poraque(hydrogen_system, coarse_grid, functionals,
+        return OFDFTCalculator(hydrogen_system, coarse_grid, functionals,
                        settings=settings).calculate()
 
     cg = run(20)

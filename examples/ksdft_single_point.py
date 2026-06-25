@@ -3,19 +3,25 @@
 
 from ase import Atoms
 
-from poraque import run_ksdft
+from poraque.ase import Poraque
+from poraque.core import SolverSettings
 
 
 def main():
     # A single He-like center (Z=2, 2 electrons).
     atoms = Atoms("He", positions=[[3.0, 3.0, 3.0]], cell=[6, 6, 6], pbc=True)
-    result = run_ksdft(atoms, grid_shape=(32, 32, 32), mixing=0.3,
-                       max_iter=80, external_kwargs={"a": 0.6})
+    atoms.calc = Poraque(
+        mode="ks",
+        grid_shape=(32, 32, 32),
+        settings=SolverSettings(max_iter=80, mixing=0.3),
+        external_kwargs={"a": 0.6},
+    )
 
-    print(f"Converged:    {result.converged} ({result.iterations} SCF steps)")
-    print(f"Total energy: {result.total_energy:.6f} Hartree")
-    print(f"Eigenvalues:  {result.state.eigenvalues[:3]}")
-    print(f"Occupations:  {result.state.occupations}")
+    energy = atoms.get_potential_energy()
+    state = atoms.calc.results["density"]
+    print(f"Converged:    {atoms.calc.results['converged']}")
+    print(f"Total energy: {energy:.6f} eV")
+    print(f"Electrons:    {state.integrate():.6f}")
 
 
 if __name__ == "__main__":

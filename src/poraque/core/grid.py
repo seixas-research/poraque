@@ -11,7 +11,24 @@ import numpy as np
 
 class Grid:
     """
-    Represents the simulation grid and cell.
+    Real-space grid and its dual plane-wave (reciprocal) basis.
+
+    Poraquê represents fields (densities, potentials, Kohn-Sham orbitals) on a
+    uniform real-space grid that fills the periodic unit cell. The grid is the
+    *primal* representation; its discrete Fourier transform spans a **plane-wave
+    basis**
+
+    .. math::
+
+        \\psi(\\mathbf{r}) = \\sum_{\\mathbf{G}} c_{\\mathbf{G}}\\,
+        e^{i \\mathbf{G}\\cdot\\mathbf{r}},
+
+    where the wavevectors :math:`\\mathbf{G}` are the reciprocal-lattice points
+    sampled by the FFT (see :meth:`get_g_vectors`). This duality is what lets
+    the kinetic operator be applied exactly (and diagonally) in reciprocal space
+    while local potentials are applied diagonally in real space. The
+    completeness of the basis is controlled by the grid density, i.e. by the
+    plane-wave kinetic-energy cutoff (see :meth:`from_ecut`).
     """
     def __init__(self, shape, cell, pbc=True):
         """
@@ -50,7 +67,89 @@ class Grid:
 
         # Reciprocal lattice vectors
         self.reciprocal_cell = 2 * np.pi * np.linalg.inv(self.cell).T
-        
+
+        # Plane-wave cutoff used to build the grid, if any (see from_ecut).
+        self.ecut = None
+
+    @classmethod
+    def from_ecut(cls, cell, ecut, pbc=True, density_factor=2.0):
+        """
+        Build a grid dense enough for a given plane-wave kinetic cutoff.
+
+        The wavefunction plane-wave cutoff ``ecut`` (Hartree) corresponds to a
+        maximum wavevector ``g_max = sqrt(2 * ecut)``. The electron density,
+        being the square of the orbitals, contains components up to
+        ``density_factor * g_max`` (``2`` for an exact product), so the grid
+        spacing must satisfy the Nyquist condition
+        ``h <= pi / (density_factor * g_max)`` along each lattice vector.
+
+        Parameters
+        ----------
+        cell : array_like
+            ``3x3`` lattice vectors (Bohr).
+        ecut : float
+            Plane-wave kinetic-energy cutoff for the wavefunctions (Hartree).
+        pbc : bool or tuple of bool, optional
+            Periodic boundary conditions.
+        density_factor : float, optional
+            Ratio between the density and wavefunction cutoffs (default ``2.0``).
+
+        Returns
+        -------
+        Grid
+            A grid whose shape resolves the requested cutoff. The attribute
+            :attr:`ecut` records the cutoff used.
+        """
+        cell = np.asarray(cell, dtype=float)
+        g_max = np.sqrt(2.0 * float(ecut))
+        lengths = np.linalg.norm(cell, axis=1)
+        # h_i <= pi / (density_factor * g_max)  ->  N_i >= L_i * density_factor * g_max / pi
+        n = np.ceil(lengths * density_factor * g_max / np.pi).astype(int)
+        # Use even, FFT-friendly sizes (and never fewer than 2 points).
+        shape = tuple(int(max(2, ni + (ni % 2))) for ni in n)
+        grid = cls(shape, cell, pbc=pbc)
+        grid.ecut = float(ecut)
+        return grid
+
+    def kinetic_g2(self, kpoint_cartesian=None):
+        r"""
+        Squared shifted reciprocal vectors :math:`|\mathbf{G} + \mathbf{k}|^2`.
+
+        Parameters
+        ----------
+        kpoint_cartesian : array_like, optional
+            Bloch wavevector in **Cartesian** reciprocal coordinates (1/Bohr).
+            Defaults to the :math:`\Gamma` point, recovering :meth:`get_g2`.
+
+        Returns
+        -------
+        numpy.ndarray
+            Array of shape :attr:`shape` used to build the kinetic operator
+            ``T = 1/2 |G + k|^2`` in reciprocal space.
+        """
+        gx, gy, gz = self.get_g_vectors()
+        if kpoint_cartesian is None:
+            return gx**2 + gy**2 + gz**2
+        kx, ky, kz = kpoint_cartesian
+        return (gx + kx) ** 2 + (gy + ky) ** 2 + (gz + kz) ** 2
+
+    def kpoint_to_cartesian(self, kpoint_fractional):
+        """
+        Convert a fractional k-point to Cartesian reciprocal coordinates.
+
+        Parameters
+        ----------
+        kpoint_fractional : array_like
+            ``(3,)`` k-point in fractional reciprocal coordinates (the
+            convention used by :func:`ase.dft.kpoints.monkhorst_pack`).
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(3,)`` Cartesian wavevector (1/Bohr).
+        """
+        return np.asarray(kpoint_fractional, dtype=float) @ self.reciprocal_cell
+
     def get_xyz(self):
         """
         Generate Cartesian coordinates for all grid points.

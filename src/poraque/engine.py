@@ -206,30 +206,83 @@ def aufbau_occupations(n_states, n_electrons, max_occ=2.0):
     return occ
 
 
+def fermi_fill(eigenvalues_per_k, weights, n_electrons, max_occ=2.0):
+    """
+    Zero-temperature occupation across a weighted set of k-points.
+
+    All Bloch eigenvalues from every k-point are pooled and filled from the
+    bottom until the electron count is reached, so the chemical potential is
+    common to the whole Brillouin-zone sample (the correct band-filling for both
+    insulators and metals at ``T = 0``). A state at k-point ``k`` that is fully
+    occupied contributes ``weights[k] * max_occ`` electrons.
+
+    Parameters
+    ----------
+    eigenvalues_per_k : sequence of array_like
+        Eigenvalues for each k-point (one array per k-point).
+    weights : array_like
+        k-point weights (need not be normalized; they are normalized here).
+    n_electrons : float
+        Total number of electrons to place.
+    max_occ : float, optional
+        Maximum occupation per orbital (``2`` for spin-degenerate states).
+
+    Returns
+    -------
+    list of numpy.ndarray
+        Occupation numbers per orbital for each k-point.
+    """
+    weights = np.asarray(weights, dtype=float)
+    weights = weights / weights.sum()
+    occ = [np.zeros(len(ev)) for ev in eigenvalues_per_k]
+
+    states = []
+    for ik, ev in enumerate(eigenvalues_per_k):
+        for ib, e in enumerate(ev):
+            states.append((float(e), ik, ib))
+    states.sort(key=lambda s: s[0])
+
+    remaining = float(n_electrons)
+    for _e, ik, ib in states:
+        if remaining <= 1e-14:
+            break
+        capacity = weights[ik] * max_occ
+        take = min(capacity, remaining)
+        occ[ik][ib] = take / weights[ik] if weights[ik] > 0 else 0.0
+        remaining -= take
+    return occ
+
+
 class KSDFTEngine:
     """
-    Kohn-Sham DFT engine on the real-space grid.
+    Kohn-Sham DFT engine on the real-space grid with k-point sampling.
 
-    The Kohn-Sham Hamiltonian is
+    The Kohn-Sham Hamiltonian for a Bloch state of wavevector :math:`\\mathbf{k}`
+    acts on the cell-periodic part :math:`u_{\\mathbf{k}}` as
 
     .. math::
 
-        \\hat{H} = -\\tfrac{1}{2}\\nabla^2 + v_{ext}(\\mathbf{r})
-                   + v_H[n](\\mathbf{r}) + v_{xc}[n](\\mathbf{r})
+        \\hat{H}_{\\mathbf{k}} = \\tfrac{1}{2}\\left(-i\\nabla + \\mathbf{k}\\right)^2
+                   + v_{ext}(\\mathbf{r}) + v_H[n](\\mathbf{r}) + v_{xc}[n](\\mathbf{r}),
 
-    with the kinetic operator applied spectrally (FFT) and the local potential
-    applied as a diagonal multiplication. Occupied orbitals are obtained with a
-    matrix-free Hermitian eigensolver, and the density is updated with linear
-    mixing inside a fixed-point SCF loop.
+    with the kinetic operator applied spectrally in the plane-wave basis
+    (:math:`\\tfrac12 |\\mathbf{G} + \\mathbf{k}|^2` is diagonal in reciprocal
+    space) and the local potential applied as a diagonal multiplication in real
+    space. At each k-point the occupied orbitals are obtained with a matrix-free
+    Hermitian eigensolver; the density is accumulated over the Brillouin-zone
+    sample and updated with linear mixing inside a fixed-point SCF loop.
+
+    For a single :math:`\\Gamma` point (the default) the Hamiltonian is real and
+    the engine reduces to a standard molecular real-space KS-DFT solver.
 
     Parameters
     ----------
     system : System
         Atomic structure (provides the electron count).
     grid : Grid
-        Real-space grid.
+        Real-space grid (and its dual plane-wave basis).
     v_ext : numpy.ndarray
-        External (electron-nucleus) potential on the grid, in Hartree.
+        External (electron-nucleus / pseudopotential) potential, in Hartree.
     backend : Backend
         Numerical backend.
     settings : SolverSettings
@@ -238,12 +291,18 @@ class KSDFTEngine:
         Exchange-correlation functional (default :class:`~poraque.functionals.LDA`).
     hartree : bool, optional
         Include the Hartree term (default ``True``).
+    kpoints : array_like, optional
+        ``(Nk, 3)`` Brillouin-zone sampling points in fractional reciprocal
+        coordinates. Defaults to the :math:`\\Gamma` point.
+    kweights : array_like, optional
+        Weights for ``kpoints`` (normalized internally). Defaults to uniform.
     n_extra_states : int, optional
         Extra unoccupied states to compute for eigensolver robustness.
     """
 
     def __init__(self, system, grid, v_ext, backend, settings,
-                 xc=None, hartree=True, n_extra_states=2):
+                 xc=None, hartree=True, kpoints=None, kweights=None,
+                 n_extra_states=2):
         self.system = system
         self.grid = grid
         self.v_ext = np.asarray(v_ext, dtype=float)
@@ -253,27 +312,49 @@ class KSDFTEngine:
         self.hartree = Hartree() if hartree else None
         self.n_extra_states = n_extra_states
 
+        if kpoints is None:
+            self.kpoints = np.zeros((1, 3))
+            self.kweights = np.ones(1)
+        else:
+            self.kpoints = np.atleast_2d(np.asarray(kpoints, dtype=float))
+            self.kweights = (np.ones(len(self.kpoints)) if kweights is None
+                             else np.asarray(kweights, dtype=float))
+        self.kweights = self.kweights / self.kweights.sum()
+        self.n_kpoints = len(self.kpoints)
+        # A real Hamiltonian (and real orbitals) is possible only at Gamma.
+        self.gamma_only = (self.n_kpoints == 1
+                           and np.allclose(self.kpoints[0], 0.0))
+
         self.n_occupied = int(np.ceil(self.system.electrons / 2.0))
         self.n_states = self.n_occupied + n_extra_states
-        self._g2 = grid.get_g2()
         self.dV = grid.volume_element
 
-    def _apply_kinetic(self, psi):
-        """Apply -1/2 nabla^2 spectrally to a grid-shaped wavefunction."""
-        psi_g = np.fft.fftn(psi)
-        return 0.5 * np.real(np.fft.ifftn(self._g2 * psi_g))
+        # Pre-compute the kinetic factor 1/2 |G + k|^2 for every k-point.
+        self._kfac = [
+            0.5 * grid.kinetic_g2(grid.kpoint_to_cartesian(kf))
+            for kf in self.kpoints
+        ]
 
-    def _hamiltonian_operator(self, v_eff):
-        """Build a matrix-free Hermitian LinearOperator for H = T + v_eff."""
+    def _apply_kinetic(self, psi, ik):
+        """Apply 1/2 (-i nabla + k)^2 spectrally at k-point ``ik``."""
+        psi_g = np.fft.fftn(psi)
+        return np.fft.ifftn(self._kfac[ik] * psi_g)
+
+    def _hamiltonian_operator(self, v_eff, ik):
+        """Matrix-free Hermitian LinearOperator for H_k = T_k + v_eff."""
         shape = self.grid.shape
         n = self.grid.N
+        real = self.gamma_only
 
         def matvec(x):
             psi = x.reshape(shape)
-            hpsi = self._apply_kinetic(psi) + v_eff * psi
+            hpsi = self._apply_kinetic(psi, ik) + v_eff * psi
+            if real:
+                hpsi = np.real(hpsi)
             return hpsi.ravel()
 
-        return LinearOperator((n, n), matvec=matvec, dtype=float)
+        return LinearOperator((n, n), matvec=matvec,
+                              dtype=float if real else complex)
 
     def _effective_potential(self, density):
         v = np.array(self.v_ext, dtype=float)
@@ -282,9 +363,9 @@ class KSDFTEngine:
         v = v + self.xc.potential(density, self.system, self.grid, self.backend)
         return v
 
-    def _solve_orbitals(self, v_eff):
-        """Return the lowest eigenvalues and grid-normalized orbitals."""
-        H = self._hamiltonian_operator(v_eff)
+    def _solve_orbitals(self, v_eff, ik):
+        """Lowest eigenvalues and grid-normalized orbitals at k-point ``ik``."""
+        H = self._hamiltonian_operator(v_eff, ik)
         k = min(self.n_states, self.grid.N - 2)
         # Shift-invert-free: smallest algebraic eigenvalues.
         eigvals, eigvecs = eigsh(H, k=k, which="SA")
@@ -298,9 +379,15 @@ class KSDFTEngine:
         ])
         return eigvals, orbitals
 
-    def _total_energy(self, density, eigvals, occupations):
+    def _band_energy(self, eigvals_per_k, occ_per_k):
+        """Brillouin-zone-weighted sum of occupied eigenvalues."""
+        e_band = 0.0
+        for w, ev, occ in zip(self.kweights, eigvals_per_k, occ_per_k):
+            e_band += w * float(np.sum(occ * ev))
+        return e_band
+
+    def _total_energy(self, density, e_band):
         """KS total energy via the band-energy decomposition."""
-        e_band = float(np.sum(occupations * eigvals[: len(occupations)]))
         e_ext = self.backend.integrate(self.v_ext * density.data, self.grid)
 
         e_h = 0.0
@@ -325,6 +412,15 @@ class KSDFTEngine:
         }
         return e_total, components
 
+    def _build_density(self, orbitals_per_k, occ_per_k):
+        """Sum |psi|^2 over occupied states and the Brillouin-zone sample."""
+        new_data = np.zeros(self.grid.shape)
+        for w, orbitals, occ in zip(self.kweights, orbitals_per_k, occ_per_k):
+            for f, psi in zip(occ, orbitals):
+                if f > 0:
+                    new_data += w * f * np.abs(psi) ** 2
+        return new_data
+
     def run(self, initial_density=None):
         """Run the SCF loop and return a :class:`Result` with the KS state."""
         if initial_density is None:
@@ -337,25 +433,29 @@ class KSDFTEngine:
         history = {"energy": [], "density_residual": []}
         converged = False
         energy = np.nan
-        eigvals = np.zeros(self.n_states)
-        occupations = aufbau_occupations(self.n_states, self.system.electrons)
-        orbitals = None
+        components = {}
+        eigvals_per_k = [np.zeros(self.n_states) for _ in range(self.n_kpoints)]
+        occ_per_k = None
+        orbitals_per_k = None
 
         i = 0
         for i in range(self.settings.max_iter):
             v_eff = self._effective_potential(density)
-            eigvals, orbitals = self._solve_orbitals(v_eff)
-            occupations = aufbau_occupations(len(eigvals), self.system.electrons)
 
-            new_data = np.zeros(self.grid.shape)
-            for f, psi in zip(occupations, orbitals):
-                if f > 0:
-                    new_data += f * np.abs(psi) ** 2
-            new_density = Density(self.grid, new_data)
+            eigvals_per_k, orbitals_per_k = [], []
+            for ik in range(self.n_kpoints):
+                ev, orb = self._solve_orbitals(v_eff, ik)
+                eigvals_per_k.append(ev)
+                orbitals_per_k.append(orb)
+
+            occ_per_k = fermi_fill(eigvals_per_k, self.kweights, self.system.electrons)
+
+            new_density = Density(self.grid, self._build_density(orbitals_per_k, occ_per_k))
             new_density.normalize(self.system.electrons)
 
             residual = self.backend.norm(new_density.data - density.data) * np.sqrt(self.dV)
-            energy, components = self._total_energy(new_density, eigvals, occupations)
+            e_band = self._band_energy(eigvals_per_k, occ_per_k)
+            energy, components = self._total_energy(new_density, e_band)
             history["energy"].append(energy)
             history["density_residual"].append(residual)
 
@@ -368,9 +468,16 @@ class KSDFTEngine:
                 converged = True
                 break
 
-        state = State(self.grid, orbitals, occupations[: len(orbitals)]) if orbitals is not None else None
-        if state is not None:
-            state.eigenvalues = eigvals
+        # Expose the first k-point (Gamma for a Gamma-centred grid) as the state.
+        state = None
+        if orbitals_per_k is not None:
+            orbitals0 = orbitals_per_k[0]
+            state = State(self.grid, orbitals0, occ_per_k[0][: len(orbitals0)])
+            state.eigenvalues = eigvals_per_k[0]
+            state.kpoints = self.kpoints
+            state.kweights = self.kweights
+            state.kpoint_eigenvalues = eigvals_per_k
+            state.kpoint_occupations = occ_per_k
         return Result(
             energy=energy,
             components=components,

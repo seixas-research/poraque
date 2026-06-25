@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-# file: _version.py
+# file: version.py
 
 # This code is part of Poraquê.
 # MIT License
 #
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br> 
 
-__version__ ="26.6.0"
+__version__ ="26.6.1"

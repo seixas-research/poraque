@@ -212,3 +212,6 @@ __marimo__/
 
 # Reports (Latex files and pdfs)
 reports/
+
+# Pseudopotentials (from PseudoDojo)
+pseudos/
