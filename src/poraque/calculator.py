@@ -48,12 +48,14 @@ class OFDFTCalculator:
     settings : SolverSettings, optional
         Minimizer configuration.
     """
-    def __init__(self, system, grid, functionals, backend='numpy', settings=None):
+    def __init__(self, system, grid, functionals, backend='numpy', settings=None,
+                 verbose=False):
         self.system = system
         self.grid = grid
         self.functionals = functionals
         self.backend = _resolve_backend(backend)
         self.settings = settings if settings is not None else SolverSettings()
+        self.verbose = verbose
 
     def calculate(self, initial_density=None):
         """Run the OF-DFT minimization and return a :class:`~poraque.core.Result`."""
@@ -68,6 +70,7 @@ class OFDFTCalculator:
             functionals=self.functionals,
             backend=self.backend,
             settings=self.settings,
+            verbose=self.verbose,
         )
         return engine.run(initial_density)
 
@@ -98,9 +101,18 @@ class KSDFTCalculator:
         SCF configuration.
     """
     def __init__(self, system, grid, v_ext, xc=None, hartree=True,
-                 kpoints=None, kweights=None, backend='numpy', settings=None):
+                 kpoints=None, kweights=None, backend='numpy', settings=None,
+                 basis='pw', verbose=False):
+        # Kohn-Sham DFT in Poraquê is solved in the plane-wave basis dual to the
+        # real-space grid (the kinetic operator is applied spectrally as
+        # 1/2 |G + k|^2). The plane-wave basis is therefore mandatory.
+        if str(basis).lower() not in ('pw', 'planewave', 'plane-wave', 'plane_wave'):
+            raise ValueError(
+                f"KS-DFT requires the plane-wave basis ('pw'); got {basis!r}."
+            )
         self.system = system
         self.grid = grid
+        self.basis = 'pw'
         self.v_ext = v_ext
         self.xc = xc
         self.hartree = hartree
@@ -108,6 +120,7 @@ class KSDFTCalculator:
         self.kweights = kweights
         self.backend = _resolve_backend(backend)
         self.settings = settings if settings is not None else SolverSettings()
+        self.verbose = verbose
 
     def calculate(self, initial_density=None):
         """Run the KS-DFT SCF loop and return a :class:`~poraque.core.Result`."""
@@ -115,5 +128,6 @@ class KSDFTCalculator:
             self.system, self.grid, self.v_ext, self.backend, self.settings,
             xc=self.xc, hartree=self.hartree,
             kpoints=self.kpoints, kweights=self.kweights,
+            verbose=self.verbose,
         )
         return engine.run(initial_density)

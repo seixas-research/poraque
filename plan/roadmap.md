@@ -16,6 +16,23 @@ foundational capabilities landed alongside the rename:
 * periodic k-point sampling in `KSDFTEngine` (Bloch states, BZ-weighted Fermi
   filling) with Monkhorst–Pack grids from `ase.dft.kpoints`.
 
+### Physics & I/O hardening (2026-06-25)
+
+A follow-up pass enforced the plane-wave basis and enriched I/O:
+
+* the plane-wave basis is now **mandatory for KS-DFT** (`basis='pw'`, validated
+  in both `Poraque` and `KSDFTCalculator`); the real-space grid is generated
+  automatically from the plane-wave cutoff (`ecut`) and a manually supplied
+  `grid_shape` is overridden by the optimized grid with a logged warning;
+* `.upf` (Unified Pseudopotential Format) support: `poraque.pseudopotentials.upf`
+  reads PseudoDojo / Quantum-ESPRESSO UPF v2 files (local channel, Ry→Ha), and a
+  bundled registry (`pseudos/{LDA,PBE}/*.upf`) maps the chosen XC functional to
+  the matching file (`pseudopotentials='upf'`);
+* the KS energy is now reported as a strictly additive decomposition
+  (Kinetic / External / Hartree / XC / Nonlocal), and a new
+  `poraque.core.reporting` module + `verbose=True` print the generated grid, the
+  material structure, per-step SCF convergence, and the final energy breakdown.
+
 ## Main layers
 
 * [x] Frontend and workflow layer
@@ -284,13 +301,18 @@ Tests to add (with pytest):
 Only add this after basic KS-DFT is working for toy systems.
 
 * [~] Pseudopotentials for KS-DFT
-  - [ ] Norm-conserving pseudopotentials
+  - [~] Norm-conserving pseudopotentials (local channel of `.upf` files read;
+    nonlocal projectors still pending)
   - [x] Local pseudopotential structure (`poraque.pseudopotentials`)
   - [x] Parser for a standard local pseudopotential format (`read_pseudopotential`)
+  - [x] Parser for `.upf` files (PseudoDojo / Quantum ESPRESSO; `read_upf`,
+    functional-aware registry)
   - [ ] Local + nonlocal projector structure
 * [x] Plane-wave basis on the real-space grid
+  - [x] Plane waves enforced as the mandatory KS-DFT basis
   - [x] Reciprocal-space (FFT) orbital representation with Bloch k-points
   - [x] Kinetic cutoff handling (`Grid.from_ecut`)
+  - [x] Automatic real-space grid generation from `ecut` (with manual-grid override)
   - [x] FFT transfer between real and reciprocal space
 * [ ] PAW method
   - [ ] Treat this as a later-generation milestone, not a first implementation target
@@ -367,6 +389,7 @@ Map the roadmap to the current package structure so the code grows coherently.
   - [x] external potentials
 * [x] `src/poraque/pseudopotentials/`
   - [x] core-valence split, analytic local pseudopotentials, standard-format reader
+  - [x] `.upf` reader (`upf.py`) and functional-aware registry (`registry.py`)
 * [x] `src/poraque/engine.py`
   - [x] OF minimizer, KS SCF driver, convergence control
 * [x] `src/poraque/calculator.py`
@@ -393,7 +416,8 @@ If the goal is to reach working science quickly, a good milestone sequence is:
 * [ ] Milestone 6: ML-KEDF dataset pipeline + symbolic-regression baseline
 * [ ] Milestone 7: CNN-based ML-KEDF on electron-density slices
 * [x] Milestone 8: minimal KS-DFT on the same grid
-* [ ] Milestone 9: norm-conserving pseudopotentials
+* [~] Milestone 9: norm-conserving pseudopotentials (local channel of `.upf`
+  files read and used; nonlocal projectors pending)
 * [x] Milestone 10: frozen-density embedding
 
 This order keeps the hardest abstractions until the shared numerical core is already

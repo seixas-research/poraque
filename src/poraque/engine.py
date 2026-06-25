@@ -10,6 +10,7 @@ import numpy as np
 from scipy.sparse.linalg import LinearOperator, eigsh
 
 from .core import Density, Result, State
+from .core import reporting
 from .functionals import Hartree, LDA
 
 
@@ -23,12 +24,13 @@ class OFDFTEngine:
     energy monotonically decreasing for stability.
     """
 
-    def __init__(self, system, grid, functionals, backend, settings):
+    def __init__(self, system, grid, functionals, backend, settings, verbose=False):
         self.system = system
         self.grid = grid
         self.functionals = functionals
         self.backend = backend
         self.settings = settings
+        self.verbose = verbose
 
     def compute_total_energy(self, density):
         """Compute the total energy and its per-functional components."""
@@ -105,6 +107,8 @@ class OFDFTEngine:
         converged = False
 
         energy, components = self._energy_of_w(w)
+        if self.verbose:
+            print(reporting.scf_header("Orbital-free DFT"))
         g_prev = None
         d_prev = None
         i = 0
@@ -121,6 +125,9 @@ class OFDFTEngine:
             history["energy"].append(energy)
             history["residual"].append(residual)
             history["mu"].append(mu)
+            if self.verbose:
+                print(reporting.scf_step(i, energy, residual,
+                                         extra=f"mu = {mu:+.6f}"))
 
             if residual < self.settings.tolerance:
                 converged = True
@@ -168,6 +175,9 @@ class OFDFTEngine:
             step = min(used_step * 1.5, max_step)
 
         density.data = w**2
+        if self.verbose:
+            print(reporting.format_energy_decomposition(
+                energy, components, converged=converged, iterations=i + 1))
         return Result(
             energy=energy,
             components=components,
@@ -302,7 +312,7 @@ class KSDFTEngine:
 
     def __init__(self, system, grid, v_ext, backend, settings,
                  xc=None, hartree=True, kpoints=None, kweights=None,
-                 n_extra_states=2):
+                 n_extra_states=2, verbose=False):
         self.system = system
         self.grid = grid
         self.v_ext = np.asarray(v_ext, dtype=float)
@@ -311,6 +321,7 @@ class KSDFTEngine:
         self.xc = xc if xc is not None else LDA()
         self.hartree = Hartree() if hartree else None
         self.n_extra_states = n_extra_states
+        self.verbose = verbose
 
         if kpoints is None:
             self.kpoints = np.zeros((1, 3))
@@ -386,29 +397,43 @@ class KSDFTEngine:
             e_band += w * float(np.sum(occ * ev))
         return e_band
 
-    def _total_energy(self, density, e_band):
-        """KS total energy via the band-energy decomposition."""
+    def _total_energy(self, density, e_band, v_eff):
+        """
+        KS total energy and its physical decomposition.
+
+        The non-interacting kinetic energy is recovered from the band energy via
+
+        .. math:: T_s = E_\\text{band} - \\int v_\\text{eff}\\, n\\, d\\mathbf{r},
+
+        which is exactly :math:`\\sum_i f_i \\langle\\psi_i| \\hat{T} |\\psi_i\\rangle`.
+        The total energy is then the strictly additive sum
+        ``T_s + E_ext + E_H + E_xc`` (algebraically identical to the usual
+        double-counting-corrected band-energy expression), so the reported
+        components always add up to :attr:`total_energy`.
+        """
         e_ext = self.backend.integrate(self.v_ext * density.data, self.grid)
+        v_eff_n = self.backend.integrate(v_eff * density.data, self.grid)
+        # Non-interacting kinetic energy from the band/eigenvalue sum.
+        e_kin = e_band - v_eff_n
 
         e_h = 0.0
-        v_h_n = 0.0
         if self.hartree is not None:
             e_h = self.hartree.energy(density, self.system, self.grid, self.backend)
-            v_h = self.hartree.potential(density, self.system, self.grid, self.backend)
-            v_h_n = self.backend.integrate(v_h * density.data, self.grid)
 
         e_xc = self.xc.energy(density, self.system, self.grid, self.backend)
-        v_xc = self.xc.potential(density, self.system, self.grid, self.backend)
-        v_xc_n = self.backend.integrate(v_xc * density.data, self.grid)
 
-        # E_tot = E_band - E_H + (E_xc - integral(v_xc n))
-        # (the external and kinetic pieces are folded into E_band via v_eff).
-        e_total = e_band - v_h_n + e_h + e_xc - v_xc_n
+        # Local pseudopotentials only: the nonlocal projector term is exactly 0,
+        # but it is reported explicitly to make the accounting complete.
+        e_nonlocal = 0.0
+
+        e_total = e_kin + e_ext + e_h + e_xc + e_nonlocal
+        # Strictly additive: components sum to total_energy.
         components = {
-            "Band": e_band,
+            "Kinetic": e_kin,
             "External": e_ext,
             "Hartree": e_h,
             "XC": e_xc,
+            "Nonlocal": e_nonlocal,
         }
         return e_total, components
 
@@ -430,13 +455,16 @@ class KSDFTEngine:
             density = initial_density
         density.normalize(self.system.electrons)
 
-        history = {"energy": [], "density_residual": []}
+        history = {"energy": [], "density_residual": [], "band_energy": []}
         converged = False
         energy = np.nan
         components = {}
         eigvals_per_k = [np.zeros(self.n_states) for _ in range(self.n_kpoints)]
         occ_per_k = None
         orbitals_per_k = None
+
+        if self.verbose:
+            print(reporting.scf_header("Kohn-Sham DFT"))
 
         i = 0
         for i in range(self.settings.max_iter):
@@ -455,9 +483,12 @@ class KSDFTEngine:
 
             residual = self.backend.norm(new_density.data - density.data) * np.sqrt(self.dV)
             e_band = self._band_energy(eigvals_per_k, occ_per_k)
-            energy, components = self._total_energy(new_density, e_band)
+            energy, components = self._total_energy(new_density, e_band, v_eff)
             history["energy"].append(energy)
             history["density_residual"].append(residual)
+            history["band_energy"].append(e_band)
+            if self.verbose:
+                print(reporting.scf_step(i, energy, residual))
 
             # Linear density mixing.
             mixed = (1 - self.settings.mixing) * density.data + self.settings.mixing * new_density.data
@@ -478,6 +509,9 @@ class KSDFTEngine:
             state.kweights = self.kweights
             state.kpoint_eigenvalues = eigvals_per_k
             state.kpoint_occupations = occ_per_k
+        if self.verbose:
+            print(reporting.format_energy_decomposition(
+                energy, components, converged=converged, iterations=i + 1))
         return Result(
             energy=energy,
             components=components,

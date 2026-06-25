@@ -4,12 +4,6 @@ API Reference
 High-level drivers
 ------------------
 
-.. automodule:: poraque.ofdft
-   :members:
-
-.. automodule:: poraque.ksdft
-   :members:
-
 .. automodule:: poraque.calculator
    :members:
 
@@ -43,6 +37,9 @@ Core data model
 .. automodule:: poraque.core.solver
    :members:
 
+.. automodule:: poraque.core.reporting
+   :members:
+
 Functionals
 -----------
 
@@ -65,6 +62,27 @@ Potentials
 ----------
 
 .. automodule:: poraque.potentials.external
+   :members:
+
+Pseudopotentials
+----------------
+
+.. automodule:: poraque.pseudopotentials
+   :members: resolve_pseudopotentials, build_pseudopotential_potential
+
+.. automodule:: poraque.pseudopotentials.base
+   :members:
+
+.. automodule:: poraque.pseudopotentials.local
+   :members:
+
+.. automodule:: poraque.pseudopotentials.io
+   :members:
+
+.. automodule:: poraque.pseudopotentials.upf
+   :members:
+
+.. automodule:: poraque.pseudopotentials.registry
    :members:
 
 Backends

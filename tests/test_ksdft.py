@@ -103,6 +103,36 @@ class TestKSHarmonic:
         assert np.allclose(overlap, np.eye(n), atol=1e-6)
 
 
+class TestEnergyDecomposition:
+    def test_components_present_and_additive(self, harmonic):
+        grid, system, v_ext, omega = harmonic
+        engine = KSDFTEngine(system, grid, v_ext, NumpyBackend(),
+                             SolverSettings(max_iter=15, tolerance=1e-8, mixing=1.0),
+                             xc=_NoXC(), hartree=True)
+        result = engine.run()
+        comp = result.energy_components
+        # The required decomposition terms are all reported.
+        for key in ("Kinetic", "External", "Hartree", "XC", "Nonlocal"):
+            assert key in comp
+        # Local pseudopotentials only -> nonlocal term is identically zero.
+        assert comp["Nonlocal"] == 0.0
+        # The breakdown is strictly additive.
+        assert sum(comp.values()) == pytest.approx(result.total_energy, abs=1e-8)
+
+    def test_kinetic_is_band_minus_potential_energy(self, harmonic):
+        grid, system, v_ext, omega = harmonic
+        engine = KSDFTEngine(system, grid, v_ext, NumpyBackend(),
+                             SolverSettings(max_iter=15, tolerance=1e-8, mixing=1.0),
+                             xc=_NoXC(), hartree=False)
+        result = engine.run()
+        # With no Hartree/XC the only potential energy is External, so
+        # Kinetic + External == total == band energy of the single electron.
+        comp = result.energy_components
+        assert comp["Kinetic"] + comp["External"] == pytest.approx(
+            result.total_energy, abs=1e-8)
+        assert comp["Kinetic"] > 0.0  # kinetic energy is positive
+
+
 class TestKSInteracting:
     def test_helium_like_scf_converges(self):
         """A closed-shell 2-electron soft-Coulomb well: SCF should converge."""

@@ -14,26 +14,85 @@
 # Poraquê
 
 **Poraquê** is a compact, readable density-functional theory (DFT) code for
-electronic-structure calculations. It implements both **Kohn-Sham (KS-DFT)** and
-**orbital-free (OF-DFT)** methods behind a single calculator, and integrates
-natively with the [Atomic Simulation Environment (ASE)](https://wiki.fysik.dtu.dk/ase/)
-so that structures, workflows, and analysis tools from the wider ecosystem work
-out of the box.
+electronic-structure calculations. It implements **Kohn-Sham (KS-DFT)**,
+**orbital-free (OF-DFT)**, and **Frozen-Density Embedding (FDE / subsystem DFT)**
+behind a single calculator, and integrates natively with the
+[Atomic Simulation Environment (ASE)](https://wiki.fysik.dtu.dk/ase/) so that
+structures, workflows, and analysis tools from the wider ecosystem work out of
+the box.
+
+Unlike a traditional monolithic DFT package, Poraquê is built around **one shared
+real-space / plane-wave numerical core** that is reused by every method. That
+design is what makes its three defining capabilities possible: a *native ASE
+calculator* as the only user-facing API, the ability to *seamlessly bridge
+orbital-free and Kohn-Sham regions in a single system* via freeze-and-thaw
+embedding, and a research focus on *machine-learning-derived kinetic energy
+density functionals (ML-KEDFs)*.
+
+## What makes Poraquê different
+
+Traditional DFT codes (Quantum ESPRESSO, VASP, ABINIT, GPAW, …) are powerful but
+typically commit to a single electronic-structure paradigm (almost always
+Kohn-Sham), expose a bespoke input-file language, and treat the kinetic energy
+functional as fixed. Poraquê is deliberately different:
+
+- **Native ASE integration, not a wrapper.** The *only* public entry point is a
+  standard ASE `Calculator` (`poraque.ase.Poraque`). There is no custom input
+  language: you build an `Atoms` object and ask for `get_potential_energy()` /
+  `get_forces()`. Every ASE tool — builders, optimizers, equation-of-state,
+  databases, NEB — works unchanged. The method is chosen with a single keyword,
+  `mode='ks'` or `mode='of'`.
+- **A hybrid OF ⇄ KS engine via Freeze-Embedding.** Because OF-DFT and KS-DFT
+  share the same grid, functionals, and Hartree/XC machinery, Poraquê can
+  partition a system and treat different regions with *different* methods at the
+  same time — an accurate Kohn-Sham *active* subsystem embedded in a cheap
+  orbital-free *environment* (KS-in-OF), or any combination — coupled through a
+  non-additive kinetic + electrostatic + XC embedding potential and relaxed with
+  freeze-and-thaw cycles. This OF/KS bridging is awkward or impossible in codes
+  built around a single paradigm.
+- **Machine-learning-derived KEDFs as a first-class research target.** The
+  orbital-free kinetic energy is treated as a *pluggable, learnable* object, not
+  a hard-coded term. The functional interface (energy + functional derivative)
+  is the same one used by Thomas-Fermi and von Weizsäcker, so a symbolic-
+  regression formula or a CNN trained on electron-density slices can drop
+  straight into the self-consistent minimizer.
+- **One readable core, in plain NumPy/SciPy.** The reference implementation
+  favors clarity over micro-optimization, with a clean `Grid` / `System` /
+  `Density` / `Result` data model and a pluggable backend layer — a code you can
+  actually read, extend, and use to prototype new physics.
+
+| | Traditional KS-DFT codes | **Poraquê** |
+| --- | --- | --- |
+| Primary interface | Custom input files | **Native ASE `Calculator`** |
+| Methods | Kohn-Sham only (usually) | **KS-DFT + OF-DFT + FDE, one API** |
+| OF/KS in one system | Not supported | **KS-in-OF / OF-in-KS embedding** |
+| Kinetic functional | Fixed | **Pluggable, ML-derived KEDFs** |
+| Pseudopotentials | `.upf` (norm-conserving/PAW) | **`.upf` (PseudoDojo/QE) + analytic** |
+| Codebase | Large Fortran/C++ | **Compact, readable Python** |
 
 ## Features
 
 - **Unified calculator.** One ASE calculator, `poraque.ase.Poraque`, selects the
   method dynamically with `mode='ks'` (Kohn-Sham) or `mode='of'` (orbital-free).
-- **Plane-wave / real-space basis.** Fields and orbitals live on a uniform
-  real-space grid whose discrete Fourier transform spans a **plane-wave basis**.
-  The kinetic operator is applied exactly in reciprocal space
-  (`½ |G + k|²`); local potentials are applied diagonally in real space. The
-  basis completeness is set by the grid density, controllable directly
-  (`grid_shape`) or through a plane-wave cutoff (`ecut`).
-- **Pseudopotentials.** A modular `poraque.pseudopotentials` package provides a
-  transparent core–valence split, built-in analytic local pseudopotentials, and
-  a reader for a small standard pseudopotential file format
-  (`pseudopotentials='auto'` or a per-element mapping).
+- **Plane-wave basis (mandatory for KS-DFT) with automatic grid generation.**
+  Fields and orbitals live on a uniform real-space grid whose discrete Fourier
+  transform spans a **plane-wave basis**. The kinetic operator is applied
+  exactly in reciprocal space (`½ |G + k|²`); local potentials are applied
+  diagonally in real space. Set a plane-wave cutoff with `ecut` and the
+  real-space grid is **sized automatically** to resolve it (Nyquist condition);
+  a manually supplied `grid_shape` is safely overridden by the optimized grid
+  (with a warning).
+- **Pseudopotentials, including `.upf`.** A modular `poraque.pseudopotentials`
+  package provides a transparent core–valence split, built-in analytic local
+  pseudopotentials, *and* a reader for **`.upf` (Unified Pseudopotential Format)**
+  files compatible with PseudoDojo and Quantum ESPRESSO. A bundled registry maps
+  the chosen exchange-correlation functional to the matching file
+  (`pseudopotentials='upf'` picks **LDA or PBE** pseudopotentials to match `xc`).
+- **Transparent energy accounting.** Results carry a strictly additive energy
+  decomposition — total, kinetic, external/ionic, Hartree, exchange-correlation,
+  and nonlocal terms — and an optional `verbose=True` mode prints the generated
+  grid, the material structure (cell, positions, PBC), the per-step SCF
+  convergence, and the final breakdown to standard output.
 - **Periodic systems & k-points.** Full periodic boundary conditions with
   Brillouin-zone sampling via Monkhorst–Pack grids built on
   [`ase.dft.kpoints`](https://wiki.fysik.dtu.dk/ase/ase/dft/kpoints.html)
@@ -122,12 +181,15 @@ More runnable scripts live in [`examples/`](examples/).
 | Argument            | Meaning                                                        |
 | ------------------- | -------------------------------------------------------------- |
 | `mode`              | `'ks'` (Kohn-Sham) or `'of'` (orbital-free)                    |
-| `grid_shape`        | Real-space grid `(Nx, Ny, Nz)`                                 |
+| `basis`             | Single-particle basis; `'pw'` (plane waves), **mandatory for KS-DFT** |
+| `grid_shape`        | Real-space grid `(Nx, Ny, Nz)` (overridden when `ecut` is set) |
 | `ecut`              | Plane-wave cutoff (Hartree); sizes the grid automatically      |
 | `kpts`              | `(n1, n2, n3)` Monkhorst-Pack grid, or explicit fractional k-points |
-| `pseudopotentials`  | `'auto'`, a `{symbol: spec}` mapping, or a `LocalPseudopotential` |
+| `pseudopotentials`  | `'auto'` (analytic), `'upf'` (bundled UPF), a `{symbol: spec}` mapping, or a `LocalPseudopotential` |
+| `pseudo_functional` | Functional for UPF selection (`'LDA'`/`'PBE'`); inferred from `xc` if unset |
 | `xc`                | Exchange-correlation functional (`'lda'` by default, `None` to disable) |
 | `charge`            | Net charge of the system                                       |
+| `verbose`           | Print grid, structure, SCF convergence, and energy decomposition |
 
 ## License
 

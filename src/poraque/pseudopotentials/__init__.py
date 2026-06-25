@@ -27,24 +27,35 @@ from ase.data import chemical_symbols
 from .base import LocalPseudopotential, VALENCE_ELECTRONS, valence_electrons
 from .local import GaussianCorePP, SoftCoulombPP, default_pseudopotential
 from .io import read_pseudopotential
+from .upf import UPFLocalPseudopotential, read_upf
+from .registry import registry_pseudopotential, find_pseudo_dir, normalize_functional
 
 __all__ = [
     "LocalPseudopotential",
     "SoftCoulombPP",
     "GaussianCorePP",
+    "UPFLocalPseudopotential",
     "VALENCE_ELECTRONS",
     "valence_electrons",
     "default_pseudopotential",
     "read_pseudopotential",
+    "read_upf",
+    "registry_pseudopotential",
+    "find_pseudo_dir",
+    "normalize_functional",
     "resolve_pseudopotentials",
     "build_pseudopotential_potential",
 ]
 
 
-def _resolve_one(symbol, spec, atomic_number=None):
+def _resolve_one(symbol, spec, atomic_number=None, functional="LDA"):
     """Resolve a single element's pseudopotential specification."""
     if isinstance(spec, LocalPseudopotential):
         return spec
+    if isinstance(spec, str) and spec.lower() == "upf":
+        # Pull the functional-specific norm-conserving UPF from the bundled
+        # registry (LDA orbitals -> LDA pseudopotentials, PBE -> PBE).
+        return registry_pseudopotential(symbol, functional)
     if spec is None or (isinstance(spec, str) and spec.lower() == "auto"):
         return default_pseudopotential(symbol, atomic_number)
     if isinstance(spec, str):
@@ -57,7 +68,7 @@ def _resolve_one(symbol, spec, atomic_number=None):
     raise TypeError(f"Unsupported pseudopotential spec for {symbol!r}: {spec!r}")
 
 
-def resolve_pseudopotentials(system, pseudopotentials):
+def resolve_pseudopotentials(system, pseudopotentials, functional="LDA"):
     """
     Resolve a pseudopotential specification into one object per element.
 
@@ -65,12 +76,18 @@ def resolve_pseudopotentials(system, pseudopotentials):
     ----------
     system : System
         Provides ``atomic_numbers`` (used to look up chemical symbols).
-    pseudopotentials : "auto" or dict or LocalPseudopotential
-        ``"auto"`` builds a default local pseudopotential for every element. A
-        ``dict`` maps chemical symbols to per-element specifications (a built
-        :class:`LocalPseudopotential`, a path to a pseudopotential file, a
-        keyword ``dict`` for :class:`SoftCoulombPP`, or ``"auto"``). A single
-        :class:`LocalPseudopotential` is applied to all atoms.
+    pseudopotentials : "auto" or "upf" or dict or LocalPseudopotential
+        ``"auto"`` builds a default analytic local pseudopotential for every
+        element. ``"upf"`` loads the bundled functional-specific norm-conserving
+        ``.upf`` files from the registry (see ``functional``). A ``dict`` maps
+        chemical symbols to per-element specifications (a built
+        :class:`LocalPseudopotential`, a path to a pseudopotential file —
+        including ``.upf`` — a keyword ``dict`` for :class:`SoftCoulombPP`, or
+        ``"auto"``/``"upf"``). A single :class:`LocalPseudopotential` is applied
+        to all atoms.
+    functional : str, optional
+        Exchange-correlation functional used to pick UPF files from the registry
+        (``"LDA"`` or ``"PBE"``; default ``"LDA"``).
 
     Returns
     -------
@@ -88,13 +105,14 @@ def resolve_pseudopotentials(system, pseudopotentials):
             if sym not in pseudopotentials:
                 raise KeyError(f"No pseudopotential supplied for element {sym!r}.")
             spec = pseudopotentials[sym]
-        else:  # "auto" / None
-            spec = "auto"
-        resolved[sym] = _resolve_one(sym, spec, z)
+        else:  # "auto" / "upf" / None
+            spec = "auto" if pseudopotentials is None else pseudopotentials
+        resolved[sym] = _resolve_one(sym, spec, z, functional=functional)
     return resolved
 
 
-def build_pseudopotential_potential(grid, system, pseudopotentials, mic=True):
+def build_pseudopotential_potential(grid, system, pseudopotentials, mic=True,
+                                    functional="LDA"):
     """
     Build the valence external potential and count valence electrons.
 
@@ -104,10 +122,13 @@ def build_pseudopotential_potential(grid, system, pseudopotentials, mic=True):
         Real-space grid.
     system : System
         Atomic structure.
-    pseudopotentials : "auto" or dict or LocalPseudopotential
+    pseudopotentials : "auto" or "upf" or dict or LocalPseudopotential
         See :func:`resolve_pseudopotentials`.
     mic : bool, optional
         Use the minimum-image convention for periodic cells.
+    functional : str, optional
+        Exchange-correlation functional used to select bundled UPF files
+        (default ``"LDA"``).
 
     Returns
     -------
@@ -115,7 +136,7 @@ def build_pseudopotential_potential(grid, system, pseudopotentials, mic=True):
         ``(v_ext, n_valence)`` — the local pseudopotential summed over all ions
         on the grid (Hartree) and the total number of valence electrons.
     """
-    table = resolve_pseudopotentials(system, pseudopotentials)
+    table = resolve_pseudopotentials(system, pseudopotentials, functional=functional)
     v_ext = np.zeros(grid.shape)
     n_valence = 0.0
     for z, pos in zip(system.atomic_numbers, system.positions):

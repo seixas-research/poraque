@@ -75,17 +75,23 @@ def read_pseudopotential(path):
     """
     Read a local pseudopotential from ``path``.
 
-    The encoding is chosen from the file extension (``.json`` -> JSON, anything
-    else -> key/value text).
+    The encoding is chosen from the file extension (``.upf`` -> UPF v2 reader,
+    ``.json`` -> JSON, anything else -> key/value text).
 
     Returns
     -------
     LocalPseudopotential
         The reconstructed pseudopotential.
     """
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".upf":
+        # UPF files (PseudoDojo / Quantum ESPRESSO) have their own binary-ish
+        # tabulated reader.
+        from .upf import read_upf
+        return read_upf(path)
     with open(path, "r", encoding="utf-8") as fh:
         text = fh.read()
-    if os.path.splitext(path)[1].lower() == ".json":
+    if ext == ".json":
         spec = json.loads(text)
     else:
         spec = _parse_text(text)
