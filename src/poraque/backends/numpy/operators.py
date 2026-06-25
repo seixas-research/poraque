@@ -39,6 +39,17 @@ class NumpyBackend(Backend):
             lap += (np.roll(field, -1, axis=axis) - 2 * field + np.roll(field, 1, axis=axis)) / (grid.h[axis]**2)
         return lap
 
+    def laplacian_fft(self, field, grid):
+        """
+        Compute the Laplacian via reciprocal space: nabla^2 f = IFFT(-G^2 f(G)).
+
+        Spectrally accurate for periodic, band-limited fields.
+        """
+        g2 = grid.get_g2()
+        f_g = np.fft.fftn(field)
+        lap_g = -g2 * f_g
+        return np.real(np.fft.ifftn(lap_g))
+
     def poisson(self, charge_density, grid):
         """
         Solve Poisson equation via FFT: V(G) = 4 * pi * n(G) / G^2

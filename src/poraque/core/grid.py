@@ -73,6 +73,36 @@ class Grid:
         """
         return np.sum(field) * self.volume_element
 
+    def get_g_vectors(self):
+        """
+        Build the reciprocal-space grid vectors (Gx, Gy, Gz).
+
+        These are the angular wavevectors ``G = 2*pi*k`` sampled by the FFT
+        for the current grid spacing, returned as three arrays each shaped
+        like the grid.
+
+        Returns
+        -------
+        tuple of numpy.ndarray
+            ``(Gx, Gy, Gz)`` arrays of shape ``self.shape``.
+        """
+        gx = 2 * np.pi * np.fft.fftfreq(self.Nx, self.h[0])
+        gy = 2 * np.pi * np.fft.fftfreq(self.Ny, self.h[1])
+        gz = 2 * np.pi * np.fft.fftfreq(self.Nz, self.h[2])
+        return np.meshgrid(gx, gy, gz, indexing="ij")
+
+    def get_g2(self):
+        """
+        Squared magnitude of the reciprocal grid vectors ``|G|^2``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Array of shape ``self.shape`` with ``Gx^2 + Gy^2 + Gz^2``.
+        """
+        gx, gy, gz = self.get_g_vectors()
+        return gx**2 + gy**2 + gz**2
+
     def __repr__(self):
         return f"Grid(shape={self.shape}, volume={self.volume:.4f}, pbc={self.pbc})"
 

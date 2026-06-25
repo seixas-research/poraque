@@ -8,6 +8,9 @@
 
 import numpy as np
 
+from .units import ANGSTROM, BOHR_TO_ANGSTROM
+
+
 class System:
     """
     Represents the physical system (ions, electrons, cell).
@@ -48,16 +51,49 @@ class System:
         self.spin_polarized = spin_polarized
         
     @classmethod
-    def from_ase(cls, atoms):
+    def from_ase(cls, atoms, charge=0):
         """
-        Create a System object from an ASE Atoms object.
+        Create a System object from an ASE ``Atoms`` object.
+
+        Positions and cell are converted from Ångström (ASE convention) to
+        Bohr (internal atomic units).
+
+        Parameters
+        ----------
+        atoms : ase.Atoms
+            The atomic structure.
+        charge : int, optional
+            Net charge; the electron count is ``sum(Z) - charge``.
         """
+        numbers = atoms.get_atomic_numbers()
         return cls(
-            positions=atoms.get_positions(),
-            atomic_numbers=atoms.get_atomic_numbers(),
-            cell=atoms.get_cell(),
+            positions=np.asarray(atoms.get_positions()) * ANGSTROM,
+            atomic_numbers=numbers,
+            cell=np.asarray(atoms.get_cell()) * ANGSTROM,
             pbc=atoms.get_pbc(),
-            electrons=int(np.sum(atoms.get_atomic_numbers())) # Default to neutral
+            electrons=int(np.sum(numbers)) - int(charge),
+        )
+
+    def to_ase(self):
+        """
+        Export this system to an ASE ``Atoms`` object.
+
+        Positions and cell are converted from Bohr (internal) back to
+        Ångström (ASE convention). The inverse of :meth:`from_ase` for
+        neutral systems.
+
+        Returns
+        -------
+        ase.Atoms
+            The atomic structure in ASE units.
+        """
+        from ase import Atoms
+
+        return Atoms(
+            numbers=self.atomic_numbers,
+            positions=self.positions * BOHR_TO_ANGSTROM,
+            cell=self.cell * BOHR_TO_ANGSTROM,
+            pbc=self.pbc,
         )
 
     def __repr__(self):

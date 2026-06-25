@@ -209,3 +209,6 @@ __marimo__/
 
 # macOS
 .DS_Store
+
+# Reports (Latex files and pdfs)
+reports/

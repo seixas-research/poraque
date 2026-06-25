@@ -7,9 +7,20 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br> 
 
 from .core import Grid, System, Density, SolverSettings
+from .backends.base import Backend
 from .backends.numpy import NumpyBackend
 from .engine import OFDFTEngine
 import numpy as np
+
+
+def _resolve_backend(backend):
+    """Return a Backend instance from a name or a pre-built instance."""
+    if isinstance(backend, Backend):
+        return backend
+    if backend == 'numpy':
+        return NumpyBackend()
+    raise ValueError(f"Unknown backend: {backend!r}")
+
 
 class Poraque:
     """
@@ -19,12 +30,7 @@ class Poraque:
         self.system = system
         self.grid = grid
         self.functionals = functionals
-        
-        if backend == 'numpy':
-            self.backend = NumpyBackend()
-        else:
-            raise ValueError(f"Unknown backend: {backend}")
-            
+        self.backend = _resolve_backend(backend)
         self.settings = settings if settings is not None else SolverSettings()
 
     def calculate(self, initial_density=None):

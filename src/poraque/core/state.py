@@ -39,9 +39,12 @@ class State:
             self.occupations = np.array(occupations)
 
     def get_density(self):
-        """
+        r"""
         Compute the electron density from orbitals and occupations.
-        n(r) = sum_i f_i |phi_i(r)|^2
+
+        .. math::
+
+            n(\mathbf{r}) = \sum_i f_i\, |\phi_i(\mathbf{r})|^2
         """
         density_data = np.zeros(self.grid.shape)
         for i in range(self.n_orbitals):

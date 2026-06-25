@@ -4,12 +4,12 @@
 * [x] Frontend and workflow layer
   - [x] user-facing calculator API
   - [x] ASE integration
-  - [ ] examples, benchmarks, and workflow helpers
+  - [x] examples and workflow helpers (benchmarks pending)
 * [x] Scientific engine layer
   - [x] OF-DFT minimization
-  - [ ] KS-DFT SCF drivers later
-  - [ ] FDE drivers later
-  - [ ] convergence control and diagnostics
+  - [x] KS-DFT SCF drivers later
+  - [x] FDE drivers later
+  - [x] convergence control and diagnostics
 * [x] Physics model layer
   - [x] kinetic, Hartree, exchange-correlation, and embedding functionals
   - [x] external and pseudopotential models
@@ -74,13 +74,13 @@ Build the numerical foundation first. Everything else depends on this being stab
   - [x] Minimization / SCF driver interface
   - [x] Result object with energies, density, convergence history, diagnostics
 
-Tests to add:
+Tests to add (with pytest):
 
 * [x] Grid indexing and inverse indexing
 * [x] Integration of constant density gives the correct electron number
-* [ ] Finite-difference and FFT Laplacians reproduce analytic results for plane waves
-* [ ] Poisson solver reproduces known simple charge distributions
-* [ ] All energies and potentials use consistent units and array shapes
+* [x] Finite-difference and FFT Laplacians reproduce analytic results for plane waves
+* [x] Poisson solver reproduces known simple charge distributions
+* [x] All energies and potentials use consistent units and array shapes
 
 ## 2. ASE Integration Layer
 
@@ -89,51 +89,51 @@ standard ecosystem instead of a custom one.
 
 * [x] ASE interoperability
   - [x] Read atomic structures from ASE `Atoms`
-  - [ ] Export internal structures back to ASE `Atoms`
+  - [x] Export internal structures back to ASE `Atoms`
   - [x] Preserve cell, periodic boundary conditions, positions, species, and charges
 * [x] ASE calculator interface
   - [x] Implement a Poraquê ASE `Calculator`
   - [x] Return total energy, forces, and stress when available
   - [x] Expose OF-DFT and later KS-DFT through the same interface
-* [ ] ASE workflows
-  - [ ] Single-point energy calculations
-  - [ ] Geometry optimization hooks
+* [x] ASE workflows
+  - [x] Single-point energy calculations
+  - [x] Geometry optimization hooks
   - [ ] Molecular dynamics compatibility as a future extension
 
-Tests to add:
+Tests to add (with pytest):
 
-* [ ] Round-trip conversion between internal `System` objects and ASE `Atoms`
-* [ ] Correct handling of periodic and nonperiodic boundary conditions
-* [ ] ASE single-point calls return energies in expected units
-* [ ] Basic force-consistency checks when forces are implemented
+* [x] Round-trip conversion between internal `System` objects and ASE `Atoms`
+* [x] Correct handling of periodic and nonperiodic boundary conditions
+* [x] ASE single-point calls return energies in expected units
+* [x] Basic force-consistency checks when forces are implemented
 
 ## 3. Minimal OF-DFT Solver
 
 Start with the simplest end-to-end OF-DFT calculation and make it robust.
 
 * [x] External potential
-  - [ ] Point-charge potential for toy problems
+  - [x] Point-charge potential for toy problems
   - [x] Regularized ionic potential for numerical stability
 * [x] Energy terms
   - [x] Thomas-Fermi kinetic functional
   - [x] Hartree energy
-  - [ ] Dirac exchange (LDA exchange)
+  - [x] Dirac exchange (LDA exchange)
 * [x] Total energy assembly
   - [x] `E[n] = T_s[n] + E_H[n] + E_xc[n] + E_ext[n]`
   - [x] Separate reporting of each contribution
 * [x] OF-DFT minimizer
   - [x] Optimize with respect to `sqrt(n)` or another positivity-preserving variable
   - [x] Enforce electron-number normalization
-  - [ ] Add line search or damping for stability
+  - [x] Add line search or damping for stability
   - [x] Store convergence metrics: energy change, density residual, chemical potential
 
-Tests to add:
+Tests to add (with pytest):
 
-* [ ] Functional derivative matches finite-difference energy derivatives
-* [ ] Density remains non-negative during minimization
-* [ ] Electron number is conserved after every iteration
-* [ ] Total energy decreases or stabilizes under controlled minimization steps
-* [ ] Uniform-density limit reproduces the expected Thomas-Fermi behavior
+* [x] Functional derivative matches finite-difference energy derivatives
+* [x] Density remains non-negative during minimization
+* [x] Electron number is conserved after every iteration
+* [x] Total energy decreases or stabilizes under controlled minimization steps
+* [x] Uniform-density limit reproduces the expected Thomas-Fermi behavior
 
 ## 4. Improved OF-DFT Functionals
 
@@ -141,10 +141,10 @@ Once the minimal solver works, add the first useful physical corrections.
 
 * [x] Thomas-Fermi-von Weizsäcker (TFvW)
   - [x] Full von Weizsäcker term
-  - [ ] Mixing parameter support
-* [ ] Better exchange-correlation support
-  - [ ] LDA correlation
-  - [ ] Shared XC interface usable by OF-DFT and KS-DFT
+  - [x] Mixing parameter support
+* [x] Better exchange-correlation support
+  - [x] LDA correlation
+  - [x] Shared XC interface usable by OF-DFT and KS-DFT
 * [ ] Pauli enhancement factor models
   - [ ] Base class for generalized kinetic energy density functionals
   - [ ] Local and semilocal enhancement-factor implementations
@@ -152,11 +152,11 @@ Once the minimal solver works, add the first useful physical corrections.
   - [ ] Library of simple analytic local pseudopotentials
   - [ ] Input format for tabulated local pseudopotentials
 
-Tests to add:
+Tests to add (with pytest):
 
-* [ ] TFvW reduces to TF when `lambda_vW = 0`
-* [ ] von Weizsäcker term gives the expected behavior for one-orbital densities
-* [ ] Functional derivatives of all added terms pass finite-difference checks
+* [x] TFvW reduces to TF when `lambda_vW = 0`
+* [x] von Weizsäcker term gives the expected behavior for one-orbital densities
+* [x] Functional derivatives of all added terms pass finite-difference checks
 * [ ] Energies converge with grid refinement
 * [ ] Reference calculations for simple atoms or jellium-like model systems
 
@@ -177,7 +177,7 @@ This is where OF-DFT becomes more useful for realistic condensed-phase systems.
   - [ ] Bravais lattice helpers
   - [ ] Structure input/output
 
-Tests to add:
+Tests to add (with pytest):
 
 * [ ] Reciprocal-space operators are consistent with real-space operators
 * [ ] Nonlocal kernels are translationally invariant
@@ -218,7 +218,7 @@ reference data.
   - [ ] Wrap CNN models as differentiable learned functionals
   - [ ] Support inference inside self-consistent minimization loops
 
-Tests to add:
+Tests to add (with pytest):
 
 * [ ] Dataset loading is deterministic and reproducible
 * [ ] No train/validation/test leakage across related molecular geometries
@@ -235,31 +235,31 @@ minimization/SCF diagnostics are already reliable.
 Recommended strategy: reuse the real-space grid first, then add a planewave basis
 later if periodic materials become the main target.
 
-* [ ] Orbital representation
-  - [ ] Real-space orbitals on the existing grid
-  - [ ] Occupations, spin channels, and density reconstruction
-  - [ ] Orthonormalization utilities
-* [ ] Kohn-Sham Hamiltonian
-  - [ ] Kinetic operator
-  - [ ] External potential
-  - [ ] Hartree potential
-  - [ ] XC potential
-* [ ] SCF machinery
-  - [ ] Fixed-point SCF loop
-  - [ ] Density or potential mixing
-  - [ ] Convergence criteria for energy, density, and eigenvalues
-  - [ ] Subspace diagonalization / eigensolver interface
-* [ ] Total KS energy
-  - [ ] Band energy bookkeeping
-  - [ ] Double-counting corrections
-  - [ ] Consistent total-energy decomposition
+* [x] Orbital representation
+  - [x] Real-space orbitals on the existing grid
+  - [x] Occupations, spin channels, and density reconstruction
+  - [x] Orthonormalization utilities
+* [x] Kohn-Sham Hamiltonian
+  - [x] Kinetic operator
+  - [x] External potential
+  - [x] Hartree potential
+  - [x] XC potential
+* [x] SCF machinery
+  - [x] Fixed-point SCF loop
+  - [x] Density or potential mixing
+  - [x] Convergence criteria for energy, density, and eigenvalues
+  - [x] Subspace diagonalization / eigensolver interface
+* [x] Total KS energy
+  - [x] Band energy bookkeeping
+  - [x] Double-counting corrections
+  - [x] Consistent total-energy decomposition
 
-Tests to add:
+Tests to add (with pytest):
 
-* [ ] Orbitals remain orthonormal after each update
-* [ ] Density integrates to the correct electron number
-* [ ] KS total energy is internally consistent with its components
-* [ ] One-electron test problem reproduces the expected exact limit
+* [x] Orbitals remain orthonormal after each update
+* [x] Density integrates to the correct electron number
+* [x] KS total energy is internally consistent with its components
+* [x] One-electron test problem reproduces the expected exact limit
 * [ ] Small-system benchmarks against trusted reference data
 
 ## 8. Pseudopotentials and Basis Extensions for KS-DFT
@@ -277,7 +277,7 @@ Only add this after basic KS-DFT is working for toy systems.
 * [ ] PAW method
   - [ ] Treat this as a later-generation milestone, not a first implementation target
 
-Tests to add:
+Tests to add (with pytest):
 
 * [ ] Pseudopotential normalization and projector consistency checks
 * [ ] No obvious ghost-state pathologies in basic benchmarks
@@ -289,27 +289,27 @@ Tests to add:
 Introduce FDE only after both subsystem density handling and KS/OF total-energy
 machinery are already dependable.
 
-* [ ] Subsystem partitioning
-  - [ ] Define subsystem objects with their own ions, densities, and solvers
-  - [ ] Support active and frozen subsystems
-* [ ] Embedding potential
-  - [ ] Electrostatic contribution
-  - [ ] Nonadditive exchange-correlation contribution
-  - [ ] Nonadditive kinetic contribution
-* [ ] FDE workflows
-  - [ ] OF-in-OF embedding
-  - [ ] KS-in-KS embedding
-  - [ ] KS-in-OF or OF-in-KS mixed embedding as an advanced target
-* [ ] Freeze-and-thaw cycles
-  - [ ] Alternating subsystem relaxation
-  - [ ] Convergence criteria for subsystem densities and total embedded energy
+* [x] Subsystem partitioning
+  - [x] Define subsystem objects with their own ions, densities, and solvers
+  - [x] Support active and frozen subsystems
+* [x] Embedding potential
+  - [x] Electrostatic contribution
+  - [x] Nonadditive exchange-correlation contribution
+  - [x] Nonadditive kinetic contribution
+* [x] FDE workflows
+  - [x] OF-in-OF embedding
+  - [x] KS-in-KS embedding
+  - [x] KS-in-OF or OF-in-KS mixed embedding as an advanced target
+* [x] Freeze-and-thaw cycles
+  - [x] Alternating subsystem relaxation
+  - [x] Convergence criteria for subsystem densities and total embedded energy
 
-Tests to add:
+Tests to add (with pytest):
 
-* [ ] Subsystem densities sum to the total density
-* [ ] Embedding contributions vanish in appropriate noninteracting limits
-* [ ] Freeze-and-thaw lowers or stabilizes the embedded energy
-* [ ] Numerical derivatives of nonadditive terms match embedding potentials
+* [x] Subsystem densities sum to the total density
+* [x] Embedding contributions vanish in appropriate noninteracting limits
+* [x] Freeze-and-thaw lowers or stabilizes the embedded energy
+* [x] Numerical derivatives of nonadditive terms match embedding potentials
 * [ ] Small dimer or weakly interacting benchmark systems against literature data
 
 ## 10. Validation, Performance, and Research Readiness
@@ -317,7 +317,7 @@ Tests to add:
 These should evolve in parallel with the physics, not only at the end.
 
 * [ ] Validation suite
-  - [ ] Regression tests for energies, densities, and convergence history
+  - [x] Regression tests for energies, densities, and convergence history
   - [ ] Reference-data folder for trusted benchmarks
   - [ ] Grid-convergence and box-size studies
 * [ ] Performance
@@ -325,12 +325,12 @@ These should evolve in parallel with the physics, not only at the end.
   - [ ] FFT acceleration
   - [ ] Profiling of Hartree, nonlocal kernels, and eigensolvers
 * [ ] Usability
-  - [ ] Input file format or Python API examples
-  - [ ] Reproducible examples for OF-DFT, KS-DFT, FDE, ASE workflows, and ML-KEDFs
+  - [x] Input file format or Python API examples
+  - [x] Reproducible examples for OF-DFT, KS-DFT, FDE, and ASE workflows (ML-KEDF pending)
   - [ ] Error messages for invalid densities, missing parameters, and nonconvergence
 * [ ] Documentation
-  - [ ] Theory notes for each functional and approximation
-  - [ ] Developer notes describing the code architecture
+  - [x] Theory notes for each functional and approximation
+  - [x] Developer notes describing the code architecture
   - [ ] Benchmark notebook or script collection
   - [ ] Training notes and model cards for ML-KEDF experiments
 
@@ -338,28 +338,28 @@ These should evolve in parallel with the physics, not only at the end.
 
 Map the roadmap to the current package structure so the code grows coherently.
 
-* [ ] `src/poraque/core/grid.py`
-  - [ ] grid geometry, spacing, integration weights, Laplacian/gradient, FFT helpers
-* [ ] `src/poraque/core/system.py`
-  - [ ] ions, electron counts, spin, cell, pseudopotential references, ASE conversion hooks
-* [ ] `src/poraque/functionals/`
-  - [ ] base functional API
-  - [ ] Hartree, TF, vW, XC, nonlocal KEDF, and ML-KEDF implementations
-* [ ] `src/poraque/potentials/`
-  - [ ] external potentials and pseudopotential library
-* [ ] `src/poraque/engine.py`
-  - [ ] OF minimizer, KS SCF driver, convergence control
-* [ ] `src/poraque/calculator.py`
-  - [ ] high-level user-facing API and ASE calculator bridge
+* [x] `src/poraque/core/grid.py`
+  - [x] grid geometry, spacing, integration weights, Laplacian/gradient, FFT helpers
+* [x] `src/poraque/core/system.py`
+  - [x] ions, electron counts, spin, cell, pseudopotential references, ASE conversion hooks
+* [x] `src/poraque/functionals/`
+  - [x] base functional API
+  - [x] Hartree, TF, vW, XC implementations (nonlocal KEDF and ML-KEDF pending)
+* [x] `src/poraque/potentials/`
+  - [x] external potentials (pseudopotential library pending)
+* [x] `src/poraque/engine.py`
+  - [x] OF minimizer, KS SCF driver, convergence control
+* [x] `src/poraque/calculator.py`
+  - [x] high-level user-facing API and ASE calculator bridge
 * [ ] `src/poraque/ml/`
   - [ ] dataset loading, preprocessing, symbolic regression, CNN training, inference wrappers
-* [ ] `examples/`
-  - [ ] ASE single-point and geometry-optimization examples
+* [x] `examples/`
+  - [x] ASE single-point and geometry-optimization examples
   - [ ] ML-KEDF data-preparation and training examples
-* [ ] `tests/`
-  - [ ] unit tests for operators and functionals
-  - [ ] regression tests for total energies and ASE calculator behavior
-  - [ ] integration tests for complete workflows
+* [x] `tests/`
+  - [x] unit tests for operators and functionals
+  - [x] regression tests for total energies and ASE calculator behavior
+  - [x] integration tests for complete workflows
 
 ## Practical Milestones
 
@@ -372,9 +372,9 @@ If the goal is to reach working science quickly, a good milestone sequence is:
 * [ ] Milestone 5: nonlocal KEDFs
 * [ ] Milestone 6: ML-KEDF dataset pipeline + symbolic-regression baseline
 * [ ] Milestone 7: CNN-based ML-KEDF on electron-density slices
-* [ ] Milestone 8: minimal KS-DFT on the same grid
+* [x] Milestone 8: minimal KS-DFT on the same grid
 * [ ] Milestone 9: norm-conserving pseudopotentials
-* [ ] Milestone 10: frozen-density embedding
+* [x] Milestone 10: frozen-density embedding
 
 This order keeps the hardest abstractions until the shared numerical core is already
 tested and reusable.

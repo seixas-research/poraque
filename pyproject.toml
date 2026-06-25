@@ -17,7 +17,8 @@ dependencies = [
     'pandas',
     'ase',
     'scipy',
-    'matplotlib'
+    'matplotlib',
+    'pytest'
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
