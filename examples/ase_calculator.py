@@ -9,30 +9,23 @@ The full calculation log is printed to stdout by default (verbose=True).
 from ase import Atoms
 
 from poraque.ase import Poraque
-from poraque.core import Grid, SolverSettings, System
+from poraque.core import SolverSettings
 
+atoms = Atoms("H2",
+              positions=[[2.0, 2.5, 2.5], [3.0, 2.5, 2.5]],
+              cell=[5, 5, 5],
+              pbc=True)
 
-def main():
-    atoms = Atoms("H2", positions=[[2.0, 2.5, 2.5], [3.0, 2.5, 2.5]],
-                  cell=[5, 5, 5], pbc=True)
+ecut = 8.0  # Hartree
 
-    # A user-supplied cutoff dynamically determines the grid dimensions.
-    ecut = 8.0  # Hartree
-    derived = Grid.from_ecut(System.from_ase(atoms).cell, ecut)
-    print(f"Ecut = {ecut} Ha  ->  grid_shape = {derived.shape}")
+atoms.calc = Poraque(
+    mode="of",
+    ecut=ecut,                  # grid generated automatically from the cutoff
+    settings=SolverSettings(max_iter=60, mixing=0.1),
+    external_kwargs={"a": 0.8},
+)
 
-    atoms.calc = Poraque(
-        mode="of",
-        ecut=ecut,                  # grid generated automatically from the cutoff
-        settings=SolverSettings(max_iter=60, mixing=0.1),
-        external_kwargs={"a": 0.8},
-    )
-    # Equivalent explicit form: Poraque(mode="of", grid_shape=derived.shape, ...)
+print(f"Potential energy: {atoms.get_potential_energy():.6f} eV")
+print("Forces (eV/A):")
+print(atoms.get_forces())
 
-    print(f"Potential energy: {atoms.get_potential_energy():.6f} eV")
-    print("Forces (eV/A):")
-    print(atoms.get_forces())
-
-
-if __name__ == "__main__":
-    main()
