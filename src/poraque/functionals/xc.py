@@ -6,16 +6,32 @@
 #
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
-"""Local-density approximation exchange-correlation functionals.
+"""Exchange-correlation functionals.
 
 The functionals here follow the shared :class:`~poraque.functionals.base.Functional`
 interface (``energy`` and ``potential``) so they can be reused unchanged by both
 the OF-DFT engine and the KS-DFT engine.
+
+Two families are provided:
+
+* native, dependency-free **LDA** functionals (Dirac exchange + PW92
+  correlation), and
+* libxc-backed **GGA** functionals (:class:`PBE`, :class:`PBEsol`) that wrap the
+  `Libxc <https://www.tddft.org/programs/libxc/>`_ library through its
+  ``pylibxc`` Python bindings.
 """
 
 import numpy as np
 
 from .base import Functional
+from ..profiling import profiler
+
+try:  # libxc is only required for the GGA functionals (PBE / PBEsol).
+    import pylibxc
+    _PYLIBXC_AVAILABLE = True
+except Exception:  # pragma: no cover - exercised only without pylibxc
+    pylibxc = None
+    _PYLIBXC_AVAILABLE = False
 
 # Small density floor to keep n^p and 1/n stable in vacuum regions.
 _DENS_FLOOR = 1e-30
@@ -133,3 +149,178 @@ class LDA(Functional):
         if self._c is not None:
             v = v + self._c.potential(density, system, grid, backend)
         return v
+
+
+# --------------------------------------------------------------------------- #
+# Spectral (plane-wave) differential operators for GGA functionals
+# --------------------------------------------------------------------------- #
+def _spectral_gradient(field, grid):
+    r"""
+    Cartesian gradient :math:`\nabla f` via the plane-wave basis.
+
+    Each component is ``Re(IFFT(i G_a * FFT(f)))`` using the grid's reciprocal
+    vectors (valid for any, including non-orthogonal, cell). Returns an array of
+    shape ``(3, Nx, Ny, Nz)``.
+    """
+    f_g = np.fft.fftn(field)
+    gx, gy, gz = grid.get_g_vectors()
+    dx = np.real(np.fft.ifftn(1j * gx * f_g))
+    dy = np.real(np.fft.ifftn(1j * gy * f_g))
+    dz = np.real(np.fft.ifftn(1j * gz * f_g))
+    return np.array([dx, dy, dz])
+
+
+def _spectral_divergence(vector, grid):
+    r"""
+    Divergence :math:`\nabla\cdot\mathbf{F}` of a ``(3, ...)`` field via FFT.
+
+    Computed as ``Re(IFFT(i (G_x F_x + G_y F_y + G_z F_z)))``, the spectral
+    adjoint of :func:`_spectral_gradient`.
+    """
+    gx, gy, gz = grid.get_g_vectors()
+    fx = np.fft.fftn(vector[0])
+    fy = np.fft.fftn(vector[1])
+    fz = np.fft.fftn(vector[2])
+    div_g = 1j * (gx * fx + gy * fy + gz * fz)
+    return np.real(np.fft.ifftn(div_g))
+
+
+class LibXC(Functional):
+    r"""
+    Exchange-correlation functional evaluated through libxc (``pylibxc``).
+
+    A functional is specified as a list of libxc component identifiers (e.g.
+    exchange + correlation), whose energy densities and potentials are summed.
+    Both LDA- and GGA-family components are supported. For GGA components the
+    reduced density gradient :math:`\sigma = |\nabla n|^2` is built with the
+    spectral gradient, and the potential includes the gradient-dependent term
+
+    .. math::
+
+        v_{xc} = \frac{\partial e}{\partial n}
+                 - 2\,\nabla\cdot\!\left(\frac{\partial e}{\partial \sigma}\,
+                   \nabla n\right),
+
+    where ``e = n\,\varepsilon_{xc}`` is the XC energy density returned by libxc.
+
+    Parameters
+    ----------
+    label : str
+        Human-readable functional name (used in the energy decomposition).
+    components : sequence of (str, bool)
+        Each entry is ``(libxc_name, is_gga)`` — the libxc functional string
+        (e.g. ``"gga_x_pbe"``) and whether it needs the density gradient.
+
+    Notes
+    -----
+    This functional is spin-unpolarized. It requires ``pylibxc``; constructing
+    it without libxc installed raises a clear :class:`ImportError`.
+    """
+
+    def __init__(self, label, components):
+        super().__init__(label)
+        if not _PYLIBXC_AVAILABLE:
+            raise ImportError(
+                f"The {label!r} functional requires libxc (the 'pylibxc' "
+                "package), which is not installed. Install it, e.g. with "
+                "`conda install -c conda-forge libxc pylibxc`."
+            )
+        self._components = list(components)
+        self._funcs = [
+            (pylibxc.LibXCFunctional(name, "unpolarized"), bool(is_gga))
+            for name, is_gga in components
+        ]
+        self._is_gga = any(is_gga for _, is_gga in components)
+
+    def _eval(self, density, grid):
+        """Return ``(n, eps, vrho, vsigma, grad_n)`` on the grid."""
+        n = np.maximum(density.data, _DENS_FLOOR)
+        inp = {"rho": np.ascontiguousarray(n.ravel())}
+        grad = None
+        if self._is_gga:
+            grad = _spectral_gradient(n, grid)
+            sigma = grad[0] ** 2 + grad[1] ** 2 + grad[2] ** 2
+            inp["sigma"] = np.ascontiguousarray(np.maximum(sigma.ravel(), 1e-40))
+
+        eps = np.zeros(n.size)
+        vrho = np.zeros(n.size)
+        vsigma = np.zeros(n.size)
+        for func, is_gga in self._funcs:
+            out = func.compute(inp, do_exc=True, do_vxc=True)
+            eps += np.asarray(out["zk"]).ravel()
+            vrho += np.asarray(out["vrho"]).ravel()
+            if is_gga and out.get("vsigma") is not None:
+                vsigma += np.asarray(out["vsigma"]).ravel()
+
+        shp = n.shape
+        return (n, eps.reshape(shp), vrho.reshape(shp),
+                vsigma.reshape(shp), grad)
+
+    def energy(self, density, system, grid, backend):
+        with profiler.timer(f"XC energy [{self.name}]"):
+            n, eps, _, _, _ = self._eval(density, grid)
+            return backend.integrate(n * eps, grid)
+
+    def potential(self, density, system, grid, backend):
+        with profiler.timer(f"XC potential [{self.name}]"):
+            n, _, vrho, vsigma, grad = self._eval(density, grid)
+            v = vrho
+            if self._is_gga:
+                flux = np.array([vsigma * grad[0],
+                                 vsigma * grad[1],
+                                 vsigma * grad[2]])
+                v = v - 2.0 * _spectral_divergence(flux, grid)
+            return np.where(density.data > _DENS_FLOOR, v, 0.0)
+
+
+class PBE(LibXC):
+    """Perdew-Burke-Ernzerhof (PBE) GGA exchange-correlation (libxc)."""
+
+    def __init__(self):
+        super().__init__("XC (PBE)",
+                         [("gga_x_pbe", True), ("gga_c_pbe", True)])
+
+
+class PBEsol(LibXC):
+    """PBEsol GGA exchange-correlation, revised for solids (libxc)."""
+
+    def __init__(self):
+        super().__init__("XC (PBEsol)",
+                         [("gga_x_pbe_sol", True), ("gga_c_pbe_sol", True)])
+
+
+# Registry of string-addressable XC functionals for the ASE calculator.
+_XC_REGISTRY = {
+    "lda": LDA,
+    "pbe": PBE,
+    "pbesol": PBEsol,
+}
+
+
+def resolve_xc(name):
+    """
+    Map a functional name (case-insensitive) to a constructed functional.
+
+    Parameters
+    ----------
+    name : str
+        One of ``"lda"``, ``"pbe"``, ``"pbesol"``.
+
+    Returns
+    -------
+    Functional
+        A freshly constructed functional instance.
+
+    Raises
+    ------
+    NotImplementedError
+        If ``name`` is not a recognized functional.
+    """
+    key = name.lower()
+    if key not in _XC_REGISTRY:
+        supported = ", ".join(sorted(_XC_REGISTRY))
+        raise NotImplementedError(
+            f"Exchange-correlation functional {name!r} is not implemented. "
+            f"Supported functionals: {supported}."
+        )
+    return _XC_REGISTRY[key]()

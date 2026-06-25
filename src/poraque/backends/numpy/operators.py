@@ -55,16 +55,11 @@ class NumpyBackend(Backend):
         Solve Poisson equation via FFT: V(G) = 4 * pi * n(G) / G^2
         """
         n_g = np.fft.fftn(charge_density)
-        
-        # Get G vectors
-        kx = 2 * np.pi * np.fft.fftfreq(grid.Nx, grid.h[0])
-        ky = 2 * np.pi * np.fft.fftfreq(grid.Ny, grid.h[1])
-        kz = 2 * np.pi * np.fft.fftfreq(grid.Nz, grid.h[2])
-        
-        KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
-        G2 = KX**2 + KY**2 + KZ**2
+
+        # Reuse the grid's |G|^2 (valid for non-orthogonal cells too).
+        G2 = grid.get_g2()
         G2[0, 0, 0] = 1.0 # Avoid division by zero
-        
+
         v_g = 4 * np.pi * n_g / G2
         v_g[0, 0, 0] = 0.0 # Set average potential to zero
         

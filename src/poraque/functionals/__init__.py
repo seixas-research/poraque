@@ -10,7 +10,8 @@ from .base import Functional
 from .kinetic import ThomasFermi, VonWeizsaecker, TFvW
 from .hartree import Hartree
 from .external import External
-from .xc import DiracExchange, PW92Correlation, LDA
+from .xc import (DiracExchange, PW92Correlation, LDA, LibXC, PBE, PBEsol,
+                 resolve_xc)
 
 __all__ = [
     "Functional",
@@ -22,4 +23,8 @@ __all__ = [
     "DiracExchange",
     "PW92Correlation",
     "LDA",
+    "LibXC",
+    "PBE",
+    "PBEsol",
+    "resolve_xc",
 ]

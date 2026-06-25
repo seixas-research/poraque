@@ -12,6 +12,7 @@ from scipy.sparse.linalg import LinearOperator, eigsh
 from .core import Density, Result, State
 from .core import reporting
 from .functionals import Hartree, LDA
+from .potentials.external import compute_ion_ion_energy
 
 
 class OFDFTEngine:
@@ -31,6 +32,14 @@ class OFDFTEngine:
         self.backend = backend
         self.settings = settings
         self.verbose = verbose
+        # Ion-ion repulsion is constant for fixed nuclei; compute it once.
+        self._e_ion = None
+
+    def _ion_ion_energy(self):
+        """Cached classical ion-ion repulsion energy (Hartree)."""
+        if self._e_ion is None:
+            self._e_ion = compute_ion_ion_energy(self.system, self.grid)
+        return self._e_ion
 
     def compute_total_energy(self, density):
         """Compute the total energy and its per-functional components."""
@@ -40,6 +49,11 @@ class OFDFTEngine:
             e = func.energy(density, self.system, self.grid, self.backend)
             components[func.name] = e
             total_e += e
+
+        # Classical nuclear-nuclear (ion-ion) repulsion.
+        e_ion = self._ion_ion_energy()
+        components["Ion-Ion"] = e_ion
+        total_e += e_ion
         return total_e, components
 
     def compute_effective_potential(self, density):
@@ -339,6 +353,8 @@ class KSDFTEngine:
         self.n_occupied = int(np.ceil(self.system.electrons / 2.0))
         self.n_states = self.n_occupied + n_extra_states
         self.dV = grid.volume_element
+        # Ion-ion repulsion is constant for fixed nuclei; compute it once.
+        self._e_ion = None
 
         # Pre-compute the kinetic factor 1/2 |G + k|^2 for every k-point.
         self._kfac = [
@@ -390,6 +406,12 @@ class KSDFTEngine:
         ])
         return eigvals, orbitals
 
+    def _ion_ion_energy(self):
+        """Cached classical ion-ion repulsion energy (Hartree)."""
+        if self._e_ion is None:
+            self._e_ion = compute_ion_ion_energy(self.system, self.grid)
+        return self._e_ion
+
     def _band_energy(self, eigvals_per_k, occ_per_k):
         """Brillouin-zone-weighted sum of occupied eigenvalues."""
         e_band = 0.0
@@ -426,7 +448,10 @@ class KSDFTEngine:
         # but it is reported explicitly to make the accounting complete.
         e_nonlocal = 0.0
 
-        e_total = e_kin + e_ext + e_h + e_xc + e_nonlocal
+        # Classical nuclear-nuclear (ion-ion) repulsion.
+        e_ion = self._ion_ion_energy()
+
+        e_total = e_kin + e_ext + e_h + e_xc + e_nonlocal + e_ion
         # Strictly additive: components sum to total_energy.
         components = {
             "Kinetic": e_kin,
@@ -434,6 +459,7 @@ class KSDFTEngine:
             "Hartree": e_h,
             "XC": e_xc,
             "Nonlocal": e_nonlocal,
+            "Ion-Ion": e_ion,
         }
         return e_total, components
 

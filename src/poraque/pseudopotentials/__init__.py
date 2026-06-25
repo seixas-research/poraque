@@ -111,7 +111,7 @@ def resolve_pseudopotentials(system, pseudopotentials, functional="LDA"):
     return resolved
 
 
-def build_pseudopotential_potential(grid, system, pseudopotentials, mic=True,
+def build_pseudopotential_potential(grid, system, pseudopotentials, mic=None,
                                     functional="LDA"):
     """
     Build the valence external potential and count valence electrons.
@@ -125,7 +125,9 @@ def build_pseudopotential_potential(grid, system, pseudopotentials, mic=True,
     pseudopotentials : "auto" or "upf" or dict or LocalPseudopotential
         See :func:`resolve_pseudopotentials`.
     mic : bool, optional
-        Use the minimum-image convention for periodic cells.
+        Use the minimum-image convention. When ``None`` (default), it is
+        enabled only if the grid is periodic in at least one direction
+        (``any(grid.pbc)``), so finite/molecular systems are not wrapped.
     functional : str, optional
         Exchange-correlation functional used to select bundled UPF files
         (default ``"LDA"``).
@@ -136,6 +138,8 @@ def build_pseudopotential_potential(grid, system, pseudopotentials, mic=True,
         ``(v_ext, n_valence)`` — the local pseudopotential summed over all ions
         on the grid (Hartree) and the total number of valence electrons.
     """
+    if mic is None:
+        mic = any(grid.pbc)
     table = resolve_pseudopotentials(system, pseudopotentials, functional=functional)
     v_ext = np.zeros(grid.shape)
     n_valence = 0.0

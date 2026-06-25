@@ -212,3 +212,6 @@ reports/
 
 # Pseudopotentials (from PseudoDojo)
 pseudos/
+
+# Poraque default execution log
+output.txt

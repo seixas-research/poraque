@@ -1,5 +1,0 @@
-Incluir cálculos em paralelo usando MPI ou OpenMP
-Incluir libxc para xc functionals
-Incluir tests com numba, python-jit (>= 3.14), ou engine criado com rust
-Incluir medições de tempo para cada módulo
-Incluir output como argumento do Poraque, para escrever o output padrão

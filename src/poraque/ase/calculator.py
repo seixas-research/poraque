@@ -18,7 +18,9 @@ are all configured through the constructor.
 """
 
 import logging
+import sys
 import warnings
+from contextlib import contextmanager, redirect_stdout
 
 import numpy as np
 from ase.calculators.calculator import Calculator, all_changes
@@ -27,8 +29,9 @@ from ..calculator import KSDFTCalculator, OFDFTCalculator
 from ..core import Grid, System, reporting
 from ..core.kpoints import gamma_only, monkhorst_pack_kpoints
 from ..core.units import BOHR_TO_ANGSTROM, HARTREE_TO_EV
-from ..functionals import External, Hartree, LDA, TFvW
+from ..functionals import External, Hartree, LDA, TFvW, resolve_xc
 from ..potentials import build_external_potential
+from ..profiling import profiler
 from ..pseudopotentials import build_pseudopotential_potential
 
 logger = logging.getLogger(__name__)
@@ -90,12 +93,18 @@ class Poraque(Calculator):
     fd_step : float, optional
         Finite-difference displacement (Å) for numerical forces.
     verbose : bool, optional
-        Write the full calculation log to standard output (default ``True``).
-        The log reports the generated grid, the material structure, the
-        step-by-step SCF convergence, and the final energy decomposition. Set
-        ``verbose=False`` to silence it. The numerical-force displacements never
-        print, regardless of this flag, so a single ``get_potential_energy()`` /
-        ``get_forces()`` call produces exactly one structured log.
+        Write the full calculation log (default ``True``). The log reports the
+        generated grid, the material structure, the step-by-step SCF
+        convergence, the final energy decomposition, and an execution-timing
+        summary. Set ``verbose=False`` to silence it. The numerical-force
+        displacements never print, regardless of this flag, so a single
+        ``get_potential_energy()`` / ``get_forces()`` call produces exactly one
+        structured log.
+    output : str or path-like or None, optional
+        Destination for the standard execution log. Defaults to
+        ``"output.txt"``: all verbose logs/results are redirected to this file
+        (overwritten each calculation). Pass ``None`` to write to the process's
+        real standard output instead (the pre-redirection behaviour).
     """
 
     implemented_properties = ["energy", "free_energy", "forces"]
@@ -105,7 +114,7 @@ class Poraque(Calculator):
                  xc="lda", hartree=True,
                  kinetic=None, external_kind="soft", external_kwargs=None,
                  charge=0, backend="numpy", settings=None, fd_step=0.01,
-                 verbose=True, **kwargs):
+                 verbose=True, output="output.txt", **kwargs):
         Calculator.__init__(self, **kwargs)
         mode = mode.lower()
         if mode not in ("ks", "of"):
@@ -139,6 +148,7 @@ class Poraque(Calculator):
         self.solver_settings = settings
         self.fd_step = fd_step
         self.verbose = verbose
+        self.output = output
 
     # -- construction helpers -------------------------------------------------
 
@@ -217,24 +227,59 @@ class Poraque(Calculator):
         functionals = [kinetic]
         if self.hartree:
             functionals.append(Hartree())
-        if self.xc is not None:
-            functionals.append(LDA() if self.xc == "lda" else self.xc)
+        xc = self._resolve_xc()
+        if xc is not None:
+            functionals.append(xc)
         functionals.append(External(v_ext))
         return functionals
 
-    def _xc_functional(self):
-        """Resolve the XC functional argument for KS-DFT."""
+    def _resolve_xc(self):
+        """
+        Resolve the ``xc`` argument into a functional object (or ``None``).
+
+        String functional names (``"lda"``, ``"pbe"``, ``"pbesol"``) are mapped
+        to concrete functionals through :func:`poraque.functionals.resolve_xc`;
+        the GGA functionals (PBE/PBEsol) are backed by libxc. An unsupported
+        name raises a clear :class:`NotImplementedError` up front instead of
+        crashing deep in the SCF loop.
+        """
         if self.xc is None:
             return None
-        return LDA() if self.xc == "lda" else self.xc
+        if isinstance(self.xc, str):
+            return resolve_xc(self.xc)
+        return self.xc
+
+    def _xc_functional(self):
+        """Resolve the XC functional argument for KS-DFT."""
+        return self._resolve_xc()
 
     # -- core evaluation ------------------------------------------------------
+
+    @contextmanager
+    def _output_stream(self):
+        """
+        Yield the stream the execution log should be written to.
+
+        Returns the process stdout when ``output`` is ``None``; otherwise opens
+        (and truncates) the configured output file for the duration of the
+        calculation.
+        """
+        if self.output is None:
+            yield sys.stdout
+        else:
+            handle = open(self.output, "w")
+            try:
+                yield handle
+            finally:
+                handle.close()
 
     def _single_point(self, atoms, verbose=False):
         """Run a single-point calculation and return the :class:`Result`."""
         system = System.from_ase(atoms, charge=self.charge)
-        grid = self._build_grid(system)
-        v_ext = self._build_external(system, grid)
+        with profiler.timer("grid build"):
+            grid = self._build_grid(system)
+        with profiler.timer("external potential"):
+            v_ext = self._build_external(system, grid)
 
         if verbose:
             # Report the automatically generated grid and the material structure
@@ -249,7 +294,8 @@ class Poraque(Calculator):
                                      backend=self.backend_name,
                                      settings=self.solver_settings,
                                      verbose=verbose)
-            return driver.calculate()
+            with profiler.timer("SCF (orbital-free)"):
+                return driver.calculate()
 
         kpoints, kweights = self._build_kpoints()
         driver = KSDFTCalculator(system, grid, v_ext,
@@ -259,21 +305,31 @@ class Poraque(Calculator):
                                  backend=self.backend_name,
                                  settings=self.solver_settings,
                                  verbose=verbose)
-        return driver.calculate()
+        with profiler.timer("SCF (Kohn-Sham)"):
+            return driver.calculate()
 
     def calculate(self, atoms=None, properties=("energy",), system_changes=all_changes):
         Calculator.calculate(self, atoms, properties, system_changes)
 
-        result = self._single_point(self.atoms, verbose=self.verbose)
-        energy_ev = result.total_energy * HARTREE_TO_EV
+        # Fresh timing accounting for this calculation; the standard execution
+        # log (and the final timing summary) is redirected to ``self.output``.
+        profiler.reset()
+        with self._output_stream() as stream, redirect_stdout(stream):
+            result = self._single_point(self.atoms, verbose=self.verbose)
+            energy_ev = result.total_energy * HARTREE_TO_EV
 
-        self.results["energy"] = energy_ev
-        self.results["free_energy"] = energy_ev
-        self.results["density"] = result.density
-        self.results["converged"] = result.converged
+            self.results["energy"] = energy_ev
+            self.results["free_energy"] = energy_ev
+            self.results["density"] = result.density
+            self.results["converged"] = result.converged
 
-        if "forces" in properties:
-            self.results["forces"] = self._numerical_forces(self.atoms)
+            if "forces" in properties:
+                self.results["forces"] = self._numerical_forces(self.atoms)
+
+            if self.verbose:
+                summary = profiler.summary()
+                if summary:
+                    print(summary)
 
     def _numerical_forces(self, atoms):
         """Central finite-difference forces in eV/Å."""

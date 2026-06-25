@@ -176,19 +176,31 @@ class Grid:
         """
         Build the reciprocal-space grid vectors (Gx, Gy, Gz).
 
-        These are the angular wavevectors ``G = 2*pi*k`` sampled by the FFT
-        for the current grid spacing, returned as three arrays each shaped
-        like the grid.
+        These are the angular wavevectors :math:`\\mathbf{G}` sampled by the FFT
+        for the current grid, returned as three Cartesian-component arrays each
+        shaped like the grid. The construction is valid for **any** Bravais
+        lattice: the integer FFT frequencies are projected onto the reciprocal
+        lattice vectors (rows of :attr:`reciprocal_cell`), which reduces to the
+        orthogonal ``2*pi*fftfreq`` form for a cubic cell.
 
         Returns
         -------
         tuple of numpy.ndarray
             ``(Gx, Gy, Gz)`` arrays of shape ``self.shape``.
         """
-        gx = 2 * np.pi * np.fft.fftfreq(self.Nx, self.h[0])
-        gy = 2 * np.pi * np.fft.fftfreq(self.Ny, self.h[1])
-        gz = 2 * np.pi * np.fft.fftfreq(self.Nz, self.h[2])
-        return np.meshgrid(gx, gy, gz, indexing="ij")
+        # Integer FFT frequencies (0, 1, ..., -2, -1) along each axis.
+        kx = np.fft.fftfreq(self.Nx) * self.Nx
+        ky = np.fft.fftfreq(self.Ny) * self.Ny
+        kz = np.fft.fftfreq(self.Nz) * self.Nz
+        KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing="ij")
+
+        # Project the integer frequencies onto the reciprocal lattice vectors
+        # (rows of self.reciprocal_cell = 2*pi*inv(cell).T).
+        b1, b2, b3 = self.reciprocal_cell
+        Gx = KX * b1[0] + KY * b2[0] + KZ * b3[0]
+        Gy = KX * b1[1] + KY * b2[1] + KZ * b3[1]
+        Gz = KX * b1[2] + KY * b2[2] + KZ * b3[2]
+        return Gx, Gy, Gz
 
     def get_g2(self):
         """

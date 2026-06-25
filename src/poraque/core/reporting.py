@@ -139,6 +139,7 @@ _DECOMP_ORDER = [
     "Hartree",
     "XC",
     "Nonlocal",
+    "Ion-Ion",
 ]
 
 
