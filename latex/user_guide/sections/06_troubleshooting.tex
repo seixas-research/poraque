@@ -1,0 +1,69 @@
+\chapter{Troubleshooting}
+\label{ch:troubleshooting}
+
+\section{The run stops immediately}
+
+\begin{description}
+  \item[``No struct* directories''] Check \opt{data.root} and
+    \opt{data.pattern}. The pattern is a prefix, not a glob.
+  \item[``use\_vasp\_extcar is set but \ldots does not exist''] Standard VASP
+    does not write \file{EXTCAR}. Unset the flag and let Poraqu\^e compute it.
+  \item[``No valence charge for \ldots''] No \file{POTCAR} was found. Supply one,
+    or pass \opt{--zval Au=11}.
+  \item[``Unknown key(s) in section \ldots''] A typo in the YAML. The message
+    lists the valid keys.
+\end{description}
+
+\section{The results look wrong}
+
+\begin{description}
+  \item[$R^2$ is negative] The model is worse than predicting the mean. Usually
+    too few epochs, or a learning rate that diverged --- check the loss curve in
+    \file{results/plots/}.
+  \item[The electron count is far off] Nothing constrains it by default. A few
+    per cent is normal; tens of per cent means the model is extrapolating,
+    typically because the evaluation grid is far from the training resolution.
+  \item[The numbers seem too good] Check whether anything was held out. In
+    universal mode with \opt{holdout: null} they are training fit. The report's
+    \emph{What these numbers do not show} section states this explicitly.
+\end{description}
+
+\section{Grids and shapes}
+
+\begin{description}
+  \item[``grid shape \ldots does not match the supplied shared grid''] Two
+    fields of one material are on different meshes. All three must share a grid;
+    read them with \opt{grid=} from the same source.
+  \item[``Cannot batch mixed grid shapes''] Use the shape-bucketed loader
+    (the training script does) or \opt{batch\_size: 1}.
+  \item[A few negative voxels in \file{TAUCAR}] Band-limiting a strictly
+    positive field with sharp core peaks rings slightly. It is an artefact of
+    the downsampling, not of the data, and is why the pipeline uses a
+    sign-tolerant $\operatorname{asinh}$ normalisation.
+\end{description}
+
+\section{Devices}
+
+\begin{description}
+  \item[``CUDA was requested but \ldots''] A warning, not an error --- the run
+    continues on CPU.
+  \item[Training is slower on MPS than CPU] At small grids kernel-launch
+    overhead dominates. The advantage grows with size: $2.2\times$ at $32^3$,
+    $5.7\times$ at $64^3$.
+  \item[Results differ slightly between devices] Expect $\sim10^{-6}$ relative
+    on a single forward pass. Two \emph{independently trained} runs will differ
+    much more, because optimisation amplifies tiny differences --- that is not a
+    bug.
+\end{description}
+
+\section{Reports}
+
+\begin{description}
+  \item[A \file{.tex} appears instead of a PDF] No \opt{latexmk} or
+    \opt{pdflatex} on the path. The source is written so it can be compiled
+    elsewhere.
+  \item[Stray \file{.aux} or \file{.log} files] Should not happen: reports are
+    built in a temporary directory that is deleted wholesale. If you see them,
+    they came from compiling the guides by hand --- use \opt{make} in
+    \file{latex/technical\_guide/} or \file{latex/user\_guide/}, which cleans up.
+\end{description}

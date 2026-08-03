@@ -1,40 +1,26 @@
 # =========================================================================
-# Poraque Technical Guide
+# Build both Poraque guides.
 #
-#   make          compile the PDF and remove every auxiliary file
-#   make watch    recompile on change (auxiliaries kept while watching)
-#   make clean    remove auxiliaries, keep the PDF
-#   make distclean  remove auxiliaries AND the PDF
-#
-# `latexmk -c` deletes exactly the regenerable files -- .aux .log .out .toc
-# .fls .fdb_latexmk and friends -- while keeping the .pdf. Listing extensions
-# by hand would drift as packages add new ones, so the cleaning is delegated
-# rather than reimplemented.
+#   make            build both PDFs and remove every auxiliary file
+#   make user       user guide only
+#   make technical  technical guide only
+#   make clean      remove auxiliaries, keep the PDFs
 # =========================================================================
-DOC := poraque_technical_guide
-LATEXMK := latexmk -pdf -interaction=nonstopmode -halt-on-error
-
-.PHONY: all clean distclean watch
-# Serial only: `clean` must not run before the PDF is produced.
+.PHONY: all user technical clean distclean
 .NOTPARALLEL:
 
-all: $(DOC).pdf clean
+all: user technical
 
-$(DOC).pdf: $(DOC).tex $(wildcard sections/*.tex)
-	$(LATEXMK) $(DOC).tex
+user:
+	$(MAKE) -C user_guide
 
-# -c removes auxiliaries but preserves the PDF; sections/ holds only sources,
-# but latexmk can leave a stray .aux there when \input files are compiled.
+technical:
+	$(MAKE) -C technical_guide
+
 clean:
-	@latexmk -c $(DOC).tex >/dev/null 2>&1 || true
-	@rm -f sections/*.aux
-	@rm -f $(DOC).bbl $(DOC).blg $(DOC).synctex.gz
-	@echo "cleaned: kept $(DOC).pdf, $(DOC).tex and sections/*.tex"
+	@$(MAKE) -C user_guide clean
+	@$(MAKE) -C technical_guide clean
 
 distclean:
-	@latexmk -C $(DOC).tex >/dev/null 2>&1 || true
-	@rm -f sections/*.aux
-	@echo "removed auxiliaries and $(DOC).pdf"
-
-watch:
-	$(LATEXMK) -pvc $(DOC).tex
+	@$(MAKE) -C user_guide distclean
+	@$(MAKE) -C technical_guide distclean

@@ -1,0 +1,120 @@
+\chapter{Training}
+\label{ch:training}
+
+\section{The short version}
+
+\begin{lstlisting}
+python scripts/train_fno.py --write-config configs/train_config.yaml
+python scripts/train_fno.py --config configs/train_config.yaml
+\end{lstlisting}
+
+This trains \textbf{one} \opt{ext2chg} model and \textbf{one} \opt{chg2tau}
+model on the combined data of every structure, and writes:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Path & Contents \\
+\midrule
+\file{models/ext2chg.pt}, \file{models/chg2tau.pt} & the trained operators \\
+\file{logs/*.log}, \file{logs/*.json} & metrics and full history \\
+\file{logs/*\_config.yaml} & the resolved configuration \\
+\file{results/plots/} & loss curves, cross-sections, parity plots \\
+\file{reports/*.pdf} & a typeset report per model \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{One model, all structures}
+
+Training is \emph{universal}: a single set of weights is fitted to every
+structure at once, and batches mix materials. That is the deployable artefact.
+
+\begin{pwarn}
+By default nothing is held out, so the metrics printed at the end are
+\textbf{training fit}. They show the model can represent the data; they are not
+a measure of how it will do on a new material. On the reference data the
+training fit is $4$--$5\times$ better than the cross-validated score, which is
+the size of the mistake if the two are confused.
+\end{pwarn}
+
+\section{Measuring generalisation}
+
+Two options, both splitting at the \emph{structure} level.
+
+\subsection{Hold out named structures}
+
+\begin{lstlisting}
+python scripts/train_fno.py --config configs/train_config.yaml \
+       --holdout struct_004
+\end{lstlisting}
+
+\subsection{K-fold cross-validation}
+
+\begin{lstlisting}
+python scripts/train_fno.py --config configs/train_config.yaml \
+       --kfold --k-folds 5
+\end{lstlisting}
+
+Each fold trains a fresh model on $K-1$ groups and scores it on the held-out
+group. A consolidated PDF reports the mean and standard deviation of each
+metric across folds.
+
+\begin{ptip}
+\opt{k\_folds} is capped at the number of structures; setting it equal to that
+count is leave-one-out. Whole materials are held out --- never a subset of
+voxels from a material that also appears in training, which would score the
+model on data it had effectively already seen.
+\end{ptip}
+
+\section{Reading the output}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Metric & Read it as \\
+\midrule
+relative $L^2$ & fractional error; $0.03$ means $3\,\%$ \\
+$R^2$ & $1$ is perfect; \emph{negative} means worse than the mean \\
+MAE, RMSE & absolute error, in the field's own units \\
+integral error & how well the electron count or $T_s$ is reproduced \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+For \opt{chg2tau} the log also prints the classical orbital-free functionals
+(Thomas--Fermi, von Weizsäcker) evaluated on the same input. Beating those is
+the bar --- a learned functional that does not is not adding anything.
+
+\section{Reference numbers}
+
+Five gold supercells, $32^3$ working resolution, 200 epochs:
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Model & 5-fold CV & universal (training fit) \\
+\midrule
+\opt{ext2chg} & $0.0295 \pm 0.0025$ & $0.0057$ \\
+\opt{chg2tau} & $0.0525 \pm 0.0031$ & $0.0133$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Quote the cross-validated column.
+
+\section{Options worth knowing}
+
+\begin{description}
+  \item[\opt{--pauli-head}] For \opt{chg2tau}, predicts
+    $\tau = \tau_{\rm vW}[\rho] + s\,\mathrm{softplus}(f)$ so the exact bound
+    $\tau \ge \tau_{\rm vW}$ holds by construction. Improves accuracy and
+    trains slightly faster; recommended.
+  \item[\opt{--gaussian-blur}] Smooths the external potential. Measured to make
+    no meaningful difference at $32^3$ and to remove information near the ionic
+    cores; leave it off unless working at higher resolution.
+  \item[\opt{--device}] \opt{auto}, \opt{cuda}, \opt{mps} or \opt{cpu}. An
+    unavailable backend warns and falls back rather than failing.
+  \item[\opt{--resolution}] Working grid. Higher is more faithful and much
+    slower; $32$ is a reasonable starting point.
+\end{description}

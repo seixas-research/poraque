@@ -133,22 +133,6 @@ units, and the absence of a volume pre-factor; for GPAW the coarse-versus-fine
 grid distinction and the pseudo-versus-all-electron density ambiguity, which
 would be a silent physics error if mixed across a data set.
 
-\section{Numerical kernels}
-
-The classical electrostatic lattice sums --- the pairwise Coulomb energy and
-the real-space Ewald term --- are the scalar hot spots of the legacy solver.
-They live in \file{poraque/potentials/kernels.py} as vectorised NumPy, with no
-JIT and no optional dependency. Each is a pure function (arrays in, float out)
-carrying no Poraqu\^e types, so a compiled backend can replace the bodies
-without touching any caller.
-
-\begin{ptip}
-Correctness is pinned by physics rather than by an implementation reference:
-the rock-salt Madelung constant is reproduced as $1.74756459$ against the exact
-$1.7475645946$, and is invariant under the Ewald splitting parameter $\alpha$
---- the signature of a correctly balanced real/reciprocal decomposition.
-\end{ptip}
-
 \section{Hardware acceleration}
 \label{sec:hardware}
 
@@ -206,7 +190,7 @@ $\sim10^{-6}$ relative on a single forward pass with identical weights.
 
 A training run is defined by a YAML file with four sections --- \opt{data},
 \opt{model}, \opt{training}, \opt{output} --- mirroring the four things a run
-needs. Command-line flags override individual entries, so one committed config
+needs; Chapter~\ref{ch:pipeline} walks the pipeline end to end. Command-line flags override individual entries, so one committed config
 can be swept from the shell without being edited:
 
 \begin{lstlisting}

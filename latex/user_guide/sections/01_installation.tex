@@ -1,0 +1,44 @@
+\chapter{Installation}
+\label{ch:install}
+
+\begin{lstlisting}
+git clone https://github.com/seixas-research/poraque.git
+cd poraque
+pip install -e .
+\end{lstlisting}
+
+This installs NumPy, SciPy, ASE, Matplotlib, PyYAML and PyTorch.
+
+\section{Python version}
+
+\begin{pnote}
+Poraqu\^e requires \textbf{Python 3.11 or newer}. Every module is verified
+against the 3.11 grammar. There is deliberately no upper bound, so newer
+interpreters are supported.
+\end{pnote}
+
+\section{Checking the installation}
+
+\begin{lstlisting}
+pytest
+python -c "from poraque.ml.device import available_devices; print(available_devices())"
+\end{lstlisting}
+
+The device list is ordered by preference, so the first entry is what
+\opt{device: auto} will select --- \opt{cuda}, then \opt{mps}, then \opt{cpu}.
+
+\section{Optional components}
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Component & Needed for & Install \\
+\midrule
+CUDA build of PyTorch & NVIDIA GPUs & \url{https://pytorch.org} \\
+\opt{pdflatex} / \opt{latexmk} & automatic PDF reports & TeX Live or MacTeX \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Apple Silicon needs nothing extra: the Metal backend ships with the standard
+PyTorch wheel and is selected automatically.

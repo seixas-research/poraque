@@ -1,0 +1,104 @@
+\chapter{Configuration reference}
+\label{ch:config}
+
+A run is defined by a YAML file with four sections. Command-line flags override
+individual entries, so one committed configuration can be swept from the shell
+without being edited:
+
+\begin{lstlisting}
+python scripts/train_fno.py --config configs/train_config.yaml --epochs 500
+\end{lstlisting}
+
+\begin{pnote}
+Unknown keys are \emph{rejected}, not ignored. A typo such as \opt{learn\_rate}
+would otherwise be silently dropped and the run would quietly use the default
+--- producing results that do not match the file that appears to describe them.
+\end{pnote}
+
+The \emph{resolved} configuration is written beside the results, recording what
+actually ran, overrides included.
+
+\section{\opt{data}}
+
+\begin{center}
+\begin{tabular}{@{}llp{6.4cm}@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\opt{root} & \opt{data/vasp} & directory of per-material calculations \\
+\opt{pattern} & \opt{struct} & prefix identifying those directories \\
+\opt{cache} & \opt{data/cache} & where downsampled copies are written \\
+\opt{code} & \opt{auto} & DFT code, or detect it \\
+\opt{resolution} & \opt{32} & longest grid axis after downsampling \\
+\opt{use\_vasp\_extcar} & \opt{false} & read a reference \file{EXTCAR} instead of computing it \\
+\opt{gaussian\_blur} & \opt{null} & blur width in Å for the computed potential \\
+\opt{blur\_method} & \opt{spectral} & \opt{spectral} or \opt{ndimage} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{pwarn}
+\opt{blur\_method: ndimage} blurs along \emph{lattice} axes, which is
+anisotropic in Cartesian space unless the cell is orthogonal --- on a
+face-centred cubic cell the two methods differ by $2$--$6\,\%$. Prefer the
+default.
+\end{pwarn}
+
+\section{\opt{model}}
+
+\begin{center}
+\begin{tabular}{@{}llp{6.4cm}@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\opt{width} & \opt{16} & channel width of the Fourier layers \\
+\opt{modes} & \opt{8} & retained modes per axis (a capacity limit) \\
+\opt{n\_layers} & \opt{4} & number of Fourier layers \\
+\opt{projection\_channels} & \opt{48} & hidden width of the output head \\
+\opt{mode\_selection} & \opt{fixed} & \opt{fixed} index, or \opt{physical} at constant $G_{\max}$ \\
+\opt{pauli\_residual} & \opt{false} & structural $\tau\ge\tau_{\rm vW}$ for \opt{chg2tau} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{\opt{training}}
+
+\begin{center}
+\begin{tabular}{@{}llp{6.4cm}@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\opt{mode} & \opt{universal} & one model on all structures, or \opt{leave\_one\_out} \\
+\opt{enable\_kfold} & \opt{false} & run K-fold cross-validation \\
+\opt{k\_folds} & \opt{5} & number of folds (capped at the structure count) \\
+\opt{holdout} & \opt{null} & structures excluded from universal training \\
+\opt{epochs} & \opt{200} & passes over the training set \\
+\opt{batch\_size} & \opt{4} & capped per grid-shape bucket \\
+\opt{learning\_rate} & \opt{0.002} & AdamW \\
+\opt{device} & \opt{auto} & \opt{auto}, \opt{cuda}, \opt{mps}, \opt{cpu} \\
+\opt{loss} & \opt{relative\_l2} & or \opt{sobolev} (adds a gradient term) \\
+\opt{physics} & all zero & weights of the physics-informed terms \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Physics weights default to zero, so the objective is the plain supervised
+baseline until one is enabled deliberately. Introduce them one at a time
+against a measured baseline: a badly scaled constraint degrades accuracy while
+looking principled.
+
+\section{\opt{output}}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Key & Default \\
+\midrule
+\opt{log}, \opt{json} & \file{logs/\ldots} \\
+\opt{checkpoint\_dir} & \file{models} \\
+\opt{plot\_dir} & \file{results/plots} \\
+\opt{report\_dir} & \file{reports} \\
+\opt{dpi} & \opt{160} \\
+\bottomrule
+\end{tabular}
+\end{center}

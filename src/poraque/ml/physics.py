@@ -218,6 +218,179 @@ def integrate(field, cell):
     return values.sum(dim=(-3, -2, -1)) * volume / n_points
 
 
+def volume_element(field, cell):
+    r"""
+    Volume per grid point, :math:`\Delta v = \Omega / (N_1 N_2 N_3)`.
+
+    Returned shaped ``(B, 1, 1, 1, 1)`` so it broadcasts against a field.
+    """
+    values = field.squeeze(1) if field.dim() == 5 else field
+    volume = cell_volume(cell, device=values.device, dtype=values.dtype)
+    n_points = float(np.prod(values.shape[-3:]))
+    return (volume / n_points).reshape(-1, *([1] * (field.dim() - 1)))
+
+
+# ---------------------------------------------------------------------- #
+# Functional derivatives
+# ---------------------------------------------------------------------- #
+def functional_derivative(energy, density, cell, create_graph=False,
+                          retain_graph=None):
+    r"""
+    Functional derivative :math:`\delta F/\delta\rho` of a scalar functional.
+
+    ``energy`` is any differentiable map from a density field to a per-structure
+    scalar, so this covers an analytic functional, a neural network, or a
+    composition of both. Autograd supplies the derivative in one backward pass:
+    no finite differences, and no derivative to work out by hand — which is the
+    traditional obstacle to proposing a new kinetic energy functional.
+
+    Parameters
+    ----------
+    energy : callable
+        ``rho -> (B,)`` tensor. Must be differentiable with respect to ``rho``.
+    density : torch.Tensor
+        ``(B, 1, Nx, Ny, Nz)`` density in e/Å³.
+    cell : torch.Tensor
+        ``(B, 3, 3)`` lattice vectors in Å.
+    create_graph : bool, optional
+        Keep the graph so the derivative can itself appear in a loss that is
+        backpropagated. Required for physics-informed training; costs memory.
+    retain_graph : bool, optional
+        Passed through to :func:`torch.autograd.grad`; defaults to
+        ``create_graph``.
+
+    Returns
+    -------
+    torch.Tensor
+        ``δF/δρ`` with the same shape as ``density``, in
+        ``[F] / (e/Å³) / Å³`` — for :math:`T_s` in eV that is eV per electron,
+        i.e. a potential.
+
+    Notes
+    -----
+    **The discretisation factor is not optional.** With
+    :math:`F = \sum_i f_i\,\Delta v` autograd returns
+    :math:`\partial F/\partial\rho_i`, whereas the functional derivative is
+    defined through :math:`\delta F = \int (\delta F/\delta\rho)\,\delta\rho\,
+    \mathrm{d}^3 r`. Matching the two gives
+
+    .. math:: \frac{\delta F}{\delta \rho}(\mathbf r_i)
+              = \frac{1}{\Delta v}\,\frac{\partial F}{\partial \rho_i}.
+
+    Omitting the :math:`1/\Delta v` rescales the whole potential by the number
+    of grid points — a factor of :math:`3\times10^4` on a 32³ mesh — silently,
+    with nothing raised. Every consumer here goes through this function so the
+    factor is applied exactly once.
+    """
+    if not torch.is_tensor(density):
+        raise TypeError("density must be a torch.Tensor")
+
+    # A leaf that requires grad, without disturbing the caller's tensor.
+    rho = density.detach().clone().requires_grad_(True)
+
+    with torch.enable_grad():
+        value = energy(rho)
+        if value.dim() == 0:
+            value = value.reshape(1)
+        gradient, = torch.autograd.grad(
+            value.sum(), rho, create_graph=create_graph,
+            retain_graph=create_graph if retain_graph is None else retain_graph,
+        )
+
+    return gradient / volume_element(density, cell)
+
+
+def kinetic_potential(tau, density, cell, create_graph=False):
+    r"""
+    Kinetic potential :math:`\delta T_s/\delta\rho` from a KEDF.
+
+    ``tau`` maps a density to a kinetic energy *density*; the integral over the
+    cell gives :math:`T_s`, and its functional derivative is the quantity
+    orbital-free DFT actually consumes.
+
+    Parameters
+    ----------
+    tau : callable
+        ``rho -> tau(rho)``, both ``(B, 1, Nx, Ny, Nz)``; :math:`\tau` in
+        eV/Å³. Accepts the analytic functionals of this module and any learned
+        operator.
+    density : torch.Tensor
+        ``(B, 1, Nx, Ny, Nz)`` density in e/Å³.
+    cell : torch.Tensor
+        ``(B, 3, 3)`` lattice vectors in Å.
+    create_graph : bool, optional
+        Keep the graph for physics-informed training.
+
+    Returns
+    -------
+    torch.Tensor
+        :math:`\delta T_s/\delta\rho` in eV, same shape as ``density``.
+
+    Examples
+    --------
+    Recovering the analytic Thomas-Fermi potential from its energy density:
+
+    >>> import torch
+    >>> from poraque.ml.physics import kinetic_potential, thomas_fermi_tau
+    >>> rho = torch.rand(1, 1, 8, 8, 8) * 0.3 + 0.05
+    >>> cell = torch.eye(3).unsqueeze(0) * 6.0
+    >>> potential = kinetic_potential(thomas_fermi_tau, rho, cell)
+    >>> potential.shape
+    torch.Size([1, 1, 8, 8, 8])
+
+    Notes
+    -----
+    A model with small pointwise error in :math:`\tau` can still have a poor
+    derivative, because differentiation amplifies high-frequency error: a
+    ripple of amplitude :math:`\epsilon` at wavevector :math:`G` contributes
+    :math:`\epsilon` to the value but :math:`\epsilon G` to the gradient.
+    Validate the derivative directly rather than inferring it from the
+    :math:`\tau` error.
+    """
+    return functional_derivative(
+        lambda rho: integrate(tau(rho), cell), density, cell,
+        create_graph=create_graph,
+    )
+
+
+def operator_kinetic_potential(operator, density, cell, create_graph=False):
+    r"""
+    :math:`\delta T_s/\delta\rho` from a trained ``chg2tau``
+    :class:`~poraque.ml.training.FieldOperator`.
+
+    Handles the normalisation round trip: the operator consumes and returns
+    normalised fields, while the derivative must be taken with respect to the
+    **physical** density, or its magnitude is meaningless.
+
+    Parameters
+    ----------
+    operator : FieldOperator
+        A trained ``chg2tau`` operator.
+    density : torch.Tensor
+        ``(B, 1, Nx, Ny, Nz)`` physical density in e/Å³.
+    cell : torch.Tensor
+        ``(B, 3, 3)`` lattice vectors in Å.
+    create_graph : bool, optional
+        Keep the graph so this can enter a differentiable loss.
+
+    Returns
+    -------
+    torch.Tensor
+        :math:`\delta T_s/\delta\rho` in eV.
+    """
+    if operator.task.name != "chg2tau":
+        raise ValueError(
+            f"kinetic potential requires a chg2tau operator, got "
+            f"{operator.task.name!r}."
+        )
+
+    def tau(rho):
+        normalized = operator.input_transform(rho)
+        return operator.target_transform.inverse(operator.model(normalized, cell))
+
+    return kinetic_potential(tau, density, cell, create_graph=create_graph)
+
+
 # ---------------------------------------------------------------------- #
 # Electrostatics
 # ---------------------------------------------------------------------- #
@@ -479,7 +652,7 @@ def kinetic_energy_loss(tau, cell, target_energy):
 
 
 def euler_lagrange_residual(density, v_external, cell, lam=1.0 / 9.0,
-                            v_xc=None, epsilon=1e-10):
+                            v_xc=None, epsilon=1e-10, kinetic=None):
     r"""
     Residual of the orbital-free Euler-Lagrange equation.
 
@@ -518,6 +691,18 @@ def euler_lagrange_residual(density, v_external, cell, lam=1.0 / 9.0,
         *constancy* of the sum.
     epsilon : float, optional
         Density floor.
+    kinetic : callable or torch.Tensor, optional
+        Replaces the analytic ``TF + lam*vW`` surrogate with a **learned**
+        kinetic potential. Either
+
+        * a tensor already holding :math:`\delta T_s/\delta\rho` in eV, or
+        * a callable ``rho -> tau(rho)``, in which case the derivative is
+          taken here by autograd (:func:`kinetic_potential`), with
+          ``create_graph=True`` so the residual stays differentiable.
+
+        Passing a trained ``chg2tau`` operator's :math:`\tau` closes the loop
+        between the two models: the constraint on ``ext2chg`` is then built
+        from the learned functional rather than from a fixed approximation.
 
     Returns
     -------
@@ -526,17 +711,24 @@ def euler_lagrange_residual(density, v_external, cell, lam=1.0 / 9.0,
 
     Notes
     -----
-    The residual is only as good as the kinetic functional used to build it.
-    ``TF + lam*vW`` is an approximation, so this term should carry a modest
-    weight — it supplies a physically correct *inductive bias*, not ground
-    truth. The plan in ``plan/pi_fno.md`` discusses replacing it with the
-    learned ``chg2tau`` operator, which turns the constraint exact in the limit
-    of a perfect KEDF.
+    With the analytic surrogate the residual is only as good as
+    ``TF + lam*vW``, which is an approximation — the term supplies a physically
+    correct *inductive bias*, not ground truth, and should carry a modest
+    weight. Supplying ``kinetic`` removes that limitation, at the cost of
+    coupling the two models; see ``docs/model2_architecture.md`` §5, including
+    the warning that the residual alone has trivial solutions and the data
+    terms must stay dominant.
     """
-    total = (thomas_fermi_potential(density)
-             + lam * von_weizsacker_potential(density, cell, epsilon)
-             + v_external
-             + hartree_potential(density, cell))
+    if kinetic is None:
+        kinetic_term = (thomas_fermi_potential(density)
+                        + lam * von_weizsacker_potential(density, cell, epsilon))
+    elif callable(kinetic):
+        kinetic_term = kinetic_potential(kinetic, density, cell,
+                                         create_graph=True)
+    else:
+        kinetic_term = kinetic
+
+    total = kinetic_term + v_external + hartree_potential(density, cell)
     if v_xc is not None:
         total = total + v_xc
     return total - total.mean(dim=(-3, -2, -1), keepdim=True)

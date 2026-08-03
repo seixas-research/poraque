@@ -1,0 +1,46 @@
+\chapter{Preparing data}
+\label{ch:data}
+
+\section{Directory layout}
+
+One directory per material:
+
+\begin{lstlisting}
+data/vasp/
+    struct_000/   POSCAR  INCAR  POTCAR  CHGCAR  TAUCAR
+    struct_001/   POSCAR  INCAR  POTCAR  CHGCAR  TAUCAR
+    ...
+\end{lstlisting}
+
+The prefix is configurable (\opt{data.pattern}); anything matching it and
+containing the required files is picked up.
+
+\begin{ptip}
+\textbf{You do not need a modified VASP.} The external potential is computed
+from \file{POSCAR}, \file{INCAR} and \file{POTCAR} using the tabulated
+pseudopotential, reproducing a reference \file{EXTCAR} to a relative
+$5\times10^{-5}$. Only \file{CHGCAR} and \file{TAUCAR} are needed as targets.
+\end{ptip}
+
+\section{Grids may differ between materials}
+
+They usually do: \opt{ENCUT} and the cell shape fix \opt{NGXF, NGYF, NGZF}, so
+two structures of the same compound can land on different meshes. This is
+handled --- batches are grouped by grid shape and one model serves them all.
+
+Fields are reduced to a common working resolution (\opt{data.resolution}, the
+longest axis) by Fourier truncation, which is the exact band-limited projection
+for a plane-wave field: periodicity and the electron count survive to machine
+precision.
+
+\section{Checking your data}
+
+\begin{lstlisting}
+python scripts/validate_vasp_data.py --fit-sigma --form-factor
+\end{lstlisting}
+
+This reads every structure, recomputes the external potential, compares it
+against a reference \file{EXTCAR} if one is present, and runs integrity checks
+on \file{CHGCAR} and \file{TAUCAR} --- grid agreement, finiteness, sign, and the
+integrated totals. The electron count is the sharpest check: it should return
+the exact integer $\sum_a Z^{\mathrm{val}}_a$.

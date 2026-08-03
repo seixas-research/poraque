@@ -77,6 +77,11 @@ _LAZY = {
     "fit_pauli_scale": "poraque.ml.heads",
     "pauli_bound_violation": "poraque.ml.heads",
     # losses
+    # differentiable physics
+    "functional_derivative": "poraque.ml.physics",
+    "kinetic_potential": "poraque.ml.physics",
+    "operator_kinetic_potential": "poraque.ml.physics",
+    "euler_lagrange_residual": "poraque.ml.physics",
     "PhysicsInformedLoss": "poraque.ml.losses",
     "RelativeL2Loss": "poraque.ml.losses",
     "SobolevLoss": "poraque.ml.losses",

@@ -1,0 +1,261 @@
+% =========================================================================
+% Chapter 9 - The training pipeline
+% =========================================================================
+\chapter{The training pipeline}
+\label{ch:pipeline}
+
+\section{Requirements}
+\label{sec:requirements}
+
+\begin{pnote}
+Poraqu\^e requires \textbf{Python 3.11 or newer}
+(\opt{requires-python = ">=3.11"}). Every module has been verified against the
+3.11 grammar, so nothing in the source uses syntax or standard-library calls
+newer than that. There is deliberately no upper bound: newer interpreters are
+supported.
+\end{pnote}
+
+\begin{lstlisting}
+git clone https://github.com/seixas-research/poraque.git
+cd poraque
+pip install -e .
+\end{lstlisting}
+
+This pulls in NumPy, SciPy, ASE, Matplotlib, PyYAML and PyTorch. A working
+\opt{pdflatex} or \opt{latexmk} is needed only for the automatic PDF reports
+of Section~\ref{sec:pdfreports}; without one the pipeline still runs and simply
+writes the \LaTeX{} source instead.
+
+\section{Configuration}
+
+A run is defined by a YAML file with four sections --- \opt{data},
+\opt{model}, \opt{training}, \opt{output} --- mirroring the four things a run
+needs. Command-line flags override individual entries, so one committed
+configuration can be swept from the shell without being edited or copied:
+
+\begin{lstlisting}
+python scripts/train_fno.py --write-config configs/train_config.yaml
+python scripts/train_fno.py --config configs/train_config.yaml --epochs 500
+\end{lstlisting}
+
+Unknown keys are \emph{rejected} rather than ignored: a typo such as
+\opt{learn\_rate} would otherwise be silently dropped and the run would quietly
+use the default, producing results that do not match the file that appears to
+describe them. The \emph{resolved} configuration is written beside the results,
+recording what actually ran, overrides included.
+
+\section{The external potential is computed, not imported}
+\label{sec:computedextcar}
+
+Standard VASP does not write \file{EXTCAR}. Depending on it would make the
+pipeline unusable for anyone without the patched build, so the default is to
+\textbf{compute} the potential from \file{POSCAR}, \file{INCAR} and
+\file{POTCAR} using the tabulated pseudopotential of
+Chapter~\ref{ch:vasp}. Setting \opt{use\_vasp\_extcar: true} reads a reference
+file instead, and errors clearly if none is present.
+
+The default costs essentially nothing in fidelity. Measured across five gold
+structures:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Structure & grid & relative $L^2$ & Pearson $r$ \\
+\midrule
+struct\_000 & $128^3$ & $2.13\times10^{-5}$ & $1.000000$ \\
+struct\_001 & $120{\times}128{\times}128$ & $5.95\times10^{-5}$ & $1.000000$ \\
+struct\_002 & $128{\times}120{\times}128$ & $5.75\times10^{-5}$ & $1.000000$ \\
+struct\_003 & $128^3$ & $5.66\times10^{-5}$ & $1.000000$ \\
+struct\_004 & $128^3$ & $5.36\times10^{-5}$ & $1.000000$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{ptip}
+The shared grid is taken from \file{CHGCAR}, not \file{EXTCAR}: the density is
+present in any standard run, the external potential is not. Sourcing the grid
+from a file that may not exist would have reintroduced the dependency through
+the back door.
+\end{ptip}
+
+\section{Gaussian smoothing of the potential}
+\label{sec:smoothing}
+
+The tabulated pseudopotential is sharply peaked at the ionic cores. Since a
+network with a fixed mode truncation may not use the highest spatial
+frequencies, an optional Gaussian blur is available:
+
+\begin{lstlisting}
+python scripts/train_fno.py --config configs/train_config.yaml \
+       --gaussian-blur 0.15 --blur-method spectral
+\end{lstlisting}
+
+Smoothing is applied \emph{on top of} the tabulated potential; it never
+replaces it. It is off by default (\opt{gaussian\_blur: null}).
+
+\subsection{Two methods, and why the default matters}
+
+\begin{description}
+  \item[\opt{spectral} (default)] multiplies by $e^{-G^2\sigma^2/2}$ in
+    reciprocal space. Exact for a band-limited field, and it uses the true
+    reciprocal metric, so the blur stays isotropic in Cartesian space on
+    \emph{any} cell.
+  \item[\opt{ndimage}] uses \opt{scipy.ndimage.gaussian\_filter} with
+    \opt{mode="wrap"} --- the wrap is essential, since the cell is a torus.
+\end{description}
+
+\begin{pwarn}
+The two agree to a relative $1.4\times10^{-5}$ on an \emph{orthogonal} cell and
+differ by $2$--$6\,\%$ on the fcc cell of the reference data. \opt{ndimage}
+blurs along \emph{lattice} axes, which is anisotropic in Cartesian space
+whenever the lattice vectors are not orthogonal. For a face-centred cubic
+lattice --- angles of $60^\circ$ --- it is measurably wrong, not merely
+different.
+\end{pwarn}
+
+\subsection{Measured effect}
+
+The blur is far from uniform. Binned by distance to the nearest ion at
+$\sigma = 0.15$~\AA:
+
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Shell [\AA] & voxels & mean $|\Delta V|$ [eV] & $\overline{V}$ [eV] & $\overline{\rho}$ [e/\AA$^3$] \\
+\midrule
+$0$--$0.5$ & $959$ & $9.64$ & $-113.8$ & $3.51$ \\
+$0.5$--$1.0$ & $6748$ & $4.06$ & $-45.8$ & $1.46$ \\
+$1.0$--$1.5$ & $17854$ & $1.58$ & $+13.0$ & $0.32$ \\
+$1.5$--$2.0$ & $7194$ & $1.18$ & $+25.8$ & $0.16$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The core region ($< 1$~\AA) is $23.5\,\%$ of the voxels but absorbs
+$50\,\%$ of the total change, and the deepest well shrinks by $7.8\,\%$
+($-137.3 \to -126.6$~eV). Those same voxels carry the charge-density peaks
+($\overline\rho = 1.72$ against a cell mean of $0.61$). Smoothing therefore
+preferentially removes exactly the information that generates the density
+maxima.
+
+\begin{pnote}
+On a matched held-out comparison --- same four training structures, same seed,
+architecture and epochs, sole occupancy of the accelerator --- blurring changed
+the held-out relative $L^2$ from $0.0274$ to $0.0272$, i.e.\ by $0.7\,\%$, and
+training time by $0.4\,\%$. \textbf{Neither is a meaningful difference.} At
+$32^3$ the field is already band-limited at $|G|_{\max}\approx26\ \text{\AA}^{-1}$
+and the blur removes content the mode truncation was discarding anyway. The
+option is worth revisiting only at higher resolution or larger \opt{modes},
+where the model could actually use those frequencies.
+\end{pnote}
+
+\section{Universal training}
+\label{sec:universal}
+
+\textbf{One model per task is trained on the combined data of every
+structure.} This is the deployable artefact.
+
+\begin{lstlisting}
+python scripts/train_fno.py --config configs/train_config.yaml   # mode: universal
+\end{lstlisting}
+
+Batches are drawn \emph{across} materials: the sampler groups structures by
+grid shape and shuffles both within and across those groups, so a gradient step
+generally mixes several. On the reference data the buckets are
+$(32,32,32)\times3$, $(30,32,32)\times1$ and $(32,30,32)\times1$ --- three
+distinct shapes flowing through one set of weights.
+
+The run writes a single \file{models/ext2chg.pt} and \file{models/chg2tau.pt}.
+
+\begin{pwarn}
+With \opt{holdout: null} every structure is in training, so the reported
+metrics are \textbf{training fit}. They show the model can represent the data;
+they are not a generalisation estimate. Name structures in \opt{holdout}, or
+use the cross-validation of Section~\ref{sec:kfold}, for that.
+
+Measured on five gold structures: universal training fit gives relative $L^2$
+of $0.0057$ (\opt{ext2chg}) and $0.0133$ (\opt{chg2tau}), against
+cross-validated values roughly five times larger. That gap is the memorisation
+margin, and quoting the training-fit number as a result would be a serious
+overstatement.
+\end{pwarn}
+
+\section{K-fold cross-validation}
+\label{sec:kfold}
+
+\begin{lstlisting}
+python scripts/train_fno.py --config configs/train_config.yaml \
+       --kfold --k-folds 5
+\end{lstlisting}
+
+or in the configuration file:
+
+\begin{lstlisting}
+training:
+  enable_kfold: true
+  k_folds: 5
+\end{lstlisting}
+
+Each fold trains a fresh model on $K-1$ groups and scores it on the held-out
+group, in physical units. The result is a generalisation estimate \emph{with a
+spread}, not a model to deploy.
+
+\subsection{The split is at the structure level}
+
+This is the part that decides whether the number means anything.
+
+A fold is a set of \emph{material names}; every voxel of a material goes to the
+same side of the split. Splitting at the voxel level would place the same
+material in both training and validation, and since neighbouring voxels of one
+crystal are enormously correlated, the model would effectively be scored on
+data it had already seen. The resulting figure would look excellent and would
+say nothing about transfer to a new material.
+
+\begin{ptip}
+\opt{k\_folds} is capped at the number of structures; setting it equal to that
+count \emph{is} leave-one-out. The partition is verified exact and disjoint ---
+every structure appears in exactly one validation fold.
+\end{ptip}
+
+\section{Automatic PDF reporting}
+\label{sec:pdfreports}
+
+Every run assembles its metrics and figures into a typeset PDF under
+\file{reports/}. In cross-validation mode a single \emph{consolidated} report
+covers all folds, with the per-fold table and the mean $\pm$ standard deviation
+of each metric.
+
+The mechanism matters for hygiene: the \LaTeX{} source is written into a
+\opt{tempfile.mkdtemp()} scratch directory, compiled there, and only the PDF is
+moved out; the whole tree is then removed with \opt{shutil.rmtree}.
+
+\begin{ptip}
+Deleting the directory wholesale is the only reliable way to guarantee that no
+\file{.tex}, \file{.aux}, \file{.log}, \file{.toc}, \file{.fls} or
+\file{.fdb\_latexmk} survives --- a hand-maintained list of extensions would
+drift as packages begin emitting new ones. Compilation falls back from
+\opt{latexmk} to two \opt{pdflatex} passes, and if no toolchain is present the
+source is written beside the target and the caller is told, rather than failing
+silently.
+\end{ptip}
+
+Each report carries a \emph{What these numbers do not show} section, generated
+from the run itself: whether anything was held out, how many structures there
+were, and whether the figures support a generalisation claim.
+
+\section{Outputs}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Path & Contents \\
+\midrule
+\file{models/*.pt} & trained operators (one per task in universal mode) \\
+\file{logs/*.log} & human-readable training log \\
+\file{logs/*.json} & machine-readable metrics and full history \\
+\file{logs/*\_config.yaml} & the resolved configuration, for reproduction \\
+\file{results/plots/} & loss curves, cross-sections, parity plots \\
+\file{reports/*.pdf} & typeset report per model or per cross-validation \\
+\bottomrule
+\end{tabular}
+\end{center}

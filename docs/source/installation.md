@@ -1,6 +1,9 @@
 # Installation
 
-Poraquê targets Python ≥ 3.10.
+Poraquê requires **Python 3.11 or newer**.
+
+Every module is verified against the 3.11 grammar. There is no upper bound —
+newer interpreters are supported.
 
 ```bash
 git clone https://github.com/seixas-research/poraque.git

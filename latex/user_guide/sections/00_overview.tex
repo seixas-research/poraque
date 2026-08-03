@@ -1,0 +1,55 @@
+\chapter*{Overview}
+\addcontentsline{toc}{chapter}{Overview}
+\markboth{Overview}{}
+
+Poraqu\^e predicts the electronic structure of a crystal from its geometry
+alone. Given a \file{POSCAR}, an \file{INCAR} and a \file{POTCAR}, it produces
+the valence charge density and the kinetic energy density --- with no
+wavefunctions and no self-consistency cycle.
+
+It does this by chaining two learned operators:
+\[
+  \{\text{\file{POSCAR}},\ \text{\file{INCAR}},\ \text{\file{POTCAR}}\}
+  \;\xrightarrow{\ \text{analytic}\ }\;
+  \text{\file{EXTCAR}}
+  \;\xrightarrow{\ \text{Model 1}\ }\;
+  \text{\file{CHGCAR}}
+  \;\xrightarrow{\ \text{Model 2}\ }\;
+  \text{\file{TAUCAR}}
+\]
+The first step is closed-form; only the two field-to-field maps are learned.
+Every output is written in \file{CHGCAR} format and opens directly in VESTA.
+
+\section*{Who this guide is for}
+
+This is the practical guide: how to lay out data, train, predict, and read the
+results. It assumes you can run a plane-wave DFT calculation and want to use
+Poraqu\^e as a tool.
+
+For the physics and the architecture --- why a Fourier neural operator, what
+the models correspond to in density-functional theory, how the external
+potential is reconstructed from the pseudopotential tables --- see the
+companion \emph{Technical Guide} in \file{latex/technical\_guide/}.
+
+\section*{What you need}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Requirement & Note \\
+\midrule
+Python 3.11 or newer & see Chapter~\ref{ch:install} \\
+A set of DFT calculations & \file{CHGCAR} and \file{TAUCAR} per structure \\
+An accelerator (optional) & CUDA or Apple Metal; CPU works \\
+\opt{latexmk} (optional) & only for the automatic PDF reports \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{pwarn}
+Poraqu\^e learns from the data you give it. The published results were obtained
+on five gold supercells, and they measure interpolation between nearby
+geometries of one element. Nothing in this guide should be read as evidence
+that a model trained on one chemistry transfers to another --- validate on your
+own held-out structures before trusting a prediction.
+\end{pwarn}

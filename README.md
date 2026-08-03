@@ -13,8 +13,7 @@
 
 # Poraquê
 
-Poraquê is a research code for electronic structure and machine learning on
-3D scalar fields (external potential, charge density, kinetic energy density).
+Poraquê is a research code for electronic structure and machine learning on 3D scalar fields (external potential, charge density, kinetic energy density).
 
 ## Status
 

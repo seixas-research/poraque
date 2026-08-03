@@ -507,6 +507,184 @@ def run_task_universal(task_name, cache, config, log):
     }
 
 
+def structure_level_folds(names, k, seed=0):
+    r"""
+    Partition **whole structures** into ``k`` validation groups.
+
+    The split is at the structure level by construction: a fold is a set of
+    material names, and every voxel of a material goes to the same side. A
+    voxel-level split would place the same material in both training and
+    validation, and the resulting score would measure interpolation *within* a
+    material rather than transfer *to a new* one — the number would look
+    excellent and mean nothing.
+
+    Parameters
+    ----------
+    names : sequence of str
+        Structure identifiers.
+    k : int
+        Requested number of folds; capped at ``len(names)``.
+    seed : int, optional
+        Shuffling seed, so the partition is reproducible.
+
+    Returns
+    -------
+    list of list of str
+        ``k`` disjoint groups whose union is ``names``.
+    """
+    names = list(names)
+    k = max(2, min(int(k), len(names)))
+    order = np.random.default_rng(seed).permutation(len(names))
+    return [[names[i] for i in group]
+            for group in np.array_split(order, k) if len(group)]
+
+
+def run_task_kfold(task_name, cache, config, log):
+    r"""
+    K-fold cross-validation over structures.
+
+    Each fold trains a fresh model on :math:`K-1` groups of structures and
+    scores it on the held-out group, in physical units. The result is a
+    *generalisation estimate* with a spread, not a deployable model; use
+    ``mode: universal`` for the artefact to ship.
+    """
+    task = resolve_task(task_name)
+    dataset = FieldPairDataset(cache, task=task)
+    names = [m.identifier for m in dataset.materials]
+    folds = structure_level_folds(names, config.training.k_folds,
+                                  config.training.seed)
+    by_name = {m.identifier: m for m in dataset.materials}
+
+    log(f"\n{'=' * 78}")
+    log(f"TASK  {task.name}:  {task.input_field} -> {task.target_field}   "
+        f"[{len(folds)}-FOLD CROSS-VALIDATION]")
+    log(f"      {task.description}")
+    log("=" * 78)
+    log(f"  structures : {len(names)}")
+    log(f"  folds      : {len(folds)} (requested {config.training.k_folds})")
+    if len(folds) == len(names):
+        log("               = leave-one-out, since k equals the structure count")
+    for index, group in enumerate(folds, 1):
+        log(f"     fold {index}: validate on {group}")
+    log("  split is at the STRUCTURE level: no material appears on both sides")
+
+    label_text, unit = FIELD_LABELS[task.target_field]
+    records, figures = [], []
+
+    for index, group in enumerate(folds, 1):
+        log(f"\n  --- fold {index}/{len(folds)}: validate on {group} ---")
+        train_records = [by_name[n] for n in names if n not in group]
+        val_records = [by_name[n] for n in group]
+
+        train_set = FieldPairDataset(cache, task=task, materials=train_records)
+        source_transform, target_transform = train_set.fit_transforms()
+        val_set = FieldPairDataset(cache, task=task, materials=val_records,
+                                   input_transform=source_transform,
+                                   target_transform=target_transform)
+        log(f"      train on {len(train_set)}: {[m.identifier for m in train_records]}")
+
+        operator = build_operator(task, train_set, config, log)
+        start = time.time()
+        history = train(
+            operator, train_set, validation=val_set,
+            epochs=config.training.epochs, batch_size=config.training.batch_size,
+            learning_rate=config.training.learning_rate,
+            weight_decay=config.training.weight_decay,
+            scheduler=config.training.scheduler,
+            grad_clip=config.training.grad_clip,
+            loss=build_loss(config, task.name), seed=config.training.seed,
+            verbose=False,
+        )
+        elapsed = time.time() - start
+        log(f"      trained {config.training.epochs} epochs in {elapsed:.1f} s   "
+            f"loss {history['train_loss'][0]:.4f} -> {history['train_loss'][-1]:.4f}")
+
+        for position in range(len(val_set)):
+            name = val_records[position].identifier
+            prediction, target, values = evaluate_material(
+                operator, val_set, position, task, log, f"{name} (VALIDATION)")
+            records.append({"fold": index, "material": name,
+                            "split": f"fold {index}", "metrics": values,
+                            "predicted_integral": prediction.integrate(),
+                            "reference_integral": target.integrate()})
+            if config.output.plot_dir and position == 0:
+                from poraque.vis import TrainingReport
+
+                report = TrainingReport(
+                    config.output.plot_dir, dpi=config.output.dpi,
+                    fmt=config.output.plot_format,
+                    prefix=f"{task.name}_fold{index}_{name}")
+                figures.append(report.loss_curves(
+                    history, title=f"{task.name} · fold {index}"))
+                figures.append(report.field_comparison(
+                    target, prediction, label=label_text, unit=unit,
+                    log=(task.target_field in ("CHGCAR", "TAUCAR")),
+                    title=f"{task.name} · fold {index} · {name}"))
+
+    # ---------------- aggregate across folds ---------------- #
+    log(f"\n  --- {task.name}: {len(folds)}-fold summary "
+        f"({len(records)} validation structures) ---")
+    aggregate = {}
+    for key in ("mse", "mae", "rmse", "relative_l2", "r2"):
+        values = np.array([r["metrics"][key] for r in records], dtype=float)
+        aggregate[key] = {"mean": float(values.mean()), "std": float(values.std()),
+                          "min": float(values.min()), "max": float(values.max())}
+        log(f"      {key:<12s} {values.mean():12.5g} +/- {values.std():<11.4g}"
+            f"  [{values.min():.5g}, {values.max():.5g}]")
+
+    log("\n      These ARE generalisation numbers: every score above comes from")
+    log("      a model that never saw that structure. The spread across folds")
+    log("      matters as much as the mean with a dataset this small.")
+
+    # ---------------- consolidated report ---------------- #
+    pdf = None
+    if config.output.report_dir:
+        from poraque.vis import ModelReport
+
+        per_material = {r["material"]: {"split": r["split"],
+                                        "metrics": r["metrics"]}
+                        for r in records}
+        reporter = ModelReport(config.output.report_dir)
+        pdf = reporter.build(
+            task=task.name, per_material=per_material, figures=figures,
+            unit=task.target_unit,
+            filename=f"{task.name}_kfold_report.pdf",
+            summary={
+                "protocol": f"{len(folds)}-fold cross-validation",
+                "split level": "structure (whole materials held out)",
+                "structures": str(len(names)),
+                "validation scores": str(len(records)),
+                "epochs per fold": str(config.training.epochs),
+                "device": describe_device(resolve_device(config.training.device)),
+                "mean relative L2": f"{aggregate['relative_l2']['mean']:.5g}"
+                                    f" +/- {aggregate['relative_l2']['std']:.3g}",
+                "mean MAE": f"{aggregate['mae']['mean']:.5g}"
+                            f" +/- {aggregate['mae']['std']:.3g}",
+                "mean MSE": f"{aggregate['mse']['mean']:.5g}"
+                            f" +/- {aggregate['mse']['std']:.3g}",
+            },
+            caveats=[
+                "Every score is from a model that never saw that structure, so "
+                "these are generalisation estimates rather than training fit.",
+                f"{len(names)} structures of a single element: this measures "
+                f"transfer between geometries, not between chemistries.",
+                "With few folds the spread is wide; quote the standard "
+                "deviation alongside the mean.",
+            ],
+            configuration={f"{section}.{key}": str(value)
+                           for section, values in config.to_dict().items()
+                           if isinstance(values, dict)
+                           for key, value in values.items()},
+        )
+        log(f"\n  consolidated report -> {pdf}")
+
+    return {"task": task.name, "mode": "kfold", "n_folds": len(folds),
+            "folds": [{"fold": i, "validate_on": g}
+                      for i, g in enumerate(folds, 1)],
+            "records": records, "aggregate": aggregate,
+            "report": pdf, "figures": figures}
+
+
 def run_task(task_name, cache, config, log):
     """Train and evaluate one task with leave-one-out cross-validation."""
     task = resolve_task(task_name)
@@ -723,6 +901,12 @@ def build_parser():
                        choices=["universal", "leave_one_out"],
                        help="universal: one model on all structures (default); "
                             "leave_one_out: cross-validation estimate")
+    group.add_argument("--kfold", dest="training.enable_kfold",
+                       action="store_const", const=True, default=None,
+                       help="run K-fold cross-validation over structures")
+    group.add_argument("--k-folds", dest="training.k_folds", type=int,
+                       default=None, help="number of folds (capped at the "
+                                          "number of structures)")
     group.add_argument("--holdout", dest="training.holdout", nargs="*",
                        default=None, metavar="NAME",
                        help="structures excluded from universal training and "
@@ -779,8 +963,12 @@ def main(argv=None):
 
         cache = build_cache(config, log)
         names = (["ext2chg", "chg2tau"] if config.task == "all" else [config.task])
-        driver = (run_task_universal
-                  if config.training.mode == "universal" else run_task)
+        if config.training.enable_kfold:
+            driver = run_task_kfold
+        elif config.training.mode == "universal":
+            driver = run_task_universal
+        else:
+            driver = run_task
         results = [result for result in
                    (driver(name, cache, config, log) for name in names)
                    if result is not None]
@@ -789,7 +977,11 @@ def main(argv=None):
         log(f"  {'task':<12s} {'rel L2 (mean)':>14s} {'R2 (mean)':>12s} "
             f"{'MAE (mean)':>14s}   basis")
         for result in results:
-            if result.get("mode") == "universal":
+            if result.get("mode") == "kfold":
+                values = [r["metrics"] for r in result["records"]]
+                basis = (f"{result['n_folds']}-fold CV, "
+                         f"{len(values)} validation structures")
+            elif result.get("mode") == "universal":
                 values = [v["metrics"] for v in result["per_material"].values()]
                 basis = (f"training fit, {result['n_train']} structures"
                          if not result["holdout"] else "train + holdout")
@@ -805,8 +997,11 @@ def main(argv=None):
         log("")
         log(f"  NOTE: {n_materials} material(s), all of one element. These numbers")
         log("  characterise the pipeline, not the science: they say nothing about")
-        log("  transfer to new chemistry. In 'universal' mode without a holdout")
-        log("  they are training fit and not a generalisation estimate at all.")
+        log("  transfer to new chemistry.")
+        if any(r.get("mode") == "universal" and not r.get("holdout")
+               for r in results):
+            log("  For the runs marked 'training fit' above, no structure was held")
+            log("  out, so those are not generalisation estimates at all.")
 
         # Archive the resolved config beside the results, so the run is
         # reproducible even if the source config is later edited.

@@ -245,13 +245,12 @@ IBZKPT
 
 
 # LaTeX build artefacts (the .tex sources and the final PDF are kept)
-latex/*.aux
-latex/*.log
-latex/*.out
-latex/*.toc
-latex/*.fls
-latex/*.fdb_latexmk
-latex/sections/*.aux
+latex/**/*.aux
+latex/**/*.log
+latex/**/*.out
+latex/**/*.toc
+latex/**/*.fls
+latex/**/*.fdb_latexmk
 
 # Generated results: figures and PDF reports are reproducible from the logs
 results/

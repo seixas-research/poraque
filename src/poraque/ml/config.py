@@ -189,6 +189,19 @@ class TrainingConfig_:
         Structure names excluded from universal training and used for
         validation. ``null`` trains on everything, in which case the reported
         metrics are **training fit** and carry no generalisation claim.
+    enable_kfold : bool
+        Run K-fold cross-validation instead of a single universal fit. Takes
+        precedence over ``mode``.
+    k_folds : int
+        Number of folds. Splitting is at the **structure level**: each fold
+        holds out whole materials, never a subset of voxels from a material
+        that also appears in training. A voxel-level split would let the model
+        see the same material in both halves and would report a
+        wildly optimistic score that says nothing about transfer to a new
+        material.
+
+        Capped at the number of structures; ``k_folds`` equal to that count is
+        leave-one-out.
     seed : int
         Seed for weight initialisation and batching.
     device : str
@@ -210,6 +223,8 @@ class TrainingConfig_:
     grad_clip: float = 1.0
     mode: str = "universal"
     holdout: list = None
+    enable_kfold: bool = False
+    k_folds: int = 5
     seed: int = 0
     device: str = "auto"
     loss: str = "relative_l2"

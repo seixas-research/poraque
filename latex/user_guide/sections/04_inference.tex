@@ -1,0 +1,61 @@
+\chapter{Predicting a new structure}
+\label{ch:inference}
+
+\begin{lstlisting}
+python scripts/infer_fno.py new_structure/ \
+    --ext2chg models/ext2chg.pt \
+    --chg2tau models/chg2tau.pt \
+    --output predictions/new_structure
+\end{lstlisting}
+
+The directory needs only \file{POSCAR}, \file{INCAR} and \file{POTCAR}. The
+script computes the external potential, predicts the density, then the kinetic
+energy density, and writes all three in \file{CHGCAR} format.
+
+\section{Choosing the grid}
+
+Resolved in this order, first hit wins:
+
+\begin{enumerate}
+  \item \opt{--grid NX NY NZ} --- explicit;
+  \item \opt{--like FILE} --- adopt an existing volumetric file's grid, which is
+    what you want when comparing against a reference calculation;
+  \item \opt{--resolution N} --- longest axis, preserving the aspect ratio;
+  \item otherwise derived from \opt{ENCUT} and \opt{PREC}.
+\end{enumerate}
+
+\begin{pwarn}
+A Fourier neural operator is resolution-\emph{flexible}, not
+resolution-\emph{indifferent}. Evaluating far from the grid density a model was
+trained on is extrapolation, and no metric printed here can detect it. The
+script warns when the requested grid departs markedly from the training
+resolution.
+\end{pwarn}
+
+\section{Comparing against a reference}
+
+\begin{lstlisting}
+python scripts/infer_fno.py run/ --ext2chg m1.pt --chg2tau m2.pt \
+    --like run/CHGCAR --compare --plot-dir results/plots/check
+\end{lstlisting}
+
+\opt{--compare} scores the prediction against any reference files present,
+bringing them onto the prediction grid by spectral truncation. \opt{--plot-dir}
+adds cross-section and parity figures.
+
+\section{Sanity checks the script performs}
+
+\begin{itemize}
+  \item the predicted electron count against $\sum_a Z^{\mathrm{val}}_a$;
+  \item the number of negative density voxels, if any;
+  \item the bound $\tau \ge \tau_{\rm vW}[\rho]$ on the chained output, with the
+    minimum margin.
+\end{itemize}
+
+A large electron-count error or a violated bound means the prediction should
+not be trusted, whatever the field looks like.
+
+\section{Visualising}
+
+All outputs are \file{CHGCAR}-format and open directly in VESTA. Use
+\opt{--write-chg} for an additional coarse-formatted \file{CHG}.
