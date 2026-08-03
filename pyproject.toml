@@ -18,7 +18,8 @@ dependencies = [
     'ase',
     'scipy',
     'matplotlib',
-    'pytest'
+    'pytest',
+    'torch>=2.0'
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -27,21 +28,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Chemistry",
     "Topic :: Scientific/Engineering :: Physics"
 ]
-
-[project.optional-dependencies]
-# CPU acceleration: the Numba JIT / OpenMP kernels in poraque.accel and the
-# tests/test_jit.py suite. Numba 0.65 fails to import against NumPy >= 2.5, so
-# the upper bound is pinned alongside Numba here (it is only needed when Numba
-# is installed; the core package keeps NumPy unconstrained and falls back to a
-# pure-NumPy implementation when Numba is absent).
-accel = [
-    'numba>=0.60',
-    'numpy<2.5',
-]
-# Exchange-correlation GGA functionals (PBE / PBEsol) are backed by libxc via
-# its 'pylibxc' bindings. These are distributed through conda-forge, NOT PyPI,
-# so they cannot be declared as pip dependencies; install them with:
-#   conda install -c conda-forge libxc pylibxc
 
 [project.urls]
 "Homepage" = "https://github.com/seixas-research/poraque"

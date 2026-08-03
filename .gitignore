@@ -215,3 +215,22 @@ pseudos/
 
 # Poraque default execution log
 output.txt
+
+# VASP files
+POTCAR
+CHGCAR
+CHG
+WAVECAR
+TAUCAR
+EXTCAR
+vasprun.xml
+PROCAR
+XDATCAR
+DOSCAR
+EIGENVAL
+ELFCAR
+OSZICAR
+OUTCAR
+PCDAT
+REPORT
+
