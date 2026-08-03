@@ -31,6 +31,7 @@ of the package never depends on it::
 
 _LAZY = {
     "TrainingReport": "poraque.vis.report",
+    "ModelReport": "poraque.vis.pdf_report",
     "CATEGORICAL": "poraque.vis.style",
     "INK": "poraque.vis.style",
     "diverging_cmap": "poraque.vis.style",

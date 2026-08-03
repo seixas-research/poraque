@@ -18,6 +18,9 @@ data:
   train_fraction: 0.8
   split: leave_one_out
   seed: 0
+  use_vasp_extcar: false
+  gaussian_blur: null
+  blur_method: spectral
 model:
   width: 16
   modes: 8
@@ -29,16 +32,18 @@ model:
   embedding_dim: 32
   mode_selection: fixed
   g_max: null
-  pauli_residual: true
+  pauli_residual: false
   pauli_scale: null
   learn_pauli_scale: true
 training:
   epochs: 200
-  batch_size: 1
+  batch_size: 4
   learning_rate: 0.002
   weight_decay: 0.0001
   scheduler: cosine
   grad_clip: 1.0
+  mode: universal
+  holdout: null
   seed: 0
   device: auto
   loss: relative_l2
@@ -49,9 +54,10 @@ training:
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0
 output:
-  log: logs/fno_retrain.log
-  json: logs/fno_retrain.json
+  log: logs/fno_training.log
+  json: logs/fno_training.json
   checkpoint_dir: models
   plot_dir: results/plots
+  report_dir: reports
   plot_format: png
   dpi: 160

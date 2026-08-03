@@ -70,6 +70,22 @@ class DataConfig:
         ``"random"``.
     seed : int
         Seed for the split.
+    use_vasp_extcar : bool
+        Read a reference ``EXTCAR`` written by a modified VASP instead of
+        computing it. **Off by default**: standard VASP distributions do not
+        write that file, so relying on it would make the pipeline unusable for
+        anyone without the patched build. Poraquê's tabulated reconstruction
+        reproduces it to a relative :math:`2\\times10^{-5}`, so the default
+        costs essentially nothing in fidelity.
+    gaussian_blur : float or None
+        Width in Å of a Gaussian blur applied to the computed external
+        potential. ``null`` disables it. Ignored when ``use_vasp_extcar`` is
+        set, since the reference file is taken as given.
+    blur_method : str
+        ``"spectral"`` (exact, isotropic on any cell) or ``"ndimage"``
+        (:func:`scipy.ndimage.gaussian_filter` with ``mode="wrap"``, which
+        blurs along grid axes and is therefore anisotropic in Cartesian space
+        unless the cell is orthogonal).
     """
 
     root: str = "data/vasp"
@@ -80,6 +96,9 @@ class DataConfig:
     train_fraction: float = 0.8
     split: str = "leave_one_out"
     seed: int = 0
+    use_vasp_extcar: bool = False
+    gaussian_blur: float = None
+    blur_method: str = "spectral"
 
 
 @dataclass
@@ -156,6 +175,20 @@ class TrainingConfig_:
         ``"cosine"`` or ``null``.
     grad_clip : float
         Global gradient-norm clip; ``0`` disables.
+    mode : str
+        ``"universal"`` (default) trains **one** model on the combined data of
+        every structure and saves a single checkpoint per task — the
+        deployable artefact. ``"leave_one_out"`` instead runs the
+        cross-validation protocol, training N models each holding one structure
+        out; it produces a generalisation *estimate*, not a model to ship.
+
+        The two answer different questions and are both worth running: LOO says
+        whether the architecture generalises, ``universal`` produces the model
+        that uses all available data.
+    holdout : list or None
+        Structure names excluded from universal training and used for
+        validation. ``null`` trains on everything, in which case the reported
+        metrics are **training fit** and carry no generalisation claim.
     seed : int
         Seed for weight initialisation and batching.
     device : str
@@ -170,11 +203,13 @@ class TrainingConfig_:
     """
 
     epochs: int = 200
-    batch_size: int = 1
+    batch_size: int = 4
     learning_rate: float = 2e-3
     weight_decay: float = 1e-4
     scheduler: str = "cosine"
     grad_clip: float = 1.0
+    mode: str = "universal"
+    holdout: list = None
     seed: int = 0
     device: str = "auto"
     loss: str = "relative_l2"
@@ -203,6 +238,9 @@ class OutputConfig:
     plot_dir : str or None
         Directory for the figures produced by
         :class:`~poraque.vis.TrainingReport`; ``null`` disables plotting.
+    report_dir : str or None
+        Directory for the automatically generated PDF report; ``null``
+        disables it.
     plot_format : str
         Image format for saved figures.
     dpi : int
@@ -213,6 +251,7 @@ class OutputConfig:
     json: str = "logs/fno_training.json"
     checkpoint_dir: str = "models"
     plot_dir: str = "results/plots"
+    report_dir: str = "reports"
     plot_format: str = "png"
     dpi: int = 160
 

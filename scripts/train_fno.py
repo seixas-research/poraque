@@ -129,7 +129,15 @@ def build_cache(config, log):
     if not directories:
         raise SystemExit(f"No {data.pattern}* directories under {data.root!r}.")
 
-    target = os.path.join(data.cache, f"res{data.resolution}")
+    # The cache key encodes everything that changes the stored fields. Without
+    # this, switching --gaussian-blur or --use-vasp-extcar would silently reuse
+    # the previous cache and the "comparison" would compare a model against
+    # itself.
+    tag = f"res{data.resolution}"
+    tag += "_vaspext" if data.use_vasp_extcar else "_poraqueext"
+    if data.gaussian_blur:
+        tag += f"_blur{data.gaussian_blur:g}{data.blur_method[:4]}"
+    target = os.path.join(data.cache, tag)
     log(f"Cache: {target}")
 
     for directory in directories:
@@ -146,15 +154,48 @@ def build_cache(config, log):
         os.makedirs(destination, exist_ok=True)
         start = time.time()
 
-        source_grid = FieldGrid.from_file(reader.field_path(directory, "external"))
+        # The shared grid comes from CHGCAR, not EXTCAR: the density is always
+        # present in a standard VASP run, whereas EXTCAR is written only by the
+        # modified build.
+        source_grid = FieldGrid.from_file(reader.field_path(directory, "density"))
         reduced_shape = downsample_shape(source_grid.shape,
                                          target_max=data.resolution)
         reduced_grid = FieldGrid(reduced_shape, source_grid.cell,
                                  encut=source_grid.encut)
 
         summary, warnings = [], []
-        for kind, filename in (("external", "EXTCAR"), ("density", "CHGCAR"),
-                               ("kinetic", "TAUCAR")):
+
+        # ---- external potential ---------------------------------------- #
+        # Default: computed by poraque from POSCAR/INCAR/POTCAR, so the
+        # pipeline works with any standard VASP distribution. A reference
+        # EXTCAR is used only when explicitly requested.
+        vasp_extcar = reader.field_path(directory, "external")
+        if data.use_vasp_extcar:
+            if not os.path.exists(vasp_extcar):
+                raise SystemExit(
+                    f"{name}: use_vasp_extcar is set but {vasp_extcar} does not "
+                    f"exist. Standard VASP does not write EXTCAR; unset the flag "
+                    f"to have poraque compute it."
+                )
+            potential = ExternalPotential.read(vasp_extcar, grid=source_grid)
+            origin = "VASP reference"
+        else:
+            potential = ExternalPotential.from_calculation(
+                directory, code=reader.code, grid=source_grid,
+                gaussian_blur=data.gaussian_blur,
+                blur_method=data.blur_method,
+            )
+            origin = f"poraque/{potential.metadata.get('model', '?')}"
+            if data.gaussian_blur:
+                origin += f", blur {data.gaussian_blur} A ({data.blur_method})"
+
+        reduced = resample_field(potential, reduced_shape, grid=reduced_grid)
+        reduced.write(os.path.join(destination, "EXTCAR"))
+        summary.append(f"EXTCAR [{reduced.data.min():.3g}, "
+                       f"{reduced.data.max():.3g}] ({origin})")
+
+        # ---- density and kinetic energy density ------------------------ #
+        for kind, filename in (("density", "CHGCAR"), ("kinetic", "TAUCAR")):
             path = reader.field_path(directory, kind)
             if not os.path.exists(path):
                 raise SystemExit(f"{name}: missing {path}")
@@ -241,6 +282,231 @@ def build_loss(config, task_name):
 # ===================================================================== #
 # Leave-one-out driver
 # ===================================================================== #
+def build_operator(task, train_set, config, log):
+    """Construct the operator, attaching the Pauli head when requested."""
+    source_transform = train_set.input_transform
+    target_transform = train_set.target_transform
+
+    head = {}
+    if config.model.pauli_residual and task.name == "chg2tau":
+        from poraque.ml import fit_pauli_scale, pauli_bound_violation
+
+        scale = (config.model.pauli_scale if config.model.pauli_scale
+                 else fit_pauli_scale(train_set))
+        head = {"pauli_residual": True, "pauli_scale": scale,
+                "learn_pauli_scale": config.model.learn_pauli_scale}
+        log(f"      head: tau = tau_vW[rho] + s*softplus(f)   s = {scale:.4f} eV/Ang^3")
+        for entry in pauli_bound_violation(train_set):
+            if entry["violations"]:
+                log(f"      note: {entry['material']} violates tau >= tau_vW at "
+                    f"{entry['violations']}/{entry['points']} points "
+                    f"({100 * entry['fraction']:.4f} %)")
+
+    torch.manual_seed(config.training.seed)
+    operator = FieldOperator(
+        task, input_transform=source_transform, target_transform=target_transform,
+        device=config.training.device, **config.model_kwargs(), **head,
+    )
+    log(f"      model: {type(operator.model).__name__} width={config.model.width} "
+        f"modes={config.model.modes} layers={config.model.n_layers}  "
+        f"({operator.model.n_parameters():,} parameters)")
+    return operator
+
+
+def evaluate_material(operator, dataset, index, task, log, label):
+    """Predict one material and report metrics against its reference field."""
+    source, target = dataset.load_fields(index)
+    prediction = operator.predict(source)
+    values = metrics(prediction.data, target.data)
+    log(format_metrics(label, values, task.target_unit))
+    return prediction, target, values
+
+
+def run_task_universal(task_name, cache, config, log):
+    r"""
+    Train **one** model on the combined data of every structure.
+
+    This is the deployable artefact: a single set of weights that has seen all
+    available materials. Batches are drawn across structures — the sampler
+    groups by grid shape and shuffles both within and across those groups — so
+    a gradient step generally mixes several materials.
+
+    With ``training.holdout`` unset the model trains on everything, and the
+    metrics reported here are **training fit**. They say the model has capacity
+    to represent the data; they say nothing about generalisation. Use
+    ``mode: leave_one_out`` for that, or name structures in ``holdout``.
+    """
+    task = resolve_task(task_name)
+    log(f"\n{'=' * 78}")
+    log(f"TASK  {task.name}:  {task.input_field} -> {task.target_field}   "
+        f"[UNIVERSAL: one model, all structures]")
+    log(f"      {task.description}")
+    log("=" * 78)
+
+    dataset = FieldPairDataset(cache, task=task)
+    holdout = set(config.training.holdout or [])
+    unknown = holdout - {m.identifier for m in dataset.materials}
+    if unknown:
+        raise SystemExit(f"holdout names not present in the dataset: {sorted(unknown)}")
+
+    train_records = [m for m in dataset.materials if m.identifier not in holdout]
+    test_records = [m for m in dataset.materials if m.identifier in holdout]
+
+    train_set = FieldPairDataset(cache, task=task, materials=train_records)
+    source_transform, target_transform = train_set.fit_transforms()
+    validation = (FieldPairDataset(cache, task=task, materials=test_records,
+                                   input_transform=source_transform,
+                                   target_transform=target_transform)
+                  if test_records else None)
+
+    shapes = train_set.shapes()
+    buckets = {}
+    for shape in shapes:
+        buckets[tuple(shape)] = buckets.get(tuple(shape), 0) + 1
+
+    log(f"  training structures : {len(train_set)}  "
+        f"{[m.identifier for m in train_records]}")
+    log(f"  held out            : {sorted(holdout) if holdout else 'none (trains on everything)'}")
+    log(f"  grid shapes         : {shapes}")
+    log(f"  shape buckets       : "
+        + ", ".join(f"{s}x{n}" for s, n in sorted(buckets.items())))
+    log(f"  batch size          : {config.training.batch_size} "
+        f"(capped per bucket; batches mix structures of equal shape)")
+    log(f"  transforms          : in {source_transform}  out {target_transform}")
+
+    operator = build_operator(task, train_set, config, log)
+
+    start = time.time()
+    history = train(
+        operator, train_set, validation=validation,
+        epochs=config.training.epochs, batch_size=config.training.batch_size,
+        learning_rate=config.training.learning_rate,
+        weight_decay=config.training.weight_decay,
+        scheduler=config.training.scheduler, grad_clip=config.training.grad_clip,
+        loss=build_loss(config, task.name), seed=config.training.seed,
+        verbose=False,
+    )
+    elapsed = time.time() - start
+    log(f"\n  trained {config.training.epochs} epochs in {elapsed:.1f} s   "
+        f"loss {history['train_loss'][0]:.4f} -> {history['train_loss'][-1]:.4f}")
+
+    # ---------------- per-material evaluation ---------------- #
+    label_text, unit = FIELD_LABELS[task.target_field]
+    per_material, figures = {}, []
+    report = None
+    if config.output.plot_dir:
+        from poraque.vis import TrainingReport
+
+        report = TrainingReport(config.output.plot_dir, dpi=config.output.dpi,
+                                fmt=config.output.plot_format,
+                                prefix=f"{task.name}_universal")
+        figures.append(report.loss_curves(
+            history, title=f"{task.name} (universal, {len(train_set)} structures)"))
+
+    log(f"\n  per-structure results ({'TRAINING FIT' if not holdout else 'train / held out'}):")
+    for index in range(len(train_set)):
+        name = train_records[index].identifier
+        prediction, target, values = evaluate_material(
+            operator, train_set, index, task, log, f"{name} (train)")
+        per_material[name] = {"split": "train", "metrics": values,
+                              "predicted_integral": prediction.integrate(),
+                              "reference_integral": target.integrate()}
+        if report is not None and index == 0:
+            report.prefix = f"{task.name}_universal_{name}"
+            figures.append(report.field_comparison(
+                target, prediction, label=label_text, unit=unit,
+                log=(task.target_field in ("CHGCAR", "TAUCAR")),
+                title=f"{task.name} · {name}"))
+            figures.append(report.parity(
+                target, prediction, label=label_text, unit=unit,
+                log=(task.target_field in ("CHGCAR", "TAUCAR"))))
+
+    if validation is not None:
+        for index in range(len(validation)):
+            name = test_records[index].identifier
+            prediction, target, values = evaluate_material(
+                operator, validation, index, task, log, f"{name} (HELD OUT)")
+            per_material[name] = {"split": "holdout", "metrics": values,
+                                  "predicted_integral": prediction.integrate(),
+                                  "reference_integral": target.integrate()}
+
+    # ---------------- aggregate ---------------- #
+    train_metrics = [v["metrics"] for v in per_material.values()
+                     if v["split"] == "train"]
+    log(f"\n  --- {task.name}: aggregate over {len(train_metrics)} training structures ---")
+    for key in ("mse", "mae", "rmse", "relative_l2", "r2"):
+        values = [m[key] for m in train_metrics]
+        log(f"      {key:<12s} mean {np.mean(values):12.5g}   "
+            f"min {np.min(values):11.5g}   max {np.max(values):11.5g}")
+
+    if not holdout:
+        log("\n      NOTE: no structure was held out, so these are TRAINING-FIT")
+        log("      numbers. They show the model can represent the data; they are")
+        log("      not a generalisation estimate. Run mode: leave_one_out for that.")
+
+    # ---------------- persist ---------------- #
+    checkpoint = None
+    if config.output.checkpoint_dir:
+        os.makedirs(config.output.checkpoint_dir, exist_ok=True)
+        checkpoint = os.path.join(config.output.checkpoint_dir, f"{task.name}.pt")
+        operator.save(checkpoint)
+        log(f"\n  universal model -> {checkpoint}")
+    if figures:
+        log(f"  figures         -> {config.output.plot_dir} ({len(figures)})")
+
+    # ---------------- PDF report ---------------- #
+    pdf = None
+    if config.output.report_dir:
+        from poraque.vis import ModelReport
+
+        caveats = [
+            f"{len(train_set)} structure(s), all of one element: nothing here "
+            f"speaks to transfer across chemistry.",
+        ]
+        if not holdout:
+            caveats.append(
+                "No structure was held out, so every number in the table is "
+                "training fit, not a generalisation estimate."
+            )
+        reporter = ModelReport(config.output.report_dir)
+        pdf = reporter.build(
+            task=task.name, per_material=per_material, figures=figures,
+            unit=task.target_unit, caveats=caveats,
+            summary={
+                "model": type(operator.model).__name__,
+                "parameters": f"{operator.model.n_parameters():,}",
+                "training structures": str(len(train_set)),
+                "grid shapes": ", ".join(str(s) for s in sorted(buckets)),
+                "epochs": str(config.training.epochs),
+                "batch size": str(config.training.batch_size),
+                "device": describe_device(operator.device),
+                "training time": f"{elapsed:.1f} s",
+                "final train loss": f"{history['train_loss'][-1]:.5f}",
+            },
+            configuration={f"{section}.{key}": str(value)
+                           for section, values in config.to_dict().items()
+                           if isinstance(values, dict)
+                           for key, value in values.items()},
+        )
+        log(f"  PDF report      -> {pdf}")
+
+    return {
+        "task": task.name,
+        "mode": "universal",
+        "report": pdf,
+        "n_train": len(train_set),
+        "train_structures": [m.identifier for m in train_records],
+        "holdout": sorted(holdout),
+        "grid_shapes": [list(s) for s in shapes],
+        "per_material": per_material,
+        "checkpoint": checkpoint,
+        "figures": figures,
+        "seconds": elapsed,
+        "final_train_loss": history["train_loss"][-1],
+        "history": {k: list(map(float, v)) for k, v in history.items()},
+    }
+
+
 def run_task(task_name, cache, config, log):
     """Train and evaluate one task with leave-one-out cross-validation."""
     task = resolve_task(task_name)
@@ -424,6 +690,16 @@ def build_parser():
     group.add_argument("--pattern", dest="data.pattern", default=None)
     group.add_argument("--code", dest="data.code", default=None)
     group.add_argument("--resolution", dest="data.resolution", type=int, default=None)
+    group.add_argument("--use-vasp-extcar", dest="data.use_vasp_extcar",
+                       action="store_const", const=True, default=None,
+                       help="use a reference EXTCAR from a modified VASP "
+                            "instead of computing it (default: compute)")
+    group.add_argument("--gaussian-blur", dest="data.gaussian_blur", type=float,
+                       default=None,
+                       help="Gaussian blur width in Angstrom for the computed "
+                            "external potential")
+    group.add_argument("--blur-method", dest="data.blur_method", default=None,
+                       choices=["spectral", "ndimage"])
 
     group = parser.add_argument_group("model overrides")
     group.add_argument("--width", dest="model.width", type=int, default=None)
@@ -443,6 +719,14 @@ def build_parser():
                        default=None)
     group.add_argument("--learning-rate", dest="training.learning_rate",
                        type=float, default=None)
+    group.add_argument("--mode", dest="training.mode", default=None,
+                       choices=["universal", "leave_one_out"],
+                       help="universal: one model on all structures (default); "
+                            "leave_one_out: cross-validation estimate")
+    group.add_argument("--holdout", dest="training.holdout", nargs="*",
+                       default=None, metavar="NAME",
+                       help="structures excluded from universal training and "
+                            "used for validation")
     group.add_argument("--seed", dest="training.seed", type=int, default=None)
     group.add_argument("--device", dest="training.device", default=None,
                        help="auto | cuda | mps | cpu")
@@ -452,6 +736,7 @@ def build_parser():
     group.add_argument("--json", dest="output.json", default=None)
     group.add_argument("--checkpoint-dir", dest="output.checkpoint_dir", default=None)
     group.add_argument("--plot-dir", dest="output.plot_dir", default=None)
+    group.add_argument("--report-dir", dest="output.report_dir", default=None)
     group.add_argument("--no-plots", action="store_true",
                        help="skip figure generation")
     return parser
@@ -494,26 +779,34 @@ def main(argv=None):
 
         cache = build_cache(config, log)
         names = (["ext2chg", "chg2tau"] if config.task == "all" else [config.task])
+        driver = (run_task_universal
+                  if config.training.mode == "universal" else run_task)
         results = [result for result in
-                   (run_task(name, cache, config, log) for name in names)
+                   (driver(name, cache, config, log) for name in names)
                    if result is not None]
 
         log(f"\n{'=' * 78}\nOVERALL\n{'=' * 78}")
         log(f"  {'task':<12s} {'rel L2 (mean)':>14s} {'R2 (mean)':>12s} "
-            f"{'MAE (mean)':>14s}")
+            f"{'MAE (mean)':>14s}   basis")
         for result in results:
-            folds = result["folds"]
+            if result.get("mode") == "universal":
+                values = [v["metrics"] for v in result["per_material"].values()]
+                basis = (f"training fit, {result['n_train']} structures"
+                         if not result["holdout"] else "train + holdout")
+            else:
+                values = [f["test_metrics"] for f in result["folds"]]
+                basis = f"leave-one-out, {len(result['folds'])} folds"
             log(f"  {result['task']:<12s} "
-                f"{np.mean([f['test_metrics']['relative_l2'] for f in folds]):14.4f} "
-                f"{np.mean([f['test_metrics']['r2'] for f in folds]):12.4f} "
-                f"{np.mean([f['test_metrics']['mae'] for f in folds]):14.5g}")
+                f"{np.mean([m['relative_l2'] for m in values]):14.4f} "
+                f"{np.mean([m['r2'] for m in values]):12.4f} "
+                f"{np.mean([m['mae'] for m in values]):14.5g}   {basis}")
 
         n_materials = len(FieldPairDataset(cache, task=names[0]))
         log("")
-        log(f"  NOTE: with only {n_materials} material(s) these numbers characterise")
-        log("  the pipeline, not the science. Leave-one-out over a handful of")
-        log("  related structures of one element measures interpolation between")
-        log("  nearby geometries; it says nothing about transfer to new chemistry.")
+        log(f"  NOTE: {n_materials} material(s), all of one element. These numbers")
+        log("  characterise the pipeline, not the science: they say nothing about")
+        log("  transfer to new chemistry. In 'universal' mode without a holdout")
+        log("  they are training fit and not a generalisation estimate at all.")
 
         # Archive the resolved config beside the results, so the run is
         # reproducible even if the source config is later edited.

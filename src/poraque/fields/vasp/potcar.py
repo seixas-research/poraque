@@ -126,11 +126,28 @@ class PotcarSingle:
         Returns
         -------
         numpy.ndarray or None
-            ``(NPSPTS,)`` values, or ``None`` if the tables were not parsed.
+            The tabulated values, or ``None`` if the tables were not parsed.
+            A well-formed POTCAR yields exactly ``NPSPTS`` of them; check
+            :attr:`has_local_table` before relying on the length.
         """
         if self.local_part is None or len(self.local_part) < 2:
             return None
         return np.asarray(self.local_part[1:1 + self.NPSPTS], dtype=float)
+
+    @property
+    def has_local_table(self):
+        """
+        Whether a **complete** local-potential table was read.
+
+        A truncated block — an abridged test fixture, a partial download —
+        parses without error but cannot be splined onto the ``PSGMAX`` mesh.
+        Callers must gate on this rather than on
+        ``local_potential is not None``, so that an incomplete table falls back
+        to an analytic model instead of raising from inside the interpolator.
+        """
+        values = self.local_potential
+        return (self.psgmax is not None and values is not None
+                and len(values) == self.NPSPTS)
 
     @property
     def local_q_grid(self):
@@ -138,11 +155,14 @@ class PotcarSingle:
         Wavevectors of :attr:`local_potential`, Å⁻¹.
 
         Uniform, ``q_i = PSGMAX * (i-1) / NPSPTS``, exactly as ``pseudo.F``
-        constructs ``PSP(:,1)``.
+        constructs ``PSP(:,1)``. The returned length always matches
+        :attr:`local_potential`, so the two can be paired directly even for a
+        truncated table.
         """
-        if self.psgmax is None:
+        values = self.local_potential
+        if self.psgmax is None or values is None:
             return None
-        return (self.psgmax / self.NPSPTS) * np.arange(self.NPSPTS, dtype=float)
+        return (self.psgmax / self.NPSPTS) * np.arange(len(values), dtype=float)
 
     @property
     def pscore(self):

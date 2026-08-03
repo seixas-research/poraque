@@ -160,7 +160,8 @@ class ExternalPotential(ScalarField):
     @classmethod
     def from_calculation(cls, directory=".", code="auto", grid=None, shape=None,
                          encut=None, prec=None, model="auto", sigma=None,
-                         rcore_factor=0.5, zval=None):
+                         rcore_factor=0.5, zval=None, gaussian_blur=None,
+                         blur_method="spectral"):
         """
         Build the external potential from *any* supported DFT calculation.
 
@@ -198,6 +199,18 @@ class ExternalPotential(ScalarField):
         zval : dict, optional
             ``{element: charge}`` overriding the pseudopotential valence
             charges. Required when the code stores no pseudopotential files.
+        gaussian_blur : float, optional
+            Width in Å of a Gaussian blur applied to the finished potential.
+            The tabulated pseudopotential has sharp, high-curvature features at
+            the ionic cores; blurring removes the highest spatial frequencies,
+            which can help a network with a fixed mode truncation. It also
+            destroys real information, so treat it as a hyper-parameter to be
+            justified by held-out error, not as a free improvement.
+        blur_method : {"spectral", "ndimage"}, optional
+            See :meth:`~poraque.fields.base.ScalarField.smooth`. ``"spectral"``
+            is exact and stays isotropic on a skewed cell; ``"ndimage"`` blurs
+            along grid axes and is anisotropic in Cartesian space unless the
+            cell is orthogonal.
 
         Returns
         -------
@@ -222,15 +235,18 @@ class ExternalPotential(ScalarField):
             tabulated = getattr(reader, "read_potcar", None)
             potcar = (tabulated(directory, parse_tables=True)
                       if tabulated is not None else None)
+            # Gate on a COMPLETE table: a truncated block parses fine but
+            # cannot be splined onto the PSGMAX mesh.
             usable = (potcar is not None
-                      and all(entry.local_potential is not None
-                              for entry in potcar))
+                      and all(entry.has_local_table for entry in potcar))
             if usable:
-                return cls.from_potcar_tables(
+                field = cls.from_potcar_tables(
                     structure, grid, potcar,
                     metadata={"code": reader.code, "encut": grid.encut,
                               "prec": grid.prec, "source": str(directory)},
                 )
+                return (field.smooth(gaussian_blur, blur_method)
+                        if gaussian_blur else field)
             if model == "potcar":
                 raise ValueError(
                     "model='potcar' requires a POTCAR with a readable "
@@ -245,15 +261,16 @@ class ExternalPotential(ScalarField):
             sigma, rcore_factor, model,
         )
 
-        return cls.compute(structure, grid, charges, widths=widths, model=model,
-                           metadata={
-                               "code": reader.code,
-                               "encut": grid.encut,
-                               "prec": grid.prec,
-                               "model": model,
-                               "rcore_factor": rcore_factor,
-                               "source": str(directory),
-                           })
+        field = cls.compute(structure, grid, charges, widths=widths, model=model,
+                            metadata={
+                                "code": reader.code,
+                                "encut": grid.encut,
+                                "prec": grid.prec,
+                                "model": model,
+                                "rcore_factor": rcore_factor,
+                                "source": str(directory),
+                            })
+        return field.smooth(gaussian_blur, blur_method) if gaussian_blur else field
 
     @classmethod
     def from_vasp(cls, directory=".", poscar=None, incar=None, potcar=None,

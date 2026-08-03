@@ -1,45 +1,16 @@
 # -*- coding: utf-8 -*-
 # file: conftest.py
-"""Shared pytest fixtures for the Poraquê test-suite."""
+"""Shared pytest configuration for the Poraquê test-suite."""
 
-import numpy as np
 import pytest
 
-from poraque.backends.numpy import NumpyBackend
-from poraque.core import Grid, System
 
+@pytest.fixture(autouse=True)
+def _keep_working_tree_clean(tmp_path, monkeypatch):
+    """Run every test from a scratch directory.
 
-@pytest.fixture
-def backend():
-    """A NumPy reference backend instance."""
-    return NumpyBackend()
-
-
-@pytest.fixture
-def cubic_cell():
-    """A 10x10x10 Bohr cubic cell."""
-    return np.eye(3) * 10.0
-
-
-@pytest.fixture
-def grid(cubic_cell):
-    """A periodic 24^3 grid on the cubic cell."""
-    return Grid((24, 24, 24), cubic_cell, pbc=True)
-
-
-@pytest.fixture
-def coarse_grid(cubic_cell):
-    """A small periodic grid for cheap iterative tests."""
-    return Grid((16, 16, 16), cubic_cell, pbc=True)
-
-
-@pytest.fixture
-def hydrogen_system(cubic_cell):
-    """A single nucleus (Z=1, 1 electron) at the cell centre."""
-    return System(
-        positions=[[5.0, 5.0, 5.0]],
-        atomic_numbers=[1],
-        cell=cubic_cell,
-        pbc=True,
-        electrons=1,
-    )
+    Tests must never write into the repository. Any code that defaults to a
+    relative output path — a log, a checkpoint, a figure — would otherwise
+    deposit it wherever pytest happens to be invoked from.
+    """
+    monkeypatch.chdir(tmp_path)

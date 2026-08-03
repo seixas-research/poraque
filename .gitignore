@@ -252,3 +252,9 @@ latex/*.toc
 latex/*.fls
 latex/*.fdb_latexmk
 latex/sections/*.aux
+
+# Generated results: figures and PDF reports are reproducible from the logs
+results/
+reports/
+reports_blur/
+models_blur/

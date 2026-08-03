@@ -151,7 +151,7 @@ class PhysicsInformedLoss(nn.Module):
 
     def forward(self, prediction, target, cell=None, physical_prediction=None,
                 physical_input=None, n_electrons=None):
-        """
+        r"""
         Evaluate the composite loss.
 
         Parameters

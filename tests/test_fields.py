@@ -469,8 +469,10 @@ class TestPotcarLocalTables:
         )
         entry = Potcar.from_string(text, parse_tables=True)[0]
         q = entry.local_q_grid
+        # The spacing is always PSGMAX/NPSPTS; the *length* tracks how many
+        # samples were actually present, so q and the values always pair up.
         assert q[0] == 0.0
-        assert len(q) == entry.NPSPTS
+        assert len(q) == len(entry.local_potential)
         assert q[1] == pytest.approx(100.0 / entry.NPSPTS)
         assert np.allclose(np.diff(q), 100.0 / entry.NPSPTS)
 
@@ -479,3 +481,104 @@ class TestPotcarLocalTables:
         assert entry.psgmax is None
         assert entry.local_potential is None
         assert entry.pscore is None
+
+
+# --------------------------------------------------------------------- #
+# Gaussian smoothing
+# --------------------------------------------------------------------- #
+class TestSmoothing:
+    @staticmethod
+    def _field(cell, shape=(24, 24, 24)):
+        grid = FieldGrid(shape, cell)
+        structure = Poscar(cell, ["Si"], [2], [[0.25, 0.25, 0.25],
+                                               [0.6, 0.4, 0.7]])
+        return ExternalPotential.compute(structure, grid, {"Si": 4.0},
+                                         widths={"Si": 0.5})
+
+    def test_zero_sigma_is_a_copy(self):
+        field = self._field(np.eye(3) * 8.0)
+        for sigma in (0, 0.0, None):
+            out = field.smooth(sigma)
+            assert np.array_equal(out.data, field.data)
+            assert out is not field
+
+    def test_preserves_the_cell_average(self):
+        """The G=0 coefficient is untouched, so integrals survive exactly."""
+        field = self._field(np.eye(3) * 8.0)
+        for sigma in (0.2, 0.5, 1.0):
+            assert field.smooth(sigma).mean() == pytest.approx(field.mean(),
+                                                               abs=1e-12)
+
+    def test_monotonically_reduces_variance(self):
+        field = self._field(np.eye(3) * 8.0)
+        deviations = [field.smooth(s).data.std() for s in (0.0, 0.2, 0.4, 0.8)]
+        assert all(a > b for a, b in zip(deviations, deviations[1:]))
+
+    def test_methods_agree_on_an_orthogonal_cell(self):
+        """On a cubic cell the two routes are the same convolution.
+
+        The residual is the discrete kernel's truncation, so it shrinks as the
+        field is better resolved; a coarse grid with a sharp potential leaves a
+        few tenths of a percent.
+        """
+        field = self._field(np.eye(3) * 8.0, shape=(32, 32, 32))
+        for sigma in (0.3, 0.5):
+            spectral = field.smooth(sigma, "spectral").data
+            ndimage = field.smooth(sigma, "ndimage").data
+            assert np.abs(spectral - ndimage).max() < 1e-2 * np.abs(spectral).max()
+
+    def test_methods_disagree_on_a_skewed_cell(self):
+        """ndimage blurs along lattice axes, which is anisotropic in Cartesian
+        space unless the cell is orthogonal. This is why 'spectral' is default;
+        the gold data set is fcc, so the distinction is not academic.
+        """
+        cell = 6.0 * np.array([[0, 1, 1], [1, 0, 1], [1, 1, 0]], dtype=float)
+        field = self._field(cell)
+        spectral = field.smooth(0.4, "spectral").data
+        ndimage = field.smooth(0.4, "ndimage").data
+        assert np.abs(spectral - ndimage).max() > 1e-2 * np.abs(spectral).max()
+
+    def test_rejects_bad_arguments(self):
+        field = self._field(np.eye(3) * 8.0)
+        with pytest.raises(ValueError, match="non-negative"):
+            field.smooth(-0.5)
+        with pytest.raises(ValueError, match="Unknown smoothing method"):
+            field.smooth(0.3, "box")
+
+    def test_records_provenance(self):
+        out = self._field(np.eye(3) * 8.0).smooth(0.3, "spectral")
+        assert out.metadata["gaussian_blur"] == 0.3
+        assert out.metadata["gaussian_blur_method"] == "spectral"
+
+    def test_preserves_type_and_grid(self):
+        field = self._field(np.eye(3) * 8.0)
+        out = field.smooth(0.3)
+        assert isinstance(out, ExternalPotential)
+        assert out.grid is field.grid
+
+    def test_from_calculation_applies_the_blur(self, vasp_dir):
+        sharp = ExternalPotential.from_calculation(vasp_dir, encut=245.0)
+        blurred = ExternalPotential.from_calculation(vasp_dir, encut=245.0,
+                                                     gaussian_blur=0.3)
+        assert blurred.data.std() < sharp.data.std()
+        assert blurred.metadata["gaussian_blur"] == 0.3
+        # smoothing must not shift the neutralising-background convention
+        assert blurred.mean() == pytest.approx(0.0, abs=1e-10)
+
+    def test_blur_is_off_by_default(self, vasp_dir):
+        field = ExternalPotential.from_calculation(vasp_dir, encut=245.0)
+        assert "gaussian_blur" not in field.metadata
+
+    def test_truncated_local_table_is_rejected(self):
+        """A short 'local part' block must not reach the spline.
+
+        It parses without error but cannot be interpolated onto the PSGMAX
+        mesh; gating on `has_local_table` makes it fall back to the analytic
+        model instead of raising from inside SciPy.
+        """
+        entry = Potcar.from_string(POTCAR_TEXT, parse_tables=True)[0]
+        assert entry.local_potential is not None
+        assert len(entry.local_potential) < entry.NPSPTS
+        assert entry.has_local_table is False
+        # the q grid must still pair with whatever was read
+        assert len(entry.local_q_grid) == len(entry.local_potential)

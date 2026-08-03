@@ -11,9 +11,11 @@ from unittest.mock import MagicMock
 if os.environ.get("READTHEDOCS") == "True":
     MOCK_MODULES = [
         "numpy", "numpy.fft", "numpy.linalg",
-        "scipy", "scipy.sparse", "scipy.sparse.linalg", "scipy.special",
-        "ase", "ase.calculators", "ase.calculators.calculator",
-        "pandas", "matplotlib",
+        "scipy", "scipy.ndimage", "scipy.interpolate", "scipy.special",
+        "torch", "torch.nn", "torch.nn.functional", "torch.fft",
+        "torch.utils", "torch.utils.data", "torch.optim",
+        "ase", "matplotlib", "matplotlib.pyplot", "matplotlib.colors",
+        "yaml",
     ]
     sys.modules.update((mod_name, MagicMock()) for mod_name in MOCK_MODULES)
 

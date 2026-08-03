@@ -358,9 +358,23 @@ class TrainingReport:
         if reference_data.shape != prediction_data.shape:
             raise ValueError("reference and prediction must have the same size.")
 
-        valid = np.isfinite(reference_data) & np.isfinite(prediction_data)
+        finite = np.isfinite(reference_data) & np.isfinite(prediction_data)
+        valid = finite
         if log:
-            valid &= (reference_data > 0) & (prediction_data > 0)
+            positive = finite & (reference_data > 0) & (prediction_data > 0)
+            # An undertrained model can predict a non-positive field
+            # everywhere, which would leave nothing to plot. Fall back to
+            # linear axes rather than crashing on an empty reduction: a
+            # diagnostic plot is least dispensable exactly when the model is
+            # behaving badly.
+            if positive.sum() < 0.01 * finite.sum():
+                log = False
+            else:
+                valid = positive
+
+        if not valid.any():
+            raise ValueError("No finite points to plot.")
+
         x, y = reference_data[valid], prediction_data[valid]
         metrics = _metrics(prediction_data[valid], reference_data[valid])
 

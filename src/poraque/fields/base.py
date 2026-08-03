@@ -192,6 +192,70 @@ class ScalarField(ABC):
             "integral": self.integrate(),
         }
 
+    def smooth(self, sigma, method="spectral"):
+        r"""
+        Gaussian blur of the field, respecting periodicity.
+
+        Convolution with a normalized Gaussian of width :math:`\sigma`. Because
+        the field lives on a torus the convolution must wrap; a filter that
+        pads or reflects at the cell face would corrupt exactly the region
+        where periodic images meet.
+
+        Parameters
+        ----------
+        sigma : float
+            Gaussian width in **Ångström**. Zero or ``None`` returns a copy.
+        method : {"spectral", "ndimage"}, optional
+            ``"spectral"`` multiplies by :math:`e^{-G^2\sigma^2/2}` in
+            reciprocal space. This is the exact periodic Gaussian convolution
+            for a band-limited field, it costs two FFTs, and it uses the true
+            reciprocal metric — so it stays isotropic in Cartesian space even
+            for a triclinic cell.
+            ``"ndimage"`` uses :func:`scipy.ndimage.gaussian_filter` with
+            ``mode="wrap"``, with the width converted from Ångström to voxels
+            per axis.
+
+        Returns
+        -------
+        ScalarField
+            A new instance of the same class.
+
+        Notes
+        -----
+        The two methods agree to rounding on an orthogonal cell. They do
+        **not** agree on a skewed one: ``ndimage`` filters along grid axes with
+        a per-axis voxel width, which is an anisotropic blur in Cartesian space
+        when the lattice vectors are not orthogonal. ``"spectral"`` is the
+        default for that reason.
+        """
+        if not sigma:
+            return type(self)(self.data.copy(), self.grid, self.structure,
+                              metadata=dict(self.metadata))
+
+        sigma = float(sigma)
+        if sigma < 0:
+            raise ValueError(f"sigma must be non-negative, got {sigma}.")
+
+        if method == "spectral":
+            kernel = np.exp(-0.5 * self.grid.get_g2() * sigma * sigma)
+            smoothed = np.real(np.fft.ifftn(np.fft.fftn(self.data) * kernel))
+        elif method == "ndimage":
+            from scipy.ndimage import gaussian_filter
+
+            # gaussian_filter measures sigma in voxels, and the spacing differs
+            # per axis, so the width must be converted per axis.
+            voxels = sigma / self.grid.spacing
+            smoothed = gaussian_filter(self.data, sigma=voxels, mode="wrap")
+        else:
+            raise ValueError(
+                f"Unknown smoothing method {method!r}; use 'spectral' or 'ndimage'."
+            )
+
+        metadata = dict(self.metadata)
+        metadata["gaussian_blur"] = sigma
+        metadata["gaussian_blur_method"] = method
+        return type(self)(smoothed, self.grid, self.structure, metadata=metadata)
+
     def same_grid_as(self, other):
         """True when ``other`` is defined on an identical mesh."""
         return self.grid.matches(other.grid)

@@ -1,101 +1,105 @@
 API Reference
 =============
 
-High-level drivers
-------------------
-
-.. automodule:: poraque.calculator
-   :members:
-
-Engines
--------
-
-.. automodule:: poraque.engine
-   :members:
-
-.. automodule:: poraque.fde
-   :members:
-
-Core data model
----------------
-
-.. automodule:: poraque.core.grid
-   :members:
-
-.. automodule:: poraque.core.system
-   :members:
-
-.. automodule:: poraque.core.density
-   :members:
-
-.. automodule:: poraque.core.state
-   :members:
-
-.. automodule:: poraque.core.results
-   :members:
-
-.. automodule:: poraque.core.solver
-   :members:
-
-.. automodule:: poraque.core.reporting
-   :members:
-
-Functionals
------------
-
-.. automodule:: poraque.functionals.base
-   :members:
-
-.. automodule:: poraque.functionals.kinetic
-   :members:
-
-.. automodule:: poraque.functionals.hartree
-   :members:
-
-.. automodule:: poraque.functionals.xc
-   :members:
-
-.. automodule:: poraque.functionals.external
-   :members:
-
-Potentials
-----------
-
-.. automodule:: poraque.potentials.external
-   :members:
-
-Pseudopotentials
-----------------
-
-.. automodule:: poraque.pseudopotentials
-   :members: resolve_pseudopotentials, build_pseudopotential_potential
-
-.. automodule:: poraque.pseudopotentials.base
-   :members:
-
-.. automodule:: poraque.pseudopotentials.local
-   :members:
-
-.. automodule:: poraque.pseudopotentials.io
-   :members:
-
-.. automodule:: poraque.pseudopotentials.upf
-   :members:
-
-.. automodule:: poraque.pseudopotentials.registry
-   :members:
-
-Backends
---------
-
-.. automodule:: poraque.backends.base
-   :members:
-
-.. automodule:: poraque.backends.numpy.operators
-   :members:
-
-ASE interface
+Scalar fields
 -------------
 
-.. automodule:: poraque.ase.calculator
+.. automodule:: poraque.fields
+   :members: ScalarField, FieldGrid, Structure
+
+.. autoclass:: poraque.fields.ExternalPotential
+   :members:
+   :inherited-members:
+
+.. autoclass:: poraque.fields.ChargeDensity
+   :members:
+
+.. autoclass:: poraque.fields.KineticEnergyDensity
+   :members:
+
+Grid and resampling
+-------------------
+
+.. automodule:: poraque.fields.grid
+   :members:
+
+.. automodule:: poraque.fields.resample
+   :members:
+
+Ingestion
+---------
+
+.. automodule:: poraque.fields.io
+   :members:
+
+.. automodule:: poraque.fields.io.vasp
+   :members:
+
+VASP file formats
+-----------------
+
+.. automodule:: poraque.fields.vasp.poscar
+   :members:
+
+.. automodule:: poraque.fields.vasp.incar
+   :members:
+
+.. automodule:: poraque.fields.vasp.potcar
+   :members:
+
+.. automodule:: poraque.fields.vasp.volumetric
+   :members:
+
+Neural operators
+----------------
+
+.. automodule:: poraque.ml.fno
+   :members:
+
+.. automodule:: poraque.ml.heads
+   :members:
+
+.. automodule:: poraque.ml.tasks
+   :members:
+
+Data pipeline
+-------------
+
+.. automodule:: poraque.ml.data
+   :members:
+
+.. automodule:: poraque.ml.transforms
+   :members:
+
+Training
+--------
+
+.. automodule:: poraque.ml.training
+   :members:
+
+.. automodule:: poraque.ml.config
+   :members:
+
+.. automodule:: poraque.ml.device
+   :members:
+
+Physics operators and losses
+----------------------------
+
+.. automodule:: poraque.ml.physics
+   :members:
+
+.. automodule:: poraque.ml.losses
+   :members:
+
+Visualization
+-------------
+
+.. automodule:: poraque.vis.report
+   :members:
+
+.. automodule:: poraque.vis.pdf_report
+   :members:
+
+.. automodule:: poraque.vis.style
    :members:

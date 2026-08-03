@@ -1,70 +1,121 @@
+# Theory
 
-# Total energy
+## Density-functional theory
 
-The electronic energy is decomposed as
+The Hohenberg–Kohn theorems replace the $3N$-dimensional many-body
+wavefunction by the electron density. The first states that the ground-state
+density determines the external potential up to a constant, so for a fixed
+electron number
 
-$$ E[n] = T_s[n] + E_{ext}[n] + E_H[n] + E_{xc}[n], $$
+$$
+V_\mathrm{ext}(\mathbf r) \;\longleftrightarrow\; \rho_0(\mathbf r).
+$$
 
-with the external (electron-nucleus) energy $E_{ext} = \int n(\mathbf{r})\, v_{ext}(\mathbf{r})\, d\mathbf{r}$.
+The second gives a universal functional $F[\rho]$ such that
+$E[\rho]=F[\rho]+\int V_\mathrm{ext}\rho\,\mathrm d^3r$ is minimised by the
+ground-state density.
 
-# Kinetic energy density functionals (OF-DFT)
+This is the formal footing of the `ext2chg` model: its target is not a fitted
+correlation but a single-valued function whose existence and uniqueness is a
+theorem.
 
-* **Thomas-Fermi:** $T_{TF}[n] = C_{TF} \int n^{5/3}\, d\mathbf{r}$ with
-  $C_{TF} = \tfrac{3}{10}(3\pi^2)^{2/3}$.
-* **von Weizsäcker:** $T_{vW}[n] = \tfrac{1}{8}\int \frac{|\nabla n|^2}{n}\, d\mathbf{r}$,
-  exact for one- and two-electron systems.
-* **TFvW:** $T[n] = c_{TF}\,T_{TF}[n] + \lambda\, T_{vW}[n]$. The gradient
-  prefactor $\lambda$ interpolates between the Thomas-Fermi limit
-  ($\lambda = 0$) and the full von Weizsäcker correction.
+```{note}
+The map is conditional on the electron number $N$. In a dataset where $N$
+follows from the geometry a network can infer it; for charged systems or mixed
+chemistry, $N$ must become an explicit input.
+```
 
-The OF-DFT engine minimizes $E[n]$ directly over the positivity-preserving
-variable $w = \sqrt{n}$, constrained to the sphere $\int w^2\, d\mathbf{r} = N$.
-The constrained gradient is $g = 2w\,(v_{\mathrm eff} - \mu)$ with the chemical
-potential $\mu = \tfrac{1}{N}\int w^2 v_{\mathrm eff}\, d\mathbf{r}$, which makes
-$g$ tangent to the constraint sphere ($\langle g, w\rangle = 0$). Search
-directions are built with the **Polak-Ribière(+) conjugate-gradient** formula,
+## Kohn–Sham theory
 
-$$ d_k = -g_k + \beta_k\, d_{k-1}, \qquad
-   \beta_k = \max\!\left(0,\ \frac{\langle g_k,\, g_k - g_{k-1}\rangle}
-                                  {\langle g_{k-1},\, g_{k-1}\rangle}\right), $$
+Since $F[\rho]$ is unknown and its kinetic part is badly approximated by
+explicit density functionals, Kohn and Sham introduce non-interacting
+electrons with the same density:
 
-projected back onto the tangent space at $w$ and followed by a backtracking line
-search with the normalization retraction $w' = \mathrm{normalize}(w + \alpha d)$.
-The method restarts to steepest descent periodically and whenever a conjugate
-direction stops descending, guaranteeing a monotonically decreasing energy.
+$$
+\left(-\tfrac12\nabla^2 + v_\mathrm{s}[\rho]\right)\psi_i = \varepsilon_i\psi_i,
+\qquad
+v_\mathrm{s} = V_\mathrm{ext} + v_H[\rho] + v_{xc}[\rho],
+$$
 
-# Exchange-correlation
+solved self-consistently. Two features shape the architecture: the map is
+**non-local** (the Hartree term is a $1/|\mathbf r-\mathbf r'|$ convolution) and
+**self-consistent** (the density is a fixed point).
 
-The shared LDA functional combines Dirac (Slater) exchange,
-$E_x = -C_x \int n^{4/3}\, d\mathbf{r}$ with $C_x = \tfrac{3}{4}(3/\pi)^{1/3}$,
-and Perdew-Wang (1992) correlation. The same interface is reused by the OF-DFT
-and KS-DFT engines.
+## Kinetic energy density
 
-# Kohn-Sham DFT
+The quantity stored in `TAUCAR` is the positive-definite form
 
-The Kohn-Sham Hamiltonian is
+$$
+\tau(\mathbf r) = \tfrac12\sum_i^\mathrm{occ} f_i |\nabla\psi_i(\mathbf r)|^2 .
+$$
 
-$$ \hat{H} = -\tfrac{1}{2}\nabla^2 + v_{ext} + v_H[n] + v_{xc}[n]. $$
+An alternative using the Laplacian integrates to the same $T_s$ but differs
+pointwise by $\tfrac14\nabla^2\rho$ and is not sign-definite. The distinction
+matters: the constraints below apply to the positive-definite form.
 
-The kinetic operator is applied spectrally (FFT), $-\tfrac{1}{2}\nabla^2\psi =
-\tfrac{1}{2}\,\mathcal{F}^{-1}\!\big(|\mathbf{G}|^2\,\mathcal{F}\psi\big)$, and the
-occupied orbitals are obtained with a matrix-free Hermitian eigensolver inside a
-linearly-mixed fixed-point SCF loop. The total energy uses the band-energy
-decomposition
+### Exact properties
 
-$$ E = \sum_i f_i \varepsilon_i - E_H[n] + E_{xc}[n] - \int v_{xc}[n]\, n\, d\mathbf{r}. $$
+| Property | Statement |
+| --- | --- |
+| Non-negativity | $\tau \ge 0$ |
+| Hoffmann-Ostenhof bound | $\tau \ge \tau_\mathrm{vW} = \lvert\nabla\rho\rvert^2/8\rho$ |
+| Uniform-gas limit | $\tau \to C_\mathrm{TF}\rho^{5/3}$ as $\nabla\rho\to0$ |
+| Coordinate scaling | $T_s[\rho_\lambda] = \lambda^2 T_s[\rho]$ |
 
-# Frozen-Density Embedding
+The decomposition $\tau = \tau_\mathrm{vW} + \tau_\mathrm{P}$ with
+$\tau_\mathrm{P}\ge0$ defines the **Pauli term** — the part arising purely from
+Fermi statistics, and what every orbital-free kinetic functional is really
+trying to approximate.
 
-The supersystem density is partitioned as $n_{tot} = \sum_I n_I$. Each subsystem
-is relaxed in the embedding potential generated by the others
-(Wesolowski-Warshel),
+## Orbital-free DFT
 
-$$ v^I_{emb} = v^{others}_{ext} + v_H[n_{others}]
-   + \big(v_{xc}[n_{tot}] - v_{xc}[n_I]\big)
-   + \big(v_{Ts}[n_{tot}] - v_{Ts}[n_I]\big), $$
+Removing the orbitals entirely and minimising $E[\rho]$ under
+$\int\rho=N$ gives the Euler–Lagrange equation
 
-where the nonadditive kinetic potential uses an explicit KEDF. Subsystems may be
-solved with the OF-DFT or KS-DFT engine, enabling OF-in-OF, KS-in-KS, and mixed
-embedding. Freeze-and-thaw cycles alternate which subsystem is relaxed until the
-total density and embedded energy are self-consistent.
+$$
+\frac{\delta T_s}{\delta\rho}(\mathbf r) + V_\mathrm{ext}(\mathbf r)
+  + v_H[\rho](\mathbf r) + v_{xc}[\rho](\mathbf r) = \mu ,
+$$
+
+with $\mu$ constant in space. One scalar equation replaces the $N$ coupled
+Kohn–Sham equations, and the cost becomes near-linear in system size.
+
+Everything in it is available: $V_\mathrm{ext}$ is Model 1's input, $\rho$ its
+output, $v_H$ is computed exactly by FFT, and $\delta T_s/\delta\rho$ follows
+from autograd through Model 2. Since $\mu$ is a constant, subtracting the cell
+average eliminates it, leaving a residual that must vanish for the true
+ground-state density — a **label-free** training signal.
+
+```{warning}
+The residual is a *consistency* condition, not a *correctness* one. With both
+models free to adapt, the pair can drive it to zero without either being
+right. Joint training is safe only with the data terms retained and dominant.
+```
+
+## Why the classical functionals fail
+
+| Functional | Regime | Failure |
+| --- | --- | --- |
+| Thomas–Fermi | uniform gas | no shell structure; does not bind molecules |
+| von Weizsäcker | one orbital | exact only for a single nodeless orbital |
+| TF + $\lambda$vW | gradient expansion | not reliable across chemistry |
+
+On a $d$-band metal Thomas–Fermi attains a *negative* coefficient of
+determination — as a pointwise predictor of $\tau$ it is worse than the
+constant mean. That is the gap a learned functional is meant to close.
+
+## Electrostatics on a periodic grid
+
+Both $V_\mathrm{ext}$ and $v_H$ are evaluated in reciprocal space, where the
+Coulomb kernel is diagonal:
+
+$$
+v_H(\mathbf G) = \frac{4\pi e^2 \rho(\mathbf G)}{G^2},
+\qquad v_H(\mathbf 0) \equiv 0 .
+$$
+
+The $\mathbf G = 0$ component diverges for any charged distribution. In a
+neutral periodic crystal that divergence cancels between the electron–electron,
+electron–ion and ion–ion terms; the standard convention is to zero each term's
+$\mathbf G=0$ component individually, which adds a uniform neutralising
+background and leaves potentials defined up to a constant.
