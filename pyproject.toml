@@ -11,7 +11,7 @@ authors = [
 description = "For machine-learned density functional"
 readme = "README.md"
 license = {file = "LICENSE"} # MIT License
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
     'numpy',
     # 'pandas',
