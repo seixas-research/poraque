@@ -1,0 +1,511 @@
+# -*- coding: utf-8 -*-
+# file: report.py
+
+# This code is part of Poraquê.
+# MIT License
+#
+# Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
+
+r"""
+Visual evaluation of a trained neural operator against reference DFT data.
+
+:class:`TrainingReport` produces the three figures that answer three different
+questions, which is why they are three figures and not one:
+
+**Did it train?**  :meth:`loss_curves`
+    Objective against epoch. Training loss and validation error are drawn in
+    *separate stacked panels* rather than on twin y-axes: they are different
+    quantities (a normalised objective and a physical relative :math:`L^2`), and
+    a second y-scale invites the reader to compare two curves whose vertical
+    positions have no shared meaning.
+
+**Is it right in space?**  :meth:`field_comparison`
+    A cross-section of the reference field, the prediction, and their
+    difference. Reference and prediction share one colour scale — plotting them
+    on independent scales is the classic way to make a bad prediction look
+    good. The difference panel uses a diverging ramp on limits symmetric about
+    zero, so neutral always means zero error.
+
+**Is it right in distribution?**  :meth:`parity`
+    Predicted against true voxel values. With :math:`10^6` points a scatter is a
+    solid blob, so the default is a 2D density histogram; the identity line and
+    the fitted metrics sit on top.
+
+All figures are written to a results directory and the paths returned, so a
+training script can archive them without knowing anything about Matplotlib.
+"""
+
+import os
+
+import numpy as np
+
+from .style import (
+    INK,
+    diverging_cmap,
+    rc_params,
+    sequential_cmap,
+    series_color,
+    symmetric_limits,
+)
+
+
+def _as_array(field):
+    """Accept a :class:`~poraque.fields.ScalarField` or a raw array."""
+    return np.asarray(getattr(field, "data", field), dtype=float)
+
+
+def _metrics(prediction, reference):
+    """Relative L2, R^2, MAE and RMSE between two fields."""
+    prediction = prediction.ravel()
+    reference = reference.ravel()
+    difference = prediction - reference
+    total = np.sum((reference - reference.mean()) ** 2)
+    return {
+        "relative_l2": float(np.linalg.norm(difference) / np.linalg.norm(reference)),
+        "r2": float(1.0 - np.sum(difference ** 2) / total) if total > 0 else float("nan"),
+        "mae": float(np.mean(np.abs(difference))),
+        "rmse": float(np.sqrt(np.mean(difference ** 2))),
+    }
+
+
+class TrainingReport:
+    """
+    Generate and save the evaluation figures for one model.
+
+    Parameters
+    ----------
+    output_dir : str, optional
+        Directory for the figures; created on demand.
+    theme : {"light", "dark"}, optional
+        Dark mode is a *selected* set of tokens, not an inverted light mode.
+    dpi : int, optional
+        Raster resolution.
+    fmt : str, optional
+        Image format (``png``, ``pdf``, ``svg``).
+    prefix : str, optional
+        Prepended to every filename, e.g. the task or fold name.
+
+    Examples
+    --------
+    >>> report = TrainingReport("results/plots", prefix="chg2tau")   # doctest: +SKIP
+    >>> report.loss_curves(history)                                  # doctest: +SKIP
+    >>> report.field_comparison(reference, prediction,
+    ...                         label=r"$\\tau$", unit="eV/Ang^3")   # doctest: +SKIP
+    >>> report.parity(reference, prediction)                         # doctest: +SKIP
+    """
+
+    def __init__(self, output_dir="results/plots", theme="light", dpi=160,
+                 fmt="png", prefix=""):
+        self.output_dir = str(output_dir)
+        self.theme = theme
+        self.dpi = int(dpi)
+        self.fmt = str(fmt).lstrip(".")
+        self.prefix = str(prefix)
+        self.ink = INK["dark" if theme == "dark" else "light"]
+        self.written = []
+
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
+    def _path(self, name):
+        os.makedirs(self.output_dir, exist_ok=True)
+        stem = f"{self.prefix}_{name}" if self.prefix else name
+        return os.path.join(self.output_dir, f"{stem}.{self.fmt}")
+
+    def _save(self, figure, name):
+        import matplotlib.pyplot as plt
+
+        path = self._path(name)
+        figure.savefig(path, dpi=self.dpi, facecolor=self.ink["surface"])
+        plt.close(figure)
+        self.written.append(path)
+        return path
+
+    def _context(self, base_size=10):
+        import matplotlib.pyplot as plt
+
+        return plt.rc_context(rc_params(self.theme, base_size))
+
+    # ------------------------------------------------------------------ #
+    # 1. Loss curves
+    # ------------------------------------------------------------------ #
+    def loss_curves(self, history, name="loss_curves", title=None, log_scale=True):
+        """
+        Plot the training objective and validation error against epoch.
+
+        Parameters
+        ----------
+        history : dict
+            ``{"train_loss": [...], "val_error": [...]}`` as returned by
+            :func:`~poraque.ml.training.train`. ``val_error`` may be empty.
+        name : str, optional
+            Filename stem.
+        title : str, optional
+        log_scale : bool, optional
+            Log y-axis. Losses fall over orders of magnitude, and on a linear
+            axis everything after the first few epochs is a flat line against
+            the floor.
+
+        Returns
+        -------
+        str
+            Path written.
+        """
+        import matplotlib.pyplot as plt
+
+        train = np.asarray(history.get("train_loss", []), dtype=float)
+        validation = np.asarray(history.get("val_error", []), dtype=float)
+        if train.size == 0:
+            raise ValueError("history contains no 'train_loss' entries.")
+        has_validation = validation.size > 0
+
+        with self._context():
+            rows = 2 if has_validation else 1
+            figure, axes = plt.subplots(
+                rows, 1, figsize=(7.0, 3.2 * rows), sharex=True,
+                constrained_layout=True,
+            )
+            axes = np.atleast_1d(axes)
+
+            panels = [(axes[0], train, "Training objective", 0)]
+            if has_validation:
+                panels.append((axes[1], validation,
+                               "Validation relative $L^2$ (physical units)", 1))
+
+            for axis, values, label, slot in panels:
+                epochs = np.arange(1, values.size + 1)
+                colour = series_color(slot)
+                axis.plot(epochs, values, color=colour, label=label)
+                if log_scale and np.all(values > 0):
+                    axis.set_yscale("log")
+
+                # Direct label at the final point, rather than a number on
+                # every point: the endpoint is the value the reader wants.
+                axis.scatter([epochs[-1]], [values[-1]], s=28, color=colour,
+                             zorder=3, edgecolor=self.ink["surface"], linewidth=2)
+                axis.annotate(f"{values[-1]:.4g}",
+                              xy=(epochs[-1], values[-1]),
+                              xytext=(-6, 10), textcoords="offset points",
+                              ha="right", fontsize=9, color=self.ink["primary"])
+                if values.size and np.isfinite(values).any():
+                    best = int(np.nanargmin(values))
+                    if best != values.size - 1:
+                        axis.scatter([epochs[best]], [values[best]], s=28,
+                                     facecolor=self.ink["surface"],
+                                     edgecolor=colour, linewidth=1.8, zorder=3)
+                        axis.annotate(f"best {values[best]:.4g}",
+                                      xy=(epochs[best], values[best]),
+                                      xytext=(6, -12), textcoords="offset points",
+                                      fontsize=8, color=self.ink["secondary"])
+                # One series per panel: the axis label names it, so a legend
+                # box would only repeat the same words.
+                axis.set_ylabel(label, fontsize=9)
+
+            axes[-1].set_xlabel("Epoch")
+            figure.suptitle(title or "Training history", x=0.01, ha="left",
+                            fontsize=12, color=self.ink["primary"])
+            return self._save(figure, name)
+
+    # ------------------------------------------------------------------ #
+    # 2. Field cross-sections
+    # ------------------------------------------------------------------ #
+    def field_comparison(self, reference, prediction, name="field_slice",
+                         axis=2, index=None, label="field", unit="",
+                         title=None, log=False, difference_quantile=0.999):
+        """
+        Compare a 2D cross-section of the reference and predicted 3D fields.
+
+        Parameters
+        ----------
+        reference, prediction : ScalarField or numpy.ndarray
+            Fields of identical shape.
+        name : str, optional
+            Filename stem.
+        axis : {0, 1, 2}, optional
+            Axis to slice along.
+        index : int, optional
+            Slice index; defaults to the middle of ``axis``.
+        label : str, optional
+            Quantity name used in panel titles.
+        unit : str, optional
+            Physical unit, shown on the colour bars.
+        title : str, optional
+        log : bool, optional
+            Logarithmic colour scale, for strictly positive fields spanning
+            several decades (a valence density does).
+        difference_quantile : float, optional
+            Quantile of ``|error|`` setting the diverging limits, so a few
+            outlying voxels cannot wash out the whole error map.
+
+        Returns
+        -------
+        str
+            Path written.
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LogNorm, Normalize
+
+        reference_data = _as_array(reference)
+        prediction_data = _as_array(prediction)
+        if reference_data.shape != prediction_data.shape:
+            raise ValueError(
+                f"Shape mismatch: reference {reference_data.shape} vs "
+                f"prediction {prediction_data.shape}."
+            )
+        if axis not in (0, 1, 2):
+            raise ValueError(f"axis must be 0, 1 or 2, got {axis!r}.")
+
+        index = reference_data.shape[axis] // 2 if index is None else int(index)
+        reference_slice = np.take(reference_data, index, axis=axis)
+        prediction_slice = np.take(prediction_data, index, axis=axis)
+        difference = prediction_slice - reference_slice
+
+        # ONE shared scale for reference and prediction. Independent scales
+        # would hide exactly the errors this figure exists to reveal.
+        finite = np.concatenate([reference_slice.ravel(), prediction_slice.ravel()])
+        finite = finite[np.isfinite(finite)]
+        if log and finite.min() <= 0:
+            log = False           # LogNorm cannot show non-positive values
+        if log:
+            norm = LogNorm(vmin=max(finite.min(), 1e-8), vmax=finite.max())
+        else:
+            norm = Normalize(vmin=finite.min(), vmax=finite.max())
+
+        low, high = symmetric_limits(difference, difference_quantile)
+        metrics = _metrics(prediction_data, reference_data)
+        axis_names = ("a", "b", "c")
+        remaining = [axis_names[i] for i in range(3) if i != axis]
+
+        with self._context():
+            figure, axes = plt.subplots(1, 3, figsize=(13.0, 4.1),
+                                        constrained_layout=True)
+            common = dict(origin="lower", aspect="equal", interpolation="nearest")
+
+            for panel, values, panel_title in (
+                (axes[0], reference_slice, f"DFT reference {label}"),
+                (axes[1], prediction_slice, f"FNO prediction {label}"),
+            ):
+                image = panel.imshow(values.T, cmap=sequential_cmap(), norm=norm,
+                                     **common)
+                panel.set_title(panel_title)
+                panel.set_xlabel(f"grid index along {remaining[0]}")
+                panel.grid(False)
+            axes[0].set_ylabel(f"grid index along {remaining[1]}")
+
+            bar = figure.colorbar(image, ax=axes[:2], fraction=0.046, pad=0.02)
+            bar.set_label(f"{label} [{unit}]" if unit else label)
+            bar.outline.set_visible(False)
+
+            error_image = axes[2].imshow(difference.T, cmap=diverging_cmap(),
+                                         vmin=low, vmax=high, **common)
+            axes[2].set_title("Prediction $-$ reference")
+            axes[2].set_xlabel(f"grid index along {remaining[0]}")
+            axes[2].grid(False)
+            error_bar = figure.colorbar(error_image, ax=axes[2], fraction=0.046,
+                                        pad=0.02)
+            error_bar.set_label(f"error [{unit}]" if unit else "error")
+            error_bar.outline.set_visible(False)
+
+            headline = (title or f"{label}: slice {index} along axis "
+                                 f"{axis_names[axis]}")
+            figure.suptitle(
+                f"{headline}          "
+                f"relative $L^2$ = {metrics['relative_l2']:.4f}   "
+                f"$R^2$ = {metrics['r2']:.4f}   "
+                f"MAE = {metrics['mae']:.4g} {unit}".rstrip(),
+                x=0.01, ha="left", fontsize=11, color=self.ink["primary"],
+            )
+            return self._save(figure, name)
+
+    # ------------------------------------------------------------------ #
+    # 3. Parity
+    # ------------------------------------------------------------------ #
+    def parity(self, reference, prediction, name="parity", label="field",
+               unit="", title=None, bins=200, max_points=200_000,
+               scatter=False, log=False):
+        """
+        Predicted against true voxel values, with the identity line.
+
+        Parameters
+        ----------
+        reference, prediction : ScalarField or numpy.ndarray
+        name : str, optional
+        label : str, optional
+        unit : str, optional
+        title : str, optional
+        bins : int, optional
+            Bins per axis for the density histogram.
+        max_points : int, optional
+            Subsample size when ``scatter`` is true.
+        scatter : bool, optional
+            Draw individual points instead of a density map. Only sensible for
+            small grids — a million points render as one opaque blob, which
+            shows the extent of the data but nothing about where it
+            concentrates.
+        log : bool, optional
+            Log-scale both axes, for strictly positive fields.
+
+        Returns
+        -------
+        str
+            Path written.
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LogNorm
+
+        reference_data = _as_array(reference).ravel()
+        prediction_data = _as_array(prediction).ravel()
+        if reference_data.shape != prediction_data.shape:
+            raise ValueError("reference and prediction must have the same size.")
+
+        valid = np.isfinite(reference_data) & np.isfinite(prediction_data)
+        if log:
+            valid &= (reference_data > 0) & (prediction_data > 0)
+        x, y = reference_data[valid], prediction_data[valid]
+        metrics = _metrics(prediction_data[valid], reference_data[valid])
+
+        with self._context():
+            figure, panel = plt.subplots(figsize=(5.6, 5.4),
+                                         constrained_layout=True)
+
+            if scatter:
+                if x.size > max_points:
+                    picked = np.random.default_rng(0).choice(x.size, max_points,
+                                                             replace=False)
+                    x, y = x[picked], y[picked]
+                panel.scatter(x, y, s=4, alpha=0.25, linewidths=0,
+                              color=series_color(0), label="voxels")
+            else:
+                # Log axes demand log-spaced bins. With linear bins the cells
+                # render enormous at the low end and invisible at the high end,
+                # which reads as structure in the data that is not there.
+                if log:
+                    edges_x = np.logspace(np.log10(x.min()), np.log10(x.max()),
+                                          bins + 1)
+                    edges_y = np.logspace(np.log10(y.min()), np.log10(y.max()),
+                                          bins + 1)
+                    grid_bins = [edges_x, edges_y]
+                else:
+                    grid_bins = bins
+                counts = panel.hist2d(x, y, bins=grid_bins,
+                                      cmap=sequential_cmap(), norm=LogNorm())[3]
+                bar = figure.colorbar(counts, ax=panel, fraction=0.046, pad=0.02)
+                bar.set_label("voxels per bin")
+                bar.outline.set_visible(False)
+
+            lower = float(min(x.min(), y.min()))
+            upper = float(max(x.max(), y.max()))
+            panel.plot([lower, upper], [lower, upper], linestyle="--",
+                       linewidth=1.6, color=self.ink["muted"], zorder=4,
+                       label="perfect agreement")
+            if log:
+                panel.set_xscale("log")
+                panel.set_yscale("log")
+            panel.set_xlim(lower, upper)
+            panel.set_ylim(lower, upper)
+            panel.set_aspect("equal")
+
+            suffix = f" [{unit}]" if unit else ""
+            panel.set_xlabel(f"DFT reference {label}{suffix}")
+            panel.set_ylabel(f"FNO prediction {label}{suffix}")
+            panel.legend(loc="upper left")
+
+            panel.text(
+                0.98, 0.04,
+                f"relative $L^2$ = {metrics['relative_l2']:.4f}\n"
+                f"$R^2$ = {metrics['r2']:.4f}\n"
+                f"RMSE = {metrics['rmse']:.4g}{suffix}",
+                transform=panel.transAxes, ha="right", va="bottom", fontsize=9,
+                color=self.ink["secondary"],
+            )
+            figure.suptitle(title or f"Parity: {label}", x=0.01, ha="left",
+                            fontsize=12, color=self.ink["primary"])
+            return self._save(figure, name)
+
+    # ------------------------------------------------------------------ #
+    # 4. Error distribution
+    # ------------------------------------------------------------------ #
+    def error_histogram(self, reference, prediction, name="error_histogram",
+                        label="field", unit="", title=None, bins=120):
+        """
+        Distribution of the signed voxel-wise error.
+
+        Complements :meth:`parity` by showing bias (is the distribution
+        centred?) separately from spread, which a parity cloud conflates.
+
+        Returns
+        -------
+        str
+            Path written.
+        """
+        import matplotlib.pyplot as plt
+
+        difference = (_as_array(prediction) - _as_array(reference)).ravel()
+        difference = difference[np.isfinite(difference)]
+
+        with self._context():
+            figure, panel = plt.subplots(figsize=(6.4, 3.6),
+                                         constrained_layout=True)
+            low, high = symmetric_limits(difference, 0.999)
+            panel.hist(difference, bins=bins, range=(low, high),
+                       color=series_color(0), alpha=0.85,
+                       label="voxel-wise error")
+            panel.axvline(0.0, color=self.ink["muted"], linestyle="--",
+                          linewidth=1.4, label="zero error")
+            panel.axvline(float(difference.mean()), color=series_color(1),
+                          linewidth=1.8,
+                          label=f"mean {difference.mean():+.3g}")
+            panel.set_xlabel(f"prediction $-$ reference"
+                             + (f" [{unit}]" if unit else ""))
+            panel.set_ylabel("voxel count")
+            panel.set_yscale("log")
+            panel.legend(loc="upper right")
+            figure.suptitle(title or f"Error distribution: {label}", x=0.01,
+                            ha="left", fontsize=12, color=self.ink["primary"])
+            return self._save(figure, name)
+
+    # ------------------------------------------------------------------ #
+    # Convenience
+    # ------------------------------------------------------------------ #
+    def full_report(self, history=None, reference=None, prediction=None,
+                    label="field", unit="", log_field=False, title=None):
+        """
+        Produce every applicable figure in one call.
+
+        Parameters
+        ----------
+        history : dict, optional
+            Training history; skipped when absent.
+        reference, prediction : ScalarField or numpy.ndarray, optional
+            Field pair; the field figures are skipped when absent.
+        label, unit : str, optional
+            Quantity name and unit.
+        log_field : bool, optional
+            Use logarithmic colour/axes for the field and parity plots.
+        title : str, optional
+            Prefix for figure titles.
+
+        Returns
+        -------
+        list of str
+            Paths written, in order.
+        """
+        produced = []
+        prefix = f"{title} — " if title else ""
+
+        if history:
+            produced.append(self.loss_curves(
+                history, title=f"{prefix}training history".strip()))
+
+        if reference is not None and prediction is not None:
+            produced.append(self.field_comparison(
+                reference, prediction, label=label, unit=unit, log=log_field,
+                title=f"{prefix}cross-section".strip()))
+            produced.append(self.parity(
+                reference, prediction, label=label, unit=unit, log=log_field,
+                title=f"{prefix}parity".strip()))
+            produced.append(self.error_histogram(
+                reference, prediction, label=label, unit=unit,
+                title=f"{prefix}error distribution".strip()))
+
+        return produced

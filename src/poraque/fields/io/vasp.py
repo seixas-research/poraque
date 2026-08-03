@@ -100,10 +100,20 @@ class VaspReader(CalculationReader):
     # ------------------------------------------------------------------ #
     # VASP-specific extras
     # ------------------------------------------------------------------ #
-    def read_potcar(self, directory):
-        """Return the raw :class:`~poraque.fields.vasp.Potcar`, or ``None``."""
+    def read_potcar(self, directory, parse_tables=False):
+        """
+        Return the raw :class:`~poraque.fields.vasp.Potcar`, or ``None``.
+
+        Parameters
+        ----------
+        directory : str
+        parse_tables : bool, optional
+            Also read the ``local part`` tables, needed to reconstruct the
+            exact local pseudopotential.
+        """
         path = os.path.join(directory, "POTCAR")
-        return Potcar.from_file(path) if os.path.exists(path) else None
+        return (Potcar.from_file(path, parse_tables=parse_tables)
+                if os.path.exists(path) else None)
 
     def read_incar(self, directory):
         """Return the raw :class:`~poraque.fields.vasp.Incar`, or ``None``."""

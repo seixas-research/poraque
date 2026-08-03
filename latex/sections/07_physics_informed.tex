@@ -1,0 +1,271 @@
+% =========================================================================
+% Chapter 7 - Physics-informed operators
+% =========================================================================
+\chapter{Physics-informed operators}
+\label{ch:pifno}
+
+\section{Constrain by construction, not by penalty}
+
+A soft penalty $\lambda\lVert\text{violation}\rVert^2$ trades accuracy against
+constraint satisfaction and fully achieves neither: the weight must be tuned,
+the constraint holds only approximately, and a badly scaled term degrades the
+model while looking principled. Where a constraint can be built into the
+\emph{parameterisation} it should be. It then holds for every weight
+configuration, at initialisation and after any optimiser step, with nothing to
+tune and no inference cost.
+
+Three constraints move into the architecture.
+
+\subsection{Positivity}
+
+Predict $\log\rho$ and exponentiate. The inverse transform returns
+$e^{y}-\epsilon$, so $\rho > -\epsilon$ \emph{identically}.
+
+\subsection{Electron count}
+
+\begin{equation}
+  \rho_{\mathrm{out}}(\rr) = N_{\mathrm{val}}\,
+    \frac{\tilde\rho(\rr)}{\int \tilde\rho\,\mathrm{d}\rr}
+\end{equation}
+makes $\int\rho = N_{\mathrm{val}}$ hold to machine precision, differentiably,
+at the cost of one reduction. Strictly better than a penalty on the same
+quantity.
+
+\subsection{The von Weizsäcker bound}
+\label{sec:pauli-head}
+
+Using the exact decomposition~\eqref{eq:pauli}, write the network output as
+\begin{equation}
+  \boxed{\;
+    \tau_\theta = \tauvW[\rho] \;+\; s\cdot\mathrm{softplus}\bigl(f_\theta(\rho)\bigr) \;}
+  \label{eq:paulihead}
+\end{equation}
+so the network learns only the Pauli term. This buys two things at once:
+
+\begin{enumerate}
+  \item \textbf{The bound becomes structural.} \opt{softplus} is non-negative,
+    so $\tau_\theta \ge \tauvW$ identically. The inequality is enforced
+    \emph{non-strictly}, exactly as Hoffmann-Ostenhof states it: for a strongly
+    negative output \opt{softplus} underflows and the head returns
+    $\tau=\tauvW$ exactly --- the correct one-orbital limit, which is
+    \emph{reachable} rather than merely approachable. A soft penalty can only
+    approach it from above.
+  \item \textbf{The network stops re-deriving known physics.} On the gold data
+    $\tauvW$ accounts for $\sim31\,\%$ of $\tau$; that fraction is now supplied
+    analytically and exactly by a spectral gradient, leaving only the genuinely
+    unknown remainder to learn.
+\end{enumerate}
+
+\begin{ptip}
+The scale $s$ is fitted on the \emph{training split only} --- fitting it on the
+held-out material would leak the answer --- and is then optimised as $\log s$,
+which cannot change sign. $\tauvW[\rho]$ is a fixed function of the
+\emph{input}, so it contributes no gradient to $\theta$: it is a per-sample
+offset, not a second trainable branch.
+\end{ptip}
+
+\begin{pwarn}
+The bound is a theorem for all-electron densities; \file{CHGCAR} and
+\file{TAUCAR} are pseudo quantities, so it must be \emph{measured} before the
+head is enabled on a new data set. \opt{pauli\_bound\_violation} does this.
+On the present data it holds at every point of two structures and at all but
+one point of the third.
+\end{pwarn}
+
+\section{Measured effect of the head}
+\label{sec:headresult}
+
+Identical data, seed, architecture and epoch count; only the head differs.
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Held out & baseline & \textbf{Pauli head} & change \\
+\midrule
+struct\_000 & $0.0534$ & $\mathbf{0.0363}$ & $-32.0\,\%$ \\
+struct\_001 & $0.0840$ & $\mathbf{0.0762}$ & $-9.3\,\%$ \\
+struct\_002 & $0.0902$ & $\mathbf{0.0734}$ & $-18.6\,\%$ \\
+\midrule
+mean & $0.0759$ & $\mathbf{0.0620}$ & $\mathbf{-18.3\,\%}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+(relative $L^2$ on the held-out material.) The head wins on every fold and every
+metric; MSE falls $30.6\,\%$.
+
+Two results deserve more attention than the headline number.
+
+\begin{description}
+  \item[$\Ts$ improves more than $\tau$ does.] The integrated kinetic energy ---
+    the quantity that actually enters the total energy --- improves from
+    $2.55\to1.13\,\%$, $0.53\to0.27\,\%$ and $0.90\to0.58\,\%$: roughly halved
+    on every fold, a larger relative gain than the pointwise error. That is the
+    expected direction, since $\tauvW$ is supplied exactly and contributes no
+    model error to the integral.
+  \item[It trains \emph{faster}.] $148.6$\,s per fold against $180.8$\,s, and to
+    a lower final training loss. The extra FFT for $\tauvW$ is more than repaid
+    by conditioning: the network fits only $\tauP$, whose dynamic range is far
+    narrower than $\tau$'s. This is not an accuracy-versus-cost trade.
+\end{description}
+
+\begin{pwarn}
+The constraint did \emph{not} bind. The unconstrained baseline violated the
+bound at zero points in all three folds, with margins of $0.83$--$1.05\
+\mathrm{eV}/\text{\AA}^3$. On converged reference data the head's gain therefore
+comes from handing the model $31\,\%$ of the answer analytically, not from
+rescuing violations. The hard guarantee is insurance that costs nothing here and
+becomes load-bearing inside an SCF loop, where the functional sees
+non-converged densities far from the training distribution. These three
+structures cannot distinguish ``the head enforces the bound'' from ``the bound
+is easy here''; the enforcement claim rests on the tests, which check it at
+random initialisation, at $50\times$ weights and after training at a
+destructive learning rate.
+\end{pwarn}
+
+\section{Soft constraints}
+
+Where a constraint cannot be built in, it enters the objective:
+\begin{equation}
+  \mathcal{L} = \mathcal{L}_{\mathrm{data}}
+    + \lambda_{\mathrm{EL}}\mathcal{L}_{\mathrm{EL}}
+    + \lambda_{\mathrm{TF}}\mathcal{L}_{\mathrm{TF}}
+    + \lambda_{T}\mathcal{L}_{T}
+    + \lambda_{\mathrm{scale}}\mathcal{L}_{\mathrm{scale}} .
+\end{equation}
+
+Every physics weight defaults to zero, so the objective is exactly the
+supervised baseline until a term is enabled deliberately. Three design rules:
+
+\begin{enumerate}
+  \item \textbf{Physics terms act on the prediction decoded to physical units},
+    never on the normalised representation --- a constraint is a statement about
+    physics, not about preprocessing.
+  \item \textbf{Every term is dimensionless.} A raw
+    $(\mathrm{eV}/\text{\AA}^3)^2$ penalty varies by orders of magnitude between
+    a light semiconductor and a transition-metal oxide, and no single weight
+    could serve both.
+  \item \textbf{The data term is $H^1$, not $L^2$}, when gradients matter:
+    $\tauvW$ depends on $\nabla\rho$, and gradient noise is amplified by
+    $|\nabla\rho|^2/8\rho$ exactly where $\rho$ is small.
+\end{enumerate}
+
+\subsection{The Euler--Lagrange residual}
+
+The most valuable soft term is Eq.~\eqref{eq:euler} itself. Since $\mu$ is a
+constant, subtracting the cell average eliminates it and leaves a residual that
+must vanish for the exact density:
+\begin{equation}
+  r(\rr) = \frac{\delta \Ts}{\delta\rho} + \vext + \vH[\rho] + \vxc[\rho]
+           - \overline{(\cdots)} .
+  \label{eq:elresidual}
+\end{equation}
+It contains only $\vext$ (the network input) and $\rho$ (its output), so it
+requires \textbf{no additional labels}.
+
+\begin{pwarn}
+The residual is only as good as the kinetic functional used to build it. With
+the analytic $\mathrm{TF}+\lambda\,\mathrm{vW}$ surrogate it supplies a
+physically correct \emph{inductive bias}, not ground truth, and must carry a
+modest weight.
+\end{pwarn}
+
+\section{The closed loop}
+
+The end state is not two models but one differentiable orbital-free cycle. The
+link is Eq.~\eqref{eq:euler} with $\delta\Ts/\delta\rho$ obtained by autograd
+through Model~2, since $\Ts=\int\tau_{\theta_B}[\rho]\,\mathrm{d}\rr$:
+
+\begin{center}
+\begin{tikzpicture}[
+    node distance=8mm and 12mm,
+    box/.style={draw=poraqueblue, rounded corners=2pt, fill=poraqueblue!5,
+                inner sep=5pt, font=\small},
+    file/.style={draw=shadegray, rounded corners=2pt, fill=panelgray,
+                 inner sep=5pt, font=\small\ttfamily},
+    arr/.style={-{Latex[length=2mm]}, thick, draw=poraquedark}]
+  \node[file] (ext) {EXTCAR};
+  \node[box, right=of ext] (m1) {FNO 1: $\vext \mapsto \rho$};
+  \node[file, right=of m1] (chg) {CHGCAR};
+  \node[box, right=of chg] (m2) {FNO 2: $\rho \mapsto \tau$};
+  \node[file, right=of m2] (tau) {TAUCAR};
+  \draw[arr] (ext) -- (m1);
+  \draw[arr] (m1) -- (chg);
+  \draw[arr] (chg) -- (m2);
+  \draw[arr] (m2) -- (tau);
+  \node[below=14mm of chg, font=\small\itshape, text=shadegray]
+    (loop) {Euler--Lagrange residual (label-free)};
+  \draw[arr, draw=poraqueamber] (chg) |- ([yshift=-6mm]chg.south) -| (loop);
+  \draw[arr, draw=poraqueamber, dashed] (m2.south) |- (loop.east);
+  \draw[arr, draw=poraqueamber, dashed] (loop.west) -| (m1.south);
+\end{tikzpicture}
+\end{center}
+
+Three consequences, in order of practical value:
+
+\begin{enumerate}
+  \item \textbf{Model~2 is regularised on Model~1's output distribution.} A
+    functional trained only on converged reference densities fails when placed
+    inside an SCF loop, because it then sees non-converged densities it was
+    never shown. Joint training on the residual exposes it to exactly that
+    distribution.
+  \item \textbf{The optimised quantity becomes the used quantity.} Orbital-free
+    DFT needs $\delta\Ts/\delta\rho$, not $\tau$; training through the
+    derivative removes the objective mismatch of Chapter~\ref{ch:ofdft}.
+  \item \textbf{Inference becomes physically consistent.} A predicted
+    $(\rho,\tau)$ pair satisfies the variational condition it is supposed to
+    satisfy, rather than merely resembling the training data.
+\end{enumerate}
+
+Beyond that, replacing Model~1's forward pass with a fixed-point solve of
+Eq.~\eqref{eq:euler} using the learned functional --- a deep-equilibrium model,
+differentiated by the implicit function theorem --- would make the network an
+orbital-free \emph{solver} rather than a regressor, with transferability bounded
+by the functional alone.
+
+\section{Why this is cheap here}
+
+Physics-informed training is normally expensive: derivatives must come from
+autograd through the network or from finite differences, and the latter injects
+a truncation error that the loss misattributes to the model. On a plane-wave
+grid neither problem arises.
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Operator & On this grid & Cost \\
+\midrule
+$\nabla$ & $i\GG$ & one FFT, \textbf{exact} \\
+$\nabla^2$ & $-G^2$ & one FFT, \textbf{exact} \\
+$\vH[\rho]$ & $4\pi e^2\rho(\GG)/G^2$ & one FFT, \textbf{exact} \\
+$\tauvW$ & $|\nabla\rho|^2/8\rho$ & one FFT, \textbf{exact} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+These are exact for band-limited fields --- precisely what a plane-wave grid
+carries --- and the operator is already computing FFTs in every layer. The
+physics and the architecture share one mathematical substrate. That is the
+strongest technical argument for a Fourier neural operator here, independent of
+accuracy.
+
+\section{Roadmap}
+
+\begin{center}
+\begin{tabular}{@{}clc@{}}
+\toprule
+Phase & Work & Status \\
+\midrule
+0 & supervised baseline, honest split by material & done \\
+1 & hard constraints: $\log$ head, charge normalisation, Pauli head & Pauli head done \\
+2 & $H^1$ data loss; scaling-relation augmentation & available \\
+3 & Euler--Lagrange residual with the analytic surrogate & available \\
+4 & $\delta \Ts/\delta\rho$ by autograd; joint training & planned \\
+5 & cycle consistency via density-to-potential inversion & planned \\
+6 & deep-equilibrium orbital-free solver & stretch \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Phases~1--3 are low risk and independently valuable. Phase~4 is the research
+contribution.

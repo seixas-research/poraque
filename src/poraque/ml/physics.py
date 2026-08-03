@@ -45,6 +45,71 @@ _HA_TO_EV = HARTREE_TO_EV
 
 
 # ---------------------------------------------------------------------- #
+# Cell metric
+#
+# These two helpers are the only place the code inverts or takes the
+# determinant of a lattice matrix. Both run on the **CPU in float64** and move
+# only the 3x3 (or scalar) result to the target device. Two reasons:
+#
+#   * Accuracy. A skewed cell has a poorly conditioned inverse, and every G
+#     vector on the grid inherits that error; float64 costs nothing here.
+#   * Portability. Apple's MPS backend supports neither float64 nor
+#     `linalg.det`, so doing this work on-device would make the whole package
+#     unusable on Apple Silicon. See poraque.ml.device.
+#
+# The cost is O(1) per structure against an O(N log N) FFT, i.e. unmeasurable.
+# ---------------------------------------------------------------------- #
+def cell_reciprocal(cell, device=None, dtype=torch.float32):
+    r"""
+    Reciprocal lattice :math:`2\pi\,(\mathbf{A}^{-1})^{T}` for a batch of cells.
+
+    Parameters
+    ----------
+    cell : torch.Tensor
+        ``(B, 3, 3)`` or ``(3, 3)`` lattice vectors in Å.
+    device : torch.device, optional
+        Where to place the result; defaults to the input's device.
+    dtype : torch.dtype, optional
+        Result dtype.
+
+    Returns
+    -------
+    torch.Tensor
+        ``(B, 3, 3)`` reciprocal vectors in Å⁻¹, rows ``b1, b2, b3``.
+    """
+    cell = cell if cell.dim() == 3 else cell.unsqueeze(0)
+    device = device if device is not None else cell.device
+    # Move to host BEFORE widening: casting an MPS tensor to float64 in place
+    # raises, because the dtype is unrepresentable on that backend.
+    host = cell.detach().cpu().to(torch.float64)
+    reciprocal = 2.0 * np.pi * torch.linalg.inv(host).transpose(-1, -2)
+    return reciprocal.to(device=device, dtype=dtype)
+
+
+def cell_volume(cell, device=None, dtype=torch.float32):
+    """
+    Absolute cell volume :math:`|\\det \\mathbf{A}|` for a batch of cells.
+
+    Parameters
+    ----------
+    cell : torch.Tensor
+        ``(B, 3, 3)`` or ``(3, 3)`` lattice vectors in Å.
+    device : torch.device, optional
+    dtype : torch.dtype, optional
+
+    Returns
+    -------
+    torch.Tensor
+        ``(B,)`` volumes in Å³.
+    """
+    cell = cell if cell.dim() == 3 else cell.unsqueeze(0)
+    device = device if device is not None else cell.device
+    # Host first, then widen -- see cell_reciprocal.
+    host = cell.detach().cpu().to(torch.float64)
+    return torch.linalg.det(host).abs().to(device=device, dtype=dtype)
+
+
+# ---------------------------------------------------------------------- #
 # Spectral differential operators
 # ---------------------------------------------------------------------- #
 def reciprocal_vectors(cell, shape, device=None, dtype=torch.float32):
@@ -68,9 +133,7 @@ def reciprocal_vectors(cell, shape, device=None, dtype=torch.float32):
     """
     cell = cell if cell.dim() == 3 else cell.unsqueeze(0)
     device = device or cell.device
-    reciprocal = 2.0 * np.pi * torch.linalg.inv(cell.to(torch.float64)) \
-        .transpose(-1, -2)                                      # (B, 3, 3)
-    reciprocal = reciprocal.to(dtype=dtype, device=device)
+    reciprocal = cell_reciprocal(cell, device=device, dtype=dtype)  # (B, 3, 3)
 
     frequencies = [
         torch.fft.fftfreq(n, d=1.0 / n, device=device, dtype=dtype) for n in shape
@@ -150,7 +213,7 @@ def integrate(field, cell):
         ``(B,)`` integrals.
     """
     values = field.squeeze(1) if field.dim() == 5 else field
-    volume = torch.linalg.det(cell.to(torch.float64)).abs().to(values.dtype)
+    volume = cell_volume(cell, device=values.device, dtype=values.dtype)
     n_points = float(np.prod(values.shape[-3:]))
     return values.sum(dim=(-3, -2, -1)) * volume / n_points
 

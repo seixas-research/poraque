@@ -1,0 +1,215 @@
+% =========================================================================
+% Chapter 1 - Kohn-Sham DFT
+% =========================================================================
+\chapter{Kohn--Sham density-functional theory}
+\label{ch:ksdft}
+
+This chapter fixes the physical objects the rest of the guide manipulates. The
+emphasis is on \emph{which statements are theorems and which are
+approximations}, because that distinction determines what a neural network may
+legitimately be asked to learn, and what may be enforced on it as a hard
+constraint.
+
+\section{The many-body problem}
+
+The non-relativistic electronic Hamiltonian for $N$ electrons in the field of
+fixed nuclei is, in Hartree atomic units,
+\begin{equation}
+  \hat{H}
+  = -\tfrac{1}{2}\sum_{i}^{N}\nabla_i^2
+    + \sum_{i}^{N}\vext(\rr_i)
+    + \sum_{i<j}\frac{1}{|\rr_i-\rr_j|} ,
+  \label{eq:hamiltonian}
+\end{equation}
+where $\vext$ collects the electron--nucleus attraction. The wavefunction
+$\Psi(\rr_1,\dots,\rr_N)$ depends on $3N$ coordinates, so a direct solution is
+hopeless beyond a handful of electrons.
+
+\section{The Hohenberg--Kohn theorems}
+\label{sec:hk}
+
+Density-functional theory replaces $\Psi$ by the electron density
+\begin{equation}
+  \rho(\rr) = N\int |\Psi(\rr,\rr_2,\dots,\rr_N)|^2\,
+              \mathrm{d}\rr_2\cdots\mathrm{d}\rr_N ,
+\end{equation}
+a function of three coordinates. Two theorems justify this.
+
+\begin{description}
+  \item[First theorem.] The ground-state density determines the external
+    potential up to an additive constant. Consequently, for a fixed electron
+    number, the ground-state density is a functional of $\vext$ alone:
+    \begin{equation}
+      \vext(\rr) \;\longleftrightarrow\; \rho_0(\rr).
+      \label{eq:hkmap}
+    \end{equation}
+  \item[Second theorem.] There exists a universal functional $F[\rho]$ such that
+    the total energy
+    \begin{equation}
+      E[\rho] = F[\rho] + \int \vext(\rr)\rho(\rr)\,\mathrm{d}\rr
+      \label{eq:energyfunctional}
+    \end{equation}
+    is minimised, subject to $\int\rho\,\mathrm{d}\rr = N$, by the ground-state
+    density, where it equals the ground-state energy.
+\end{description}
+
+Equation~\eqref{eq:hkmap} is the formal justification for the first learned
+model of this work. The target of a $\vext \mapsto \rho$ regression is not a
+fitted correlation: it is a single-valued function whose existence and
+uniqueness are guaranteed. That is a stronger footing than most machine-learning
+targets enjoy.
+
+\begin{pwarn}
+The map is conditional on the electron number $N$. In the present data set
+$N=\sum_a Z^{\mathrm{val}}_a$ follows from the geometry, so a network can infer
+it; for charged systems or a chemically heterogeneous data set, $N$ must become
+an explicit input.
+\end{pwarn}
+
+\section{The Kohn--Sham construction}
+
+The difficulty is that $F[\rho]$ is unknown, and its dominant part --- the
+kinetic energy --- is badly approximated by explicit density functionals. Kohn
+and Sham sidestep this by introducing an auxiliary system of non-interacting
+electrons with the \emph{same} density, for which the kinetic energy can be
+computed exactly from orbitals. Writing
+\begin{equation}
+  F[\rho] = \Ts[\rho] + E_{\mathrm{H}}[\rho] + E_{\mathrm{xc}}[\rho],
+\end{equation}
+with the Hartree energy
+\begin{equation}
+  E_{\mathrm{H}}[\rho] = \frac{1}{2}\iint
+    \frac{\rho(\rr)\rho(\rr')}{|\rr-\rr'|}\,\mathrm{d}\rr\,\mathrm{d}\rr',
+\end{equation}
+the variational condition becomes a set of single-particle equations,
+\begin{equation}
+  \left(-\tfrac{1}{2}\nabla^2 + v_{\mathrm{s}}[\rho](\rr)\right)\psi_i(\rr)
+    = \varepsilon_i \psi_i(\rr),
+  \qquad
+  v_{\mathrm{s}} = \vext + \vH[\rho] + \vxc[\rho],
+  \label{eq:kseq}
+\end{equation}
+with
+\begin{equation}
+  \rho(\rr) = \sum_i^{\mathrm{occ}} f_i |\psi_i(\rr)|^2,
+  \qquad
+  \Ts = -\tfrac{1}{2}\sum_i^{\mathrm{occ}} f_i
+        \langle \psi_i | \nabla^2 | \psi_i \rangle .
+\end{equation}
+Because $v_{\mathrm{s}}$ depends on $\rho$, which depends on the orbitals,
+Eq.~\eqref{eq:kseq} must be solved self-consistently.
+
+\subsection{Why the map is hard}
+
+Two features of Eq.~\eqref{eq:kseq} shape the choice of neural architecture in
+Chapter~\ref{ch:fno}.
+
+\begin{enumerate}
+  \item \textbf{It is non-local.} The Hartree term is a
+    $1/|\rr-\rr'|$ convolution: the density at one point depends on the
+    potential everywhere. A network with a finite receptive field must be made
+    very deep to propagate that information across a unit cell.
+  \item \textbf{It is self-consistent.} The density is a fixed point, not a
+    single forward evaluation. A supervised model learns the fixed point
+    directly, which is what makes it fast --- and what makes it fragile off the
+    training distribution.
+\end{enumerate}
+
+\section{The kinetic energy density}
+\label{sec:tau}
+
+The quantity stored in \file{TAUCAR} is the \emph{positive-definite} kinetic
+energy density of the Kohn--Sham system,
+\begin{equation}
+  \tau(\rr) = \frac{1}{2}\sum_i^{\mathrm{occ}} f_i
+              \bigl|\nabla\psi_i(\rr)\bigr|^2 .
+  \label{eq:taudef}
+\end{equation}
+It integrates to $\Ts$ and is manifestly non-negative. An alternative
+definition using the Laplacian,
+$\tilde\tau = -\tfrac{1}{2}\sum_i f_i \psi_i^*\nabla^2\psi_i$, integrates to the
+same $\Ts$ but differs pointwise by $\tfrac{1}{4}\nabla^2\rho$ and is
+\emph{not} sign-definite. The distinction matters here: the constraints of
+Section~\ref{sec:constraints} apply to Eq.~\eqref{eq:taudef}, and applying them
+to the Laplacian form would be simply wrong.
+
+\begin{ptip}
+Chapter~\ref{ch:vasp} shows, from the VASP source, that \file{TAUCAR} indeed
+stores Eq.~\eqref{eq:taudef} --- built spectrally as $i(\GG+\kk)$ acting on the
+plane-wave coefficients --- and not the Laplacian form. This was verified
+rather than assumed.
+\end{ptip}
+
+\section{Exact properties of \texorpdfstring{$\tau$}{tau}}
+\label{sec:constraints}
+
+Several relations constrain $\tau$ exactly. They are theorems, and
+Chapter~\ref{ch:pifno} uses them as hard constraints rather than as penalties.
+
+\begin{description}
+  \item[Non-negativity.] $\tau(\rr)\ge 0$, immediately from
+    Eq.~\eqref{eq:taudef}.
+  \item[The von Weizsäcker bound.] For any system,
+    \begin{equation}
+      \tau(\rr) \;\ge\; \tauvW(\rr)
+        \;\equiv\; \frac{|\nabla\rho(\rr)|^2}{8\rho(\rr)} ,
+      \label{eq:hobound}
+    \end{equation}
+    with equality for a single nodeless orbital. This is the
+    Hoffmann-Ostenhof inequality, and it is the single most useful constraint
+    available for the $\rho\mapsto\tau$ map: $\tauvW$ is a closed-form
+    functional of the input, so the bound can be imposed \emph{by
+    construction}.
+  \item[Uniform-gas limit.] As $\nabla\rho \to 0$,
+    \begin{equation}
+      \tau \;\longrightarrow\; \tauTF = C_{\mathrm{TF}}\,\rho^{5/3},
+      \qquad
+      C_{\mathrm{TF}} = \tfrac{3}{10}(3\pi^2)^{2/3} \approx 2.8712 .
+    \end{equation}
+  \item[Coordinate scaling.] For $\rho_\lambda(\rr)=\lambda^3\rho(\lambda\rr)$,
+    \begin{equation}
+      \Ts[\rho_\lambda] = \lambda^2\,\Ts[\rho] .
+      \label{eq:scaling}
+    \end{equation}
+    This is exact and label-free: any training sample can be rescaled and its
+    target $\Ts$ is then known in closed form, which is a data augmentation at
+    zero DFT cost.
+\end{description}
+
+The decomposition suggested by Eq.~\eqref{eq:hobound},
+\begin{equation}
+  \tau = \tauvW[\rho] + \tauP,
+  \qquad \tauP \ge 0 ,
+  \label{eq:pauli}
+\end{equation}
+defines the \emph{Pauli term} $\tauP$. It is the part of the kinetic energy
+that arises purely from Fermi statistics --- what distinguishes a many-fermion
+system from a single-orbital one --- and it is the object every orbital-free
+kinetic functional is really trying to approximate. Section~\ref{sec:pauli-head}
+shows that learning $\tauP$ instead of $\tau$ is both more accurate and
+cheaper.
+
+\section{Pseudopotentials}
+
+Core electrons are chemically inert but carry sharp oscillations that would
+demand an impractically fine grid. A pseudopotential replaces the nucleus and
+core by an effective ion of charge $Z^{\mathrm{val}}$ acting on smooth
+pseudo-valence orbitals. Its local part behaves as
+$-Z^{\mathrm{val}}e^2/r$ outside a core radius $R_{\mathrm{core}}$ and is
+softened inside.
+
+Three consequences run through this document:
+
+\begin{enumerate}
+  \item The fields in \file{CHGCAR} and \file{TAUCAR} are
+    \emph{pseudo} quantities. They are mutually consistent, which is why the
+    bound~\eqref{eq:hobound} is observed to hold on this data even though it is
+    strictly guaranteed only for all-electron quantities.
+  \item The external potential in \file{EXTCAR} is the \emph{local} part only.
+    Non-local projectors are not functions of $\rr$ at all and cannot appear in
+    a volumetric file even in principle.
+  \item The short-range shape of the local pseudopotential is tabulated, not
+    analytic. Chapter~\ref{ch:vasp} shows that modelling it with a smooth
+    analytic form factor is the dominant error in a naive reconstruction, and
+    how to avoid it.
+\end{enumerate}

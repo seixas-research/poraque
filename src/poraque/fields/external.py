@@ -52,6 +52,22 @@ The form factor :math:`f_s(G)` selects the pseudo-ion model:
     :math:`f_s(G) = 1`: bare point pseudo-ions. Parameter-free and the exact
     long-range limit, but visibly aliased near the nuclei on any finite grid.
 
+``model="potcar"`` (**exact**, reproduces VASP's ``EXTCAR``)
+    Uses the tabulated short-ranged local pseudopotential from the ``POTCAR``
+    instead of a model form factor:
+
+    .. math::
+
+        V_{\rm ext}(\mathbf{G}) = \frac{1}{\Omega}\sum_{s} S_{s}(\mathbf{G})
+        \left[\, v^{s}_{\rm short}(G) \;-\; \frac{4\pi Z^{\rm val}_{s} e^{2}}{G^{2}} \,\right],
+
+    which is line-for-line the formula in VASP's ``POTION`` (``pot.F``). The
+    second term is exactly the ``model="coulomb"`` result; the first is the
+    short-range remainder that no analytic form factor reproduces. Requires
+    ``parse_tables=True`` when reading the ``POTCAR``, which
+    :meth:`ExternalPotential.from_calculation` does automatically for this
+    model. See ``docs/vasp_analysis_report.md``.
+
 .. note::
    This is the *long-range, local* part of the ionic potential. It is not the
    full VASP ``PAW`` local pseudopotential: the short-range pseudization inside
@@ -143,7 +159,7 @@ class ExternalPotential(ScalarField):
     # ------------------------------------------------------------------ #
     @classmethod
     def from_calculation(cls, directory=".", code="auto", grid=None, shape=None,
-                         encut=None, prec=None, model="gaussian", sigma=None,
+                         encut=None, prec=None, model="auto", sigma=None,
                          rcore_factor=0.5, zval=None):
         """
         Build the external potential from *any* supported DFT calculation.
@@ -169,11 +185,14 @@ class ExternalPotential(ScalarField):
             Cutoff in eV overriding the input file.
         prec : str, optional
             Precision setting overriding the input file.
-        model : {"gaussian", "coulomb"}, optional
-            Pseudo-ion model; see the module docstring.
+        model : {"auto", "potcar", "gaussian", "coulomb"}, optional
+            Pseudo-ion model; see the module docstring. ``"auto"`` (default)
+            uses the **exact** tabulated pseudopotential when the code provides
+            one and falls back to ``"gaussian"`` otherwise, so the most
+            accurate available construction is used without being asked for.
         sigma : float or dict, optional
             Gaussian width(s) in Å. Defaults to ``rcore_factor`` times the
-            pseudopotential core radius.
+            pseudopotential core radius. Ignored by ``"potcar"``.
         rcore_factor : float, optional
             Multiplier turning the core radius into a Gaussian width.
         zval : dict, optional
@@ -196,6 +215,28 @@ class ExternalPotential(ScalarField):
                 structure, parameters, pseudopotentials,
                 shape=shape, encut=encut, prec=prec,
             )
+
+        # The tabulated route reproduces VASP's EXTCAR to ~1e-5 relative, so it
+        # is preferred whenever the tables can actually be read.
+        if model in ("auto", "potcar"):
+            tabulated = getattr(reader, "read_potcar", None)
+            potcar = (tabulated(directory, parse_tables=True)
+                      if tabulated is not None else None)
+            usable = (potcar is not None
+                      and all(entry.local_potential is not None
+                              for entry in potcar))
+            if usable:
+                return cls.from_potcar_tables(
+                    structure, grid, potcar,
+                    metadata={"code": reader.code, "encut": grid.encut,
+                              "prec": grid.prec, "source": str(directory)},
+                )
+            if model == "potcar":
+                raise ValueError(
+                    "model='potcar' requires a POTCAR with a readable "
+                    "'local part' table; none was found."
+                )
+            model = "gaussian"
 
         charges = _charges_from_pseudopotentials(structure, pseudopotentials, zval)
         widths = _widths_from_pseudopotentials(
@@ -289,6 +330,91 @@ class ExternalPotential(ScalarField):
                                "model": model,
                                "rcore_factor": rcore_factor,
                            })
+
+    @classmethod
+    def from_potcar_tables(cls, structure, grid, potcar, metadata=None):
+        r"""
+        Build the **exact** VASP local potential from the ``POTCAR`` tables.
+
+        Implements ``POTION`` (``pot.F``) verbatim:
+
+        .. math::
+
+            V_{\rm ext}(\mathbf G) = \frac{1}{\Omega}\sum_{s} S_s(\mathbf G)
+            \left[ v^{s}_{\rm short}(G) - \frac{4\pi Z^{\rm val}_s e^2}{G^2}\right]
+
+        with :math:`V(\mathbf G = 0) = 0`, and with the whole contribution of a
+        species set to zero beyond its tabulated range
+        :math:`G \ge \mathrm{PSGMAX} - \mathrm{PSGMAX}/N_{\rm pts}` — VASP
+        truncates there rather than extrapolating, and reproducing the
+        truncation matters because it is visible in the reference file.
+
+        Parameters
+        ----------
+        structure : Structure
+            Geometry.
+        grid : FieldGrid
+            Shared mesh.
+        potcar : Potcar
+            Must have been read with ``parse_tables=True``.
+        metadata : dict, optional
+
+        Returns
+        -------
+        ExternalPotential
+        """
+        from scipy.interpolate import CubicSpline
+
+        entries = {entry.element: entry for entry in potcar}
+        g2 = grid.get_g2()
+        magnitude = np.sqrt(g2)
+
+        inverse_g2 = np.zeros_like(g2)
+        nonzero = g2 > 1e-12
+        inverse_g2[nonzero] = 1.0 / g2[nonzero]
+
+        v_g = np.zeros(grid.shape, dtype=complex)
+
+        for symbol, atom_slice in structure.species_slices():
+            element = symbol.split("_")[0]
+            entry = entries.get(element)
+            if entry is None or entry.local_potential is None:
+                raise ValueError(
+                    f"No tabulated local potential for {element!r}. Read the "
+                    f"POTCAR with parse_tables=True."
+                )
+
+            q_grid = entry.local_q_grid
+            spline = CubicSpline(q_grid, entry.local_potential,
+                                 bc_type="natural", extrapolate=False)
+
+            # VASP: IF (G /= 0 .AND. G < PSGMAX - PSGMAX/NPSPTS)
+            limit = entry.psgmax - entry.psgmax / entry.NPSPTS
+            inside = nonzero & (magnitude < limit)
+
+            short_range = np.zeros_like(g2)
+            short_range[inside] = spline(magnitude[inside])
+
+            coulomb = np.zeros_like(g2)
+            coulomb[inside] = (-4.0 * np.pi * entry.zval
+                               * COULOMB_CONSTANT_EV_ANGSTROM
+                               * inverse_g2[inside])
+
+            structure_factor = _structure_factor(
+                grid, structure.scaled_positions[atom_slice]
+            )
+            v_g += (short_range + coulomb) * structure_factor * inside
+
+        v_g /= grid.volume
+        data = np.real(np.fft.ifftn(v_g) * grid.npoints)
+
+        payload = {
+            "model": "potcar",
+            "charges": {entry.element: entry.zval for entry in potcar},
+            "psgmax": {entry.element: entry.psgmax for entry in potcar},
+        }
+        payload.update(metadata or {})
+        return cls(data, grid, structure, metadata=payload)
 
     @classmethod
     def compute(cls, structure, grid, charges, widths=None, model="gaussian",

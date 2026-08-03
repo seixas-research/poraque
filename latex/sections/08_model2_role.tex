@@ -1,0 +1,327 @@
+% =========================================================================
+% Chapter 8 - The role of Model 2
+% =========================================================================
+\chapter{The role of Model 2: a learned kinetic energy functional}
+\label{ch:model2}
+
+\section{The question, stated without charity}
+
+A skeptic's version of the objection is worth writing down, because the weak
+answers to it are the ones most often given:
+
+\begin{quote}
+\itshape
+You already have Model~1, which predicts $\rho$ from the geometry. If you have
+a converged DFT calculation you have $\tau$ for free; and if you do not have
+one, you have no $\rho$ to feed Model~2 either. What is \opt{chg2tau}
+\emph{for}?
+\end{quote}
+
+Three answers are available. Two are weak.
+
+\begin{description}
+  \item[``$\tau$ is a useful observable'' --- weak.] It enters meta-GGA
+    functionals, the electron localisation function and bonding analysis. True,
+    but anyone holding a converged \file{CHGCAR} also holds a \file{TAUCAR}.
+    Predicting a quantity one already has is a benchmark, not an application.
+  \item[``It completes the pipeline'' --- weak.] Chaining
+    $\vext\to\rho\to\tau$ yields $\tau$ for a structure never computed, which
+    is useful for screening. But it makes Model~2 a convenience: nothing in it
+    is more than interpolation, and its errors feed back into nothing.
+  \item[``It \emph{is} the orbital-free kinetic energy functional'' --- the
+    actual reason.] See below.
+\end{description}
+
+$\Ts[\rho]$ is the \emph{only} term of the total energy with no accurate
+explicit density functional. Kohn--Sham theory evades the problem by
+reintroducing orbitals and pays $\mathcal{O}(N^3)$ for it. Orbital-free DFT
+removes them and scales near-linearly, but is only as good as its functional.
+A model of $\rho\mapsto\tau$ \textbf{is} such a functional, because
+\begin{equation}
+  \Ts[\rho] = \int \tau[\rho](\rr)\,\mathrm{d}\rr .
+\end{equation}
+Model~2 is therefore not a predictor of a convenient observable; it is a
+candidate solution to the central open problem of orbital-free DFT, in the one
+form a network can represent and autograd can differentiate. \textbf{Model~2 is
+the scientific contribution; Model~1 is the infrastructure around it.}
+
+\section{Is \texorpdfstring{$\tau$}{tau} a functional of \texorpdfstring{$\rho$}{rho}?}
+
+Worth settling, because the answer is subtler than ``Hohenberg--Kohn says so''.
+
+For the integrated quantity the argument is clean: HK gives $\rho\to
+v_{\mathrm{s}}$ uniquely for non-interacting $v$-representable densities,
+$v_{\mathrm{s}}$ determines the orbitals, and the orbitals determine $\Ts$. The
+same chain $\rho\to v_{\mathrm{s}}\to\{\psi_i\}\to\tau$ establishes
+$\tau[\rho]$ as well. But note what that chain contains --- solving the
+Kohn--Sham equations. The functional is thus
+
+\begin{itemize}
+  \item \textbf{exact but non-local}: $\tau$ at one point depends on $\rho$
+    everywhere, because the orbitals are delocalised Bloch states;
+  \item \textbf{not semi-local}: no finite gradient expansion converges to it,
+    which is precisely why Thomas--Fermi and its gradient corrections fail;
+  \item \textbf{expensive to evaluate exactly}: the definition requires the very
+    diagonalisation orbital-free DFT exists to avoid.
+\end{itemize}
+
+Two architectural consequences follow. The architecture \emph{must} be
+non-local, which rules out a finite-receptive-field convolutional network and
+motivates the globally coupled Fourier layer of Chapter~\ref{ch:fno}. And the
+target is well posed: unlike most machine-learning targets, $\tau[\rho]$ is a
+genuine single-valued functional, so failure to learn it is a capacity or data
+problem, not an ill-posedness problem.
+
+\begin{pwarn}
+$\tau$ is a functional of $\rho$ \emph{for ground-state, non-interacting
+$v$-representable densities}. Inside a self-consistency loop the intermediate
+densities are not ground states of any $v_{\mathrm{s}}$, so strictly
+$\tau[\rho]$ is undefined there. Every orbital-free calculation uses the
+functional anyway --- but it means a model trained only on converged densities
+is \emph{extrapolated} every time it is used variationally. This is the single
+largest risk in the programme.
+\end{pwarn}
+
+\section{What the model must get right --- and it is not \texorpdfstring{$\tau$}{tau}}
+\label{sec:notthetau}
+
+Orbital-free DFT does not consume $\tau$. It consumes the functional
+derivative
+\begin{equation}
+  v^{\mathrm{kin}}_{\mathrm{s}}(\rr) \equiv \frac{\delta \Ts}{\delta\rho(\rr)},
+\end{equation}
+which is the term appearing in Eq.~\eqref{eq:euler} and therefore the term that
+determines the density.
+
+A model can have small $\lVert\tau_\theta-\tau\rVert$ and a \emph{useless}
+derivative, because differentiation amplifies high-frequency error: a ripple of
+amplitude $\epsilon$ and wavevector $G$ contributes $\epsilon$ to the value but
+$\epsilon G$ to the gradient. Three consequences:
+
+\begin{enumerate}
+  \item Reporting only pointwise $\tau$ error reports a \textbf{proxy}. The
+    relative $L^2$ figures of Chapter~\ref{ch:results} are necessary, not
+    sufficient.
+  \item The $H^1$ data loss exists for this reason: it penalises the gradient
+    error that plain $L^2$ ignores.
+  \item The definitive test is \textbf{downstream} --- insert the functional
+    into an orbital-free minimiser and measure the converged density and energy.
+\end{enumerate}
+
+\section{The mechanism: \texorpdfstring{$\delta \Ts/\delta\rho$}{dTs/drho} by autograd}
+\label{sec:autograd}
+
+This is what makes a \emph{neural} functional more useful than a tabulated one,
+and it is mechanically simple: $\Ts$ is a scalar computed from $\rho$ by a
+differentiable program, so one backward pass yields
+$\partial \Ts/\partial\rho_i$ at every grid point --- no finite differences and
+no derivative to derive by hand.
+
+\begin{lstlisting}
+rho = rho_physical.detach().requires_grad_(True)      # (B,1,Nx,Ny,Nz)
+
+tau = target_transform.inverse(model2(input_transform(rho), cell))
+T_s = integrate(tau, cell)                            # (B,), eV
+
+grad, = torch.autograd.grad(T_s.sum(), rho, create_graph=True)
+dTs_drho = grad / volume_element                      # see below
+\end{lstlisting}
+
+\subsection{The discretisation factor}
+
+With $\Ts = \sum_i \tau_i \Delta v$, and the functional derivative defined by
+$\delta \Ts = \int (\delta \Ts/\delta\rho)\,\delta\rho\,\mathrm{d}\rr
+\approx \sum_i (\delta \Ts/\delta\rho)_i\,\delta\rho_i\,\Delta v$, while
+autograd returns $\delta \Ts = \sum_i (\partial \Ts/\partial\rho_i)\,\delta\rho_i$,
+\begin{equation}
+  \boxed{\;
+    \frac{\delta \Ts}{\delta\rho}(\rr_i)
+      = \frac{1}{\Delta v}\,\frac{\partial \Ts}{\partial \rho_i} \;}
+  \qquad \Delta v = \frac{\Omega}{N_1N_2N_3} .
+\end{equation}
+
+\begin{pwarn}
+Omitting the $1/\Delta v$ rescales the entire kinetic potential by the number of
+grid points --- a factor of $3\times10^{4}$ on these grids --- which would
+silently destroy any Euler--Lagrange residual built from it, without raising
+anything. \opt{create\_graph=True} is likewise required if the derivative is to
+appear in a loss that is itself backpropagated.
+\end{pwarn}
+
+\subsection{Validation of the derivative}
+
+The derivative is meaningful only if verified independently:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Test & Expectation \\
+\midrule
+Substitute analytic Thomas--Fermi for Model 2
+  & recovers $\tfrac{5}{3}C_{\mathrm{TF}}\rho^{2/3}$ \\
+Substitute von Weizsäcker
+  & recovers $-\tfrac12\nabla^2\sqrt\rho/\sqrt\rho$ \\
+Finite-difference a few random voxels & agrees to FD accuracy \\
+Uniform density & $\delta \Ts/\delta\rho$ constant in space \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+These are cheap and they catch the $\Delta v$ error, a broken transform chain,
+and any accidental \opt{detach()}.
+
+\section{Coupling: how Model 2 trains Model 1}
+
+\subsection{The equation}
+
+The Euler--Lagrange condition~\eqref{eq:euler} holds pointwise at the ground
+state with $\mu$ constant in space. Every term is available:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Term & Source & Exact? \\
+\midrule
+$\vext$ & Model~1's \emph{input} & exact (tabulated pseudopotential) \\
+$\rho$ & Model~1's \emph{output} & learned \\
+$\vH[\rho]$ & $4\pi e^2\rho(\GG)/G^2$, one FFT & \textbf{exact} \\
+$\delta \Ts/\delta\rho$ & autograd through Model~2 & learned \\
+$\vxc[\rho]$ & LDA/GGA, or omitted & approximate \\
+$\mu$ & eliminated by the cell average & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Subtracting the cell average removes the unknown $\mu$ exactly, leaving the
+residual of Eq.~\eqref{eq:elresidual}, which must vanish for the true
+ground-state density.
+
+\subsection{Why this is worth the trouble}
+
+The residual is computable from \textbf{Model~1's own input and output}, plus
+Model~2. It requires \textbf{no additional labels} --- no extra DFT
+calculations, no targets --- so it can be evaluated on unlabelled structures,
+on perturbed or interpolated geometries generated on the fly, and on the
+model's own predictions during training.
+
+That converts Model~2 from a passive predictor into an \textbf{active physical
+constraint on Model~1}. This coupling is what the architecture is built around.
+
+\subsection{The loss}
+
+\begin{equation}
+  \mathcal{L}_1 =
+    \underbrace{\bigl\lVert \rho_\theta - \rho^{\mathrm{DFT}} \bigr\rVert_{\mathrm{rel}}}_{\text{data}}
+    + \lambda_{\mathrm{EL}}
+      \underbrace{\Bigl\langle \bigl(r(\rr)/s\bigr)^2 \Bigr\rangle}_{\text{Euler--Lagrange}}
+    + \lambda_{N}
+      \underbrace{\Bigl(\tfrac{\int\rho_\theta - N}{N}\Bigr)^2}_{\text{particle number}}
+\end{equation}
+
+with $s=\operatorname{std}(\vext)$ rendering the residual dimensionless and
+comparable across materials whose potentials differ by an order of magnitude.
+Three rules apply, each established elsewhere in this project: physics terms act
+on the prediction decoded to \emph{physical} units; every term is
+dimensionless; and $\lambda_{\mathrm{EL}}$ is ramped only after the data term
+has converged, since a residual evaluated at random initialisation is noise.
+
+\subsection{Freeze Model 2, or train jointly?}
+
+\begin{description}
+  \item[Frozen.] Model~2 is a fixed physics oracle. Simple, stable, and the
+    constraint is exactly as good as the functional. Recommended first.
+  \item[Joint.] Mutual regularisation, and Model~2 is exposed to the densities
+    Model~1 actually produces --- which directly attacks the distribution-shift
+    problem. But there is a real hazard.
+\end{description}
+
+\begin{pwarn}
+\textbf{The Euler--Lagrange residual alone has trivial solutions.} With both
+models free, the pair can drive $r\to0$ by co-adapting: Model~2 can learn a
+functional whose derivative cancels $\vext+\vH+\vxc$ for whatever $\rho$
+Model~1 emits, without either being correct. The residual is a
+\emph{consistency} condition, not a \emph{correctness} condition. Joint training
+is safe only with both data terms retained and dominant; the diagnostic of
+collapse is a residual that falls while the held-out data error rises.
+\end{pwarn}
+
+\section{Critical assessment}
+
+\subsection{Genuine strengths}
+
+\begin{itemize}
+  \item The target is a well-posed functional, not a fitted correlation.
+  \item It attacks the actual bottleneck of orbital-free DFT.
+  \item The derivative is free and exact via autograd --- removing the
+    traditional obstacle to proposing new kinetic functionals, which is
+    deriving $\delta\Ts/\delta\rho$ by hand.
+  \item Exact constraints exist and can be imposed structurally:
+    $\tau\ge\tauvW$ already is, supplying $\sim31\,\%$ of $\tau$ analytically.
+  \item On this data it beats every classical functional by roughly an order of
+    magnitude, with Thomas--Fermi at negative $R^2$.
+\end{itemize}
+
+\subsection{Real weaknesses}
+
+\begin{itemize}
+  \item \textbf{Distribution shift} is the central risk, and it is a domain
+    question rather than a practical inconvenience: the functional is strictly
+    undefined off the $v$-representable manifold.
+  \item \textbf{We optimise $\tau$ and use $\delta\Ts/\delta\rho$}
+    (Section~\ref{sec:notthetau}). Until training runs through the derivative,
+    the objective is a proxy.
+  \item \textbf{The derivative is unvalidated.} Nothing in the results of
+    Chapter~\ref{ch:results} bears on $\delta\Ts/\delta\rho$; the
+    Section~\ref{sec:autograd} checks are not yet implemented.
+  \item \textbf{Data scale.} Three structures of one element.
+  \item \textbf{The Pauli potential constraint is unused.} Levy--Ou-Yang gives
+    $v_{\mathrm{P}}=\delta T_{\mathrm{P}}/\delta\rho\ge0$ --- a constraint on
+    the \emph{derivative}, which is exactly the object that should be
+    constrained.
+\end{itemize}
+
+\section{Verification plan}
+
+Falsifiable, in dependency order:
+
+\begin{enumerate}
+  \item \textbf{Derivative correctness} --- the substitution tests above.
+    Blocking: nothing downstream is meaningful until they pass.
+  \item \textbf{Residual floor} --- evaluate $r(\rr)$ with the \emph{reference}
+    $\rho$ and a classical functional. It will not vanish, since the functional
+    is approximate; record the floor, because a learned functional must beat it
+    to be adding anything.
+  \item \textbf{Ablation} --- $\lambda_{\mathrm{EL}}=0$ versus $>0$ on held-out
+    material, matched otherwise. Same protocol as the Pauli-head comparison of
+    Section~\ref{sec:headresult}.
+  \item \textbf{Label efficiency} --- the real promise. Train Model~1 on $k$
+    labelled structures plus $m$ unlabelled ones under the residual, and show
+    the curve beats $k$ labelled alone. If the residual cannot buy label
+    efficiency, its main practical argument fails.
+  \item \textbf{Downstream} --- insert the functional into an orbital-free
+    minimiser and measure converged density and energy error. The only test
+    that matters.
+\end{enumerate}
+
+\section{Status}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Component & State \\
+\midrule
+$\rho\mapsto\tau$ supervised & done (rel.\ $L^2$ $0.0620$, $R^2$ $0.9924$) \\
+$\tau\ge\tauvW$ structural & done (\pyclass{PauliResidualOperator}) \\
+Exact spectral $\nabla$, $\nabla^2$, $\vH$ & done \\
+Euler--Lagrange residual, analytic functional & done \\
+$\delta\Ts/\delta\rho$ via autograd & \textbf{not implemented} \\
+Joint training & not implemented \\
+Pauli potential $v_{\mathrm{P}}\ge0$ & not implemented \\
+Orbital-free minimiser integration & not implemented \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The gap between the fourth and fifth rows is the whole programme: everything up
+to the analytic residual is infrastructure, and the autograd derivative is what
+turns two regressions into a differentiable orbital-free solver.

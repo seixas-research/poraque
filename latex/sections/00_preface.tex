@@ -1,0 +1,83 @@
+% =========================================================================
+% Preface
+% =========================================================================
+\chapter*{Preface}
+\addcontentsline{toc}{chapter}{Preface}
+\markboth{Preface}{}
+
+Poraqu\^e is a research code for learning maps between the three-dimensional
+scalar fields of density-functional theory. It has one organising idea: for a
+given material, the local external potential $\vext(\rr)$, the valence charge
+density $\rho(\rr)$ and the kinetic energy density $\tau(\rr)$ all live on
+\emph{one} grid, in \emph{one} file format, and are therefore directly
+comparable, composable, and usable as aligned inputs and targets for a neural
+operator.
+
+Two maps are learned:
+\[
+  \vext \;\longmapsto\; \rho
+  \qquad\text{and}\qquad
+  \rho \;\longmapsto\; \tau .
+\]
+They are not two unrelated regressions that happen to share a file format. They
+are the two legs of one variational statement --- the first is the
+Hohenberg--Kohn map, guaranteed to exist by theorem; the second is the kinetic
+energy density functional, the missing ingredient of orbital-free DFT. Composed,
+they constitute a complete orbital-free calculation. That relationship is the
+thread running through this document.
+
+\section*{What this guide covers}
+
+\begin{description}
+  \item[Chapters 1--2] The physics. Kohn--Sham DFT, the Hohenberg--Kohn
+    theorems, and the orbital-free formulation, with attention to which
+    quantities are exact, which are approximations, and which are the open
+    problem.
+  \item[Chapter 3] The mathematics of Fourier neural operators: why an operator
+    between function spaces is the right object, how the spectral convolution
+    is constructed, and why it is the natural architecture for a periodic
+    crystal on a plane-wave grid.
+  \item[Chapters 4--5] Implementation. The shared-grid data model, the
+    code-agnostic ingestion layer, and a detailed account of the interface to
+    VASP --- including the exact reconstruction of the local pseudopotential.
+  \item[Chapter 6] Measured results on a gold data set, with the analytic
+    baselines a learned functional must beat.
+  \item[Chapter 7] The physics-informed programme: how the governing equations
+    re-enter as constraints, and which of them are already enforced by
+    construction.
+\end{description}
+
+\section*{Conventions}
+
+Two unit systems appear, deliberately.
+
+\begin{itemize}
+  \item \textbf{Å and eV} in everything that touches a file. Every plane-wave
+    code writes geometry in Ångström and energies in electronvolt, so the field
+    layer, the readers and the machine-learning code use those units
+    throughout. A charge density is in $e/\text{\AA}^3$, a kinetic energy
+    density in $\mathrm{eV}/\text{\AA}^3$, a potential in eV.
+  \item \textbf{Hartree atomic units} in the analytical expressions of
+    Chapters~1--2 and in the legacy solver, where $\hbar = m_e = e = 1$ removes
+    constants that would otherwise clutter every equation.
+\end{itemize}
+
+Conversions are collected in \file{poraque/fields/constants.py}. The two
+constants that recur are
+\[
+  \frac{e^2}{4\pi\varepsilon_0} = 14.399645\ \mathrm{eV}\cdot\text{\AA},
+  \qquad
+  \frac{\hbar^2}{2m_e} = 3.809982\ \mathrm{eV}\cdot\text{\AA}^2 .
+\]
+
+Sign convention for potentials: $\vext(\rr)$ is the potential \emph{energy of an
+electron}, so it is negative near the ions. This matches VASP's \file{LOCPOT}
+and \file{EXTCAR}.
+
+\begin{pnote}
+Passages marked \textbf{Implementation} connect an equation to the function
+that evaluates it. Passages marked \textbf{Caveat} record an approximation, an
+untested path, or a limit on what the numbers presented here support. They are
+not disclaimers added for politeness: each one marks a place where a reader
+could otherwise draw a conclusion the evidence does not carry.
+\end{pnote}

@@ -1,0 +1,219 @@
+% =========================================================================
+% Chapter 4 - Implementation
+% =========================================================================
+\chapter{Implementation}
+\label{ch:impl}
+
+\section{The shared-grid data model}
+
+The organising invariant of \pyclass{poraque.fields} is that, for one material,
+every scalar field lives on \emph{one} \pyclass{FieldGrid} instance and is
+serialised in \emph{one} format. Everything else follows.
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Class & File & Content \\
+\midrule
+\pyclass{ExternalPotential} & \file{EXTCAR} & $\vext$, eV \\
+\pyclass{ChargeDensity} & \file{CHGCAR} & $\rho$, $e/\text{\AA}^3$ \\
+\pyclass{KineticEnergyDensity} & \file{TAUCAR} & $\tau$, $\mathrm{eV}/\text{\AA}^3$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All three derive from \pyclass{ScalarField}, which owns the \file{CHGCAR}-format
+reader and writer. One code path therefore handles every field, and reading a
+field with a supplied grid \emph{imposes} that grid --- a mismatch raises rather
+than passing silently, since a misaligned pair would train the operator on
+nonsense.
+
+\begin{ptip}
+\pyclass{ChargeDensity} and \pyclass{KineticEnergyDensity} declare
+\opt{volume\_scaled = True}: VASP stores $\rho\Omega$ and $\tau\Omega$, so the
+conversion happens transparently on read and write, and
+\opt{integrate()} returns the electron count directly. Verified against the
+reference data: $297.0000$ electrons for $27$ gold atoms at
+$Z^{\mathrm{val}}=11$. \pyclass{ExternalPotential} declares it \opt{False},
+matching \file{LOCPOT}.
+\end{ptip}
+
+\section{Grid construction}
+
+The grid may be obtained in three ways, in decreasing order of reliability:
+
+\begin{enumerate}
+  \item \opt{FieldGrid.from\_file(path)} --- adopt the grid of an existing
+    volumetric file. The only way to guarantee point-by-point comparability
+    with a reference calculation, and the recommended default.
+  \item explicit \opt{NGXF/NGYF/NGZF} tags from the input file;
+  \item \opt{FieldGrid.from\_encut} --- derived from the plane-wave cutoff.
+\end{enumerate}
+
+The cutoff rule uses $G_{\mathrm{cut}}=\sqrt{E_{\mathrm{cut}}/(\hbar^2/2m_e)}$
+and hence $n_i^{\max} = \lfloor G_{\mathrm{cut}}|\mathbf{a}_i|/2\pi \rfloor$,
+rounded up to even, FFT-friendly sizes.
+
+\begin{pwarn}
+The cutoff-derived shape is an \emph{estimate}. VASP's exact rounding is
+version- and setting-dependent: for the gold data set the rule yields $64^3$
+where VASP used $128^3$, and on a strained cell VASP chose $120$ on one axis
+where the rule gives $128$. Every result in this guide reads the grid from the
+files, so no conclusion depends on the heuristic --- but it should not be relied
+on when a match is required.
+\end{pwarn}
+
+\section{Spectral resampling}
+\label{sec:resample}
+
+Changing the resolution of a plane-wave field is a \emph{basis-truncation}
+problem, not an interpolation problem. The field is a finite Fourier series, so
+restricting it to a coarser grid means keeping the coefficients the coarse grid
+can represent:
+\begin{equation}
+  f(\rr) = \sum_{\GG} c_{\GG} e^{i\GG\cdot\rr}
+  \;\longrightarrow\;
+  \sum_{|\GG| \le \GG_{\max}^{\mathrm{coarse}}} c_{\GG} e^{i\GG\cdot\rr} .
+\end{equation}
+Nothing is approximated: the result is the exact band-limited projection, it
+remains exactly periodic, and because the $\GG=0$ coefficient is copied
+unchanged, the cell average --- hence $\int\rho\,\mathrm{d}\rr$ --- is preserved
+to machine precision.
+
+Trilinear or spline interpolation would do none of these things: it aliases
+high-frequency content onto low frequencies, breaks periodicity at the cell
+boundary, and shifts the integral.
+
+\begin{ptip}
+Measured: a band-limited field downsampled $64^3\to32^3$ agrees with direct
+sampling to $1.3\times10^{-15}$; the mean is preserved to $5.6\times10^{-17}$;
+and the operation is idempotent under down--up--down to $6.7\times10^{-16}$.
+Implemented in \file{poraque/fields/resample.py}.
+\end{ptip}
+
+\begin{pwarn}
+Band-limiting a strictly positive field with sharp core peaks rings slightly
+(the Gibbs phenomenon), so a small number of voxels can go marginally negative
+--- one point in $32768$ for this data. It is an artefact of the truncation, not
+of the data, and it is why the data pipeline uses a sign-tolerant
+$\operatorname{asinh}$ normalisation rather than a logarithm.
+\end{pwarn}
+
+\section{Code-agnostic ingestion}
+\label{sec:ingestion}
+
+Support for a new plane-wave code must not ripple through grids, fields,
+datasets and models. \pyclass{poraque.fields.io} therefore defines a narrow
+contract, and a reader implements exactly four methods:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Method & Returns \\
+\midrule
+\opt{read\_structure} & \pyclass{Structure} (Å, fractional, species-grouped) \\
+\opt{read\_parameters} & \pyclass{CalculationParameters}, cutoff in \textbf{eV} \\
+\opt{read\_pseudopotentials} & \{element: \pyclass{PseudopotentialInfo}\} \\
+\opt{read\_field} / \opt{write\_field} & \pyclass{ScalarField} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Units are normalised at the boundary: a Quantum ESPRESSO reader converts its
+Rydberg \opt{ecutwfc} in \opt{read\_parameters}, and nothing downstream needs to
+know. Field kinds are referred to by neutral names (\opt{external},
+\opt{density}, \opt{kinetic}) rather than by filename, since \file{CHGCAR} has
+no meaning outside VASP.
+
+\pyclass{VaspReader} is the reference implementation.
+\pyclass{EspressoReader} and \pyclass{GpawReader} are scaffolded, each
+documenting the specific traps: for Quantum ESPRESSO the Rydberg cutoff,
+the \opt{ibrav} cell construction, the \opt{alat}/\opt{crystal} coordinate
+units, and the absence of a volume pre-factor; for GPAW the coarse-versus-fine
+grid distinction and the pseudo-versus-all-electron density ambiguity, which
+would be a silent physics error if mixed across a data set.
+
+\section{Numerical kernels}
+
+The classical electrostatic lattice sums --- the pairwise Coulomb energy and
+the real-space Ewald term --- are the scalar hot spots of the legacy solver.
+They live in \file{poraque/potentials/kernels.py} as vectorised NumPy, with no
+JIT and no optional dependency. Each is a pure function (arrays in, float out)
+carrying no Poraqu\^e types, so a compiled backend can replace the bodies
+without touching any caller.
+
+\begin{ptip}
+Correctness is pinned by physics rather than by an implementation reference:
+the rock-salt Madelung constant is reproduced as $1.74756459$ against the exact
+$1.7475645946$, and is invariant under the Ewald splitting parameter $\alpha$
+--- the signature of a correctly balanced real/reciprocal decomposition.
+\end{ptip}
+
+\section{Hardware acceleration}
+\label{sec:hardware}
+
+\opt{resolve\_device} prefers CUDA, then Apple Metal (MPS), then CPU, and
+degrades gracefully: an explicit request for an absent backend warns and falls
+back rather than raising, so a configuration written on a workstation still runs
+on a laptop.
+
+Apple Metal required three genuine workarounds, all verified by regression
+tests:
+
+\begin{description}
+  \item[No float64, no \opt{linalg.det}.] Both are used for the cell metric.
+    Since a $3\times3$ inverse and determinant are $\mathcal{O}(1)$ work beside
+    an FFT, they are evaluated \emph{on the host in double precision} and only
+    the result is moved to the device --- which also keeps the extra accuracy
+    on every backend. Note the ordering: a tensor must be moved to the host
+    \emph{before} widening, since casting an MPS tensor to float64 in place
+    raises.
+  \item[No complex \opt{einsum}.] The spectral contraction lowers to an
+    \opt{mps.gather} over complex values, which Metal rejects by aborting the
+    process. Splitting the product into real arithmetic,
+    $(a+ib)(c+id) = (ac-bd) + i(ad+bc)$, uses only real contractions and is
+    numerically identical.
+  \item[Strided complex views are silently wrong.] Taking \opt{.real} of a
+    \emph{non-contiguous} complex tensor yields a strided real view over which
+    MPS miscomputes \opt{einsum} --- with no error and results $40$--$90\,\%$
+    off. The operands here are precisely such views (high-frequency corners
+    such as \opt{x\_ft[..., nx-m1:, ny-m2:, :m3]}). Materialising them first
+    reduces the error to $\sim10^{-7}$.
+\end{description}
+
+Gradient clipping also required replacement: \opt{clip\_grad\_norm\_} calls
+\opt{linalg.vector\_norm}, unsupported for complex dtypes on MPS, and the
+spectral weights are complex. Viewing a complex tensor as its stacked
+$(\mathrm{Re},\mathrm{Im})$ representation is exact --- $\sum_k|z_k|^2 =
+\sum_k(a_k^2+b_k^2)$ --- so the clip is identical on every backend.
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Grid & CPU & MPS & speed-up \\
+\midrule
+$32^3$ & $42.0$\,ms & $19.2$\,ms & $2.19\times$ \\
+$48^3$ & $124.3$\,ms & $38.3$\,ms & $3.24\times$ \\
+$64^3$ & $262.2$\,ms & $45.9$\,ms & $5.71\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Forward pass, five-run average, synchronised. CPU and MPS agree to
+$\sim10^{-6}$ relative on a single forward pass with identical weights.
+
+\section{Configuration}
+
+A training run is defined by a YAML file with four sections --- \opt{data},
+\opt{model}, \opt{training}, \opt{output} --- mirroring the four things a run
+needs. Command-line flags override individual entries, so one committed config
+can be swept from the shell without being edited:
+
+\begin{lstlisting}
+python scripts/train_fno.py --config configs/train_config.yaml --epochs 500
+\end{lstlisting}
+
+Unknown keys are rejected rather than ignored: a typo such as \opt{learn\_rate}
+would otherwise be silently dropped, and the run would quietly use the default
+while appearing to be described by the file. The \emph{resolved} configuration
+is written beside the results, recording what actually ran, overrides included.

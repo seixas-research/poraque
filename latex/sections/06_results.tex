@@ -1,0 +1,238 @@
+% =========================================================================
+% Chapter 6 - Results
+% =========================================================================
+\chapter{Results}
+\label{ch:results}
+
+\section{The data set}
+
+Three gold structures, each a $3\times3\times3$ supercell of the face-centred
+cubic primitive cell ($27$ atoms, $Z^{\mathrm{val}}=11$, so $297$ valence
+electrons), computed with the modified VASP~6.2.0 of Chapter~\ref{ch:vasp} at
+$E_{\mathrm{cut}}=450$\,eV, \opt{PREC=Accurate}, and a $5\times5\times5$
+$\Gamma$-centred $k$-mesh.
+
+\begin{center}
+\begin{tabular}{@{}llrl@{}}
+\toprule
+Structure & Geometry & $\Omega$ [\AA$^3$] & Native grid \\
+\midrule
+struct\_000 & pristine fcc & $484.53$ & $128\times128\times128$ \\
+struct\_001 & rattled $+$ strained & $477.65$ & $120\times128\times128$ \\
+struct\_002 & rattled $+$ strained & $476.92$ & $128\times120\times128$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The three native grids \emph{differ}, which is not an inconvenience but the
+central test: it is exactly the situation Section~\ref{sec:discinv} was designed
+for, and it arises automatically because the cell shape enters VASP's grid
+selection.
+
+\begin{ptip}
+Fields are reduced to a longest axis of $32$ points by the spectral truncation
+of Section~\ref{sec:resample}, giving $32^3$, $30\times32\times32$ and
+$32\times30\times32$. The shape difference \emph{survives} the reduction --- had
+a fixed target shape been used instead, the ragged-grid capability would have
+gone untested.
+\end{ptip}
+
+\section{Verification before learning}
+
+Nothing was trained until the field machinery was checked against quantities
+known independently.
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Check & Expected & Measured \\
+\midrule
+Poisson residual, $\nabla^2\vext$ vs $4\pi e^2 n_{\mathrm{ion}}$
+  & $0$ & $4.5\times10^{-12}$ \\
+Translation covariance & exact & $2.1\times10^{-14}$ \\
+Linearity in $Z^{\mathrm{val}}$ & exact & $0.0$ \\
+$\int\rho\,\mathrm{d}\rr$ from \file{CHGCAR} & $297$ & $297.0000$ \\
+Spectral resampling, band-limited & exact & $1.3\times10^{-15}$ \\
+Resampling, mean preserved & exact & $5.6\times10^{-17}$ \\
+Madelung constant (rock salt) & $1.7475645946$ & $1.74756459$ \\
+\file{EXTCAR} vs VASP, tabulated & --- & $2.1\times10^{-5}$ rel.\ $L^2$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The electron count is the sharpest of these: it exercises the \file{CHGCAR}
+parser, the $\Omega$ convention and the grid metric simultaneously, and returns
+the exact integer.
+
+\section{Model 1: \texorpdfstring{$\vext \mapsto \rho$}{Vext to rho}}
+
+Leave-one-out over the three materials; metrics on the held-out material in
+physical units ($e/\text{\AA}^3$).
+
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Held out & MAE & RMSE & rel.\ $L^2$ & $R^2$ \\
+\midrule
+struct\_000 & $0.01667$ & $0.03097$ & $0.0318$ & $0.9983$ \\
+struct\_001 & $0.02433$ & $0.03984$ & $0.0405$ & $0.9973$ \\
+struct\_002 & $0.02423$ & $0.04112$ & $0.0418$ & $0.9971$ \\
+\midrule
+\textbf{mean} & $\mathbf{0.02174}$ & $\mathbf{0.03731}$ & $\mathbf{0.0380}$ & $\mathbf{0.9976}$ \\
+\midrule
+baseline: mean density & $0.5199$ & $0.7589$ & $0.7779$ & $0.0000$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The learned map is a factor of $20$ better than predicting a constant density.
+The electron count, which nothing in the objective constrains, is recovered to
+$1.1$--$2.2\,\%$ --- precisely the single global degree of freedom that the
+charge-normalisation head of Section~\ref{sec:pauli-head} would fix exactly and
+for free.
+
+\section{Model 2: \texorpdfstring{$\rho \mapsto \tau$}{rho to tau}}
+
+Same protocol, in $\mathrm{eV}/\text{\AA}^3$, with the Pauli head of
+Eq.~\eqref{eq:paulihead} enabled. The analytic orbital-free functionals of
+Chapter~\ref{ch:ofdft} are evaluated on the same input as baselines.
+
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Predictor & MAE & RMSE & rel.\ $L^2$ & $R^2$ \\
+\midrule
+\textbf{FNO (learned)} & $\mathbf{0.6600}$ & $\mathbf{1.2002}$ & $\mathbf{0.0620}$ & $\mathbf{0.9924}$ \\
+\midrule
+von Weizsäcker & $8.99$ & $14.22$ & $0.7367$ & $0.0150$ \\
+Thomas--Fermi & $9.38$ & $25.99$ & $1.3454$ & $-2.2908$ \\
+TF $+$ vW$/9$ & $9.35$ & $26.18$ & $1.3554$ & $-2.3395$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The learned functional is better than the best classical approximation by a
+factor of about $12$ in relative $L^2$.
+
+\begin{pnote}
+Thomas--Fermi attains a \emph{negative} coefficient of determination: as a
+pointwise predictor of $\tau$ it is worse than the constant mean. This is not a
+defect of the implementation but the expected failure of a uniform-electron-gas
+limit applied to a $d$-band metal, whose core and $d$-shell regions are about as
+far from uniform as matter gets. It is the gap that motivates a learned
+functional.
+\end{pnote}
+
+\subsection{Integrated kinetic energy}
+
+The quantity that enters a total energy is $\Ts=\int\tau\,\mathrm{d}\rr$, not
+$\tau$ pointwise:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Held out & predicted [eV] & reference [eV] & error \\
+\midrule
+struct\_000 & $6277.16$ & $6207.07$ & $1.13\,\%$ \\
+struct\_001 & $6198.07$ & $6214.80$ & $0.27\,\%$ \\
+struct\_002 & $6180.76$ & $6217.06$ & $0.58\,\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Constraint satisfaction}
+
+With the head enabled, $\tau \ge \tauvW[\rho]$ held at every one of the
+$\sim3\times10^{4}$ grid points on all three folds, with minimum margins of
+$1.045$, $0.950$ and $1.024\ \mathrm{eV}/\text{\AA}^3$. The margins are the
+informative number: the model is not sitting on the bound but predicting a Pauli
+term comfortably above it.
+
+The fitted scale $s$ came out at $5.22$, $5.02$ and $5.01\
+\mathrm{eV}/\text{\AA}^3$ across folds --- consistent with the median $\tauP$
+measured directly from the data ($4.81$--$5.21$), which is a check that
+\opt{fit\_pauli\_scale} estimates what it claims to.
+
+Section~\ref{sec:headresult} gives the matched comparison against an
+unconstrained backbone: the head improves every fold and every metric, by
+$18.3\,\%$ in mean relative $L^2$, while training $17.8\,\%$ \emph{faster}.
+
+\section{The inference pipeline}
+
+Chaining both models turns a bare crystal geometry into predicted $\rho$ and
+$\tau$ with no wavefunctions and no self-consistency cycle:
+\begin{equation}
+  \{\text{\file{POSCAR}}, \text{\file{INCAR}}, \text{\file{POTCAR}}\}
+  \;\xrightarrow{\ \text{analytic}\ }\; \vext
+  \;\xrightarrow{\ \text{FNO 1}\ }\; \rho
+  \;\xrightarrow{\ \text{FNO 2}\ }\; \tau .
+\end{equation}
+Only the two field-to-field maps are learned; the first step is closed-form.
+
+The importance of Chapter~\ref{ch:vasp}'s correction shows up here most
+sharply. Evaluating on struct\_002 with models that never saw it:
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Field & Gaussian $\vext$ & \textbf{tabulated $\vext$} \\
+\midrule
+\file{EXTCAR} & $0.6645$ & $\mathbf{0.0014}$ \\
+\file{CHGCAR} & $0.4482$ & $\mathbf{0.0647}$ \\
+\file{TAUCAR} & $0.2456$ & $\mathbf{0.1190}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+(relative $L^2$ against the reference files.) The models were always
+\emph{trained} on VASP's own \file{EXTCAR}; the error was entirely in the
+inference path, which had been feeding them a potential from a different
+distribution. Correcting the analytic step alone improved the predicted density
+sevenfold, with no retraining.
+
+\begin{ptip}
+All predicted fields are written in \file{CHGCAR} format and open directly in
+VESTA. \opt{--compare} additionally brings reference files onto the prediction
+grid by spectral truncation --- the exact restriction --- rather than failing on
+a shape mismatch.
+\end{ptip}
+
+\section{Hardware}
+
+The full run --- two tasks, three folds each, $200$ epochs, spectral
+downsampling, figures and checkpoints --- completes in roughly $20$ minutes on
+Apple Silicon via MPS. Forward-pass throughput is given in
+Section~\ref{sec:hardware}; the advantage grows with grid size, from
+$2.2\times$ at $32^3$ to $5.7\times$ at $64^3$, because kernel-launch overhead
+dominates at small sizes while the FFTs dominate at large ones.
+
+\section{What these numbers do and do not support}
+
+\begin{pwarn}
+With three closely related structures of a single element, leave-one-out
+measures \textbf{interpolation between nearby geometries of gold}. It
+demonstrates that the pipeline is correct, that the architecture has sufficient
+capacity, and that the learned kinetic functional beats the classical
+approximations on this system. It says \textbf{nothing} about transfer to other
+chemistry, other coordination environments, or other cutoffs. The training log
+carries this caveat in its own footer so that it travels with the numbers.
+\end{pwarn}
+
+What \emph{is} established independently of data-set size:
+
+\begin{itemize}
+  \item the field machinery is verified against closed-form physics
+    (Poisson, Madelung, electron count) to machine precision;
+  \item the \file{EXTCAR} reconstruction matches a reference implementation to
+    $2\times10^{-5}$;
+  \item one set of weights serves three different grid shapes, with
+    CPU/accelerator agreement at $10^{-6}$;
+  \item the von Weizsäcker bound is structural, verified at random
+    initialisation and under adversarial optimisation;
+  \item the classical functionals' failure on this system is quantified rather
+    than asserted.
+\end{itemize}
+
+The obvious next step is more materials. The ingestion layer, the shape-bucketed
+sampler and the configuration system were all built for a heterogeneous data
+set; the binding constraint is now the data, not the code.

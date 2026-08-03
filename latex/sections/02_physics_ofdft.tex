@@ -1,0 +1,173 @@
+% =========================================================================
+% Chapter 2 - Orbital-free DFT
+% =========================================================================
+\chapter{Orbital-free density-functional theory}
+\label{ch:ofdft}
+
+Kohn--Sham theory buys an exact kinetic energy at the price of reintroducing
+$N$ orbitals, and with them the $\mathcal{O}(N^3)$ cost of orthogonalising and
+diagonalising. Orbital-free DFT removes the orbitals again. It is the reason
+the second learned map matters.
+
+\section{The variational problem}
+
+Return to Eq.~\eqref{eq:energyfunctional} and write the energy purely as a
+functional of the density,
+\begin{equation}
+  E[\rho] = \Ts[\rho]
+          + \int \vext(\rr)\,\rho(\rr)\,\mathrm{d}\rr
+          + E_{\mathrm{H}}[\rho]
+          + E_{\mathrm{xc}}[\rho] .
+  \label{eq:oftotal}
+\end{equation}
+Minimising under the constraint $\int\rho\,\mathrm{d}\rr = N$ with a Lagrange
+multiplier $\mu$ gives the Euler--Lagrange equation
+\begin{equation}
+  \boxed{\;
+    \frac{\delta \Ts}{\delta \rho}(\rr)
+    + \vext(\rr)
+    + \vH[\rho](\rr)
+    + \vxc[\rho](\rr)
+    \;=\; \mu \; }
+  \label{eq:euler}
+\end{equation}
+with $\mu$ the chemical potential --- a \emph{constant} in space. A single
+scalar equation replaces the $N$ coupled equations~\eqref{eq:kseq}, and the
+cost becomes essentially linear in system size.
+
+Equation~\eqref{eq:euler} is the central equation of this work. Every symbol in
+it is something Poraqu\^e has:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Term & Source \\
+\midrule
+$\vext$ & the input of Model~1 (\file{EXTCAR}) \\
+$\rho$ & the output of Model~1 (\file{CHGCAR}) \\
+$\vH[\rho]$ & computed \emph{exactly} by FFT, $4\pi e^2\rho(\GG)/G^2$ \\
+$\delta \Ts/\delta\rho$ & autograd through Model~2 ($\Ts=\int\tau$) \\
+$\mu$ & eliminated by removing the cell average \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+That is what allows Eq.~\eqref{eq:euler} to serve as a \emph{label-free}
+training signal in Chapter~\ref{ch:pifno}.
+
+\section{The kinetic energy functional problem}
+
+Everything in Eq.~\eqref{eq:oftotal} has an accurate explicit density
+functional except $\Ts[\rho]$. The classical approximations are:
+
+\begin{description}
+  \item[Thomas--Fermi.] $\Ts^{\mathrm{TF}}[\rho]=C_{\mathrm{TF}}\int\rho^{5/3}$,
+    exact for the uniform electron gas. It has no shell structure and does not
+    bind molecules.
+  \item[von Weizsäcker.] $\Ts^{\mathrm{vW}}[\rho]=\int|\nabla\rho|^2/8\rho$,
+    exact for one orbital, a rigorous lower bound in general.
+  \item[Gradient expansions.] $\Ts^{\mathrm{TF}} + \lambda\,\Ts^{\mathrm{vW}}$
+    with $\lambda=1/9$ (second order) or $\lambda=1$ (strongly inhomogeneous
+    densities). Neither is reliable across chemistry.
+\end{description}
+
+Chapter~\ref{ch:results} measures these on gold. Thomas--Fermi achieves a
+\emph{negative} coefficient of determination --- it is a worse pointwise
+predictor of $\tau$ than the constant mean --- which is the expected failure of
+a uniform-gas limit applied to a $d$-band metal. That is the gap a learned
+functional is meant to close.
+
+\section{Functional derivatives}
+
+The quantity Eq.~\eqref{eq:euler} actually requires is not $\tau$ but
+$\delta\Ts/\delta\rho$. For the two classical forms,
+\begin{align}
+  \frac{\delta \Ts^{\mathrm{TF}}}{\delta\rho}
+    &= \tfrac{5}{3}\,C_{\mathrm{TF}}\,\rho^{2/3},
+  \label{eq:tfpot}\\[2pt]
+  \frac{\delta \Ts^{\mathrm{vW}}}{\delta\rho}
+    &= -\frac{1}{2}\frac{\nabla^2\sqrt{\rho}}{\sqrt{\rho}} .
+  \label{eq:vwpot}
+\end{align}
+
+\begin{pwarn}
+A model with small error in $\tau$ may still have a poor functional derivative,
+because differentiation amplifies high-frequency error. Training on $\tau$ alone
+therefore optimises a proxy for the quantity that is used. Chapter~\ref{ch:pifno}
+describes training \emph{through} the derivative to remove this mismatch.
+\end{pwarn}
+
+\section{Electrostatics on a periodic grid}
+\label{sec:electrostatics}
+
+Both $\vext$ and $\vH$ are Coulombic, and both are evaluated in reciprocal
+space, where the kernel is diagonal. Solving $\nabla^2 \vH = -4\pi e^2\rho$ by
+Fourier transform gives
+\begin{equation}
+  \vH(\GG) = \frac{4\pi e^2\,\rho(\GG)}{G^2},
+  \qquad \vH(\GG=0) \equiv 0 .
+  \label{eq:hartree}
+\end{equation}
+
+The $\GG=0$ component diverges for any charged distribution. In a periodic
+crystal this divergence cancels exactly between the electron--electron,
+electron--ion and ion--ion terms, provided the cell is neutral overall. The
+standard convention --- adopted here and by VASP --- is to set the $\GG=0$
+component of \emph{each} Coulomb term to zero individually, which amounts to
+adding a uniform neutralising background. The consequence is that potentials are
+defined only up to a constant, and their cell average vanishes.
+
+\begin{ptip}
+This convention is why \file{EXTCAR} written by VASP has a cell average of
+$-2.5\times10^{-12}$ eV, and why Poraqu\^e's reconstruction reproduces it to
+$\sim10^{-16}$. Agreement of the mean was the first check that the two codes
+share a convention, before any pointwise comparison was meaningful.
+\end{ptip}
+
+\section{The external potential of pseudo-ions}
+\label{sec:extpot}
+
+For pseudo-ions of charge $Z^{\mathrm{val}}_s$ at positions $\bm{\tau}_a$, the
+local external potential is assembled in reciprocal space as
+\begin{equation}
+  \vext(\GG) = -\frac{4\pi e^2}{\Omega}
+    \sum_{s} \frac{Z^{\mathrm{val}}_{s} f_s(G)}{G^2}\, S_s(\GG),
+  \qquad
+  S_s(\GG) = \sum_{a\in s} e^{-i\GG\cdot\bm{\tau}_a},
+  \label{eq:extpot}
+\end{equation}
+with $\vext(\GG=0)\equiv 0$ and $\Omega$ the cell volume. The real-space field
+follows from one inverse FFT. The construction is $\mathcal{O}(N\log N)$,
+exactly periodic, and free of any real-space cutoff or Ewald parameter.
+
+The form factor $f_s(G)$ encodes the pseudisation:
+\begin{description}
+  \item[$f_s = 1$] bare point ions --- the exact long-range limit, but its
+    $1/G^2$ tail is truncated at the Nyquist frequency of any finite grid,
+    producing visible ringing near the nuclei.
+  \item[$f_s = e^{-G^2\sigma_s^2/2}$] Gaussian ions, equivalent to
+    $-Z^{\mathrm{val}}_s e^2\,\mathrm{erf}(r/\sqrt{2}\sigma_s)/r$ in real space:
+    band-limited, smooth, and controlled by one width per species.
+  \item[$f_s$ tabulated] the true pseudopotential form factor, read from the
+    \file{POTCAR}. Chapter~\ref{ch:vasp} shows this is the only choice that
+    reproduces a reference calculation, because the true $f_s(G)$
+    \emph{oscillates about zero} at large $G$ and no monotonic analytic form can
+    represent it.
+\end{description}
+
+\begin{ptip}
+Implemented in \pyclass{poraque.fields.ExternalPotential}. The structure factors
+are built from separable one-dimensional phase vectors --- since
+$\GG\cdot\bm{\tau}_a = 2\pi\sum_j m_j s_{aj}$ for FFT frequencies $m_j$ and
+fractional coordinates $s_{aj}$ --- so the cost is
+$\mathcal{O}(N_{\mathrm{at}}(N_1{+}N_2{+}N_3))$ complex exponentials rather
+than $\mathcal{O}(N_{\mathrm{at}}N_1N_2N_3)$, with no full complex grid
+allocated per atom.
+\end{ptip}
+
+Verification of Eq.~\eqref{eq:extpot} is by Poisson's equation: the spectral
+Laplacian of the constructed field is compared against
+$4\pi e^2(n_{\mathrm{ion}}-\langle n_{\mathrm{ion}}\rangle)$, with
+$n_{\mathrm{ion}}$ built independently by a real-space Gaussian lattice sum.
+The residual is $4.5\times10^{-12}$ against a scale of $159\ \mathrm{eV}/\text{\AA}^2$
+--- machine precision, and an independent code path.

@@ -1,0 +1,242 @@
+% =========================================================================
+% Chapter 5 - The VASP interface
+% =========================================================================
+\chapter{The VASP interface}
+\label{ch:vasp}
+
+Reference data for this work comes from a modified VASP~6.2.0 that writes two
+additional volumetric files. Reproducing them exactly required reading the
+Fortran source; this chapter records what it says, because the details decide
+whether a Python reconstruction agrees with the reference or misses it by
+$13\,\%$.
+
+\section{The modified tags}
+
+Two \file{INCAR} flags were added, declared in \file{base.F} and parsed in
+\file{main.F}:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Tag & Variable & Writes \\
+\midrule
+\opt{EXTCAR} & \opt{LEXTCAR} & local external (ionic) potential \\
+\opt{TAUCAR} & \opt{LTAUCAR} & kinetic energy density \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{\texorpdfstring{\file{EXTCAR}}{EXTCAR}: the local pseudopotential}
+
+\subsection{What is written}
+
+\file{main.F} calls \opt{POTION} to build the potential in reciprocal space,
+transforms it to real space, and writes it with \opt{OUTPOS} + \opt{OUTPOT}.
+The choice of \opt{OUTPOT} rather than \opt{OUTCHG} is what makes \file{EXTCAR}
+a \emph{potential} file in the \file{LOCPOT} sense: \textbf{no multiplication by
+$\Omega$}. The source comment states the conventions directly: values in eV,
+no volume scaling, $\GG=0$ set to zero, a single spin-independent block, no PAW
+one-centre terms and no non-local projector contribution.
+
+\subsection{The formula}
+
+\opt{POTION} (\file{pot.F}) contains, per species and per $\GG$ vector:
+
+\begin{lstlisting}[style=fortran]
+ARGSC  = NPSPTS/P(NT)%PSGMAX
+PSGMA2 = P(NT)%PSGMAX - P(NT)%PSGMAX/NPSPTS
+ZZ     = -4*PI*P(NT)%ZVALF*FELECT
+
+G = SQRT(GX**2+GY**2+GZ**2)*2*PI
+IF ( (G /= 0) .AND. (G < PSGMA2) ) THEN
+   I    = INT(G*ARGSC)+1
+   REM  = G - P(NT)%PSP(I,1)
+   VPST = PSP(I,2)+REM*(PSP(I,3)+REM*(PSP(I,4)+REM*PSP(I,5)))
+   CVPS(N) = CVPS(N) + ( VPST + ZZ/G**2 ) / LATT_CUR%OMEGA * CSTRF(N,NT)
+ELSE
+   CVPS(N) = 0._q
+ENDIF
+\end{lstlisting}
+
+which is
+\begin{equation}
+  \boxed{\;
+  \vext(\GG) = \frac{1}{\Omega}\sum_{s} S_s(\GG)
+    \left[\, v^{s}_{\mathrm{short}}(G)
+      \;-\; \frac{4\pi Z^{\mathrm{val}}_{s} e^{2}}{G^{2}} \,\right],
+  \qquad \vext(\bm{0}) = 0 . \;}
+  \label{eq:vaspextcar}
+\end{equation}
+
+Comparing with Eq.~\eqref{eq:extpot}: the second term is \emph{exactly} the
+bare-Coulomb form factor $f_s = 1$. The long-range physics was never the
+problem. The first term, $v_{\mathrm{short}}$, is a cubic spline through a
+\emph{tabulated} function read from the \file{POTCAR} --- and that is the entire
+discrepancy.
+
+Two further details are easy to miss and both are observable:
+
+\begin{itemize}
+  \item \textbf{Hard truncation.} For $G \ge$ \opt{PSGMA2} the \emph{whole}
+    contribution is zeroed, Coulomb tail included; VASP does not extrapolate
+    the table. For the gold potential \opt{PSGMAX} $=75.6\ \text{\AA}^{-1}$
+    while a $128^3$ grid reaches $|\GG|_{\max}=106\ \text{\AA}^{-1}$, so the
+    truncation is genuinely active and must be reproduced.
+  \item \textbf{$G$ carries the $2\pi$.} \opt{LATT\_CUR\%B} is the reciprocal
+    lattice \emph{without} $2\pi$, so \opt{G} is the ordinary angular
+    wavevector in $\text{\AA}^{-1}$ --- the same convention as
+    \pyclass{FieldGrid.get\_g\_vectors}.
+\end{itemize}
+
+\subsection{The \texorpdfstring{\file{POTCAR}}{POTCAR} table layout}
+
+The layout of the \opt{local part} block is given by the reader in
+\file{pseudo.F}:
+
+\begin{lstlisting}[style=fortran]
+READ(10,'(1X,A1)') CSEL          ! the "local part" marker line
+READ(10,*) P(NTYP)%PSGMAX        ! <-- FIRST number is PSGMAX, not ZVAL
+ALLOCATE(P(NTYP)%PSP(NPSPTS,5))
+READ(10,*) (P(NTYP)%PSP(I,2),I=1,NPSPTS)
+DO I=1,NPSPTS
+    P(NTYP)%PSP(I,1)=(P(NTYP)%PSGMAX/NPSPTS)*(I-1)
+ENDDO
+P(NTYP)%PSCORE=P(NTYP)%PSP(1,2)
+CALL SPLCOF(P(NTYP)%PSP(1,1),NPSPTS,NPSPTS,0._q)
+\end{lstlisting}
+
+with $\opt{NPSPTS}=1000$. The mesh is therefore uniform,
+\begin{equation}
+  q_i = \frac{\opt{PSGMAX}}{1000}\,(i-1),
+  \qquad i = 1,\dots,1000,
+\end{equation}
+and the values are in $\mathrm{eV}\cdot\text{\AA}^3$.
+
+\begin{pnote}
+The first number after the marker is \opt{PSGMAX}, the table's maximum
+wavevector --- \emph{not} the valence charge. The two can look alike in some
+files, and the misreading was the secondary cause of the original discrepancy.
+Confirmed against the gold \file{POTCAR}: the value is $75.5890395431569$, the
+block holds $1001$ numbers ($=$ \opt{PSGMAX} $+$ exactly $1000$ samples), and
+\opt{ZVAL} is $11$.
+\end{pnote}
+
+\opt{PSCORE} $= v_{\mathrm{short}}(q\to0) = 105.89\ \mathrm{eV}\cdot\text{\AA}^3$
+for gold feeds the \opt{PSCENC} energy correction and does not enter the
+potential, since $\vext(\GG=0)$ is zeroed.
+
+\subsection{Result}
+
+Implementing Eq.~\eqref{eq:vaspextcar} verbatim --- natural cubic spline on the
+\opt{PSGMAX} mesh, analytic Coulomb tail, $\GG=0$ zeroed, truncation at
+\opt{PSGMA2}, structure factors per species --- gives:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Structure & grid & Gaussian model & \textbf{tabulated} \\
+\midrule
+struct\_000 & $128^3$ & $0.1338$ & $\mathbf{2.13\times10^{-5}}$ \\
+struct\_001 & $120{\times}128{\times}128$ & $0.1303$ & $\mathbf{5.95\times10^{-5}}$ \\
+struct\_002 & $128{\times}120{\times}128$ & $0.1285$ & $\mathbf{5.75\times10^{-5}}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+(relative $L^2$ against the reference \file{EXTCAR}; Pearson $r = 1.000000$ in
+all three, MAE $0.34$\,meV.) The improvement is a factor of roughly $6000$.
+
+\begin{pwarn}
+The residual $\sim6\times10^{-5}$ is the spline boundary condition: VASP calls
+\opt{SPLCOF(PSP(1,1),NPSPTS,NPSPTS,0.\_q)} whereas the Python implementation
+uses a natural cubic spline. The difference is confined to the ends of the
+table and is worth about $0.6$\,meV. It is documented rather than chased.
+\end{pwarn}
+
+\subsection{Why an analytic form factor cannot work}
+
+For a single-species cell Eq.~\eqref{eq:vaspextcar} can be inverted to recover
+the empirical form factor directly from a reference file,
+\begin{equation}
+  f(\GG) = -\,\frac{\Omega\,G^2\,\vext^{\mathrm{ref}}(\GG)}
+                   {4\pi e^2 Z^{\mathrm{val}} S(\GG)} .
+\end{equation}
+Doing so for gold shows $f(G)$ decaying far more slowly than a Gaussian at low
+$G$ and then \emph{oscillating about zero} at large $G$ --- the signature of a
+repulsive pseudopotential core. No monotonic $e^{-G^2\sigma^2/2}$ can reproduce
+that, which is why fitting $\sigma$ saturates near a relative $L^2$ of $0.13$
+regardless of the value chosen. The best-fit width came out at
+$\sigma^{*}=0.374\ \text{\AA}$ on all three structures independently, a
+consistency that identified the limitation as structural rather than accidental.
+
+\section{\texorpdfstring{\file{TAUCAR}}{TAUCAR}: the kinetic energy density}
+
+\subsection{Definition}
+
+The source comment gives
+\opt{tau\_s(r) = hbar\^{}2/2m sum\_nk w\_k f\_nk |grad psi\_nk,s(r)|\^{}2},
+i.e. the positive-definite gradient form of Eq.~\eqref{eq:taudef}, and
+\emph{not} the Laplacian form. \opt{TAU\_PW} in \file{metagga.F} evaluates it
+per Cartesian direction:
+
+\begin{lstlisting}[style=fortran]
+DO I=1,NPL
+   G1=WDES%IGX(I,NK)+WDES%VKPT(1,NK)
+   GC=(G1*LATT_CUR%B(IDIR,1)+G2*LATT_CUR%B(IDIR,2)+G3*LATT_CUR%B(IDIR,3))
+   CFA(I)=GC*W%CPTWFP(...)*CITPI          ! i*2pi*(G+k)_IDIR * c_G
+ENDDO
+CALL FFTWAV(NPL,WDES%NINDPW(1,NK),CFAR(1),CFA(1),GRID)
+DO I=1,GRID%RL%NP
+   CKIN(I)=CKIN(I)+HSQDTM*REAL(CONJG(CFBR(I))*CFAR(I))*WEIGHT
+ENDDO
+\end{lstlisting}
+
+The gradient is applied \emph{spectrally} as $i(\GG+\kk)$ on the plane-wave
+coefficients, inverse-transformed to real space, and accumulated as
+$|\partial_\alpha\psi|^2$ weighted by $w_k f_{nk}$, with
+$\opt{HSQDTM}=\hbar^2/2m_e$.
+
+\subsection{Storage}
+
+\opt{CTAUC = CTAUC*LATT\_CUR\%OMEGA} followed by \opt{OUTCHG} means
+\file{TAUCAR} stores $\tau\Omega$, exactly as \file{CHGCAR} stores $\rho\Omega$,
+so that $\sum_\rr \file{TAUCAR}(\rr)/(N_1N_2N_3)$ is the plane-wave kinetic
+energy of the cell in eV. For \opt{ISPIN=2} the two blocks are (total,
+magnetisation), matching the \file{CHGCAR} layout.
+
+\subsection{Verdict}
+
+Poraqu\^e's handling of \file{TAUCAR} required no change: the positive-definite
+definition, the $\Omega$ factor, the units, the shared grid and the
+plane-wave-only content all matched already. That $\tau$ is the pseudo quantity
+also explains an earlier observation --- the bound~\eqref{eq:hobound} was found
+to hold at essentially every grid point (one violation in $32768$, at the single
+voxel where spectral downsampling had rung $\tau$ slightly negative), because
+$\tau$ and $\rho$ are pseudised \emph{consistently}. The bound is strictly
+guaranteed only for all-electron quantities, so this was worth measuring rather
+than assuming.
+
+\section{What is absent from \texorpdfstring{\file{EXTCAR}}{EXTCAR}}
+
+Worth stating explicitly, because it bounds what the first learned map can be
+asked to do:
+
+\begin{itemize}
+  \item no PAW one-centre terms --- \file{EXTCAR} is a pseudo quantity;
+  \item no non-local projectors --- not local functions of $\rr$, so they
+    cannot appear in a volumetric file even in principle;
+  \item no Hartree and no exchange--correlation, unlike \file{LOCPOT} which is
+    $\vH+\vext$. \file{EXTCAR} is the bare ionic term, which is precisely the
+    right input for the $\vext\mapsto\rho$ map;
+  \item \textbf{no Ewald or ion--ion contribution.} That energy is a scalar
+    (\opt{PSCENC}, \opt{TEWEN}), not a field; none is missing, because none
+    belongs in this file.
+\end{itemize}
+
+\begin{pwarn}
+Two paths remain untested. The multi-species sum in Eq.~\eqref{eq:vaspextcar}
+uses a per-species \opt{PSGMAX} and is implemented as such, but the present data
+set is pure gold. And \opt{ISPIN=2} writes a second block in both \file{CHGCAR}
+and \file{TAUCAR} which the reader currently ignores --- correct for these
+\opt{ISPIN=1} runs, a silent truncation otherwise.
+\end{pwarn}

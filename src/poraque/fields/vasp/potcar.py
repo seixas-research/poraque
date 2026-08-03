@@ -6,7 +6,7 @@
 #
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
-"""
+r"""
 Reader for VASP ``POTCAR`` pseudopotential files.
 
 A ``POTCAR`` is the concatenation of one dataset per species, each opening with
@@ -26,15 +26,30 @@ electrons:
     therefore sets the natural width of the smeared pseudo-ion model used by
     :class:`poraque.fields.ExternalPotential`.
 
-.. note::
-   The tabulated reciprocal-space local potential ``V_loc(q)`` that follows the
-   ``local part`` marker is parsed into :attr:`PotcarSingle.local_part` when
-   ``parse_tables=True``, but it is **not** used to build the external
-   potential. VASP writes the table on an internal ``q`` mesh whose extent is
-   not recorded anywhere in the file, so the mesh cannot be reconstructed from
-   the ``POTCAR`` alone; consuming it would require hard-coding a convention we
-   cannot verify. The array is exposed verbatim for downstream work that can
-   supply that convention.
+The ``local part`` block
+------------------------
+The block following the ``local part`` marker holds the tabulated
+short-ranged local pseudopotential in reciprocal space. Its layout was
+recovered from the VASP source (``pseudo.F``, the ``POTCAR`` reader)::
+
+    READ(10,*) P(NTYP)%PSGMAX
+    READ(10,*) (P(NTYP)%PSP(I,2), I=1,NPSPTS)
+    DO I=1,NPSPTS
+        P(NTYP)%PSP(I,1) = (P(NTYP)%PSGMAX/NPSPTS)*(I-1)
+    ENDDO
+
+so the first number after the marker is **PSGMAX**, the maximum wavevector of
+the table (Å⁻¹), *not* the valence charge — a coincidence in some files, where
+the two happen to look alike. It is followed by exactly ``NPSPTS = 1000``
+values sampled on the **uniform** mesh
+
+.. math:: q_i = \frac{\mathrm{PSGMAX}}{1000}\,(i-1), \qquad i = 1 \ldots 1000,
+
+in units of eV·Å³. The values are the short-ranged remainder
+:math:`v_{\rm short}(q)`, i.e. the local pseudopotential with its
+:math:`-4\pi Z_{\rm val}e^2/q^2` Coulomb tail already subtracted; VASP adds
+that tail back analytically in ``POTION``. See
+:class:`poraque.fields.ExternalPotential` for the reconstruction.
 """
 
 import re
@@ -71,8 +86,13 @@ class PotcarSingle:
     functional : str or None
         ``LEXCH`` tag: ``"PE"`` (PBE), ``"CA"`` (LDA), ``"91"`` (PW91), ...
     local_part : numpy.ndarray or None
-        Raw floats of the ``local part`` block (see the module note).
+        Raw floats of the ``local part`` block: ``PSGMAX`` followed by the
+        ``NPSPTS`` table values. Prefer :attr:`psgmax` and
+        :attr:`local_potential`.
     """
+
+    #: Number of tabulated points, ``NPSPTS`` in ``pseudo_struct.F``.
+    NPSPTS = 1000
 
     def __init__(self, symbol, zval, enmax=None, rcore=None, functional=None,
                  titel=None, local_part=None):
@@ -83,6 +103,58 @@ class PotcarSingle:
         self.functional = functional
         self.titel = titel
         self.local_part = local_part
+
+    @property
+    def psgmax(self):
+        """
+        Maximum wavevector of the tabulated local potential, Å⁻¹.
+
+        ``None`` unless the POTCAR was read with ``parse_tables=True``.
+        """
+        if self.local_part is None or len(self.local_part) < 1:
+            return None
+        return float(self.local_part[0])
+
+    @property
+    def local_potential(self):
+        r"""
+        Short-ranged local pseudopotential :math:`v_{\rm short}(q)`, eV·Å³.
+
+        The :math:`-4\pi Z_{\rm val}e^2/q^2` Coulomb tail has been removed;
+        :class:`poraque.fields.ExternalPotential` adds it back analytically.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            ``(NPSPTS,)`` values, or ``None`` if the tables were not parsed.
+        """
+        if self.local_part is None or len(self.local_part) < 2:
+            return None
+        return np.asarray(self.local_part[1:1 + self.NPSPTS], dtype=float)
+
+    @property
+    def local_q_grid(self):
+        r"""
+        Wavevectors of :attr:`local_potential`, Å⁻¹.
+
+        Uniform, ``q_i = PSGMAX * (i-1) / NPSPTS``, exactly as ``pseudo.F``
+        constructs ``PSP(:,1)``.
+        """
+        if self.psgmax is None:
+            return None
+        return (self.psgmax / self.NPSPTS) * np.arange(self.NPSPTS, dtype=float)
+
+    @property
+    def pscore(self):
+        r"""
+        ``PSCORE`` = :math:`v_{\rm short}(q\to0)`, eV·Å³.
+
+        The :math:`\mathbf{G}=0` limit of the short-ranged part, which VASP
+        uses for the ``PSCENC`` energy correction. It does not enter the
+        potential itself, since :math:`V(\mathbf{G}=0)` is set to zero.
+        """
+        values = self.local_potential
+        return None if values is None else float(values[0])
 
     @property
     def element(self):

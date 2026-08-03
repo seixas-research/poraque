@@ -70,6 +70,63 @@ _ACTIVATIONS = {
     "tanh": torch.tanh,
 }
 
+#: Contraction performed by the spectral convolution.
+_SPECTRAL_EQUATION = "bixyz,ioxyz->boxyz"
+
+
+def complex_contract(equation, x, weight):
+    r"""
+    Contract two complex tensors, portably across accelerators.
+
+    ``torch.einsum`` on **complex** operands is not implemented on Apple's MPS
+    backend: it lowers to an ``mps.gather`` over ``complex<f32>`` values, which
+    Metal rejects outright — the process aborts rather than raising, so it
+    cannot even be caught. Since this contraction *is* the Fourier layer, the
+    whole architecture would be unusable on Apple Silicon.
+
+    Splitting the product into real arithmetic,
+
+    .. math:: (a + ib)(c + id) = (ac - bd) + i(ad + bc),
+
+    uses only real ``einsum`` calls, which every backend supports. It is
+    numerically identical to the complex path — a complex multiply performs the
+    same four real products internally — and costs four kernel launches
+    instead of one. CUDA and CPU keep the native path, where it is fastest.
+
+    .. warning::
+       The ``.contiguous()`` calls below are **load-bearing, not tidiness**.
+       The operands here are strided views: high-frequency corners such as
+       ``x_ft[..., nx-m1:, ny-m2:, :m3]``, and ``weight[index]``. Taking
+       ``.real``/``.imag`` of a non-contiguous complex tensor yields a real
+       view with a stride of two elements, and MPS silently computes the wrong
+       ``einsum`` over such a view — no error, no warning, results off by
+       40-90 %. Materialising the operands first reduces the error to ~1e-7,
+       i.e. ordinary float32 rounding. Verified in ``tests/test_device.py``.
+
+    Parameters
+    ----------
+    equation : str
+        ``einsum`` subscript string.
+    x, weight : torch.Tensor
+        Complex operands.
+
+    Returns
+    -------
+    torch.Tensor
+        Complex result of the contraction.
+    """
+    if x.device.type != "mps":
+        return torch.einsum(equation, x, weight)
+
+    x = x.contiguous()
+    weight = weight.contiguous()
+    x_real, x_imag = x.real, x.imag
+    w_real, w_imag = weight.real, weight.imag
+    return torch.complex(
+        torch.einsum(equation, x_real, w_real) - torch.einsum(equation, x_imag, w_imag),
+        torch.einsum(equation, x_real, w_imag) + torch.einsum(equation, x_imag, w_real),
+    )
+
 
 # ---------------------------------------------------------------------- #
 # Spectral convolution
@@ -172,8 +229,8 @@ class SpectralConv3d(nn.Module):
             (slice(nx - m1, None), slice(ny - m2, None), 3),
         )
         for slice_1, slice_2, index in corners:
-            out_ft[:, :, slice_1, slice_2, :m3] = torch.einsum(
-                "bixyz,ioxyz->boxyz",
+            out_ft[:, :, slice_1, slice_2, :m3] = complex_contract(
+                _SPECTRAL_EQUATION,
                 x_ft[:, :, slice_1, slice_2, :m3],
                 self.weight[index, :, :, :m1, :m2, :m3],
             )
@@ -227,6 +284,8 @@ class CellEncoder(nn.Module):
             ``[a, b, c, cos(alpha), cos(beta), cos(gamma), V^(1/3)]`` with
             lengths divided by ``length_scale``.
         """
+        from .physics import cell_volume
+
         lengths = torch.linalg.norm(cell, dim=-1)                    # (B, 3)
         normalized = cell / lengths.unsqueeze(-1).clamp_min(1e-12)
         cosines = torch.stack(
@@ -237,7 +296,10 @@ class CellEncoder(nn.Module):
             ],
             dim=-1,
         )
-        volume = torch.linalg.det(cell).abs().clamp_min(1e-12)
+        # cell_volume evaluates the determinant on the CPU in float64: MPS
+        # implements neither, and the 3x3 cost is irrelevant next to the FFTs.
+        volume = cell_volume(cell, device=cell.device,
+                             dtype=cell.dtype).clamp_min(1e-12)
         return torch.cat(
             [lengths / length_scale, cosines,
              (volume ** (1.0 / 3.0) / length_scale).unsqueeze(-1)],

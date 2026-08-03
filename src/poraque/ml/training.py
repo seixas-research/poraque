@@ -23,6 +23,7 @@ import torch
 
 from ..fields import ChargeDensity, ExternalPotential, KineticEnergyDensity
 from .data import make_dataloader
+from .device import describe_device, resolve_device
 from .fno import FNO3d
 from .losses import PhysicsInformedLoss, relative_error
 from .tasks import resolve_task
@@ -34,6 +35,52 @@ _OUTPUT_CLASSES = {
     "CHGCAR": ChargeDensity,
     "TAUCAR": KineticEnergyDensity,
 }
+
+
+def clip_gradients(parameters, max_norm):
+    r"""
+    Global gradient-norm clipping that tolerates **complex** parameters.
+
+    :func:`torch.nn.utils.clip_grad_norm_` computes the norm with
+    ``linalg.vector_norm``, which Apple's MPS backend does not implement for
+    complex dtypes — and the FNO's spectral weights are complex, so the stock
+    helper raises there.
+
+    Viewing a complex tensor as its stacked ``(real, imag)`` representation is
+    **exact** rather than an approximation: for :math:`z = a + ib`,
+
+    .. math:: \sum_k |z_k|^2 = \sum_k (a_k^2 + b_k^2),
+
+    so the Frobenius norm is unchanged. The clip is therefore identical on
+    every backend.
+
+    Parameters
+    ----------
+    parameters : iterable of torch.nn.Parameter
+        Parameters whose ``.grad`` should be clipped in place.
+    max_norm : float
+        Maximum global 2-norm; non-positive disables clipping.
+
+    Returns
+    -------
+    float
+        The total gradient norm *before* clipping.
+    """
+    gradients = [p.grad for p in parameters if p.grad is not None]
+    if not gradients or max_norm is None or max_norm <= 0:
+        return 0.0
+
+    squares = [
+        (torch.view_as_real(g) if g.is_complex() else g).pow(2).sum()
+        for g in gradients
+    ]
+    total = torch.sqrt(torch.stack(squares).sum())
+
+    coefficient = max_norm / (total + 1e-6)
+    if float(coefficient) < 1.0:
+        for gradient in gradients:
+            gradient.mul_(coefficient.to(gradient.device))
+    return float(total)
 
 
 class FieldOperator:
@@ -51,7 +98,9 @@ class FieldOperator:
         Normalizations; usually taken from
         :meth:`~poraque.ml.data.FieldPairDataset.fit_transforms`.
     device : str or torch.device, optional
-        Defaults to CUDA when available.
+        ``"auto"`` (default) selects CUDA, then Apple MPS, then CPU; an
+        explicit backend that is unavailable warns and falls back to CPU. See
+        :func:`~poraque.ml.device.resolve_device`.
     pauli_residual : bool, optional
         Wrap the backbone in a
         :class:`~poraque.ml.heads.PauliResidualOperator`, so the model
@@ -73,9 +122,7 @@ class FieldOperator:
                  target_transform=None, device=None, pauli_residual=False,
                  pauli_scale=1.0, learn_pauli_scale=True, **model_kwargs):
         self.task = resolve_task(task)
-        self.device = torch.device(
-            device or ("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        self.device = resolve_device(device)
         self.input_transform = input_transform or Identity()
         self.target_transform = target_transform or Identity()
 
@@ -128,11 +175,20 @@ class FieldOperator:
         prediction = self.model(normalized, cell)
         physical = self.target_transform.inverse(prediction)[0, 0]
 
+        # .float() before .numpy(): accelerators may hand back a dtype numpy
+        # cannot consume directly, and .cpu() alone does not convert it.
         return _OUTPUT_CLASSES[self.task.target_field](
-            physical.cpu().numpy(), field.grid, field.structure,
+            physical.detach().to("cpu", torch.float32).numpy(),
+            field.grid, field.structure,
             metadata={"predicted_by": type(self.model).__name__,
-                      "task": self.task.name},
+                      "task": self.task.name,
+                      "device": str(self.device)},
         )
+
+    @property
+    def device_description(self):
+        """Human-readable description of the active device."""
+        return describe_device(self.device)
 
     # ------------------------------------------------------------------ #
     # Persistence
@@ -277,7 +333,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             terms["total"].backward()
 
             if grad_clip:
-                torch.nn.utils.clip_grad_norm_(operator.model.parameters(), grad_clip)
+                clip_gradients(operator.model.parameters(), grad_clip)
             optimizer.step()
 
             running += float(terms["total"].detach())

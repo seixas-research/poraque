@@ -439,3 +439,43 @@ class TestKineticEnergyDensities:
             ChargeDensity.compute()
         with pytest.raises(NotImplementedError):
             KineticEnergyDensity.compute()
+
+
+# --------------------------------------------------------------------- #
+# Exact local pseudopotential from the POTCAR tables
+#
+# Layout recovered from the VASP source (pseudo.F:294-305, pot.F POTION);
+# see docs/vasp_analysis_report.md.
+# --------------------------------------------------------------------- #
+class TestPotcarLocalTables:
+    def test_first_value_is_psgmax_not_zval(self):
+        """The number after 'local part' is PSGMAX, a wavevector, not ZVAL.
+
+        Misreading it was the root cause of the EXTCAR discrepancy, so it is
+        pinned here explicitly.
+        """
+        text = POTCAR_TEXT.replace(
+            "  local part\n             4.00000000000000\n",
+            "  local part\n   75.5890395431569\n",
+        )
+        entry = Potcar.from_string(text, parse_tables=True)[0]
+        assert entry.psgmax == pytest.approx(75.5890395431569)
+        assert entry.zval == 4.0                      # unchanged, separate quantity
+
+    def test_q_grid_is_uniform_from_zero(self):
+        text = POTCAR_TEXT.replace(
+            "  local part\n             4.00000000000000\n",
+            "  local part\n   100.0\n",
+        )
+        entry = Potcar.from_string(text, parse_tables=True)[0]
+        q = entry.local_q_grid
+        assert q[0] == 0.0
+        assert len(q) == entry.NPSPTS
+        assert q[1] == pytest.approx(100.0 / entry.NPSPTS)
+        assert np.allclose(np.diff(q), 100.0 / entry.NPSPTS)
+
+    def test_tables_absent_without_parse_tables(self):
+        entry = Potcar.from_string(POTCAR_TEXT)[0]
+        assert entry.psgmax is None
+        assert entry.local_potential is None
+        assert entry.pscore is None
