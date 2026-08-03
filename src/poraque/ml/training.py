@@ -52,19 +52,52 @@ class FieldOperator:
         :meth:`~poraque.ml.data.FieldPairDataset.fit_transforms`.
     device : str or torch.device, optional
         Defaults to CUDA when available.
+    pauli_residual : bool, optional
+        Wrap the backbone in a
+        :class:`~poraque.ml.heads.PauliResidualOperator`, so the model
+        predicts :math:`\\tau = \\tau_{\\rm vW}[\\rho] + s\\,
+        \\mathrm{softplus}(f_\\theta)` and the Hoffmann-Ostenhof bound holds by
+        construction. Only meaningful for ``chg2tau``; requested for any other
+        task it raises, since :math:`\\tau_{\\rm vW}` is a functional of the
+        density and the density is not the input elsewhere.
+    pauli_scale : float, optional
+        Initial Pauli-term magnitude in eV/Å³; fit it with
+        :func:`~poraque.ml.heads.fit_pauli_scale`.
+    learn_pauli_scale : bool, optional
+        Optimize the scale together with the backbone.
     **model_kwargs
         Forwarded to :class:`~poraque.ml.fno.FNO3d`.
     """
 
     def __init__(self, task, model=None, input_transform=None,
-                 target_transform=None, device=None, **model_kwargs):
+                 target_transform=None, device=None, pauli_residual=False,
+                 pauli_scale=1.0, learn_pauli_scale=True, **model_kwargs):
         self.task = resolve_task(task)
         self.device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
         )
-        self.model = (model or FNO3d(**model_kwargs)).to(self.device)
         self.input_transform = input_transform or Identity()
         self.target_transform = target_transform or Identity()
+
+        self.pauli_residual = bool(pauli_residual)
+        self.pauli_scale = float(pauli_scale)
+        self.learn_pauli_scale = bool(learn_pauli_scale)
+
+        backbone = model if model is not None else FNO3d(**model_kwargs)
+        if self.pauli_residual:
+            if self.task.name != "chg2tau":
+                raise ValueError(
+                    f"pauli_residual is only defined for the chg2tau task "
+                    f"(tau = tau_vW[rho] + ...), not {self.task.name!r}."
+                )
+            from .heads import PauliResidualOperator
+
+            backbone = PauliResidualOperator(
+                backbone, self.input_transform, self.target_transform,
+                scale=self.pauli_scale, learn_scale=self.learn_pauli_scale,
+            )
+
+        self.model = backbone.to(self.device)
 
     # ------------------------------------------------------------------ #
     # Inference
@@ -105,7 +138,13 @@ class FieldOperator:
     # Persistence
     # ------------------------------------------------------------------ #
     def save(self, path):
-        """Save weights and normalizations to ``path``."""
+        """
+        Save weights, normalizations and the head configuration to ``path``.
+
+        The head flags are stored because they change the *architecture*, not
+        just the weights: restoring a Pauli-residual model into a bare backbone
+        would silently load mismatched tensors.
+        """
         torch.save(
             {
                 "task": self.task.name,
@@ -113,6 +152,9 @@ class FieldOperator:
                 "model_class": type(self.model).__name__,
                 "input_transform": self.input_transform.state_dict(),
                 "target_transform": self.target_transform.state_dict(),
+                "pauli_residual": self.pauli_residual,
+                "pauli_scale": self.pauli_scale,
+                "learn_pauli_scale": self.learn_pauli_scale,
             },
             path,
         )
@@ -123,14 +165,18 @@ class FieldOperator:
         """
         Restore an operator saved by :meth:`save`.
 
+        The head configuration is taken from the checkpoint, so a
+        Pauli-residual model reloads as one without the caller having to
+        remember. ``**model_kwargs`` must still reproduce the backbone's
+        hyper-parameters.
+
         Parameters
         ----------
         path : str
             Checkpoint file.
         model : torch.nn.Module, optional
-            Pre-built model with matching architecture. When omitted an
-            :class:`~poraque.ml.fno.FNO3d` is built from ``**model_kwargs``,
-            which must reproduce the original hyper-parameters.
+            Pre-built **backbone** with matching architecture. When omitted an
+            :class:`~poraque.ml.fno.FNO3d` is built from ``**model_kwargs``.
         device : str or torch.device, optional
         """
         state = torch.load(path, map_location="cpu", weights_only=False)
@@ -138,6 +184,9 @@ class FieldOperator:
             state["task"], model=model, device=device,
             input_transform=FieldTransform.from_state_dict(state["input_transform"]),
             target_transform=FieldTransform.from_state_dict(state["target_transform"]),
+            pauli_residual=state.get("pauli_residual", False),
+            pauli_scale=state.get("pauli_scale", 1.0),
+            learn_pauli_scale=state.get("learn_pauli_scale", True),
             **model_kwargs,
         )
         operator.model.load_state_dict(state["model_state"])

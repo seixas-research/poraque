@@ -26,9 +26,29 @@ Poraquê is a research code for electronic structure and machine learning on
 
 | Area | State |
 | --- | --- |
-| `poraque.fields` | Under construction — 3D field descriptors and VASP-format I/O |
-| `poraque.ml` | Under construction — Fourier Neural Operator pipeline |
+| `poraque.fields` | 3D scalar fields (`EXTCAR`/`CHGCAR`/`TAUCAR`) on one shared grid |
+| `poraque.fields.io` | Pluggable ingestion — VASP working; Quantum ESPRESSO and GPAW scaffolded |
+| `poraque.ml` | Fourier Neural Operator pipeline, handles per-material grid shapes |
 | Everything else | Legacy; being reorganized |
+
+Numba has been removed. The electrostatic lattice sums are vectorized
+NumPy/SciPy in `poraque.potentials.kernels`, kept as a narrow, pure-function
+seam for a future C/C++ backend.
+
+## Scripts
+
+```bash
+# Validate the external-potential model against reference VASP EXTCAR files
+python scripts/validate_vasp_data.py --fit-sigma --form-factor
+
+# Train the two neural operators (EXTCAR -> CHGCAR, CHGCAR -> TAUCAR)
+python scripts/train_fno.py --resolution 32 --epochs 200
+```
+
+## Notes
+
+- `plan/pi_fno.md` — roadmap for the physics-informed operator (PI-FNO).
+- `plan/fno_physics.md` — how KS-DFT and OF-DFT relate to what the two models learn.
 
 ## Installation
 

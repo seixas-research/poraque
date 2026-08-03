@@ -134,17 +134,48 @@ One reduction and one division makes $\int\rho = N_{\rm val}$ hold to machine
 precision, and it is differentiable. This is strictly better than
 `electron_count_loss`, which should be kept only as a diagnostic.
 
-### 3.3 Exact von Weizsäcker bound — residual parameterisation
+### 3.3 Exact von Weizsäcker bound — residual parameterisation ✅ IMPLEMENTED
 
 $$
-\tau_{\rm out} \;=\; \tau_{\rm vW}[\rho] \;+\; \mathrm{softplus}\big(f_\theta(\rho)\big)
+\tau_{\rm out} \;=\; \tau_{\rm vW}[\rho] \;+\; s\,\mathrm{softplus}\big(f_\theta(\rho)\big)
 $$
 
 The network learns only the **Pauli term** $\tau_P\ge0$. The bound holds by
 construction, and — more importantly — the network no longer has to spend
 capacity re-learning $\lvert\nabla\rho\rvert^2/8\rho$, which is analytically
-known and often dominates. This is the single highest-value change in this
-document for the `chg2tau` task.
+known and often dominates.
+
+Implemented as `poraque.ml.heads.PauliResidualOperator`; enable with
+`FieldOperator(..., pauli_residual=True)` or `train_fno.py --pauli-head`.
+Notes from the implementation:
+
+* The head consumes and returns *normalised* fields, so it is a drop-in
+  replacement for a bare backbone. Internally it decodes $\rho$, evaluates
+  $\tau_{\rm vW}$ spectrally (exact on a plane-wave grid), adds the positive
+  residual, and re-encodes — keeping the loss well-conditioned while the
+  constraint lives in physical units.
+* The scale $s$ is fitted on the **training split only** (`fit_pauli_scale`)
+  so the ``softplus`` operates near unit argument; it is then optimised as
+  $\log s$, which cannot change sign.
+* $\tau_{\rm vW}$ is a fixed function of the *input*, so it contributes no
+  gradient to $\theta$ — it is a per-sample offset, not a second branch.
+* The bound is enforced **non-strictly**, exactly as Hoffmann-Ostenhof states
+  it: for strongly negative backbone output ``softplus`` underflows and the
+  head returns $\tau = \tau_{\rm vW}$ *exactly*. That single-orbital limit is
+  reachable, not merely approachable — something a soft penalty can never do.
+* Verified holding at random initialisation, for weights scaled by 50×, and
+  after training at a deliberately destructive learning rate
+  (`tests/test_heads.py`). A control test confirms the *unconstrained*
+  backbone does violate the bound, so the head is not solving a non-problem.
+
+**Check the data first.** The inequality is a theorem for all-electron
+densities; VASP's `CHGCAR`/`TAUCAR` are pseudo quantities. Use
+`pauli_bound_violation` before enabling the head. On the Au dataset it holds at
+every point of `struct_001`/`struct_002` and at all but one point of
+`struct_000` — and that point is where spectral downsampling rang $\tau$
+slightly negative, i.e. an artefact of resampling rather than of physics.
+$\tau_{\rm vW}$ supplies ~31 % of $\tau$ there, which is the capacity the head
+hands back to the network for free.
 
 > **Recommendation.** Implement §3.1–3.3 *before* adding any soft physics loss.
 > They cost nothing at inference, cannot destabilise training, and remove three

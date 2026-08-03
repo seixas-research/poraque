@@ -72,6 +72,10 @@ _LAZY = {
     "FNO3d": "poraque.ml.fno",
     "FNOBlock": "poraque.ml.fno",
     "SpectralConv3d": "poraque.ml.fno",
+    # constraint-enforcing output heads
+    "PauliResidualOperator": "poraque.ml.heads",
+    "fit_pauli_scale": "poraque.ml.heads",
+    "pauli_bound_violation": "poraque.ml.heads",
     # losses
     "PhysicsInformedLoss": "poraque.ml.losses",
     "RelativeL2Loss": "poraque.ml.losses",

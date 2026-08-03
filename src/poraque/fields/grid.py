@@ -179,6 +179,68 @@ class FieldGrid:
         return cls(data.shape, structure.cell)
 
     @classmethod
+    def from_parameters(cls, structure, parameters=None, pseudopotentials=None,
+                        shape=None, encut=None, prec=None):
+        """
+        Build the grid from code-agnostic ingestion results.
+
+        This is the general entry point, fed by any
+        :class:`~poraque.fields.io.base.CalculationReader`. Precedence, first
+        hit wins:
+
+        1. an explicit ``shape`` argument;
+        2. :attr:`CalculationParameters.grid_shape` (an explicit grid stated in
+           the input file);
+        3. a cutoff — the ``encut`` argument, then
+           :attr:`CalculationParameters.cutoff`, then the largest
+           ``recommended_cutoff`` among the pseudopotentials — combined with
+           the precision setting.
+
+        Parameters
+        ----------
+        structure : Structure
+            Provides the cell.
+        parameters : CalculationParameters, optional
+            Cutoff (**eV**), precision and any explicit grid shape.
+        pseudopotentials : dict, optional
+            ``{element: PseudopotentialInfo}``, used only for the fallback
+            cutoff.
+        shape : tuple of int, optional
+            Explicit grid shape; overrides everything else.
+        encut : float, optional
+            Explicit cutoff in eV.
+        prec : str, optional
+            Explicit precision setting.
+
+        Returns
+        -------
+        FieldGrid
+        """
+        precision = prec or (parameters.precision if parameters else None) or "normal"
+
+        if shape is not None:
+            return cls(shape, structure.cell, encut=encut, prec=precision)
+
+        if parameters is not None and parameters.grid_shape is not None:
+            return cls(parameters.grid_shape, structure.cell,
+                       encut=encut or parameters.cutoff, prec=precision)
+
+        if encut is None and parameters is not None:
+            encut = parameters.cutoff
+        if encut is None and pseudopotentials:
+            cutoffs = [info.recommended_cutoff for info in pseudopotentials.values()
+                       if info.recommended_cutoff is not None]
+            encut = max(cutoffs) if cutoffs else None
+        if encut is None:
+            raise ValueError(
+                "Cannot size the grid: no explicit shape, no grid shape in the "
+                "input file, no cutoff, and no recommended cutoff from the "
+                "pseudopotentials."
+            )
+
+        return cls.from_encut(structure.cell, encut, prec=precision, fine=True)
+
+    @classmethod
     def from_vasp_inputs(cls, poscar, incar=None, potcar=None, shape=None,
                          encut=None, prec=None):
         """

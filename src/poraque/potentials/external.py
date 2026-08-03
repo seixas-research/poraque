@@ -11,8 +11,8 @@ import warnings
 import numpy as np
 from scipy.special import erf, erfc
 
-from .. import accel
 from ..profiling import profiler
+from .kernels import ewald_real_energy, pairwise_coulomb_energy
 
 
 def point_charge_potential(grid, positions, charges, rc=1e-6):
@@ -175,7 +175,7 @@ def compute_ion_ion_energy(system, grid, charges=None, alpha=None, r_cut=None, k
     # --- Non-periodic: direct pairwise Coulomb repulsion ---
     if not any(grid.pbc):
         with profiler.timer("ion-ion (pairwise)"):
-            return accel.pairwise_coulomb_energy(positions, charges)
+            return pairwise_coulomb_energy(positions, charges)
 
     # --- Periodic: Ewald summation ---
     cell = np.asarray(grid.cell, dtype=float)
@@ -193,7 +193,8 @@ def compute_ion_ion_energy(system, grid, charges=None, alpha=None, r_cut=None, k
 
     # 1. Real-space term (0.5 factor handles the symmetric double counting).
     #    The triple lattice sum is the dominant scalar cost and is delegated to
-    #    the thread-parallel Numba kernel in poraque.accel.
+    #    the vectorized kernel in poraque.potentials.kernels, which is the seam
+    #    a future compiled backend would replace.
     n_max_real = np.ceil(r_cut / perpendicular_heights).astype(int)
     nx_r = np.arange(-n_max_real[0], n_max_real[0] + 1)
     ny_r = np.arange(-n_max_real[1], n_max_real[1] + 1)
@@ -202,8 +203,8 @@ def compute_ion_ion_energy(system, grid, charges=None, alpha=None, r_cut=None, k
     shift_vectors = np.dot(mesh_n_r, cell)
 
     with profiler.timer("ion-ion Ewald (real)"):
-        e_real = accel.ewald_real_energy(positions, charges, shift_vectors,
-                                         alpha, r_cut)
+        e_real = ewald_real_energy(positions, charges, shift_vectors,
+                                   alpha, r_cut)
 
     # 2. Reciprocal-space term.
     e_recip = 0.0

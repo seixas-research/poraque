@@ -61,6 +61,38 @@ The form factor :math:`f_s(G)` selects the pseudo-ion model:
    :mod:`poraque.fields.vasp.potcar` for why the tabulated ``local part`` is
    parsed but not consumed.
 
+Measured accuracy against VASP
+------------------------------
+``scripts/validate_vasp_data.py`` compares this model point-by-point against
+reference ``EXTCAR`` files produced by a modified VASP. On a 27-atom Au
+supercell (``ZVAL = 11``, ``RCORE = 1.323`` Å, ``ENCUT = 450`` eV) the
+conventions match exactly — VASP's reference also has zero cell average, i.e.
+the same :math:`\mathbf{G}=0` treatment, and the same eV units with no volume
+pre-factor — and the residual is purely the short-range pseudopotential shape:
+
+===========================  ==============  =============
+Gaussian width               relative L2     Pearson r
+===========================  ==============  =============
+``rcore_factor = 0.5``       0.69            0.984
+best fit, :math:`\sigma^*`   **0.13**        **0.992**
+===========================  ==============  =============
+
+The best-fit width came out at :math:`\sigma^* = 0.374` Å on *both* the
+pristine and the rattled structure — i.e. ``rcore_factor`` :math:`\approx 0.28`
+rather than the default ``0.5``. The default is deliberately left at ``0.5``:
+one element from one dataset is not enough to recalibrate a global default, and
+:math:`R_{\rm core}` conventions vary between pseudopotential families. Pass
+``rcore_factor`` or ``sigma`` explicitly when a reference is available.
+
+Inverting the reference potential also recovers the *empirical* form factor
+:math:`f(G)` directly (single-species cells only; see
+``empirical_form_factor`` in the validation script). For Au it decays much
+more slowly than a Gaussian at low :math:`G` and then **oscillates about zero**
+at high :math:`G` — the signature of a real pseudopotential's repulsive core,
+which no monotonic :math:`e^{-G^2\sigma^2/2}` can reproduce. That is the
+quantitative reason the residual saturates near 0.13 and cannot be fitted away
+by tuning :math:`\sigma`; closing it requires the tabulated ``V_loc(q)``.
+
 Sign and units
 --------------
 Values are the **potential energy of an electron** in eV — negative near the
@@ -109,6 +141,79 @@ class ExternalPotential(ScalarField):
     # ------------------------------------------------------------------ #
     # Constructors
     # ------------------------------------------------------------------ #
+    @classmethod
+    def from_calculation(cls, directory=".", code="auto", grid=None, shape=None,
+                         encut=None, prec=None, model="gaussian", sigma=None,
+                         rcore_factor=0.5, zval=None):
+        """
+        Build the external potential from *any* supported DFT calculation.
+
+        This is the code-agnostic entry point: the directory is handed to a
+        :class:`~poraque.fields.io.base.CalculationReader`, which supplies the
+        geometry, the cutoff and the valence charges in neutral units. Adding
+        Quantum ESPRESSO or GPAW support therefore requires no change here.
+
+        Parameters
+        ----------
+        directory : str or pathlib.Path, optional
+            Calculation directory.
+        code : str, optional
+            Registered code name (``"vasp"``, ...) or ``"auto"`` to detect it
+            from the files present.
+        grid : FieldGrid, optional
+            Pre-built shared grid. **Pass this when the material's density and
+            kinetic-energy files already exist**, so all fields share one mesh.
+        shape : tuple of int, optional
+            Explicit grid shape; overrides the cutoff-derived estimate.
+        encut : float, optional
+            Cutoff in eV overriding the input file.
+        prec : str, optional
+            Precision setting overriding the input file.
+        model : {"gaussian", "coulomb"}, optional
+            Pseudo-ion model; see the module docstring.
+        sigma : float or dict, optional
+            Gaussian width(s) in Å. Defaults to ``rcore_factor`` times the
+            pseudopotential core radius.
+        rcore_factor : float, optional
+            Multiplier turning the core radius into a Gaussian width.
+        zval : dict, optional
+            ``{element: charge}`` overriding the pseudopotential valence
+            charges. Required when the code stores no pseudopotential files.
+
+        Returns
+        -------
+        ExternalPotential
+        """
+        from .io import resolve_reader
+
+        reader = resolve_reader(directory, code)
+        structure = reader.read_structure(directory)
+        parameters = reader.read_parameters(directory)
+        pseudopotentials = reader.read_pseudopotentials(directory)
+
+        if grid is None:
+            grid = FieldGrid.from_parameters(
+                structure, parameters, pseudopotentials,
+                shape=shape, encut=encut, prec=prec,
+            )
+
+        charges = _charges_from_pseudopotentials(structure, pseudopotentials, zval)
+        widths = _widths_from_pseudopotentials(
+            structure,
+            {element: info.core_radius for element, info in pseudopotentials.items()},
+            sigma, rcore_factor, model,
+        )
+
+        return cls.compute(structure, grid, charges, widths=widths, model=model,
+                           metadata={
+                               "code": reader.code,
+                               "encut": grid.encut,
+                               "prec": grid.prec,
+                               "model": model,
+                               "rcore_factor": rcore_factor,
+                               "source": str(directory),
+                           })
+
     @classmethod
     def from_vasp(cls, directory=".", poscar=None, incar=None, potcar=None,
                   grid=None, shape=None, encut=None, prec=None,
@@ -357,47 +462,47 @@ def _resolve_potcar(potcar, directory):
     return Potcar.from_file(candidate) if os.path.exists(candidate) else None
 
 
-def _resolve_charges(poscar, potcar, zval):
+def _charges_from_pseudopotentials(structure, pseudopotentials, zval):
     """
-    Build the ``{element: Z_val}`` map, POTCAR first and overrides last.
+    Build the ``{element: Z_val}`` map from neutral pseudopotential info.
+
+    Precedence: explicit ``zval`` overrides beat the parsed pseudopotentials.
 
     Raises
     ------
     ValueError
         If a species present in the structure has no valence charge.
     """
-    charges = dict(potcar.zval_map) if potcar is not None else {}
+    charges = {element: float(info.valence_charge)
+               for element, info in (pseudopotentials or {}).items()}
     if zval:
         charges.update({str(k).split("_")[0]: float(v) for k, v in zval.items()})
 
-    missing = [
-        symbol.split("_")[0] for symbol in poscar.symbols
-        if symbol.split("_")[0] not in charges
-    ]
+    missing = [element for element in structure.elements if element not in charges]
     if missing:
         raise ValueError(
-            f"No valence charge for {sorted(set(missing))}. Provide a POTCAR "
-            f"or pass zval={{'X': charge, ...}} explicitly."
+            f"No valence charge for {sorted(set(missing))}. Provide the "
+            f"pseudopotential files or pass zval={{'X': charge, ...}} explicitly."
         )
     return charges
 
 
-def _resolve_widths(poscar, potcar, sigma, rcore_factor, model):
+def _widths_from_pseudopotentials(structure, core_radii, sigma, rcore_factor, model):
     """
     Build the ``{element: sigma}`` map of Gaussian widths (Å).
 
-    Precedence: explicit ``sigma`` (scalar or per-element) beats the
-    ``POTCAR`` ``RCORE``, which beats :data:`DEFAULT_SIGMA`.
+    Precedence: explicit ``sigma`` (scalar or per-element) beats
+    ``rcore_factor * core_radius``, which beats :data:`DEFAULT_SIGMA`.
     """
     if model != "gaussian":
         return {}
 
-    elements = [symbol.split("_")[0] for symbol in poscar.symbols]
-    rcore = potcar.rcore_map if potcar is not None else {}
+    elements = structure.elements
+    core_radii = core_radii or {}
 
     widths = {}
     for element in elements:
-        radius = rcore.get(element)
+        radius = core_radii.get(element)
         widths[element] = (
             DEFAULT_SIGMA if radius is None else max(MIN_SIGMA, rcore_factor * radius)
         )
@@ -408,3 +513,28 @@ def _resolve_widths(poscar, potcar, sigma, rcore_factor, model):
         widths = {element: float(sigma) for element in elements}
 
     return widths
+
+
+def _resolve_charges(poscar, potcar, zval):
+    """VASP-specific adapter around :func:`_charges_from_pseudopotentials`."""
+    pseudopotentials = {}
+    if potcar is not None:
+        for entry in potcar:
+            pseudopotentials[entry.element] = _SimplePseudo(entry.zval)
+    return _charges_from_pseudopotentials(poscar, pseudopotentials, zval)
+
+
+def _resolve_widths(poscar, potcar, sigma, rcore_factor, model):
+    """VASP-specific adapter around :func:`_widths_from_pseudopotentials`."""
+    core_radii = potcar.rcore_map if potcar is not None else {}
+    return _widths_from_pseudopotentials(poscar, core_radii, sigma, rcore_factor,
+                                         model)
+
+
+class _SimplePseudo:
+    """Minimal stand-in exposing only ``valence_charge``."""
+
+    __slots__ = ("valence_charge",)
+
+    def __init__(self, valence_charge):
+        self.valence_charge = float(valence_charge)

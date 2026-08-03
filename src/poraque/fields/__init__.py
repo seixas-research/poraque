@@ -48,6 +48,7 @@ from .density import (
 )
 from .external import ExternalPotential
 from .grid import FieldGrid, fft_friendly_size
+from .structure import Structure, element_of, symbol_to_z
 
 __all__ = [
     "ChargeDensity",
@@ -55,6 +56,9 @@ __all__ = [
     "FieldGrid",
     "KineticEnergyDensity",
     "ScalarField",
+    "Structure",
+    "element_of",
+    "symbol_to_z",
     "fft_friendly_size",
     "spectral_gradient",
     "thomas_fermi_tau",
