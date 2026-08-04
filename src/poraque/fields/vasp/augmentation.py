@@ -44,35 +44,13 @@ import os
 import numpy as np
 
 from .poscar import Poscar
-from .volumetric import read_augmentation
+from .volumetric import fortran_exponential, read_augmentation
 
 #: Header VASP writes before each record, and the field layout of the values.
 _HEADER = "augmentation occupancies"
 _PER_LINE = 5
 _WIDTH = 15
 _DECIMALS = 7
-
-
-def fortran_exponential(value, decimals=_DECIMALS, width=_WIDTH):
-    """
-    Format one number the way Fortran's ``E15.7`` edit descriptor does.
-
-    Python's ``%E`` normalises the mantissa to ``[1, 10)`` and Fortran's to
-    ``[0.1, 1)``, so ``6.424378`` is ``6.4243780E+00`` in one and
-    ``0.6424378E+01`` in the other. VASP reads these back with a fixed-format
-    read, so the difference is not cosmetic.
-    """
-    if not np.isfinite(value) or value == 0.0:
-        mantissa, exponent = 0.0, 0
-    else:
-        exponent = int(np.floor(np.log10(abs(value)))) + 1
-        mantissa = value / (10.0 ** exponent)
-        # Rounding can push the mantissa back to 1.0 (0.99999995 -> 1.0000000),
-        # which is not a legal Fortran mantissa; renormalise when it does.
-        if abs(round(mantissa, decimals)) >= 1.0:
-            mantissa /= 10.0
-            exponent += 1
-    return f"{mantissa:.{decimals}f}E{exponent:+03d}".rjust(width)
 
 
 def parse_augmentation(block):
@@ -121,7 +99,9 @@ def format_augmentation(records):
         lines.append(f"{_HEADER}{index:4d}{values.size:4d}")
         for start in range(0, values.size, _PER_LINE):
             chunk = values[start:start + _PER_LINE]
-            lines.append("".join(fortran_exponential(v) for v in chunk))
+            lines.append("".join(
+                fortran_exponential(v, decimals=_DECIMALS, width=_WIDTH)
+                for v in chunk))
     return lines
 
 

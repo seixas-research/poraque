@@ -155,10 +155,85 @@ def count_augmentation_records(block):
     return sum(1 for line in block if "augmentation occupancies" in line)
 
 
+def fortran_exponential(value, decimals=7, width=15):
+    r"""
+    Render one number exactly as Fortran's ``Ew.d`` edit descriptor does.
+
+    Two things separate this from ``"%*.*E" % (width, decimals, value)``:
+
+    **Mantissa normalisation.** Fortran puts the mantissa in :math:`[0.1, 1)`
+    and C puts it in :math:`[1, 10)`, so ``6.424378`` is ``0.6424378E+01``
+    here and ``6.4243780E+00`` there.
+
+    **Leading-zero omission.** When the sign would push the field past
+    ``width``, Fortran drops the optional zero before the decimal point rather
+    than overflowing: ``E17.11`` writes ``-.23625518271E+04``, never
+    ``-0.23625518271E+04``. This is not cosmetic. VASP reads its density block
+    with ``(1X,E17.11)``, so a value written one column too wide loses its
+    minus sign to the ``1X`` and is read back positive.
+
+    Parameters
+    ----------
+    value : float
+        The number to render. Non-finite input is written as zero.
+    decimals : int, optional
+        The ``d`` of ``Ew.d`` — digits after the decimal point.
+    width : int, optional
+        The ``w`` of ``Ew.d`` — the field width, *excluding* any ``1X`` the
+        surrounding format supplies.
+
+    Returns
+    -------
+    str
+        Exactly ``width`` characters, right-justified; all asterisks if the
+        value cannot be represented at all, as Fortran does.
+
+    Examples
+    --------
+    >>> fortran_exponential(2362.5518271, decimals=11, width=17)
+    '0.23625518271E+04'
+    >>> fortran_exponential(-2362.5518271, decimals=11, width=17)
+    '-.23625518271E+04'
+    """
+    if not np.isfinite(value) or value == 0.0:
+        mantissa, exponent = 0.0, 0
+    else:
+        exponent = int(np.floor(np.log10(abs(value)))) + 1
+        mantissa = value / (10.0 ** exponent)
+        # Rounding can push the mantissa back to 1.0 (0.99999995 -> 1.0000000),
+        # which is not a legal Fortran mantissa; renormalise when it does.
+        if abs(round(mantissa, decimals)) >= 1.0:
+            mantissa /= 10.0
+            exponent += 1
+
+    # Without an explicit `Ee`, Fortran writes a three-digit exponent by
+    # dropping the exponent letter rather than widening the field, so both
+    # forms occupy four characters: 0.5E-300 prints as `0.50000000000-299`.
+    marker = f"E{exponent:+03d}" if abs(exponent) <= 99 else f"{exponent:+04d}"
+    body = f"{mantissa:.{decimals}f}{marker}"
+    if len(body) > width:
+        if body.startswith("-0."):
+            body = "-" + body[2:]
+        elif body.startswith("0."):
+            body = body[1:]
+    if len(body) > width:
+        return "*" * width
+    return body.rjust(width)
+
+
 def write_volumetric(path, structure, data, comment=None, columns=5,
-                     fmt="%18.11E", direct=True, augmentation=None):
+                     width=17, decimals=11, direct=True, augmentation=None):
     """
     Write a VASP volumetric file (``CHGCAR`` layout).
+
+    .. warning::
+       The density block is **column-positional**, not whitespace-delimited.
+       VASP reads it with a non-advancing ``(1X,E17.11)`` — 18 columns per
+       value, five values per line, no separators — so a file that merely
+       *looks* right fails with ``WARNING: chargedensity file is incomplete``
+       if any field lands one column off. That is why the values are
+       concatenated here rather than joined, and why they go through
+       :func:`fortran_exponential` rather than ``printf``.
 
     Parameters
     ----------
@@ -174,8 +249,11 @@ def write_volumetric(path, structure, data, comment=None, columns=5,
         holds (units, field type) — VASP ignores this line entirely.
     columns : int, optional
         Values per line (``5`` matches ``CHGCAR``, ``10`` matches ``CHG``).
-    fmt : str, optional
-        ``printf`` format for each value.
+    width, decimals : int, optional
+        The ``w`` and ``d`` of the Fortran ``Ew.d`` descriptor used per value.
+        The defaults reproduce VASP's own ``(1X,E17.11)`` density block
+        byte-for-byte; ``(11, 5)`` matches the ``1X,G11.5`` short format of
+        ``CHG``. See the warning above before changing them.
     direct : bool, optional
         Write fractional (``Direct``) coordinates.
     augmentation : sequence of str, optional
@@ -204,9 +282,15 @@ def write_volumetric(path, structure, data, comment=None, columns=5,
         handle.write("\n")
         handle.write("  {:d}  {:d}  {:d}\n".format(*data.shape))
 
+        # The leading space is the format's own `1X`, not a separator: it is
+        # what keeps every field exactly `width + 1` columns wide whether or
+        # not the value is negative.
         for start in range(0, flat.size, columns):
             chunk = flat[start:start + columns]
-            handle.write(" ".join(fmt % value for value in chunk))
+            handle.write("".join(
+                " " + fortran_exponential(value, decimals=decimals,
+                                          width=width)
+                for value in chunk))
             handle.write("\n")
 
         # Appended verbatim. These records are a fixed-format Fortran read on

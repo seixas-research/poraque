@@ -895,3 +895,89 @@ class TestVaspGridRule:
             checked += 1
         if not checked:
             pytest.skip("no reference VASP calculations available")
+
+
+class TestFortranDensityFormat:
+    r"""
+    The ``CHGCAR`` density block is column-positional, not whitespace-delimited.
+
+    VASP reads it with a non-advancing ``(1X,E17.11)`` — 18 columns per value,
+    five per line, no separators (``INCHG`` in ``fileio.F``). A file whose
+    fields land one column off is rejected with *"WARNING: chargedensity file
+    is incomplete"*, and a negative value written one column too wide loses its
+    sign to the ``1X`` and is read back positive. Both are silent until VASP
+    refuses the file, so the layout is pinned here.
+
+    The expected strings below were produced by gfortran from the identical
+    edit descriptors, not by hand.
+    """
+
+    #: Field width VASP's ``1X,E17.11`` occupies, and values per line.
+    WIDTH = 18
+    COLUMNS = 5
+
+    def _read_as_vasp_does(self, line):
+        """Slice a line the way the fixed-format read does: skip 1X, take 17."""
+        return [line[k * self.WIDTH + 1:(k + 1) * self.WIDTH]
+                for k in range(len(line) // self.WIDTH)]
+
+    def test_matches_gfortran_for_the_density_descriptor(self):
+        from poraque.fields.vasp.volumetric import fortran_exponential
+
+        expected = {
+            2362.5518271: "0.23625518271E+04",
+            -2362.5518271: "-.23625518271E+04",   # leading zero dropped, not the sign
+            0.0: "0.00000000000E+00",
+            -2.173598e-15: "-.21735980000E-14",
+            5.0e-300: "0.50000000000-299",        # 3-digit exponent drops the E
+        }
+        for value, text in expected.items():
+            assert fortran_exponential(value, decimals=11, width=17) == text
+
+    def test_matches_gfortran_for_the_augmentation_descriptor(self):
+        from poraque.fields.vasp.volumetric import fortran_exponential
+
+        # These are copied from a real VASP CHGCAR's augmentation records.
+        assert fortran_exponential(6.424378) == "  0.6424378E+01"
+        # Fortran's mantissa is in [0.1, 1), so the exponent is one larger
+        # than C's: -2.173598e-16 is -0.2173598E-15, not E-16.
+        assert fortran_exponential(-2.173598e-16) == " -0.2173598E-15"
+        assert fortran_exponential(0.0) == "  0.0000000E+00"
+
+    def test_every_full_line_is_exactly_ninety_columns(self, tmp_path):
+        from poraque.fields.vasp.volumetric import write_volumetric
+
+        shape = (12, 10, 8)                 # NGX*NGY = 120, not a multiple of 5
+        rng = np.random.default_rng(0)
+        data = rng.normal(300.0, 900.0, size=shape)
+        path = tmp_path / "CHGCAR"
+        write_volumetric(path, Poscar.from_string(POSCAR_TEXT), data)
+
+        body = self._density_lines(path)
+        assert len(body) == -(-data.size // self.COLUMNS)
+        assert {len(line) for line in body[:-1]} == {
+            self.WIDTH * self.COLUMNS}
+        assert len(body[-1]) % self.WIDTH == 0
+
+    def test_fixed_format_slices_parse_and_keep_their_sign(self, tmp_path):
+        from poraque.fields.vasp.volumetric import write_volumetric
+
+        shape = (12, 10, 8)
+        rng = np.random.default_rng(0)
+        data = rng.normal(300.0, 900.0, size=shape)
+        assert (data < 0).any(), "the negative branch must actually be exercised"
+        path = tmp_path / "CHGCAR"
+        write_volumetric(path, Poscar.from_string(POSCAR_TEXT), data)
+
+        recovered = [float(field)
+                     for line in self._density_lines(path)
+                     for field in self._read_as_vasp_does(line)]
+        assert len(recovered) == data.size
+        # E17.11 carries 11 significant digits; compare at that precision.
+        np.testing.assert_allclose(
+            np.asarray(recovered).reshape(shape, order="F"), data, rtol=1e-10)
+
+    def _density_lines(self, path):
+        lines = path.read_text().splitlines()
+        blank = next(i for i, line in enumerate(lines) if not line.strip())
+        return lines[blank + 2:]

@@ -590,6 +590,34 @@ def run(args, log):
             f"({100 * negative / density.data.size:.4f} %), min "
             f"{density.data.min():.4g} e/A^3")
 
+    # The number of valence electrons is fixed by the pseudopotentials, so it
+    # is a constraint rather than something to predict. VASP checks it on read
+    # (`BRMIX` in broyden.F, tolerance 1e-5 relative) and, when it disagrees,
+    # forces the total by shifting the G=0 component alone -- which dumps the
+    # entire discrepancy into a uniform background instead of onto the atoms.
+    # Scaling multiplicatively here fixes the total while preserving the
+    # predicted shape and its non-negativity, which is a far better restart.
+    results["electrons_raw"] = electrons
+    results["normalized"] = False
+    if args.normalize and expected and electrons > 0:
+        factor = expected / electrons
+        density.data = density.data * factor
+        results["normalized"] = True
+        results["normalization_factor"] = factor
+        log(f"        normalized to {expected:.4f} electrons "
+            f"(x {factor:.6f}); pass --no-normalize to keep the raw "
+            f"prediction")
+        # Quote the deficit on the same basis as the line above, so the two
+        # percentages agree instead of differing by their denominator.
+        deficit = abs(electrons - expected) / expected
+        if deficit > 0.05:
+            log(f"        !! the raw prediction was {100 * deficit:.1f} % "
+                f"off. Renormalizing fixes the total charge, not the shape "
+                f"-- an error this large means the structure is far from the "
+                f"training set and the density is unreliable however it is "
+                f"scaled.")
+        electrons = density.integrate()
+
     augmentation = None
     if getattr(args, "add_paw", False):
         augmentation = resolve_augmentation(args.directory, args.models,
@@ -605,7 +633,7 @@ def run(args, log):
 
     if args.write_chg:
         chg = os.path.join(args.output, "CHG")
-        density.write(chg, columns=10, fmt="%12.5E")
+        density.write(chg, columns=10, width=11, decimals=5)
         results["outputs"]["CHG"] = chg
         log(f"        -> {chg}  (coarse CHG formatting)")
 
@@ -787,6 +815,14 @@ def predict(argv=None):
     parser.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
     parser.add_argument("--write-chg", action="store_true",
                         help="also write a CHG-formatted copy of the density")
+    parser.add_argument("--no-normalize", dest="normalize",
+                        action="store_false", default=True,
+                        help="do not rescale the predicted density to the "
+                             "electron count implied by the pseudopotentials. "
+                             "The count is an exact constraint and VASP "
+                             "requires the CHGCAR to satisfy it to 1e-5 "
+                             "relative, so the rescaling is on by default; "
+                             "turn it off to inspect the raw prediction")
     parser.add_argument("--add-paw", action="store_true",
                         help="append the PAW augmentation records from a "
                              "reference CHGCAR in the input directory, which "

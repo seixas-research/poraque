@@ -79,7 +79,7 @@ class ScalarField(ABC):
     # ------------------------------------------------------------------ #
     # I/O
     # ------------------------------------------------------------------ #
-    def write(self, path=None, comment=None, columns=5, fmt="%18.11E",
+    def write(self, path=None, comment=None, columns=5, width=17, decimals=11,
               augmentation=None):
         """
         Write the field in ``CHGCAR`` format.
@@ -95,8 +95,9 @@ class ScalarField(ABC):
             file readable by humans and by the ML dataset loader.
         columns : int, optional
             Values per line (5 = ``CHGCAR`` style, 10 = ``CHG`` style).
-        fmt : str, optional
-            ``printf`` format per value.
+        width, decimals : int, optional
+            Fortran ``Ew.d`` field per value; the defaults reproduce VASP's
+            ``(1X,E17.11)`` density block exactly.
         augmentation : sequence of str, optional
             PAW augmentation records to append, from
             :func:`~poraque.fields.vasp.volumetric.read_augmentation`. Needed
@@ -120,7 +121,8 @@ class ScalarField(ABC):
             self.to_file_values(),
             comment=comment,
             columns=columns,
-            fmt=fmt,
+            width=width,
+            decimals=decimals,
             augmentation=augmentation,
         )
 
