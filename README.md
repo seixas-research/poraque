@@ -47,17 +47,14 @@ is equivalent to `poraque-train` and needs nothing installed.
 ## Use
 
 ```bash
-# 1. check the data and the external-potential reconstruction
-python scripts/validate_vasp_data.py --fit-sigma --form-factor
-
-# 2. train one ext2chg and one chg2tau model on all structures
+# 1. train one ext2chg and one chg2tau model on all structures
 poraque-train --write-config configs/train_config.yaml
 poraque-train --config configs/train_config.yaml
 
-# 3. measure generalisation
+# 2. measure generalisation
 poraque-train --config configs/train_config.yaml --kfold --k-folds 5
 
-# 4. predict a structure that has never been computed
+# 3. predict a structure that has never been computed
 poraque-inference new_structure/ --output predictions/new_structure
 ```
 

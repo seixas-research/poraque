@@ -63,7 +63,7 @@ poraque-inference new_structure/ --output predictions/new_structure
 ```
 
 Both operators come from the single `models/poraque_models.pth` written by
-step 2. The grid is sized from `--encut` (default **200 eV**) unless `--grid`,
+step 3. The grid is sized from `--encut` (default **200 eV**) unless `--grid`,
 `--like` or `--resolution` is given.
 
 ```{tip}
@@ -78,7 +78,7 @@ energy density (Model 2). Every output is a `CHGCAR`-format file.
 
 ## 5. Evaluate generalisation
 
-Step 2 already holds back a fifth of the structures, so its score is genuinely
+Step 3 already holds back a fifth of the structures, so its score is genuinely
 held out. For a tighter estimate — every structure scored by a model that never
 saw it — run the cross-validation protocol instead:
 

@@ -79,10 +79,9 @@ The form factor :math:`f_s(G)` selects the pseudo-ion model:
 
 Measured accuracy against VASP
 ------------------------------
-``scripts/validate_vasp_data.py`` compares this model point-by-point against
-reference ``EXTCAR`` files, when such a reference is available. On a 27-atom Au
-supercell (``ZVAL = 11``, ``RCORE = 1.323`` Å, ``ENCUT = 450`` eV) the
-conventions match exactly — VASP's reference also has zero cell average, i.e.
+This model has been compared point-by-point against reference ``EXTCAR`` files
+from VASP. On a 27-atom Au supercell (``ZVAL = 11``, ``RCORE = 1.323`` Å,
+``ENCUT = 450`` eV) the conventions match exactly — VASP's reference also has zero cell average, i.e.
 the same :math:`\mathbf{G}=0` treatment, and the same eV units with no volume
 pre-factor — and the residual is purely the short-range pseudopotential shape:
 
@@ -101,8 +100,7 @@ one element from one dataset is not enough to recalibrate a global default, and
 ``rcore_factor`` or ``sigma`` explicitly when a reference is available.
 
 Inverting the reference potential also recovers the *empirical* form factor
-:math:`f(G)` directly (single-species cells only; see
-``empirical_form_factor`` in the validation script). For Au it decays much
+:math:`f(G)` directly (single-species cells only). For Au it decays much
 more slowly than a Gaussian at low :math:`G` and then **oscillates about zero**
 at high :math:`G` — the signature of a real pseudopotential's repulsive core,
 which no monotonic :math:`e^{-G^2\sigma^2/2}` can reproduce. That is the

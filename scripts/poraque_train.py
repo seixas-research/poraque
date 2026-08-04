@@ -324,6 +324,30 @@ def build_operator(task, train_set, config, log):
     return operator
 
 
+def split_history(history):
+    """
+    Separate the per-epoch curves in ``history`` from the scalar summaries.
+
+    :func:`poraque.ml.train` returns lists keyed by ``train_loss``,
+    ``val_error`` and ``val_epoch``, and -- whenever a validation split exists
+    -- three scalars beside them: ``best_epoch``, ``best_error`` and
+    ``stopped_early``. Serialising the two together is what makes this worth a
+    function: ``list(map(float, v))`` over an ``int`` raises ``TypeError``, and
+    a validation split is the default, so the failure is on the common path.
+
+    Returns
+    -------
+    tuple of (dict, dict or None)
+        The curves as lists of floats, and the scalars, or ``None`` when
+        training ran without validation and produced none.
+    """
+    curves = {key: list(map(float, value)) for key, value in history.items()
+              if isinstance(value, list)}
+    scalars = {key: value for key, value in history.items()
+               if not isinstance(value, list)}
+    return curves, (scalars or None)
+
+
 def resolve_validation_split(dataset, config):
     """
     Choose the structures held out for validation.
@@ -592,6 +616,7 @@ def run_task(task_name, cache, config, log):
         )
         log(f"  PDF report      -> {pdf}")
 
+    curves, stopping = split_history(history)
     return {
         "task": task.name,
         "mode": "split",
@@ -605,7 +630,8 @@ def run_task(task_name, cache, config, log):
         "figures": figures,
         "seconds": elapsed,
         "final_train_loss": history["train_loss"][-1],
-        "history": {k: list(map(float, v)) for k, v in history.items()},
+        "history": curves,
+        "early_stopping": stopping,
         # Not serialised into the JSON summary; main() pops it to build the
         # unified bundle once every task has trained.
         "operator": operator,

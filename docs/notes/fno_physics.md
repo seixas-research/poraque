@@ -97,13 +97,18 @@ architecture already supports this through FiLM conditioning
 
 **Our $V_{\rm ext}$ is a model potential.** `ExternalPotential` builds the
 long-range local ionic potential from `ZVAL` with a Gaussian-smeared
-pseudo-ion; VASP's `EXTCAR` is the true PAW local pseudopotential. Validation
-against the reference (see `scripts/validate_vasp_data.py`) gives Pearson
-$r = 0.992$ at the best-fit width but a residual relative $L^2$ of $\simeq 0.13$,
-concentrated near the cores. The learned map is therefore the HK map *for our
-model potential*, which is well-defined and self-consistent across the dataset,
-but is not literally VASP's. Training on the provided `EXTCAR` removes the
-ambiguity and is the recommended default.
+pseudo-ion; VASP's `EXTCAR` is the true PAW local pseudopotential. Measured
+against that reference, ours gives Pearson $r = 0.992$ at the best-fit width
+but a residual relative $L^2$ of $\simeq 0.13$, concentrated near the cores
+(the analysis is recorded in `poraque.fields.external`). The learned map is
+therefore the HK map *for our model potential*, which is well-defined and
+self-consistent across the dataset, but is not literally VASP's.
+
+The pipeline computes $V_{\rm ext}$ itself for **every** structure and ignores
+any `EXTCAR` found in the source directory. That is deliberate: at inference
+time there is no prior calculation to read one from, so training on a reference
+the deployed model can never be given would be training on an input that does
+not exist.
 
 ---
 

@@ -35,12 +35,22 @@ precision.
 
 \section{Checking your data}
 
+The sharpest check on a \file{CHGCAR} is its integral, which must come back as
+the exact electron count $\sum_a Z^{\mathrm{val}}_a$:
+
 \begin{lstlisting}
-python scripts/validate_vasp_data.py --fit-sigma --form-factor
+from poraque.fields import ChargeDensity, FieldGrid
+
+path = "data/vasp/struct_000/CHGCAR"
+rho = ChargeDensity.read(path, grid=FieldGrid.from_file(path))
+print(rho.integrate())   # 297.0 for 27 Au atoms at ZVAL = 11
 \end{lstlisting}
 
-This reads every structure, recomputes the external potential, compares it
-against a reference \file{EXTCAR} if one is present, and runs integrity checks
-on \file{CHGCAR} and \file{TAUCAR} --- grid agreement, finiteness, sign, and the
-integrated totals. The electron count is the sharpest check: it should return
-the exact integer $\sum_a Z^{\mathrm{val}}_a$.
+A result that misses the integer points at a truncated or misread file long
+before any model is trained.
+
+\opt{poraque-train} does not repeat this check, but it does stop with an error
+on a missing \file{CHGCAR} or \file{TAUCAR}, and it reports how many points a
+field drives negative when it is band-limited to \opt{data.resolution} --- Gibbs
+ringing around the core peaks, which is an artefact of the truncation rather
+than a fault in the data.

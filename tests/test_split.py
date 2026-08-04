@@ -15,6 +15,7 @@ what actually runs.
 """
 
 import importlib.util
+import json
 import os
 import sys
 
@@ -330,6 +331,58 @@ class TestEarlyStopping:
         assert history["stopped_early"] is True
         assert history["best_epoch"] == 5
         assert history["val_epoch"] == [5, 10, 15]
+
+
+# ===================================================================== #
+# Writing the history into the JSON summary
+# ===================================================================== #
+class TestHistorySerialisation:
+    """
+    `train` returns per-epoch curves and scalar summaries in one dict, and the
+    scalars appear whenever a validation split does — which is the default. A
+    run that mapped `float` over every value crashed at the very end of
+    training, after all the compute had been spent.
+    """
+
+    def test_separates_curves_from_scalars(self, toy):
+        history = _train_toy(toy, epochs=4, eval_every=2, validate=True,
+                             early_stopping=2)
+        curves, stopping = poraque_train.split_history(history)
+
+        assert set(curves) == {"train_loss", "val_error", "val_epoch"}
+        assert all(isinstance(value, list) for value in curves.values())
+        assert set(stopping) == {"best_epoch", "best_error", "stopped_early"}
+
+    def test_a_real_history_survives_json(self, toy):
+        """The failure was a TypeError on the way into json.dump."""
+        history = _train_toy(toy, epochs=4, eval_every=2, validate=True,
+                             early_stopping=2)
+        curves, stopping = poraque_train.split_history(history)
+        payload = json.loads(json.dumps({"history": curves,
+                                         "early_stopping": stopping}))
+        assert payload["history"]["train_loss"]
+        assert payload["early_stopping"]["stopped_early"] in (True, False)
+
+    def test_scalars_are_not_iterated(self):
+        """The exact shape that raised: an int beside the lists."""
+        curves, stopping = poraque_train.split_history(
+            {"train_loss": [1.0, 0.5], "best_epoch": 2, "stopped_early": True})
+        assert curves == {"train_loss": [1.0, 0.5]}
+        assert stopping == {"best_epoch": 2, "stopped_early": True}
+
+    def test_no_validation_leaves_no_scalars(self, toy):
+        """Without a split `train` adds none, and the key stays null."""
+        history = _train_toy(toy, epochs=2, eval_every=1)
+        curves, stopping = poraque_train.split_history(history)
+        assert stopping is None
+        assert curves["train_loss"]
+
+    def test_curves_are_floats(self):
+        """Tensors and numpy scalars must not reach json.dump."""
+        curves, _ = poraque_train.split_history(
+            {"train_loss": [torch.tensor(0.25)], "val_epoch": [1]})
+        assert curves == {"train_loss": [0.25], "val_epoch": [1.0]}
+        assert all(type(v) is float for v in curves["train_loss"])
 
 
 @pytest.fixture
