@@ -72,6 +72,48 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 if os.path.isdir(_SRC):
     sys.path.insert(0, _SRC)
 
+
+def _preimport_symbolic_engine(argv):
+    """
+    Load PySR's Julia runtime **before** PyTorch, when a run will use it.
+
+    Importing ``juliacall`` after ``torch`` can segfault the process --
+    juliacall warns about exactly this, citing pytorch#78829. It is not
+    hypothetical and it is not deterministic: a search with more parallel
+    populations is likelier to hit it, and the crash arrives *after* training
+    has finished, taking the run with it.
+
+    Whether the engine is needed has to be known before ``import torch``, so
+    the decision is made from the command line and the config file directly.
+    Reading a YAML file needs no heavy imports; a failure here is swallowed
+    because the real parser is a few lines further on and gives a better error
+    than anything this could raise.
+    """
+    argv = list(argv or [])
+    enabled = "--symbolic" in argv
+    if not enabled and "--config" in argv:
+        try:
+            import yaml
+
+            index = argv.index("--config") + 1
+            with open(argv[index]) as handle:
+                document = yaml.safe_load(handle) or {}
+            enabled = bool((document.get("symbolic") or {})
+                           .get("enable_symbolic_distillation", False))
+        except Exception:                               # noqa: BLE001
+            enabled = False
+    if not enabled:
+        return
+
+    try:
+        import pysr  # noqa: F401  (imported for its side effect on load order)
+    except Exception:                                   # noqa: BLE001
+        # Missing or broken; the search reports it properly when it runs.
+        pass
+
+
+_preimport_symbolic_engine(sys.argv[1:])
+
 import torch  # noqa: E402
 
 from poraque.fields import (  # noqa: E402
@@ -238,7 +280,61 @@ def build_cache(config, log):
         for message in warnings:
             log(f"      note: {message}")
 
+    build_paw_reference(directories, target, log)
     return target
+
+
+#: Per-element PAW augmentation table, cached beside the downsampled fields.
+PAW_REFERENCE_FILENAME = "paw_reference.json"
+
+
+def build_paw_reference(directories, cache, log):
+    r"""
+    Average the PAW augmentation records of the training calculations.
+
+    The one-centre terms are contractions over the converged wavefunctions, so
+    no grid-based model predicts them — but ``ICHARG=1`` needs them. Averaging
+    the training set's per element gives a transferable table the bundle can
+    carry, so a prediction for a structure with no reference of its own can
+    still be written as a restartable ``CHGCAR``.
+
+    Written beside the cache and reused, because extracting it means reading
+    the tail of every native-resolution ``CHGCAR``.
+
+    Returns
+    -------
+    dict
+        The reference, empty when no source carried any records.
+    """
+    from poraque.fields.vasp.augmentation import build_reference
+
+    path = os.path.join(cache, PAW_REFERENCE_FILENAME)
+    if os.path.exists(path):
+        with open(path) as handle:
+            reference = json.load(handle)
+        log(f"  PAW reference: cached, {sorted(reference)}")
+        return reference
+
+    log("  PAW reference: reading augmentation records from the sources")
+    reference = build_reference(directories, log=log)
+    if not reference:
+        log("      none found — these calculations carry no PAW records, so "
+            "predictions cannot be written as ICHARG=1 restarts")
+        return {}
+
+    os.makedirs(cache, exist_ok=True)
+    with open(path, "w") as handle:
+        json.dump(reference, handle)
+    return reference
+
+
+def load_paw_reference(cache):
+    """The cached per-element table, or an empty dict."""
+    path = os.path.join(cache, PAW_REFERENCE_FILENAME)
+    if not os.path.exists(path):
+        return {}
+    with open(path) as handle:
+        return json.load(handle)
 
 
 # ===================================================================== #
@@ -676,6 +772,28 @@ def validate_symbolic_settings(settings):
             f"than 10.")
 
 
+def save_task_checkpoint(task, operator, config, log):
+    """
+    Persist one task's weights immediately, before any optional analysis.
+
+    Returns
+    -------
+    str or None
+        Path written, or ``None`` when checkpointing is switched off.
+    """
+    if not config.output.checkpoint_dir:
+        return None
+
+    path = os.path.join(config.output.checkpoint_dir,
+                        f"{task.name}_trained.pfno")
+    save_bundle(path, {task.name: operator},
+                metadata={"note": "single-task safety copy, written before "
+                                  "the optional post-training analyses; "
+                                  "superseded by the unified bundle"})
+    log(f"  weights secured -> {path}")
+    return path
+
+
 def run_symbolic_distillation(task, dataset, operator, config, log,
                               validation=None, report=None):
     r"""
@@ -922,6 +1040,15 @@ def run_task(task_name, cache, config, log):
     checkpoint = None
     if figures:
         log(f"  figures         -> {config.output.plot_dir} ({len(figures)})")
+
+    # ---------------- the weights, before anything optional ---------------- #
+    # The unified bundle is written once every task has trained, which is
+    # correct but leaves the trained weights unpersisted while the optional
+    # analyses below run. Symbolic distillation calls into a Julia runtime that
+    # can take the whole process down; losing a finished fit to a post-hoc
+    # analysis is not a trade worth making, so a single-task copy goes to disk
+    # first and the unified bundle supersedes it.
+    safety = save_task_checkpoint(task, operator, config, log)
 
     # ---------------- symbolic distillation ---------------- #
     symbolic = run_symbolic_distillation(task, train_set, operator, config, log,
@@ -1400,6 +1527,13 @@ def run(argv=None):
                 "resolution": config.data.resolution,
                 "epochs": config.training.epochs,
             }
+            # Travels with the weights so a prediction can be written as an
+            # ICHARG=1 restart without a reference calculation beside it.
+            paw = load_paw_reference(cache)
+            if paw:
+                metadata["paw_reference"] = paw
+                log(f"  PAW reference   -> stored in the bundle "
+                    f"({', '.join(sorted(paw))})")
             if config.fine_tuning.enable:
                 metadata["fine_tuned_from"] = \
                     config.fine_tuning.pretrained_checkpoint
@@ -1411,6 +1545,15 @@ def run(argv=None):
             for result in results:
                 result["checkpoint"] = bundle
             log(f"\n  models -> {bundle}  ({', '.join(sorted(operators))})")
+
+            # The unified bundle now holds everything the safety copies did.
+            # Removed only after it is on disk, so there is no window in which
+            # neither exists.
+            for task_name in operators:
+                stale = os.path.join(config.output.checkpoint_dir,
+                                     f"{task_name}_trained.pfno")
+                if os.path.exists(stale):
+                    os.remove(stale)
             if len(operators) < 2:
                 log("  NOTE: the bundle holds one task. Run with task: all to")
                 log("  produce a complete pipeline in a single file.")

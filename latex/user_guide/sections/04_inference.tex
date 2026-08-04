@@ -29,12 +29,76 @@ from, and the same geometry must give the same grid either way. When the two
 differ the log says so.
 
 \begin{ptip}
-200\,eV is chosen to land near the grid the shipped models were trained on. On
-the reference cells it gives $42^3$ (27-atom) and $40^3$ (32-atom), against a
-training \opt{resolution} of $32$ --- close enough that the operator is
-interpolating rather than extrapolating. Raising it to 400\,eV would give
-$60^3$, a substantially finer mesh than anything the models have seen.
+200\,eV at \opt{PREC=Normal} lands on $32^3$ for the 27-atom reference cells
+and $28^3$ for the 32-atom ones, against a training \opt{resolution} of $32$
+--- so the operator is interpolating rather than extrapolating. Raising the
+cutoff, or switching to the \opt{Accurate} rule, gives a finer mesh than
+anything the models have seen.
 \end{ptip}
+
+\section{Matching a VASP grid}
+\label{sec:prec}
+
+VASP's \opt{PREC} tag sets the multiplier between the wavefunction cutoff and
+the density FFT grid: \opt{Normal} uses the cheaper $3/2$ rule, while
+\opt{Accurate} and \opt{High} use a factor of $2$ so that the density grid is
+wrap-around free. Two flags expose it.
+
+\begin{lstlisting}
+# the Accurate rule at the default cutoff: 42^3 instead of 32^3
+poraque-inference struct/ --prec-accurate
+
+# take ENCUT and PREC from a real INCAR: 450 eV, Accurate -> 64^3
+poraque-inference struct/ --from-incar struct/INCAR
+\end{lstlisting}
+
+\begin{pwarn}
+\textbf{\opt{--from-incar} takes precedence.} When it is given, \opt{--encut}
+and \opt{--prec-accurate} are ignored entirely, and anything overridden is
+named in the log. A run described by an input file should reproduce that
+file's grid; a flag quietly modifying it would make the two disagree while
+appearing to agree.
+\end{pwarn}
+
+\subsection{\opt{--to-vasp}: the grid VASP itself would build}
+
+\begin{lstlisting}
+poraque-inference struct/ --to-vasp --from-incar struct/INCAR --add-paw
+\end{lstlisting}
+
+The sizing above is how a plane-wave code \emph{should} choose a grid. It is
+not what VASP does, and for a restart that difference matters: the
+\file{CHGCAR} declares its own \opt{NGXF NGYF NGZF}, and \opt{ICHARG=1} wants
+those to be the grid the run itself would build.
+
+VASP derives the density grid in \textbf{two stages} (\file{main.F}):
+
+\begin{lstlisting}[style=fortran]
+GRID%NGPTAR(1) = XCUTOF*WFACT + 0.5  ! WFACT = 4 for high/accurate/single
+CALL FFTCHK(GRID%NGPTAR)             ! rounded here
+GRIDC%NGPTAR(1) = GRID%NGPTAR(1)*2   ! then doubled
+CALL FFTCHK(GRIDC%NGPTAR)
+\end{lstlisting}
+
+\begin{pwarn}
+\textbf{The order is the algorithm.} For a 27-atom gold cell at 450\,eV the
+coarse grid is $4\times15.25 = 61 \to 64$, so the density grid is $128$;
+computing the density size directly and rounding once gives $64$ --- a factor
+of two, and a file VASP would reject.
+\end{pwarn}
+
+\opt{--to-vasp} reproduces this exactly. Validated against every reference
+calculation in the project: \textbf{17 of 17}, including the anisotropic
+$(120,128,128)$ and $(108,108,112)$ cases.
+
+\begin{ptip}
+Sizes are rounded by VASP's \opt{FFTCH1} rule --- 7-smooth \emph{and} even, so
+$61 \to 64$ and $109 \to 112$.
+\end{ptip}
+
+Grid selection overall, first match winning: \opt{--grid}, then \opt{--like},
+then \opt{--to-vasp}, then \opt{--resolution}, then the cutoff path
+(\opt{--from-incar}, otherwise \opt{--encut} with \opt{--prec-accurate}).
 
 \begin{pwarn}
 A Fourier neural operator is resolution-\emph{flexible}, not
@@ -82,6 +146,35 @@ not need a prediction to restart from. The flag earns its place when the
 reference is a \emph{near-neighbour} --- a slightly displaced geometry, a
 nearby volume --- where the on-site occupancies are a good approximation and
 the interstitial density is what you want the model to supply.
+
+\subsection{Without a reference calculation}
+
+The model carries a fallback. During training the augmentation records are read
+off the training \file{CHGCAR}s, averaged per chemical element, and stored in
+the \opt{.pfno} bundle:
+
+\begin{lstlisting}
+  PAW reference: Au  138 values, averaged over 494 atoms in 17 structure(s)
+  PAW reference   -> stored in the bundle (Au)
+\end{lstlisting}
+
+At inference that table is used whenever the directory has no reference of its
+own, so a genuinely new structure can still be written as an \opt{ICHARG=1}
+restart.
+
+\begin{pwarn}
+The averaged table reproduces the true occupancies to about \textbf{9\,\% RMS}
+on the reference dataset, and the dominant component varies by a factor of two
+across sites. It is a defensible starting guess, not a converged on-site
+density --- and it covers only the elements the model was trained on. A
+structure containing anything else gets \emph{no} records rather than a partial
+block.
+\end{pwarn}
+
+A real calculation beside the structure always wins over the table: its records
+are \emph{that} system's, where the table is an average over others.
+
+\subsection{Checks}
 
 Three checks run before anything is appended, and each refuses rather than
 writing a file VASP would reject:

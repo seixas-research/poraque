@@ -52,7 +52,7 @@ output:
   plot_format: png
   dpi: 200
 symbolic:
-  enable_symbolic_distillation: true
+  enable_symbolic_distillation: false
   target: model
   features: gga
   template: none
@@ -80,6 +80,7 @@ symbolic:
   parsimony: 0.0032
   n_samples: 4000
   seed: 0
+  deterministic: false
 fine_tuning:
   enable: false
   pretrained_checkpoint: models/poraque_models.pfno

@@ -393,7 +393,21 @@ class SymbolicConfig:
         32 768 points and the search cost is linear in them, so the default
         trades a negligible amount of statistics for a tractable run.
     seed : int
-        Seeds the sampling and the engine, so a run is reproducible.
+        Seeds the sampling always, and the search only under
+        ``deterministic``.
+    deterministic : bool
+        Make the search reproducible. The engine requires **serial**
+        evaluation for this, so it costs the parallelism across populations —
+        roughly a factor of ``populations`` in wall-clock.
+
+        Off by default because a single search is one sample of a stochastic
+        process either way, and reading one expression as *the* answer is the
+        mistake this setting can otherwise encourage. Turn it on to reproduce
+        a specific result, not to make the result more trustworthy.
+
+        With it off, ``seed`` is deliberately **not** passed to the engine: a
+        seed that cannot deliver reproducibility is a promise the run does not
+        keep, and the engine warns about exactly that.
     """
 
     enable_symbolic_distillation: bool = False
@@ -414,6 +428,7 @@ class SymbolicConfig:
     parsimony: float = 0.0032
     n_samples: int = 4000
     seed: int = 0
+    deterministic: bool = False
 
 
 @dataclass

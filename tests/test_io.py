@@ -9,6 +9,10 @@ must not require touching anything downstream. These tests therefore pin the
 file format, which is covered by ``test_fields.py``.
 """
 
+import importlib.util
+import os
+import sys
+
 import numpy as np
 import pytest
 
@@ -491,3 +495,403 @@ class TestAugmentation:
                                           "  0.5"])
         restored = ChargeDensity.read(path, grid=FieldGrid.from_file(path))
         assert np.allclose(restored.data, values, rtol=1e-8)
+
+
+class TestAugmentationReference:
+    """
+    The transferable per-element table: read off the training calculations,
+    averaged, carried by the model, written out for a structure that has no
+    reference of its own.
+    """
+
+    def test_fortran_exponent_convention(self):
+        """
+        Fortran normalises the mantissa to [0.1, 1) and Python to [1, 10), so
+        6.424378 is 0.6424378E+01 in one and 6.4243780E+00 in the other. VASP
+        reads these with a fixed-format read; the difference is not cosmetic.
+        """
+        from poraque.fields.vasp.augmentation import fortran_exponential
+
+        assert fortran_exponential(6.424378) == "  0.6424378E+01"
+        assert fortran_exponential(-2.173598e-16) == " -0.2173598E-15"
+        assert fortran_exponential(0.0) == "  0.0000000E+00"
+        assert len(fortran_exponential(1.0)) == 15
+
+    def test_rounding_never_produces_an_illegal_mantissa(self):
+        """0.99999995 rounds to 1.0000000, which Fortran would not write."""
+        from poraque.fields.vasp.augmentation import fortran_exponential
+
+        for value in (0.99999999, 9.9999999, -0.999999999):
+            rendered = fortran_exponential(value).strip()
+            mantissa = float(rendered.split("E")[0])
+            assert abs(mantissa) < 1.0
+
+    def test_round_trips_through_the_formatter(self):
+        from poraque.fields.vasp.augmentation import (
+            format_augmentation,
+            parse_augmentation,
+        )
+
+        import numpy as np
+
+        records = [np.array([1.5, -2.25e-8, 0.0, 3.0]),
+                   np.array([0.125, 7.5e12, -1.0, 2.0])]
+        parsed = parse_augmentation(format_augmentation(records))
+        assert len(parsed) == 2
+        for original, restored in zip(records, parsed):
+            assert np.allclose(original, restored, rtol=1e-6, atol=1e-30)
+
+    def test_header_matches_the_fortran_format(self):
+        """``("augmentation occupancies",2I4)`` -- four columns each."""
+        from poraque.fields.vasp.augmentation import format_augmentation
+
+        import numpy as np
+
+        lines = format_augmentation([np.zeros(3)])
+        assert lines[0] == "augmentation occupancies   1   3"
+
+    def test_five_values_per_line(self):
+        from poraque.fields.vasp.augmentation import format_augmentation
+
+        import numpy as np
+
+        lines = format_augmentation([np.arange(12, dtype=float)])
+        data = lines[1:]
+        assert [len(line) // 15 for line in data] == [5, 5, 2]
+
+    def test_one_record_per_atom_in_species_order(self):
+        from poraque.fields.vasp.augmentation import records_for_structure
+        from poraque.fields.vasp.poscar import Poscar
+
+        import numpy as np
+
+        structure = Poscar(np.eye(3) * 5.0, ["Si", "O"], [1, 2],
+                           np.zeros((3, 3)))
+        reference = {"Si": {"values": [1.0, 2.0], "atoms": 1, "structures": 1},
+                     "O": {"values": [3.0, 4.0], "atoms": 2, "structures": 1}}
+        lines, missing = records_for_structure(structure, reference)
+        assert missing == []
+        headers = [line for line in lines if "augmentation" in line]
+        assert len(headers) == 3
+        assert headers[0].endswith("   1   2")
+        # Si first, then the two O -- the order the POSCAR lists them.
+        assert "0.1000000E+01" in lines[1]
+        assert "0.3000000E+01" in lines[3]
+
+    def test_a_missing_element_yields_nothing_rather_than_a_partial_block(self):
+        """
+        A file with records for some atoms and not others is worse than one
+        with none: VASP would read it and silently mis-assign them.
+        """
+        from poraque.fields.vasp.augmentation import records_for_structure
+        from poraque.fields.vasp.poscar import Poscar
+
+        import numpy as np
+
+        structure = Poscar(np.eye(3) * 5.0, ["Si", "O"], [1, 1],
+                           np.zeros((2, 3)))
+        reference = {"Si": {"values": [1.0], "atoms": 1, "structures": 1}}
+        lines, missing = records_for_structure(structure, reference)
+        assert lines == []
+        assert missing == ["O"]
+
+    def test_building_a_reference_averages_over_atoms(self, tmp_path):
+        from poraque.fields.vasp.augmentation import build_reference
+
+        import numpy as np
+
+        # Two "calculations" of one element, values 2 and 4 -> mean 3.
+        for name, value in (("a", 2.0), ("b", 4.0)):
+            directory = tmp_path / name
+            directory.mkdir()
+            self._write_chgcar(directory / "CHGCAR", value)
+        reference = build_reference([str(tmp_path / "a"), str(tmp_path / "b")])
+        assert set(reference) == {"Au"}
+        assert np.allclose(reference["Au"]["values"], 3.0)
+        assert reference["Au"]["atoms"] == 2
+        assert reference["Au"]["structures"] == 2
+
+    def test_a_directory_without_records_contributes_nothing(self, tmp_path):
+        from poraque.fields.vasp.augmentation import build_reference
+
+        directory = tmp_path / "plain"
+        directory.mkdir()
+        self._write_chgcar(directory / "CHGCAR", 1.0, augmentation=False)
+        assert build_reference([str(directory)]) == {}
+
+    @staticmethod
+    def _write_chgcar(path, value, augmentation=True):
+        lines = ["Au", "   1.0", "  2.0 0.0 0.0", "  0.0 2.0 0.0",
+                 "  0.0 0.0 2.0", "  Au", "   1", "Direct",
+                 "  0.0 0.0 0.0", "", "  2  2  2",
+                 "0.0 0.0 0.0 0.0 0.0", "0.0 0.0 0.0"]
+        if augmentation:
+            lines += ["augmentation occupancies   1   2",
+                      f"  {value:.7E}  {value:.7E}"]
+        path.write_text("\n".join(lines) + "\n")
+
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _load_inference():
+    """Import ``scripts/poraque_inference.py`` as a module."""
+    path = os.path.join(_ROOT, "scripts", "poraque_inference.py")
+    spec = importlib.util.spec_from_file_location("_poraque_inference", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_poraque_inference"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+poraque_inference = _load_inference()
+
+
+# ===================================================================== #
+# Grid: ENCUT / PREC resolution
+# ===================================================================== #
+class TestCutoffSettings:
+    """
+    `--from-incar` versus the manual flags. The failure this guards against is
+    silent: a grid that disagrees with the input file it was told to follow.
+    """
+
+    class _Args:
+        def __init__(self, **kwargs):
+            self.encut = 200.0
+            self.prec_accurate = False
+            self.from_incar = None
+            self.__dict__.update(kwargs)
+
+    def _resolve(self, args):
+        lines = []
+        settings = poraque_inference.resolve_cutoff_settings(args, lines.append)
+        return settings, lines
+
+    def test_defaults_to_normal_precision(self):
+        (cutoff, prec, source), _ = self._resolve(self._Args())
+        assert cutoff == 200.0
+        assert prec == "normal"
+        assert source == "--encut"
+
+    def test_prec_accurate_switches_the_rule(self):
+        (_, prec, _), _ = self._resolve(self._Args(prec_accurate=True))
+        assert prec == "accurate"
+
+    def test_incar_supplies_both(self, tmp_path):
+        path = tmp_path / "INCAR"
+        path.write_text("ENCUT = 450\nPREC = Accurate\n")
+        (cutoff, prec, source), _ = self._resolve(
+            self._Args(from_incar=str(path)))
+        assert cutoff == 450.0
+        assert prec == "accurate"
+        assert str(path) in source
+
+    def test_incar_overrides_both_flags(self, tmp_path):
+        """The whole point: the file wins, and the log says what it displaced."""
+        path = tmp_path / "INCAR"
+        path.write_text("ENCUT = 300\nPREC = Normal\n")
+        (cutoff, prec, _), lines = self._resolve(
+            self._Args(encut=800.0, prec_accurate=True, from_incar=str(path)))
+        assert cutoff == 300.0
+        assert prec == "normal"
+        message = " ".join(lines)
+        assert "--encut 800" in message
+        assert "--prec-accurate" in message
+
+    def test_no_override_notice_when_nothing_was_overridden(self, tmp_path):
+        path = tmp_path / "INCAR"
+        path.write_text("ENCUT = 450\nPREC = Accurate\n")
+        _, lines = self._resolve(self._Args(from_incar=str(path)))
+        assert not any("override" in line for line in lines)
+
+    def test_high_counts_as_accurate(self, tmp_path):
+        path = tmp_path / "INCAR"
+        path.write_text("ENCUT = 400\nPREC = High\n")
+        (_, prec, _), _ = self._resolve(self._Args(from_incar=str(path)))
+        assert prec in poraque_inference.ACCURATE_PRECISIONS
+
+    def test_a_missing_incar_is_an_error(self):
+        import pytest
+
+        with pytest.raises(SystemExit, match="does not exist"):
+            self._resolve(self._Args(from_incar="/nope/INCAR"))
+
+    def test_an_incar_without_encut_is_an_error(self, tmp_path):
+        """It cannot size a grid, and guessing one would be worse."""
+        import pytest
+
+        path = tmp_path / "INCAR"
+        path.write_text("PREC = Accurate\n")
+        with pytest.raises(SystemExit, match="no ENCUT"):
+            self._resolve(self._Args(from_incar=str(path)))
+
+
+class TestPrecGridDensity:
+    def test_accurate_gives_a_denser_grid_than_normal(self):
+        """
+        PREC=Accurate uses a factor of 2 against Normal's 3/2, so the grid is
+        about 4/3 longer on each axis.
+        """
+        import numpy as np
+
+        from poraque.fields import FieldGrid
+
+        cell = np.eye(3) * 12.0
+        normal = FieldGrid.from_encut(cell, 200.0, prec="normal")
+        accurate = FieldGrid.from_encut(cell, 200.0, prec="accurate")
+        assert max(accurate.shape) > max(normal.shape)
+        ratio = max(accurate.shape) / max(normal.shape)
+        assert 1.2 < ratio < 1.45
+
+
+# ===================================================================== #
+# VASP's own FFT grid rule
+# ===================================================================== #
+class TestValidFFTGridSize:
+    """
+    ``FFTCH1`` accepts a length only when dividing out 2, 3, 5 and 7 leaves 1
+    *and* the factor 2 occurs at least once — 7-smooth **and** even.
+    """
+
+    def test_known_roundings(self):
+        from poraque.fields.vasp.fftgrid import get_valid_fft_grid_size
+
+        assert get_valid_fft_grid_size(61) == 64
+        assert get_valid_fft_grid_size(64) == 64
+        assert get_valid_fft_grid_size(109) == 112
+        assert get_valid_fft_grid_size(1) == 2
+
+    def test_results_are_seven_smooth_and_even(self):
+        from poraque.fields.vasp.fftgrid import get_valid_fft_grid_size
+
+        for request in range(2, 300):
+            size = get_valid_fft_grid_size(request)
+            assert size >= request
+            assert size % 2 == 0
+            residue = size
+            for factor in (2, 3, 5, 7):
+                while residue % factor == 0:
+                    residue //= factor
+            assert residue == 1, f"{size} has a prime factor above 7"
+
+    def test_it_is_the_smallest_such_integer(self):
+        from poraque.fields.vasp.fftgrid import get_valid_fft_grid_size
+
+        def admissible(value):
+            if value % 2:
+                return False
+            for factor in (2, 3, 5, 7):
+                while value % factor == 0:
+                    value //= factor
+            return value == 1
+
+        for request in range(2, 200):
+            size = get_valid_fft_grid_size(request)
+            assert not any(admissible(v) for v in range(request, size))
+
+    def test_a_fractional_request_is_raised_first(self):
+        from poraque.fields.vasp.fftgrid import get_valid_fft_grid_size
+
+        assert get_valid_fft_grid_size(60.1) == 64
+        assert get_valid_fft_grid_size(63.999) == 64
+
+
+class TestVaspGridRule:
+    """
+    Pinned against real VASP output. The failure mode is a factor of two:
+    rounding the density size in one step instead of rounding the coarse grid
+    and doubling it gives 64 where VASP gives 128.
+    """
+
+    #: 27-atom gold cell, ENCUT 450, PREC=Accurate -> VASP writes 128^3.
+    GOLD_CELL = [[0.0, 6.233932, 6.233932],
+                 [6.233932, 0.0, 6.233932],
+                 [6.233932, 6.233932, 0.0]]
+
+    def test_reproduces_a_real_vasp_grid(self):
+        from poraque.fields.vasp.fftgrid import vasp_grid_shapes
+
+        coarse, fine = vasp_grid_shapes(self.GOLD_CELL, 450.0, prec="Accurate")
+        assert coarse == (64, 64, 64)
+        assert fine == (128, 128, 128)
+
+    def test_the_coarse_grid_is_rounded_before_doubling(self):
+        """
+        The ordering *is* the algorithm. 4 x 15.25 = 61 rounds to 64; doubling
+        gives 128. Rounding 61 x 2 = 122 in one step would give 128 too, but
+        rounding the density target 61 alone gives 64 -- half of VASP's.
+        """
+        from poraque.fields.vasp.fftgrid import (
+            cutoff_indices,
+            get_valid_fft_grid_size,
+            vasp_grid_shapes,
+        )
+
+        index = cutoff_indices(self.GOLD_CELL, 450.0)[0]
+        assert 15.0 < index < 15.5
+        naive = get_valid_fft_grid_size(4 * index + 1)
+        coarse, fine = vasp_grid_shapes(self.GOLD_CELL, 450.0, prec="Accurate")
+        assert naive == 64                       # what one-shot rounding gives
+        assert fine[0] == 2 * coarse[0] == 128   # what VASP actually builds
+
+    def test_normal_uses_the_smaller_coarse_multiplier(self):
+        from poraque.fields.vasp.fftgrid import vasp_grid_shapes
+
+        accurate, _ = vasp_grid_shapes(self.GOLD_CELL, 450.0, prec="Accurate")
+        normal, _ = vasp_grid_shapes(self.GOLD_CELL, 450.0, prec="Normal")
+        assert max(normal) < max(accurate)       # WFACT 3 against 4
+
+    def test_normal_also_doubles_for_the_density(self):
+        from poraque.fields.vasp.fftgrid import vasp_grid_shapes
+
+        coarse, fine = vasp_grid_shapes(self.GOLD_CELL, 450.0, prec="Normal")
+        assert fine == tuple(2 * n for n in coarse)
+
+    def test_single_uses_one_grid(self):
+        """PREC=Single switches off the double-grid technique entirely."""
+        from poraque.fields.vasp.fftgrid import vasp_grid_shapes
+
+        coarse, fine = vasp_grid_shapes(self.GOLD_CELL, 450.0, prec="Single")
+        assert coarse == fine
+
+    def test_only_the_first_letter_of_prec_matters(self):
+        from poraque.fields.vasp.fftgrid import vasp_density_grid
+
+        for spelling in ("Accurate", "accurate", "A", "aCcUrAtE"):
+            assert vasp_density_grid(self.GOLD_CELL, 450.0,
+                                     prec=spelling) == (128, 128, 128)
+
+    def test_an_anisotropic_cell_gives_an_anisotropic_grid(self):
+        """The complaint that started this: grids must follow the cell."""
+        from poraque.fields.vasp.fftgrid import vasp_density_grid
+
+        cell = [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 20.0]]
+        shape = vasp_density_grid(cell, 400.0, prec="Accurate")
+        assert shape[0] == shape[1]
+        assert shape[2] > shape[0]
+
+    def test_matches_every_reference_calculation(self):
+        """Data-driven, and skipped when the raw calculations are absent."""
+        import glob
+
+        from poraque.fields import FieldGrid
+        from poraque.fields.vasp.fftgrid import vasp_density_grid
+        from poraque.fields.vasp.incar import Incar
+
+        root = os.path.join(_ROOT, "data", "vasp")
+        checked = 0
+        for directory in sorted(glob.glob(os.path.join(root, "struct_*"))):
+            chgcar = os.path.join(directory, "CHGCAR")
+            incar = os.path.join(directory, "INCAR")
+            if not (os.path.exists(chgcar) and os.path.exists(incar)):
+                continue
+            reference = FieldGrid.from_file(chgcar)
+            settings = Incar.from_file(incar)
+            computed = vasp_density_grid(
+                reference.cell, settings.get_float("ENCUT"),
+                prec=str(settings.get("PREC", "normal")))
+            assert tuple(reference.shape) == computed, directory
+            checked += 1
+        if not checked:
+            pytest.skip("no reference VASP calculations available")

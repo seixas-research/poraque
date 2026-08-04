@@ -553,7 +553,15 @@ def pysr_engine(features, target, feature_names, parameters):
             maxsize=parameters["max_size"],
             maxdepth=parameters["max_depth"],
             parsimony=parameters["parsimony"],
-            random_state=parameters["seed"],
+            # A seed only reaches the engine when it can actually honour it.
+            # PySR requires serial evaluation for a reproducible search, and
+            # warns -- rightly -- when given a seed it cannot keep a promise
+            # about. Passing it anyway would put a reproducibility claim in the
+            # log that the run does not deliver.
+            **({"random_state": parameters["seed"],
+                "deterministic": True,
+                "parallelism": "serial"}
+               if parameters.get("deterministic") else {}),
             # Argument-complexity limits, `{"^": (-1, 1)}` by default: the
             # exponent is held to a single node. An unconstrained exponent is
             # the main source of nonsense from a power operator -- a fractional
@@ -908,6 +916,7 @@ class SymbolicDistiller:
             "max_depth": int(config.max_depth),
             "parsimony": float(config.parsimony),
             "seed": int(config.seed),
+            "deterministic": bool(getattr(config, "deterministic", False)),
             # PySR wants tuples for a binary operator's (left, right) limits;
             # YAML can only give lists, so they are converted here rather than
             # asking the user to write something YAML cannot express.

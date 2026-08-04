@@ -48,9 +48,15 @@ All three fields must share one mesh. Its shape is resolved in this order:
    reference calculation;
 3. ``--resolution``, which sizes a grid of that many points along the longest
    axis while preserving the cell's aspect ratio;
-4. otherwise ``--encut`` (default :data:`DEFAULT_ENCUT` eV) through the
-   ``ENCUT``/``PREC`` rule of
-   :meth:`~poraque.fields.FieldGrid.from_parameters`.
+4. otherwise a cutoff and precision, through the ``ENCUT``/``PREC`` rule of
+   :meth:`~poraque.fields.FieldGrid.from_parameters`. Those come from
+   ``--from-incar`` when it is given, and otherwise from ``--encut`` (default
+   :data:`DEFAULT_ENCUT` eV) with ``--prec-accurate``.
+
+   ``--from-incar`` takes precedence over both flags rather than merging with
+   them: a run described by an input file should reproduce that file's grid,
+   and a flag silently modifying it would make the two disagree while
+   appearing to agree. Anything overridden is named in the log.
 
 .. warning::
    An FNO is resolution-flexible but not resolution-*indifferent*. Evaluating
@@ -125,9 +131,10 @@ from poraque.ml.device import describe_device, resolve_device  # noqa: E402
 #: genuinely new structure has no prior calculation to inherit from, and the
 #: same geometry must give the same grid either way.
 #:
-#: 200 eV puts a ~12 Å cell on a grid close to the ``resolution: 32`` the
-#: shipped models were trained at, so the default evaluates them where they
-#: were actually fitted rather than extrapolating.
+#: At the default ``PREC=Normal`` this puts a ~12 Å cell on 32^3 -- exactly the
+#: ``resolution: 32`` the shipped models were trained at -- so the default
+#: evaluates them where they were fitted rather than extrapolating.
+#: ``--prec-accurate`` switches to VASP's factor-of-two rule and gives 42^3.
 DEFAULT_ENCUT = 200.0
 
 
@@ -237,14 +244,76 @@ def collect_augmentation(directory, structure, shape, log):
                 f"NGXF/NGYF/NGZF — rerun with --like {path} to match it.")
         return block
 
+    return None
+
+
+def augmentation_from_bundle(bundle, structure, log):
+    r"""
+    Fall back to the per-element table the model carries.
+
+    Averaged over the training calculations at training time, so a structure
+    with no reference of its own can still be written as an ``ICHARG=1``
+    restart. It is an approximation to on-site terms that are properly a
+    property of the converged wavefunctions, and the log says so.
+
+    Returns
+    -------
+    list of str or None
+    """
+    from poraque.fields.vasp.augmentation import records_for_structure
+    from poraque.ml import read_bundle
+
+    try:
+        metadata = read_bundle(bundle).get("metadata") or {}
+    except (OSError, KeyError, ValueError):
+        return None
+    reference = metadata.get("paw_reference") or {}
+    if not reference:
+        return None
+
+    lines, missing = records_for_structure(structure, reference)
+    if missing:
+        log(f"        !! the bundle's PAW reference covers "
+            f"{sorted(reference)} but this structure also contains "
+            f"{missing} — no records were written, because a file with them "
+            f"for some atoms and not others is worse than one with none.")
+        return None
+
+    covered = ", ".join(
+        f"{element} (averaged over {entry['atoms']} atoms in "
+        f"{entry['structures']} structures)"
+        for element, entry in sorted(reference.items()))
+    log(f"        using the bundle's PAW reference: {covered}")
+    log(f"        !! these are AVERAGED on-site terms, not this structure's. "
+        f"They are a starting guess for ICHARG=1, not a converged on-site "
+        f"density — about 9 % RMS from the truth on the reference dataset.")
+    return lines
+
+
+def resolve_augmentation(directory, bundle, structure, shape, log):
+    """
+    A reference calculation if there is one, the bundle's table otherwise.
+
+    A real calculation beside the structure always wins: its records are that
+    system's, where the bundle's are an average over other systems.
+    """
+    block = collect_augmentation(directory, structure, shape, log)
+    if block:
+        return block
+
+    block = augmentation_from_bundle(bundle, structure, log)
+    if block:
+        return block
+
     raise SystemExit(
-        f"--add-paw needs a reference calculation to take the PAW "
-        f"augmentation records from, and none of "
-        f"{list(AUGMENTATION_SOURCES)} in {directory!r} has any.\n"
+        f"--add-paw found no PAW augmentation records to use.\n"
+        f"None of {list(AUGMENTATION_SOURCES)} in {directory!r} carries any, "
+        f"and {bundle} has no stored per-element reference either.\n"
         f"The records are the one-centre part of the density, inside the PAW "
         f"spheres; they are not representable on the plane-wave grid, so no "
-        f"model predicts them. Run VASP once on this geometry (LCHARG=.TRUE.) "
-        f"and point at that directory, or drop --add-paw and use the file for "
+        f"model predicts them. Either run VASP once on this geometry "
+        f"(LCHARG=.TRUE.) and point at that directory, or retrain so the "
+        f"bundle carries a reference, or drop --add-paw and use the file for "
         f"visualisation rather than as an ICHARG=1 restart.")
 
 
@@ -273,8 +342,96 @@ def read_reference(path, field_class, grid):
     return resample_field(field, grid.shape, grid=grid)
 
 
+#: ``PREC`` values that ask for a wrap-around-free density grid.
+ACCURATE_PRECISIONS = ("accurate", "high")
+
+
+def resolve_cutoff_settings(args, log):
+    r"""
+    Settle ``ENCUT`` and ``PREC`` from the flags and any supplied ``INCAR``.
+
+    ``--from-incar`` wins outright over ``--encut`` and ``--prec-accurate``:
+    a run described by an input file should reproduce that file's grid, and a
+    flag silently modifying it would make the two disagree while appearing to
+    agree. Anything overridden is named in the log rather than dropped
+    quietly.
+
+    Returns
+    -------
+    tuple of (float, str, str)
+        Cutoff in eV, precision, and a phrase describing where they came from.
+    """
+    manual_prec = "accurate" if args.prec_accurate else "normal"
+    if not args.from_incar:
+        return float(args.encut), manual_prec, "--encut"
+
+    from poraque.fields.vasp.incar import Incar
+
+    if not os.path.exists(args.from_incar):
+        raise SystemExit(f"--from-incar {args.from_incar!r} does not exist.")
+    try:
+        incar = Incar.from_file(args.from_incar)
+    except (OSError, ValueError) as error:
+        raise SystemExit(
+            f"--from-incar {args.from_incar!r} could not be parsed: {error}"
+        ) from error
+
+    cutoff = incar.get_float("ENCUT")
+    precision = str(incar.get("PREC", "normal")).strip().lower()
+    if cutoff is None:
+        raise SystemExit(
+            f"{args.from_incar} sets no ENCUT, so it cannot size a grid. "
+            f"Add one, or use --encut instead.")
+
+    overridden = []
+    if args.encut != DEFAULT_ENCUT:
+        overridden.append(f"--encut {args.encut:g}")
+    if args.prec_accurate and precision not in ACCURATE_PRECISIONS:
+        overridden.append("--prec-accurate")
+    if overridden:
+        log(f"  !! --from-incar overrides {', '.join(overridden)}: the grid "
+            f"comes from {args.from_incar} alone.")
+
+    return cutoff, precision, f"from {args.from_incar}"
+
+
+def vasp_native_grid(structure, args, log):
+    r"""
+    The grid VASP itself would build for this cell, cutoff and precision.
+
+    :meth:`~poraque.fields.FieldGrid.from_encut` sizes a grid the way a
+    plane-wave code *should*; this reproduces what VASP actually does, which is
+    not the same thing. VASP rounds the **coarse** grid to an FFT-friendly
+    size and only then doubles it for the density, so a 27-atom gold cell at
+    450 eV gets 128 points where rounding the density size in one step gives
+    64 — a factor of two, and a ``CHGCAR`` VASP would refuse on a restart.
+
+    Reproduced from ``main.F``; validated against every reference calculation
+    in this project, 17 of 17 exact.
+
+    Returns
+    -------
+    FieldGrid
+    """
+    from poraque.fields.vasp.fftgrid import vasp_grid_shapes
+
+    cutoff, precision, source = resolve_cutoff_settings(args, log)
+    coarse, fine = vasp_grid_shapes(structure.cell, cutoff, prec=precision)
+    log(f"  grid: {fine} (--to-vasp: VASP's own rule at ENCUT={cutoff:g} eV, "
+        f"PREC={precision} ({source}); its coarse grid would be {coarse})")
+    return FieldGrid(fine, structure.cell, encut=cutoff, prec=precision)
+
+
 def resolve_grid(structure, parameters, pseudopotentials, args, log):
     """Choose the shared grid for every predicted field."""
+    if getattr(args, "to_vasp", False):
+        # Ahead of --resolution and the cutoff path: the point of the flag is
+        # a grid VASP will accept, and anything that reshapes it defeats that.
+        # --grid and --like stay in front, since both name a shape outright.
+        if not (args.grid or args.like):
+            return vasp_native_grid(structure, args, log)
+        log("  note: --to-vasp is ignored; --grid/--like set the shape "
+            "explicitly.")
     if args.grid:
         shape = tuple(int(n) for n in args.grid)
         log(f"  grid: {shape} (explicit --grid)")
@@ -296,17 +453,20 @@ def resolve_grid(structure, parameters, pseudopotentials, args, log):
     # reference calculation happened to use: inference must produce the same
     # grid for the same geometry whether or not an INCAR is present, since a
     # new structure generally has no prior calculation to inherit from.
+    # `--from-incar` is the deliberate exception, and says so in the log.
+    cutoff, precision, source = resolve_cutoff_settings(args, log)
     derived = FieldGrid.from_parameters(structure, parameters, pseudopotentials,
-                                        encut=args.encut)
+                                        encut=cutoff, prec=precision)
     if args.resolution:
         shape = downsample_shape(derived.shape, target_max=args.resolution)
         log(f"  grid: {shape} (--resolution {args.resolution}; "
-            f"ENCUT={args.encut} eV would give {derived.shape})")
+            f"ENCUT={cutoff:g} eV at PREC={precision} would give "
+            f"{derived.shape})")
         return FieldGrid(shape, structure.cell, encut=derived.encut)
 
     stated = parameters.cutoff if parameters else None
-    origin = f"from ENCUT={args.encut} eV, PREC={derived.prec}"
-    if stated and abs(float(stated) - float(args.encut)) > 1e-6:
+    origin = f"ENCUT={cutoff:g} eV, PREC={derived.prec} ({source})"
+    if stated and abs(float(stated) - float(cutoff)) > 1e-6:
         origin += f"; the calculation's own ENCUT is {stated:g} eV"
     log(f"  grid: {derived.shape} ({origin})")
     return derived
@@ -432,8 +592,8 @@ def run(args, log):
 
     augmentation = None
     if getattr(args, "add_paw", False):
-        augmentation = collect_augmentation(args.directory, structure,
-                                            grid.shape, log)
+        augmentation = resolve_augmentation(args.directory, args.models,
+                                            structure, grid.shape, log)
         results["paw_augmentation"] = {
             "records": len(augmentation) if augmentation else 0,
         }
@@ -590,7 +750,27 @@ def predict(argv=None):
                         metavar="EV",
                         help=f"plane-wave cutoff in eV setting the grid "
                              f"resolution (default: {DEFAULT_ENCUT:g}). Used "
-                             f"unless --grid, --like or --resolution is given")
+                             f"unless --grid, --like or --resolution is given, "
+                             f"and IGNORED when --from-incar is given")
+    parser.add_argument("--prec-accurate", action="store_true",
+                        help="size the grid with VASP's PREC=Accurate rule "
+                             "(density grid twice the wavefunction cutoff, "
+                             "wrap-around free) instead of the cheaper "
+                             "PREC=Normal 3/2 rule. IGNORED when --from-incar "
+                             "is given")
+    parser.add_argument("--from-incar", metavar="INCAR", default=None,
+                        help="take ENCUT and PREC from this INCAR. TAKES "
+                             "PRECEDENCE over --encut and --prec-accurate, "
+                             "which are then ignored and reported as "
+                             "overridden")
+    parser.add_argument("--to-vasp", action="store_true",
+                        help="size the grid with VASP's own rule rather than "
+                             "the generic plane-wave one, so the CHGCAR "
+                             "matches the NGXF/NGYF/NGZF a VASP run would "
+                             "build and can seed ICHARG=1. Combine with "
+                             "--from-incar to follow a specific input file; "
+                             "overridden by --grid and --like, and it "
+                             "supersedes --resolution")
     parser.add_argument("--grid", nargs=3, type=int, metavar=("NX", "NY", "NZ"),
                         help="explicit grid shape (overrides --encut)")
     parser.add_argument("--like", metavar="FILE",
