@@ -226,8 +226,10 @@ terms are absent entirely. For the 27-atom Au cell above the result is
 $\approx -31215$ eV against a VASP `TOTEN` of order $-100$ eV. Nothing in this
 module can close that gap.
 
-**Energy differences are not yet usable either.** Measured on the twelve
-reference Au supercells, with the models evaluated on their own training data:
+**Energy differences are not yet usable either.** Measured on the earlier
+twelve-structure Au dataset, with the models evaluated on their own training
+data. These figures have **not** been re-measured on the current
+seventeen-structure dataset:
 
 | Quantity | Value |
 | --- | --- |

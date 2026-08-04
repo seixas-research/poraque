@@ -110,46 +110,34 @@ relaxations.
 
 ## Status
 
-Twelve gold supercells — ten 27-atom cells and two 32-atom cells, spanning four
-grid shapes. 5-fold cross-validation, whole structures held out:
+Seventeen gold supercells — ten 27-atom cells and seven 32-atom cells, spanning
+four grid shapes. A single 80/20 split at `32³` working resolution, 300 epochs
+with early stopping, whole structures held out (`seed=42`):
 
-| Model | relative L² | R² |
+| Model | held out | training fit |
 | --- | --- | --- |
-| `ext2chg` | 0.0245 ± 0.0130 | 0.9987 |
-| `chg2tau` | 0.0444 ± 0.0271 | 0.9951 |
+| `ext2chg` | 0.0379 ± 0.0027 | 0.0209 |
+| `chg2tau` | 0.0511 ± 0.0031 | 0.0140 |
+
+R² on the held-out structures is 0.9976 (`ext2chg`) and 0.9953 (`chg2tau`). The
+`±` is the spread across the three validation structures, not a
+cross-validation error bar — see the caveat below.
 
 The learned kinetic functional beats the analytic orbital-free functionals by a
-wide margin on this system — Thomas-Fermi scores 1.348 and von Weizsäcker
-0.738 on the same fields, so `chg2tau` is **30×** and **17×** better
+wide margin on this system — on the same held-out fields Thomas-Fermi scores
+1.347 and von Weizsäcker 0.738, so `chg2tau` is **26×** and **14×** better
 respectively.
 
-### Cell size dominates the error
-
-The aggregate above hides the only interesting thing in it. Split by cell size:
-
-| Subset | `ext2chg` | `chg2tau` |
-| --- | --- | --- |
-| 27-atom (10 structures) | 0.0205 ± 0.0064 | 0.0355 ± 0.0069 |
-| 32-atom (2 structures) | 0.0445 ± 0.0182 | 0.0894 ± 0.0420 |
-
-Held out, a 32-atom cell is **2.2–2.5× harder** than a 27-atom one. That is the
-first transfer measurement this project has: with only two examples of that
-cell size, holding one out leaves a single sibling, and the operator has to
-extrapolate to a grid shape it has barely seen.
-
-Within a familiar cell size, more data helps monotonically — the 27-atom
-numbers are the best yet recorded:
-
-| Dataset | `ext2chg` | `chg2tau` |
-| --- | --- | --- |
-| 5 structures | 0.0295 ± 0.0025 | 0.0525 ± 0.0031 |
-| 9 structures | 0.0219 ± 0.0046 | 0.0400 ± 0.0069 |
-| 12 structures, 27-atom subset | 0.0205 ± 0.0064 | 0.0355 ± 0.0069 |
-
-> The three rows differ in protocol as well as in data — the 12-structure run
-> holds out 3 structures per fold against 1 for the 5-structure run, and uses
-> early stopping, which the earlier runs predate. Read the trend, not the
-> third decimal.
+> **What this split can and cannot tell you.** With `valid_fraction = 0.2` and
+> 17 structures, the held-out set is three structures — and at `seed=42` all
+> three (`struct_011`, `struct_012`, `struct_016`) happen to be 32-atom cells.
+> So the headline numbers describe the *harder* subset only, there is no
+> held-out 27-atom measurement at all, and three structures is too thin a base
+> for a meaningful error bar. Earlier 5-fold cross-validation on the
+> 12-structure dataset put 32-atom cells at roughly twice the error of 27-atom
+> ones; the number above is consistent with that, and is better than the 0.0445
+> that subset scored then, which is what four 32-atom cells in training rather
+> than one should buy. Use `--kfold` for a figure that covers every structure.
 
 > Still one element. These numbers measure interpolation between geometries of
 > gold and now, weakly, extrapolation across cell size. They say nothing about
@@ -159,11 +147,13 @@ numbers are the best yet recorded:
 **Energies are not there yet.** The total energy is a sum of terms of order
 10⁴ eV whose physically relevant variation is a fraction of an eV per atom — a
 relative ~10⁻⁴ — and a field-level error of 2×10⁻² cannot survive that
-cancellation. Across the twelve structures the true spread is 0.27 eV/atom and
-the error on predicted differences is 0.29 eV/atom, a ratio of 1.06 with
-correlation r ≈ −0.1. That is an improvement on the previous 3× ratio, but an
-error equal to the signal and no correlation still means the predicted energy
-ordering carries no information. The energy module itself is validated against
+cancellation. The last full measurement, on the earlier 12-structure dataset,
+put the true spread at 0.27 eV/atom against an error on predicted differences
+of 0.29 eV/atom — a ratio of 1.06 with correlation r ≈ −0.1. **Those figures
+have not been re-measured on the current 17-structure dataset**, and the
+verdict they support is unchanged either way: an error equal to the signal and
+no correlation means the predicted energy ordering carries no information. The
+energy module itself is validated against
 exact Madelung constants and uniform-electron-gas limits; it is the *fields*
 that are not yet accurate enough. See `docs/source/energy/index.md`.
 

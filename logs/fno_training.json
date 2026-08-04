@@ -446,7 +446,7 @@
         "results/plots/ext2chg_struct_000_field_slice.png",
         "results/plots/ext2chg_struct_000_parity.png"
       ],
-      "seconds": 318.9872500896454,
+      "seconds": 319.1656630039215,
       "final_train_loss": 0.008310844112808505,
       "history": {
         "train_loss": [
@@ -1644,7 +1644,7 @@
         "results/plots/chg2tau_struct_000_field_slice.png",
         "results/plots/chg2tau_struct_000_parity.png"
       ],
-      "seconds": 496.2706182003021,
+      "seconds": 497.96609807014465,
       "final_train_loss": 0.003354450144494573,
       "history": {
         "train_loss": [

@@ -62,6 +62,7 @@ poraque-train --config configs/train_config.yaml \
 Structures are shuffled with \opt{seed} and that share is kept back.
 
 \subsection{K-fold cross-validation}
+\label{sec:kfold}
 
 This is the only variation on the protocol; \opt{valid\_fraction} is ignored,
 since the folds define the splits.
@@ -103,43 +104,42 @@ the bar --- a learned functional that does not is not adding anything.
 
 \section{Reference numbers}
 
-Twelve gold supercells --- ten 27-atom and two 32-atom, four grid shapes ---
-at $32^3$ working resolution, 200 epochs:
+Seventeen gold supercells --- ten 27-atom and seven 32-atom, four grid shapes
+--- at $32^3$ working resolution, 300 epochs with early stopping, a single
+80/20 split at \opt{seed=42}:
 
 \begin{center}
 \begin{tabular}{@{}lrr@{}}
 \toprule
-Model & 5-fold CV & all structures (training fit) \\
+Model & held out (3 structures) & all structures (training fit) \\
 \midrule
-\opt{ext2chg} & $0.0231 \pm 0.0127$ & $0.0059$ \\
-\opt{chg2tau} & $0.0469 \pm 0.0273$ & $0.0128$ \\
+\opt{ext2chg} & $0.0379 \pm 0.0027$ & $0.0209$ \\
+\opt{chg2tau} & $0.0511 \pm 0.0031$ & $0.0140$ \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Quote the cross-validated column. The gap to the training fit is the
-memorisation margin --- roughly four-fold here.
+Quote the held-out column. The gap to the training fit is the memorisation
+margin --- roughly two- to four-fold here.
 
 \begin{pwarn}
-The cross-validated spread is dominated by \emph{cell size}, not by geometry.
-Split by supercell:
+\textbf{Read the held-out column knowing what is in it.} At
+\opt{valid\_fraction: 0.2} with 17 structures the validation set is three
+structures, and at \opt{seed=42} all three are 32-atom cells. So these numbers
+describe the harder cell size only, there is no held-out 27-atom measurement in
+them, and the $\pm$ is the spread over three structures rather than a
+cross-validation error bar.
 
-\begin{center}
-\begin{tabular}{@{}lrr@{}}
-\toprule
-Subset & \opt{ext2chg} & \opt{chg2tau} \\
-\midrule
-27-atom (10 structures) & $0.0189 \pm 0.0047$ & $0.0379 \pm 0.0077$ \\
-32-atom (2 structures)  & $0.0441 \pm 0.0180$ & $0.0920 \pm 0.0415$ \\
-\bottomrule
-\end{tabular}
-\end{center}
+Cross-validation on the earlier 12-structure dataset measured the cell-size
+effect directly: $0.0189 \pm 0.0047$ (\opt{ext2chg}) on 27-atom cells against
+$0.0441 \pm 0.0180$ on 32-atom ones, so a held-out 32-atom cell was about
+$2.4\times$ harder. The current single-split figure for that harder subset,
+$0.0379$, is better than the $0.0441$ it scored then --- which is what having
+four 32-atom cells in training rather than one should buy.
 
-A held-out 32-atom cell is about $2.4\times$ harder. With only two examples of
-that size, holding one out leaves a single sibling, so the operator is
-extrapolating to a grid shape it has barely seen. Expect the same whenever a
-new cell size enters the dataset --- and read an aggregate that mixes cell
-sizes with that in mind.
+Expect a similar penalty whenever a new cell size enters the dataset, and use
+\opt{--kfold} (Section~\ref{sec:kfold}) when you need a figure that covers
+every structure rather than whichever three the seed selected.
 \end{pwarn}
 
 \section{Options worth knowing}

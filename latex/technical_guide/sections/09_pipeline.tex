@@ -179,11 +179,11 @@ metrics are \textbf{training fit}. They show the model can represent the data;
 they are not a generalisation estimate. Raise \opt{valid\_fraction}, or use the
 cross-validation of Section~\ref{sec:kfold}, for that.
 
-Measured on twelve gold structures: the all-structure training fit gives relative
-$L^2$ of $0.0059$ (\opt{ext2chg}) and $0.0128$ (\opt{chg2tau}), against
-cross-validated values roughly four times larger. That gap is the memorisation
-margin, and quoting the training-fit number as a result would be a serious
-overstatement.
+Measured on seventeen gold structures: the all-structure training fit gives
+relative $L^2$ of $0.0209$ (\opt{ext2chg}) and $0.0140$ (\opt{chg2tau}),
+against held-out values of $0.0379$ and $0.0511$ --- roughly two to four times
+larger. That gap is the memorisation margin, and quoting the training-fit
+number as a result would be a serious overstatement.
 \end{pwarn}
 
 \section{K-fold cross-validation}
