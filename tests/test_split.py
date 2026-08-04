@@ -231,8 +231,16 @@ class TestEvalInterval:
 # early_stopping
 # ===================================================================== #
 class TestEarlyStopping:
-    def test_config_default_is_fifty(self):
-        assert TrainingConfig().training.early_stopping == 50
+    def test_config_defaults_are_pinned(self):
+        """
+        Patience and the epoch cap are set together: patience has to be short
+        enough to save time and long enough not to cut a slow run off. Pinning
+        both makes a change to either deliberate rather than incidental.
+        """
+        training = TrainingConfig().training
+        assert training.early_stopping == 100
+        assert training.epochs == 300
+        assert training.early_stopping < training.epochs
 
     def test_triggers_once_patience_runs_out(self, toy, monkeypatch):
         """

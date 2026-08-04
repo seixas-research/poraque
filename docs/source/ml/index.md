@@ -135,3 +135,14 @@ Every run writes loss curves, field cross-sections and parity plots, and
 assembles them with the metrics into a typeset PDF under `reports/`. The
 report is built in a temporary directory and only the PDF is moved out, so no
 `.tex` or auxiliary files are left behind.
+
+When a validation split exists, the parity plot becomes two panels — a training
+structure and a held-out one, side by side, each labelled with its relative
+$L^2$, $R^2$, MAE and RMSE. A held-out density visibly wider about the identity
+line is the generalisation gap: the same story the aggregate table tells, read
+off the figure instead of inferred from two numbers.
+
+The panels share their axis limits, their bin edges and one colour scale, and
+each is normalised to the share of *its own* voxels. That last point matters
+because grid shapes differ between materials — comparing raw counts would paint
+the finer-grid structure denser for no physical reason.

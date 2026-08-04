@@ -42,6 +42,55 @@ def _escape(text):
     return "".join(replacements.get(character, character) for character in str(text))
 
 
+#: Characters a long unbroken configuration value may be split after.
+_BREAK_AFTER = ("/", ",", ":", ";", "-", r"\_")
+
+
+def _wrappable(text, threshold=28):
+    """
+    Escape a configuration value and let it break inside a fixed-width column.
+
+    A ``p`` column wraps at spaces, which is enough for a value like the
+    ``training.physics`` dict. It is not enough for a long value with no
+    spaces at all -- an absolute path, or a cache tag such as
+    ``res32_blur0.15spec`` -- which stays one unbreakable word and overruns the
+    column exactly as an ``l`` column did. Break opportunities are inserted
+    after the separators such values are built from, so the line can turn
+    without hyphenating a path in a misleading place.
+
+    Short values are returned untouched: the markup is pure noise below the
+    width where wrapping could ever be needed.
+    """
+    escaped = _escape(text)
+    if len(str(text)) <= threshold:
+        return escaped
+    for separator in _BREAK_AFTER:
+        escaped = escaped.replace(separator, separator + r"\allowbreak{}")
+    return escaped
+
+
+def _format_value(value):
+    """
+    Render one configuration value for a fixed-width table cell.
+
+    A nested mapping -- ``training.physics`` is the only one today -- becomes
+    one ``key: value`` per line rather than a single 116-character repr. The
+    break is ``\\newline`` and not ``\\\\``: inside a ``p`` column ``\\\\`` ends
+    the table *row*, which would split one setting across two rows and put the
+    rest of the table out of step with its keys.
+
+    The dict is taken as a dict, never parsed back out of its ``str()`` -- a
+    repr is not a format, and reparsing one is how a stray comma inside a value
+    turns into a silently mangled table.
+    """
+    if isinstance(value, dict) and value:
+        # No column padding: LaTeX collapses runs of spaces, so padding the
+        # keys would align in the source and not on the page.
+        return r" \newline ".join(f"{_escape(key)}: {_wrappable(inner)}"
+                                  for key, inner in value.items())
+    return _wrappable(value)
+
+
 def _number(value, digits=5):
     """Format a metric, falling back to a dash for missing values."""
     if value is None or (isinstance(value, float) and not np.isfinite(value)):
@@ -95,7 +144,11 @@ class ModelReport:
 \usepackage{{graphicx}}
 \usepackage{{xcolor}}
 \usepackage{{booktabs}}
+\usepackage{{array}}
 \usepackage{{longtable}}
+% Defines the starred \caption* used for the unnumbered figure captions
+% below. Without it LaTeX prints a literal "Figure N: *" above the text.
+\usepackage{{caption}}
 \usepackage{{titlesec}}
 \usepackage{{fancyhdr}}
 \usepackage{{parskip}}
@@ -176,6 +229,83 @@ class ModelReport:
             r"\end{center}" "\n"
         )
 
+    #: Maths symbols for the quantities a distillation can fit. Without this
+    #: ``tau`` sets as the product t·a·u in an equation environment.
+    _TARGET_SYMBOLS = {"tau": r"\tau", "rho": r"\rho", "F": "F"}
+
+    @staticmethod
+    def _math_number(value, digits=4):
+        r"""
+        A number safe to drop into maths mode.
+
+        ``%g`` gives ``8.361e-07``, which inside ``$...$`` sets as *e* minus 07.
+        Exponents become ``\times 10^{...}`` instead.
+        """
+        text = _number(value, digits)
+        if "e" not in text:
+            return text
+        mantissa, exponent = text.split("e")
+        return rf"{mantissa} \times 10^{{{int(exponent)}}}"
+
+    def _symbolic_block(self, result):
+        r"""
+        Typeset the distilled expression and its accuracy/complexity front.
+
+        Accepts either a :class:`~poraque.ml.symbolic.SymbolicResult` or the
+        plain dict it serialises to, so a report can be rebuilt from a run's
+        JSON summary without importing the ML stack.
+        """
+        get = (result.get if isinstance(result, dict)
+               else lambda key, default=None: getattr(result, key, default))
+
+        target = ("the trained operator's predictions"
+                  if get("target") == "model" else "the DFT reference data")
+        name = get("target_name", "y")
+        symbol = self._TARGET_SYMBOLS.get(name, _escape(name))
+        body = [
+            r"\clearpage" "\n" r"\section*{Symbolic distillation}" "\n",
+            f"Closed-form expression fitted to {target} over "
+            f"{get('n_samples', 0)} voxels, in the "
+            f"{_escape(get('scheme', ''))} feature scheme "
+            f"({_escape(get('units', ''))}):\n\n",
+            r"\begin{equation*}" "\n",
+            f"{symbol} = {get('latex', '')}\n",
+            r"\end{equation*}" "\n\n",
+        ]
+
+        r2, relative = get("r2", float("nan")), get("relative_l2", float("nan"))
+        body.append(
+            f"Complexity {get('complexity', 0)} nodes; "
+            f"$R^2 = {self._math_number(r2)}$, "
+            f"relative $L^2 = {self._math_number(relative)}$ "
+            f"against the fitted target.\n\n")
+
+        # The caveat is not optional garnish: without it a reader takes the
+        # equation for a reconstruction of the operator rather than for the
+        # best semi-local approximation to it.
+        body.append(
+            r"\begin{quote}\small\color{shadegray}" "\n"
+            "The features are evaluated at a point, so the search space is "
+            "the semi-local functionals. Whatever the operator learned that is "
+            "non-local cannot appear in this expression, and shows up as "
+            "residual: the fit quality above measures how much of the learned "
+            "map is semi-local, not how well the search performed.\n"
+            r"\end{quote}" "\n\n")
+
+        front = get("pareto") or []
+        if front:
+            body.append(r"\subsection*{Accuracy against complexity}" "\n")
+            body.append(r"\begin{center}\begin{longtable}"
+                        r"{@{}rr>{\raggedright\arraybackslash}p{9.6cm}@{}}"
+                        r"\toprule" "\n")
+            body.append(r"Nodes & Loss & Expression \\" "\n" r"\midrule" "\n")
+            for entry in front:
+                body.append(f"{entry['complexity']} & "
+                            f"{_number(entry['loss'], 4)} & "
+                            f"{_wrappable(entry['expression'])} \\\\\n")
+            body.append(r"\bottomrule\end{longtable}\end{center}" "\n")
+        return "".join(body)
+
     def _figure_block(self, path, caption):
         return (
             r"\begin{figure}[H]" "\n"
@@ -189,7 +319,7 @@ class ModelReport:
     # Build
     # ------------------------------------------------------------------ #
     def build(self, task, per_material, figures=(), unit="", summary=None,
-              configuration=None, caveats=(), filename=None):
+              configuration=None, caveats=(), filename=None, symbolic=None):
         """
         Generate the report and return the path to the finished PDF.
 
@@ -213,6 +343,9 @@ class ModelReport:
             verbatim, because a report that omits them invites over-reading.
         filename : str, optional
             Output name; defaults to ``<task>_report.pdf``.
+        symbolic : SymbolicResult, optional
+            Distilled closed-form expression, typeset as display mathematics
+            with its accuracy/complexity front beneath it.
 
         Returns
         -------
@@ -248,7 +381,10 @@ class ModelReport:
             "loss_curves": "Training objective and validation error against epoch.",
             "field_slice": "Cross-section: DFT reference, prediction, and their "
                            "difference on a shared colour scale.",
-            "parity": "Predicted against true voxel values, with the identity line.",
+            "parity": "Predicted against true voxel values, with the identity "
+                      "line. Where a validation structure was held out it is "
+                      "drawn beside the training one in its own colour: a "
+                      "wider cloud about the line is the generalisation gap.",
             "error_histogram": "Distribution of the signed voxel-wise error.",
         }
         if figures:
@@ -259,11 +395,21 @@ class ModelReport:
                                _escape(stem))
                 body.append(self._figure_block(path, caption))
 
+        if symbolic is not None:
+            body.append(self._symbolic_block(symbolic))
+
         if configuration:
+            # Fixed-width columns, not `ll`. An `l` column is a single
+            # unbreakable box, so a long value -- `training.physics` is 116
+            # characters of nested dict -- ran straight past the right margin.
+            # 4.6 + 11.4 cm plus the inter-column gap fits the 16.6 cm text
+            # block set by `geometry`'s 2.2 cm margins on A4.
             body.append(r"\clearpage" "\n" r"\section*{Configuration}" "\n")
-            body.append(r"\begin{center}\begin{longtable}{@{}ll@{}}\toprule" "\n")
+            body.append(r"\begin{center}\begin{longtable}"
+                        r"{@{}p{4.6cm}>{\raggedright\arraybackslash}p{11.4cm}@{}}"
+                        r"\toprule" "\n")
             for key, value in sorted(configuration.items()):
-                body.append(f"{_escape(key)} & {_escape(value)} \\\\\n")
+                body.append(f"{_escape(key)} & {_format_value(value)} \\\\\n")
             body.append(r"\bottomrule\end{longtable}\end{center}" "\n")
 
         body.append(r"\end{document}" "\n")

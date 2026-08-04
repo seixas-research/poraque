@@ -89,6 +89,15 @@ _LAZY = {
     "FieldOperator": "poraque.ml.training",
     "evaluate": "poraque.ml.training",
     "train": "poraque.ml.training",
+    # symbolic distillation
+    "FeatureTable": "poraque.ml.symbolic",
+    "SymbolicDistiller": "poraque.ml.symbolic",
+    "SymbolicResult": "poraque.ml.symbolic",
+    "build_features": "poraque.ml.symbolic",
+    "distill_dataset": "poraque.ml.symbolic",
+    "expression_to_latex": "poraque.ml.symbolic",
+    "pysr_engine": "poraque.ml.symbolic",
+    "sample_rows": "poraque.ml.symbolic",
     # query by committee
     "Committee": "poraque.ml.committee",
     "committee_spread": "poraque.ml.committee",

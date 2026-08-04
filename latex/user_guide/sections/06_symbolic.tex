@@ -1,0 +1,183 @@
+\chapter{Symbolic distillation}
+\label{ch:symbolic}
+
+A Fourier Neural Operator reproduces $\rho \mapsto \tau$ to a few percent and
+explains nothing. Symbolic distillation searches short algebraic expressions
+for one that reproduces the same mapping --- trading accuracy for a formula you
+can read, publish, and check against known physics.
+
+\begin{pnote}
+Off by default, and an optional install. PySR carries a \textbf{Julia}
+toolchain, which it fetches the first time a search runs, so it is not pulled
+in by a plain installation.
+\end{pnote}
+
+\begin{lstlisting}
+pip install -e ".[symbolic]"
+poraque-train --config configs/train_config.yaml --task chg2tau --symbolic
+\end{lstlisting}
+
+Without the extra, a run with distillation enabled reports the missing
+dependency and keeps its trained model rather than failing.
+
+\section{What it can and cannot find}
+
+The features are evaluated \emph{at a point}, so the search space is exactly
+the semi-local functionals. Whatever the operator learned that is
+\textbf{non-local} cannot be expressed in that space at all, and appears as
+irreducible residual.
+
+That makes a poor fit informative rather than disappointing: it puts a number
+on how much of the learned map is not semi-local. A near-perfect fit would say
+the operator found nothing a GGA-level functional could not have.
+
+\begin{pnote}
+Only \opt{chg2tau} is attempted. \opt{ext2chg} is the Hohenberg--Kohn map,
+whose whole content is non-local --- a semi-local expression for it would be
+meaningless rather than merely inaccurate.
+\end{pnote}
+
+\section{The physical variables}
+
+Raw $\rho$ is not enough to build a robust functional. The engine receives the
+density together with its \textbf{dimensionless reduced derivatives}, which is
+the form a semi-local kinetic functional is actually written in:
+%
+\begin{equation}
+  k_F = (3\pi^2\rho)^{1/3},
+  \qquad
+  p = \frac{|\nabla\rho|}{2 k_F \rho},
+  \qquad
+  q = \frac{\nabla^2\rho}{4 k_F^2 \rho}.
+\end{equation}
+
+\begin{center}
+\begin{tabular}{@{}llp{7.4cm}@{}}
+\toprule
+Symbol & In the equation & Meaning \\
+\midrule
+$\rho$ & \opt{rho} & Electron density, atomic units ($e/a_0^3$). \\
+$p$    & \opt{p}   & Reduced gradient --- the GGA variable. \\
+$q$    & \opt{q}   & Reduced Laplacian --- the meta-GGA variable. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Those names are passed to the engine verbatim, so they are the names that
+appear in the result.
+
+Why the reduced forms rather than $|\nabla\rho|$ and $\nabla^2\rho$ directly:
+they are dimensionless and invariant under the coordinate scaling
+$\rho_\lambda(\rr) = \lambda^3\rho(\lambda\rr)$ that fixes $\Ts$, so a
+functional expressed in them holds at every density scale instead of having to
+be rediscovered at each. Raw derivatives make every coefficient carry units,
+which a genetic search spends its budget approximating.
+
+\subsection{Derivatives are spectral}
+
+$\nabla \to i\GG$ and $\nabla^2 \to -|\GG|^2$, evaluated by FFT. This is
+\emph{exact} for the band-limited periodic fields a plane-wave grid carries; a
+finite-difference stencil would introduce an error that the search would then
+model as physics.
+
+\subsection{Feature schemes}
+
+\begin{center}
+\begin{tabular}{@{}llp{5.4cm}@{}}
+\toprule
+\opt{features} & Variables & Target \\
+\midrule
+\opt{gga} (default) & \opt{rho}, \opt{p}, \opt{q} & $\tau$ \\
+\opt{enhancement}   & \opt{p}, \opt{q}            & $F = \tau/\tauTF$ \\
+\opt{raw}           & \opt{rho}, \opt{grad\_rho}, \opt{lap\_rho} & $\tau$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\opt{enhancement} is worth knowing: it is the form the literature writes
+kinetic functionals in, so the answer is directly comparable --- Thomas--Fermi
+is $F = 1$ and von Weizs\"acker is $F = 5p^2/3$ --- and every constant to be
+found is order unity.
+
+\section{Regularization in vacuum}
+\label{sec:symbolic-vacuum}
+
+$p$ and $q$ both divide by $\rho$, which decays exponentially into vacuum. Two
+things happen, and both are needed:
+
+\begin{enumerate}
+  \item \textbf{Every denominator is clamped} at \opt{epsilon}, so $k_F$, $p$
+        and $q$ stay finite even where the density underflows.
+  \item \textbf{Voxels with $\rho \le$ \opt{epsilon} are dropped.} In vacuum
+        $p$ and $q$ are ratios of two vanishing numbers --- noise with a
+        plausible magnitude, which corrupts a fit far more quietly than a
+        \opt{NaN} would. Vacuum carries no information about the functional, so
+        nothing is lost by removing it.
+\end{enumerate}
+
+\opt{epsilon} defaults to \opt{1e-8}, in atomic units ($e/a_0^3$). The mask also
+removes the slightly negative voxels that band-limiting leaves around the core
+peaks (Gibbs ringing), where a fractional power of $\rho$ would be complex.
+
+\begin{ptip}
+For a bulk crystal nothing is dropped --- the minimum density is far above the
+threshold. It matters for slabs, molecules and anything with real vacuum.
+\end{ptip}
+
+\section{Configuration}
+
+\begin{lstlisting}
+symbolic:
+  enable_symbolic_distillation: false
+  target: model          # model | reference
+  features: gga          # gga | enhancement | raw
+  epsilon: 1.0e-08       # vacuum threshold, e/a0^3
+  unary_operations: [exp, log, sqrt, abs]
+  binary_operations: ['+', '-', '*', /, ^]
+  iterations: 40
+  population_size: 33
+  populations: 15
+  max_depth: 10
+  max_size: 30
+  parsimony: 0.0032
+  n_samples: 4000
+  seed: 0
+\end{lstlisting}
+
+\opt{target} selects what is fitted. \opt{model} distils the trained operator's
+own predictions --- what the network learned, faithful to it including its
+errors. \opt{reference} fits the DFT data directly, which is plain symbolic
+regression against ground truth and answers a different question.
+
+\opt{unary\_operations} and \opt{binary\_operations} are passed to the engine
+untouched. Keep the alphabet small: the search space grows combinatorially, and
+an operator that cannot appear in the answer only dilutes the population.
+\opt{/} and \opt{log} are the usual sources of singularities on a density
+approaching zero.
+
+\opt{n\_samples} caps the rows handed to the search. A single $32^3$ structure
+is already $32\,768$ voxels and the cost is linear in them.
+
+\section{Output}
+
+The expression, its accuracy/complexity front and the fit quality are printed
+to the terminal, written to the run's JSON summary, and typeset into the PDF
+report as display mathematics with $\rho$, $p$ and $q$ rendered properly.
+
+\begin{lstlisting}
+  expression   : F = (q * 2.454276) + 0.9163395
+  variables    : p, q  [dimensionless (F = tau / tau_TF)]
+  complexity   : 5 nodes
+  fit          : R2 0.9487   relative L2 0.0736
+\end{lstlisting}
+
+\begin{pnote}
+Read the front, not just the winner. A single expression hides the trade that
+produced it; the front shows what each extra node bought.
+\end{pnote}
+
+\begin{pwarn}
+The search is stochastic. Two runs with the same \opt{seed} can still differ
+unless PySR is also put in deterministic, serial mode --- it warns about this
+itself. Treat a single expression as one sample, not as \emph{the} answer.
+\end{pwarn}

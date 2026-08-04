@@ -226,9 +226,9 @@ validation; \opt{0} uses every structure. \\
 ignores \opt{valid\_fraction}. \\
 \opt{k\_folds} & \opt{5} & Number of folds, capped at the structure count. \\
 \opt{eval\_epoch} & \opt{10} & Evaluate and log every this many epochs. \\
-\opt{early\_stopping} & \opt{50} & Stop after this many epochs without
+\opt{early\_stopping} & \opt{100} & Stop after this many epochs without
 validation improvement; \opt{0} disables. \\
-\opt{epochs} & \opt{200} & Passes over the training set. \\
+\opt{epochs} & \opt{300} & Passes over the training set. \\
 \opt{batch\_size} & \opt{4} & Maximum samples per grid-shape bucket. \\
 \opt{learning\_rate} & \opt{0.002} & AdamW step size. \\
 \opt{weight\_decay} & \opt{0.0001} & AdamW weight decay. \\
@@ -290,8 +290,8 @@ ends without a current number.
     train loss: mean PhysicsInformedLoss per batch   |   val rel L2: held-out error, physical units
           epoch     train loss     val rel L2
     -----------------------------------------
-         10/200        0.31745        0.34118
-         20/200        0.18902        0.21447  *
+         10/300        0.31745        0.34118
+         20/300        0.18902        0.21447  *
 \end{lstlisting}
 
 \subsection{\opt{early\_stopping}}
@@ -300,13 +300,13 @@ Stop after this many epochs without an improvement in the \textbf{validation}
 error, and restore the best weights seen:
 
 \begin{lstlisting}
-         30/200        0.03173        0.03659  *
+         30/300        0.03173        0.03659  *
          ...
-         38/200        0.02249        0.06568
+         38/300        0.02249        0.06568
     stopped early at epoch 38: no improvement in 8 epochs
                                  (best 0.03659 at epoch 30)
 
-  trained 38/200 epochs in 12.0 s   loss 0.8599 -> 0.0225
+  trained 38/300 epochs in 12.0 s   loss 0.8599 -> 0.0225
 \end{lstlisting}
 
 \begin{pwarn}
@@ -316,8 +316,10 @@ construction and so can never signal that training should stop --- asking for
 early stopping anyway \textbf{warns} rather than silently doing nothing and
 leaving you believing the run was protected.
 
-With the shipped default \opt{valid\_fraction: 0.0}, early stopping is
-therefore inactive. Set a split to use it.
+The shipped default holds a fifth of the structures out
+(\opt{valid\_fraction: 0.2}), so early stopping is active out of the box. It
+goes inactive only if you set \opt{valid\_fraction: 0} to train on every
+structure, and the run says so rather than appearing to be protected.
 \end{pwarn}
 
 Patience is counted in \emph{epochs} but checked only on the epochs where
@@ -405,6 +407,43 @@ The resolved configuration is written next to \opt{json} with the suffix
 \file{\_config.yaml}. PDF reports are assembled in a temporary directory that
 is removed afterwards, so no \file{.tex}, \file{.aux} or \file{.log} files are
 left behind.
+
+\section{\opt{symbolic} --- distilling a formula}
+
+Chapter~\ref{ch:symbolic} covers this feature; the keys are listed here for
+completeness. It is off by default and needs the optional \opt{symbolic}
+install extra.
+
+\begin{center}
+\begin{tabular}{@{}p{4.5cm}p{3.1cm}p{7.4cm}@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\opt{enable\_symbolic\_} \opt{distillation} & \opt{false} & Search for a
+closed-form expression after training. \\
+\opt{target} & \opt{model} & \opt{model} distils the operator's predictions;
+\opt{reference} fits the DFT data. \\
+\opt{features} & \opt{gga} & Variables given to the engine: \opt{gga}
+$(\rho, p, q)$, \opt{enhancement} $(p, q)$, or \opt{raw}. \\
+\opt{epsilon} & \opt{1e-8} & Vacuum threshold in $e/a_0^3$; clamps every
+denominator and drops voxels below it. \\
+\opt{unary\_operations} & \opt{[exp, log, sqrt, abs]} & Unary alphabet, passed
+to the engine untouched. \\
+\opt{binary\_operations} & \opt{['+', '-', '*', /, \textasciicircum]} & Binary
+alphabet. \\
+\opt{iterations} & \opt{40} & Search iterations --- the main quality/time
+knob. \\
+\opt{population\_size} & \opt{33} & Individuals per population. \\
+\opt{populations} & \opt{15} & Populations run in parallel. \\
+\opt{max\_depth} & \opt{10} & Ceiling on expression depth. \\
+\opt{max\_size} & \opt{30} & Ceiling on node count. \\
+\opt{parsimony} & \opt{0.0032} & Penalty per node; higher gives shorter,
+worse-fitting expressions. \\
+\opt{n\_samples} & \opt{4000} & Voxels sampled across the dataset. \\
+\opt{seed} & \opt{0} & Seeds the sampling and the engine. \\
+\bottomrule
+\end{tabular}
+\end{center}
 
 \section{Worked examples}
 

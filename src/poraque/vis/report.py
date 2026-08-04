@@ -54,6 +54,58 @@ def _as_array(field):
     return np.asarray(getattr(field, "data", field), dtype=float)
 
 
+def _thin_log_minor_labels(panel, subs=(2.0, 5.0)):
+    """
+    Label only a couple of the decade subdivisions on a log x-axis.
+
+    Over a range narrower than about two decades Matplotlib labels the *minor*
+    log ticks as well as the decades, so an axis spanning 1.2 to 61 gets
+    ``2x10^0, 3x10^0, 4x10^0, ... 6x10^1``. Each is wide in mathtext, and
+    horizontally they overprint into unreadable overlap -- the y-axis survives
+    the same labels only because vertical tick spacing dwarfs the text height.
+
+    Labelling the 2 and 5 subdivisions keeps the decade structure legible at a
+    fraction of the width. The ticks themselves are untouched; only which of
+    them carry text changes.
+    """
+    from matplotlib.ticker import LogFormatterSciNotation, LogLocator
+
+    if panel.get_xscale() != "log":
+        return
+    panel.xaxis.set_minor_locator(LogLocator(base=10.0, subs=subs, numticks=12))
+    panel.xaxis.set_minor_formatter(LogFormatterSciNotation(base=10.0,
+                                                            labelOnlyBase=False))
+
+
+def _rotate_if_crowded(figure, panel, rotation=30, pad=2.0):
+    """
+    Rotate the x tick labels, but only when they actually collide.
+
+    Measuring beats rotating unconditionally: a linear parity axis labelled
+    ``1 2 3 4 5`` is perfectly readable upright, and tilting it would be a
+    cosmetic regression. So the figure is laid out once, the drawn label boxes
+    are compared, and the rotation is applied only if two of them overlap.
+
+    Returns
+    -------
+    bool
+        Whether the labels were rotated.
+    """
+    figure.draw_without_rendering()
+    labels = [label for label in panel.get_xticklabels(which="both")
+              if label.get_text() and label.get_visible()]
+    boxes = sorted((label.get_window_extent() for label in labels),
+                   key=lambda box: box.x0)
+    crowded = any(later.x0 - earlier.x1 < pad
+                  for earlier, later in zip(boxes, boxes[1:]))
+    if crowded:
+        for label in labels:
+            label.set_rotation(rotation)
+            label.set_horizontalalignment("right")
+            label.set_rotation_mode("anchor")
+    return crowded
+
+
 def _metrics(prediction, reference):
     """Relative L2, R^2, MAE and RMSE between two fields."""
     prediction = prediction.ravel()
@@ -334,13 +386,27 @@ class TrainingReport:
     # ------------------------------------------------------------------ #
     def parity(self, reference, prediction, name="parity", label="field",
                unit="", title=None, bins=200, max_points=200_000,
-               scatter=False, log=False):
+               scatter=False, log=False, validation=None,
+               split_labels=("training", "validation")):
         """
         Predicted against true voxel values, with the identity line.
+
+        Passing ``validation`` puts the held-out set in a **second panel**
+        beside the training one, which is the plot that answers whether the
+        operator generalises: if the held-out density sits wider about the
+        identity line, that spread *is* the generalisation gap, read off
+        directly rather than inferred from two summary numbers.
+
+        The panels share their axes, their bin edges and one colour scale, so
+        the two sides are directly comparable. Each is normalised to the share
+        of *its own* voxels, because two structures need not have the same grid
+        size and raw counts would then paint the larger one denser for no
+        physical reason.
 
         Parameters
         ----------
         reference, prediction : ScalarField or numpy.ndarray
+            The training set, or the only set when ``validation`` is omitted.
         name : str, optional
         label : str, optional
         unit : str, optional
@@ -348,14 +414,19 @@ class TrainingReport:
         bins : int, optional
             Bins per axis for the density histogram.
         max_points : int, optional
-            Subsample size when ``scatter`` is true.
+            Subsample size per set when points are drawn individually.
         scatter : bool, optional
             Draw individual points instead of a density map. Only sensible for
             small grids — a million points render as one opaque blob, which
             shows the extent of the data but nothing about where it
-            concentrates.
+            concentrates. Applies per panel, so it composes with ``validation``.
         log : bool, optional
             Log-scale both axes, for strictly positive fields.
+        validation : tuple of (ScalarField or ndarray, ScalarField or ndarray), optional
+            ``(reference, prediction)`` for the held-out set. The two sets need
+            not be the same size — they are usually different structures.
+        split_labels : tuple of str, optional
+            Legend names for the two sets.
 
         Returns
         -------
@@ -365,87 +436,156 @@ class TrainingReport:
         import matplotlib.pyplot as plt
         from matplotlib.colors import LogNorm
 
-        reference_data = _as_array(reference).ravel()
-        prediction_data = _as_array(prediction).ravel()
-        if reference_data.shape != prediction_data.shape:
-            raise ValueError("reference and prediction must have the same size.")
+        sets = [(split_labels[0], _as_array(reference).ravel(),
+                 _as_array(prediction).ravel())]
+        if validation is not None:
+            try:
+                validation_reference, validation_prediction = validation
+            except (TypeError, ValueError):
+                raise ValueError(
+                    "validation must be a (reference, prediction) pair."
+                ) from None
+            sets.append((split_labels[1],
+                         _as_array(validation_reference).ravel(),
+                         _as_array(validation_prediction).ravel()))
 
-        finite = np.isfinite(reference_data) & np.isfinite(prediction_data)
+        for series_name, series_x, series_y in sets:
+            if series_x.shape != series_y.shape:
+                raise ValueError(f"{series_name}: reference and prediction "
+                                 f"must have the same size.")
+
+        # The log decision is taken across every set at once: axes are shared,
+        # so one set falling back to linear would silently rescale the other.
+        finite = [np.isfinite(sx) & np.isfinite(sy) for _, sx, sy in sets]
         valid = finite
         if log:
-            positive = finite & (reference_data > 0) & (prediction_data > 0)
+            positive = [f & (sx > 0) & (sy > 0)
+                        for f, (_, sx, sy) in zip(finite, sets)]
             # An undertrained model can predict a non-positive field
             # everywhere, which would leave nothing to plot. Fall back to
             # linear axes rather than crashing on an empty reduction: a
             # diagnostic plot is least dispensable exactly when the model is
             # behaving badly.
-            if positive.sum() < 0.01 * finite.sum():
+            if sum(p.sum() for p in positive) < 0.01 * sum(f.sum()
+                                                           for f in finite):
                 log = False
             else:
                 valid = positive
 
-        if not valid.any():
+        if not any(mask.any() for mask in valid):
             raise ValueError("No finite points to plot.")
 
-        x, y = reference_data[valid], prediction_data[valid]
-        metrics = _metrics(prediction_data[valid], reference_data[valid])
+        drawn = [(series_name, sx[mask], sy[mask],
+                  _metrics(sy[mask], sx[mask]))
+                 for (series_name, sx, sy), mask in zip(sets, valid)
+                 if mask.any()]
+        suffix = f" [{unit}]" if unit else ""
+        comparing = len(drawn) > 1
+
+        # Shared across panels: one range, one set of bin edges. A bin has to
+        # mean the same thing on both sides or the comparison is decorative.
+        lower = float(min(min(x.min(), y.min()) for _, x, y, _ in drawn))
+        upper = float(max(max(x.max(), y.max()) for _, x, y, _ in drawn))
+        # Log axes demand log-spaced bins. With linear bins the cells render
+        # enormous at the low end and invisible at the high end, which reads as
+        # structure in the data that is not there.
+        if log:
+            edges = np.logspace(np.log10(lower), np.log10(upper), bins + 1)
+        else:
+            edges = np.linspace(lower, upper, bins + 1)
+
+        histograms = []
+        if not scatter:
+            for _, x, y, _ in drawn:
+                counts, _, _ = np.histogram2d(x, y, bins=[edges, edges])
+                # Share of *this* set's voxels, not a raw count: two structures
+                # need not have the same number of voxels, and comparing counts
+                # would then paint the larger one denser for no physical reason.
+                histograms.append(counts / max(counts.sum(), 1))
+            positive = [h[h > 0] for h in histograms]
+            floor = float(min(p.min() for p in positive if p.size))
+            ceiling = float(max(h.max() for h in histograms))
+            norm = LogNorm(vmin=floor, vmax=ceiling)
 
         with self._context():
-            figure, panel = plt.subplots(figsize=(5.6, 5.4),
-                                         constrained_layout=True)
-
-            if scatter:
-                if x.size > max_points:
-                    picked = np.random.default_rng(0).choice(x.size, max_points,
-                                                             replace=False)
-                    x, y = x[picked], y[picked]
-                panel.scatter(x, y, s=4, alpha=0.25, linewidths=0,
-                              color=series_color(0), label="voxels")
+            if comparing:
+                figure, axes = plt.subplots(
+                    1, 2, figsize=(9.8, 5.0), sharex=True, sharey=True,
+                    constrained_layout=True)
+                panels = list(axes)
             else:
-                # Log axes demand log-spaced bins. With linear bins the cells
-                # render enormous at the low end and invisible at the high end,
-                # which reads as structure in the data that is not there.
-                if log:
-                    edges_x = np.logspace(np.log10(x.min()), np.log10(x.max()),
-                                          bins + 1)
-                    edges_y = np.logspace(np.log10(y.min()), np.log10(y.max()),
-                                          bins + 1)
-                    grid_bins = [edges_x, edges_y]
+                figure, single = plt.subplots(figsize=(5.6, 5.4),
+                                              constrained_layout=True)
+                panels = [single]
+
+            mesh = None
+            for index, (panel, (series_name, x, y, series_metrics)) in enumerate(
+                    zip(panels, drawn)):
+                if scatter:
+                    if x.size > max_points:
+                        picked = np.random.default_rng(0).choice(
+                            x.size, max_points, replace=False)
+                        x, y = x[picked], y[picked]
+                    panel.scatter(x, y, s=4, alpha=0.25, linewidths=0,
+                                  color=series_color(index), label="voxels")
                 else:
-                    grid_bins = bins
-                counts = panel.hist2d(x, y, bins=grid_bins,
-                                      cmap=sequential_cmap(), norm=LogNorm())[3]
-                bar = figure.colorbar(counts, ax=panel, fraction=0.046, pad=0.02)
-                bar.set_label("voxels per bin")
+                    mesh = panel.pcolormesh(edges, edges, histograms[index].T,
+                                            cmap=sequential_cmap(), norm=norm)
+
+                panel.plot([lower, upper], [lower, upper], linestyle="--",
+                           linewidth=1.6, color=self.ink["muted"], zorder=4,
+                           label="perfect agreement")
+                if log:
+                    panel.set_xscale("log")
+                    panel.set_yscale("log")
+                panel.set_xlim(lower, upper)
+                panel.set_ylim(lower, upper)
+                panel.set_aspect("equal")
+                panel.set_xlabel(f"DFT reference {label}{suffix}")
+                panel.set_ylabel(f"FNO prediction {label}{suffix}")
+                panel.legend(loc="upper left", fontsize=8 if comparing else None)
+
+                if comparing:
+                    panel.set_title(
+                        f"{series_name} — rel $L^2$ "
+                        f"{series_metrics['relative_l2']:.4f}",
+                        fontsize=10, color=self.ink["primary"])
+                panel.text(
+                    0.98, 0.04,
+                    f"relative $L^2$ = {series_metrics['relative_l2']:.4f}\n"
+                    f"$R^2$ = {series_metrics['r2']:.4f}\n"
+                    f"MAE = {series_metrics['mae']:.4g}{suffix}\n"
+                    f"RMSE = {series_metrics['rmse']:.4g}{suffix}",
+                    transform=panel.transAxes, ha="right", va="bottom",
+                    fontsize=8 if comparing else 9,
+                    color=self.ink["secondary"],
+                )
+
+            if comparing:
+                # Only the leftmost panel keeps its y-axis; the axes are shared,
+                # so repeating the labels between the panels is pure clutter.
+                for panel in panels:
+                    panel.label_outer()
+
+            if mesh is not None:
+                # One colourbar for every panel. Separate bars would each
+                # autoscale and two different densities could then wear the
+                # same colour, which is the specific lie this plot must not tell.
+                bar = figure.colorbar(mesh, ax=panels, fraction=0.046, pad=0.02)
+                bar.set_label("share of the structure's voxels per bin")
                 bar.outline.set_visible(False)
 
-            lower = float(min(x.min(), y.min()))
-            upper = float(max(x.max(), y.max()))
-            panel.plot([lower, upper], [lower, upper], linestyle="--",
-                       linewidth=1.6, color=self.ink["muted"], zorder=4,
-                       label="perfect agreement")
-            if log:
-                panel.set_xscale("log")
-                panel.set_yscale("log")
-            panel.set_xlim(lower, upper)
-            panel.set_ylim(lower, upper)
-            panel.set_aspect("equal")
-
-            suffix = f" [{unit}]" if unit else ""
-            panel.set_xlabel(f"DFT reference {label}{suffix}")
-            panel.set_ylabel(f"FNO prediction {label}{suffix}")
-            panel.legend(loc="upper left")
-
-            panel.text(
-                0.98, 0.04,
-                f"relative $L^2$ = {metrics['relative_l2']:.4f}\n"
-                f"$R^2$ = {metrics['r2']:.4f}\n"
-                f"RMSE = {metrics['rmse']:.4g}{suffix}",
-                transform=panel.transAxes, ha="right", va="bottom", fontsize=9,
-                color=self.ink["secondary"],
-            )
             figure.suptitle(title or f"Parity: {label}", x=0.01, ha="left",
                             fontsize=12, color=self.ink["primary"])
+
+            # Both axes carry the same labels, but only the x-axis runs out of
+            # room for them. Thin them first, then rotate only if they still
+            # collide. `constrained_layout` re-reserves the margin afterwards,
+            # so no tight_layout call is needed -- and adding one would fight
+            # the constrained layout this figure was created with.
+            for panel in panels:
+                _thin_log_minor_labels(panel)
+                _rotate_if_crowded(figure, panel)
             return self._save(figure, name)
 
     # ------------------------------------------------------------------ #

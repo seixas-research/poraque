@@ -10,7 +10,7 @@ data:
 model:
   width: 16
   modes: 8
-  n_layers: 4
+  n_layers: 2
   projection_channels: 48
   activation: gelu
   use_coordinates: true
@@ -22,19 +22,19 @@ model:
   pauli_scale: null
   learn_pauli_scale: true
 training:
-  epochs: 200
+  epochs: 300
   batch_size: 4
   learning_rate: 0.002
   weight_decay: 0.0001
   scheduler: cosine
   grad_clip: 1.0
-  mode: universal
-  holdout: null
   valid_fraction: 0.2
   enable_kfold: false
   k_folds: 5
   eval_epoch: 10
-  seed: 33
+  early_stopping: 100
+  seed: 42
+  init_seed: null
   device: auto
   loss: relative_l2
   sobolev_weight: 0.1
@@ -50,4 +50,4 @@ output:
   plot_dir: results/plots
   report_dir: reports
   plot_format: png
-  dpi: 160
+  dpi: 200

@@ -36,7 +36,7 @@ model:
   pauli_scale: null
   learn_pauli_scale: true
 training:
-  epochs: 200
+  epochs: 300
   batch_size: 4
   learning_rate: 0.002
   weight_decay: 0.0001
@@ -46,8 +46,8 @@ training:
   enable_kfold: false
   k_folds: 5
   eval_epoch: 10
-  early_stopping: 50
-  seed: 0
+  early_stopping: 100
+  seed: 42
   init_seed: null
   device: auto
   loss: relative_l2
@@ -64,4 +64,28 @@ output:
   plot_dir: results/plots
   report_dir: reports
   plot_format: png
-  dpi: 160
+  dpi: 200
+symbolic:
+  enable_symbolic_distillation: false
+  target: model
+  features: gga
+  epsilon: 1.0e-08
+  unary_operations:
+  - exp
+  - log
+  - sqrt
+  - abs
+  binary_operations:
+  - +
+  - '-'
+  - '*'
+  - /
+  - ^
+  iterations: 40
+  population_size: 33
+  populations: 15
+  max_depth: 10
+  max_size: 30
+  parsimony: 0.0032
+  n_samples: 4000
+  seed: 0

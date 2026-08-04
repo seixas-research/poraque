@@ -50,6 +50,7 @@ What Poraquê provides
    fields/index
    ml/index
    energy/index
+   symbolic/index
    theory
    configuration
    api/index

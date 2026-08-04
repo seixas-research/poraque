@@ -191,7 +191,7 @@ compute. Worth doing only after the ranking test above passes.
 
 ## Cost
 
-N× training. With early stopping the folds now converge in 90–120 epochs
-rather than the full 200, so a 5-member committee at `resolution: 32` is
+N× training. With early stopping the folds converged in 90–120 epochs rather
+than running to the epoch cap, so a 5-member committee at `resolution: 32` is
 roughly 20 minutes per task on one GPU — comparable to a single K-fold run, and
 cheaper than one DFT calculation on a 32-atom cell.

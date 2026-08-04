@@ -231,7 +231,7 @@ class TrainingConfig_:
         objective is the supervised baseline until one is enabled deliberately.
     """
 
-    epochs: int = 200
+    epochs: int = 300
     batch_size: int = 4
     learning_rate: float = 2e-3
     weight_decay: float = 1e-4
@@ -241,7 +241,7 @@ class TrainingConfig_:
     enable_kfold: bool = False
     k_folds: int = 5
     eval_epoch: int = 10
-    early_stopping: int = 50
+    early_stopping: int = 100
     seed: int = 0
     init_seed: int = None
     device: str = "auto"
@@ -290,6 +290,97 @@ class OutputConfig:
 
 
 @dataclass
+class SymbolicConfig:
+    r"""
+    Symbolic distillation: fit a closed-form expression to what was learned.
+
+    A Fourier Neural Operator is accurate and opaque. Symbolic regression
+    searches the space of short algebraic expressions for one that reproduces
+    the same mapping, trading a little accuracy for something that can be read,
+    published and checked against known physics.
+
+    .. warning::
+       The features are **semi-local** — :math:`\rho` and its derivatives at a
+       point — so the search can only recover a semi-local functional. The
+       non-local part of what the operator learned is outside the hypothesis
+       space by construction and will show up as irreducible residual, not as a
+       failure of the search. A poor fit is therefore evidence *about the
+       physics*, not only about the run.
+
+    Attributes
+    ----------
+    enable_symbolic_distillation : bool
+        Run the search after training. Off by default: it is minutes to hours
+        of CPU on top of the fit, and it needs an extra dependency.
+    target : str
+        ``"model"`` distils the trained operator's own predictions — what the
+        network learned, faithful to it including its errors. ``"reference"``
+        fits the DFT data directly, which is plain symbolic regression against
+        ground truth and answers a different question.
+    features : str
+        ``"gga"`` regresses :math:`\tau` on the density together with its
+        dimensionless reduced derivatives — the reduced gradient
+        :math:`p = |\nabla\rho|/(2k_F\rho)` and reduced Laplacian
+        :math:`q = \nabla^2\rho/(4k_F^2\rho)`, with
+        :math:`k_F = (3\pi^2\rho)^{1/3}`. These are the GGA and meta-GGA
+        variables a semi-local kinetic functional is written in.
+
+        ``"enhancement"`` drops :math:`\rho` and fits
+        :math:`F = \tau/\tau_{\rm TF}` on :math:`(p, q)` alone — the form the
+        literature uses, in which Thomas-Fermi is :math:`F = 1` and von
+        Weizsäcker is :math:`F = 5p^2/3`, and every constant to be found is
+        order unity.
+
+        ``"raw"`` regresses :math:`\tau` on
+        :math:`(\rho, |\nabla\rho|, \nabla^2\rho)`: dimensional, kept for
+        checking the reduced forms against something unprocessed.
+    epsilon : float
+        Vacuum threshold in atomic units. Denominators are clamped at it and
+        voxels at or below it are dropped, because :math:`p` and :math:`q` in
+        vacuum are ratios of two vanishing numbers — noise with a plausible
+        magnitude, which corrupts a fit more quietly than a gap would.
+    unary_operations, binary_operations : list of str
+        The operator alphabet handed to the engine. Keep it small: the search
+        space grows combinatorially, and an operator that cannot appear in the
+        answer only dilutes the population. ``/`` and ``log`` are the usual
+        sources of singularities on a density that approaches zero.
+    iterations : int
+        Search iterations. The single biggest quality/time knob.
+    population_size, populations : int
+        Individuals per population, and how many run in parallel.
+    max_depth, max_size : int
+        Ceilings on expression depth and node count — the parsimony that keeps
+        the result readable rather than a fitted polynomial in disguise.
+    parsimony : float
+        Penalty per node in the fitness. Higher gives shorter, worse-fitting
+        expressions.
+    n_samples : int
+        Voxels sampled across the dataset. A single 32³ structure is already
+        32 768 points and the search cost is linear in them, so the default
+        trades a negligible amount of statistics for a tractable run.
+    seed : int
+        Seeds the sampling and the engine, so a run is reproducible.
+    """
+
+    enable_symbolic_distillation: bool = False
+    target: str = "model"
+    features: str = "gga"
+    epsilon: float = 1e-8
+    unary_operations: list = field(
+        default_factory=lambda: ["exp", "log", "sqrt", "abs"])
+    binary_operations: list = field(
+        default_factory=lambda: ["+", "-", "*", "/", "^"])
+    iterations: int = 40
+    population_size: int = 33
+    populations: int = 15
+    max_depth: int = 10
+    max_size: int = 30
+    parsimony: float = 0.0032
+    n_samples: int = 4000
+    seed: int = 0
+
+
+@dataclass
 class TrainingConfig:
     """
     Complete definition of a training run.
@@ -298,8 +389,8 @@ class TrainingConfig:
     ----------
     task : str
         ``"ext2chg"``, ``"chg2tau"`` or ``"all"``.
-    data, model, training, output : dataclass
-        The four setting groups.
+    data, model, training, output, symbolic : dataclass
+        The five setting groups.
 
     Examples
     --------
@@ -313,9 +404,11 @@ class TrainingConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig_ = field(default_factory=TrainingConfig_)
     output: OutputConfig = field(default_factory=OutputConfig)
+    symbolic: SymbolicConfig = field(default_factory=SymbolicConfig)
 
     _SECTIONS = {"data": DataConfig, "model": ModelConfig,
-                 "training": TrainingConfig_, "output": OutputConfig}
+                 "training": TrainingConfig_, "output": OutputConfig,
+                 "symbolic": SymbolicConfig}
 
     # ------------------------------------------------------------------ #
     # Construction
@@ -467,13 +560,32 @@ class TrainingConfig:
                 for f in fields(self.model) if f.name not in excluded}
 
     def describe(self):
-        """Multi-line human-readable summary, for the log header."""
+        """
+        Multi-line human-readable summary, for the log header.
+
+        Nested mappings are broken out one entry per line instead of being
+        inlined as a repr. ``training.physics`` is 116 characters of
+        ``{'electron_count_weight': 0.0, ...}``, which wrapped across the
+        terminal and buried the four weights that actually select the
+        objective -- the run header is where a reader checks what is switched
+        on, so those have to be readable at a glance.
+        """
         lines = [f"task: {self.task}"]
         for name in self._SECTIONS:
             section = getattr(self, name)
-            body = ", ".join(f"{f.name}={getattr(section, f.name)}"
-                             for f in fields(section))
-            lines.append(f"{name}: {body}")
+            inline, nested = [], []
+            for entry in fields(section):
+                value = getattr(section, entry.name)
+                if isinstance(value, dict) and value:
+                    nested.append((entry.name, value))
+                else:
+                    inline.append(f"{entry.name}={value}")
+            lines.append(f"{name}: {', '.join(inline)}")
+            for key, mapping in nested:
+                lines.append(f"  {key}:")
+                width = max(len(str(inner)) for inner in mapping)
+                for inner, setting in mapping.items():
+                    lines.append(f"    {str(inner):<{width}s} = {setting}")
         return "\n".join(lines)
 
 

@@ -44,6 +44,11 @@ entry points are registered at install time, not import time.
 | --- | --- | --- |
 | CUDA build of PyTorch | NVIDIA GPUs | see [pytorch.org](https://pytorch.org) |
 | `pdflatex` / `latexmk` | automatic PDF reports | TeX Live or MacTeX |
+| PySR + sympy | [symbolic distillation](symbolic/index.md) | `pip install -e ".[symbolic]"` |
+
+The `symbolic` extra is kept separate because PySR carries a Julia toolchain,
+which it downloads the first time a search runs. Everything else in the package
+works without it.
 
 Apple Silicon needs nothing extra: the Metal (MPS) backend ships with the
 standard PyTorch wheel and is selected automatically.

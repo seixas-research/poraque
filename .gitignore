@@ -257,3 +257,6 @@ results/
 reports/
 reports_blur/
 models_blur/
+
+# PySR scratch output (symbolic distillation)
+outputs/

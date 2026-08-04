@@ -61,6 +61,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import asdict
 
 import numpy as np
 
@@ -255,9 +256,51 @@ def metrics(prediction, target):
     }
 
 
-def format_metrics(name, values, unit):
+#: Fallback width of the label column, used when the caller does not size it.
+MIN_LABEL_WIDTH = 22
+
+#: Names of the analytic references reported beside the model, per task. Kept
+#: separate from their computation so the column can be sized before any
+#: structure has been evaluated.
+BASELINE_NAMES = {"chg2tau": ("Thomas-Fermi", "von Weizsacker", "TF + vW/9")}
+DEFAULT_BASELINE_NAMES = ("mean density",)
+
+
+def baseline_names(task_name):
+    """Labels of the analytic baselines for ``task_name``."""
+    return BASELINE_NAMES.get(task_name, DEFAULT_BASELINE_NAMES)
+
+
+def metrics_label_width(names, task_name, baselines=True):
+    """
+    Width of the label column, sized so every row of the table lines up.
+
+    Computed rather than fixed because the baseline rows are what broke the
+    alignment: they are indented under their structure *and* carry a functional
+    name, so ``"  baseline: von Weizsacker"`` is 26 characters against a
+    hard-coded 22 and quietly shoved the numeric columns four places right.
+    A structure named more descriptively than ``struct_000`` would do the same.
+
+    Parameters
+    ----------
+    names : iterable of str
+        Every structure identifier the section will print.
+    task_name : str
+        Selects the baseline labels.
+    baselines : bool, optional
+        Whether baseline rows will be printed at all.
+    """
+    labels = [f"{name} ({tag})" for name in names
+              for tag in ("train", "VALIDATION")]
+    if baselines:
+        labels += [f"  baseline: {label}" for label in baseline_names(task_name)]
+    return max([MIN_LABEL_WIDTH] + [len(label) for label in labels])
+
+
+def format_metrics(name, values, unit, width=MIN_LABEL_WIDTH):
     """One aligned line per metric set."""
-    return (f"    {name:<22s} MSE {values['mse']:11.5g}  MAE {values['mae']:10.5g}  "
+    return (f"    {name:<{width}s} MSE {values['mse']:11.5g}  "
+            f"MAE {values['mae']:10.5g}  "
             f"RMSE {values['rmse']:10.5g}  relL2 {values['relative_l2']:8.4f}  "
             f"R2 {values['r2']:8.4f}   [{unit}]")
 
@@ -267,8 +310,12 @@ def physics_baselines(task, source, target):
     if task.name == "chg2tau":
         tf = thomas_fermi_tau(source.data)
         vw = von_weizsacker_tau(source.data, source.grid)
-        return {"Thomas-Fermi": tf, "von Weizsacker": vw, "TF + vW/9": tf + vw / 9.0}
-    return {"mean density": np.full_like(target.data, target.data.mean())}
+        fields = (tf, vw, tf + vw / 9.0)
+    else:
+        fields = (np.full_like(target.data, target.data.mean()),)
+    # Zipped against the shared name table, so the labels the column was sized
+    # for and the labels actually printed cannot drift apart.
+    return dict(zip(baseline_names(task.name), fields))
 
 
 def build_loss(config, task_name):
@@ -406,7 +453,7 @@ def resolve_validation_split(dataset, config):
 
 
 def evaluate_material(operator, dataset, index, task, log, label,
-                      baselines=False):
+                      baselines=False, width=MIN_LABEL_WIDTH):
     """
     Predict one material and report metrics against its reference field.
 
@@ -418,18 +465,107 @@ def evaluate_material(operator, dataset, index, task, log, label,
         von Weizsäcker is the bar, and printing them beside the model is the
         only way the reader can tell whether it was cleared. Worth the extra
         lines on validation structures, noise on training ones.
+    width : int, optional
+        Label-column width, from :func:`metrics_label_width`. Pass the width
+        computed for the whole section, not per row, or the baseline rows will
+        not line up with the structure rows above them.
     """
     source, target = dataset.load_fields(index)
     prediction = operator.predict(source)
     values = metrics(prediction.data, target.data)
-    log(format_metrics(label, values, task.target_unit))
+    log(format_metrics(label, values, task.target_unit, width))
 
     if baselines:
         for name, reference in physics_baselines(task, source, target).items():
             log(format_metrics(f"  baseline: {name}",
                                metrics(reference, target.data),
-                               task.target_unit))
+                               task.target_unit, width))
     return prediction, target, values
+
+
+def validate_symbolic_settings(settings):
+    """
+    Check the symbolic settings before anything is trained.
+
+    Distillation runs *after* the fit, so a typo in ``features`` would
+    otherwise surface an hour in, with the search — not the training — as the
+    only casualty but the feedback uselessly late. Checked here it costs a
+    millisecond and fails on the command line.
+    """
+    if not settings.enable_symbolic_distillation:
+        return
+    from poraque.ml.symbolic import FEATURE_SCHEMES
+
+    if settings.features not in FEATURE_SCHEMES:
+        raise SystemExit(
+            f"symbolic.features={settings.features!r} is not a known feature "
+            f"scheme; expected one of {list(FEATURE_SCHEMES)}.")
+    if settings.target not in ("model", "reference"):
+        raise SystemExit(
+            f"symbolic.target={settings.target!r} is not known; expected "
+            f"'model' (distil the trained operator) or 'reference' (fit the "
+            f"DFT data).")
+    if settings.epsilon <= 0:
+        raise SystemExit(
+            f"symbolic.epsilon={settings.epsilon!r} must be positive: it is a "
+            f"density floor and clamps every denominator.")
+    # PySR's tournament selection draws 10 individuals by default and refuses
+    # to run when the population cannot supply them. Caught here it is one
+    # line; caught by the engine it is a Julia stack trace after training.
+    if settings.population_size <= 10:
+        raise SystemExit(
+            f"symbolic.population_size={settings.population_size} is too "
+            f"small: PySR's tournament selection needs a population larger "
+            f"than 10.")
+
+
+def run_symbolic_distillation(task, dataset, operator, config, log):
+    r"""
+    Search for a closed-form expression reproducing the trained operator.
+
+    Only ``chg2tau`` is attempted. Distillation looks for a *functional of the
+    density*, and ``ext2chg`` maps a potential to a density — the Hohenberg-Kohn
+    map, whose whole content is non-local, so a semi-local expression for it
+    would be meaningless rather than merely inaccurate.
+
+    Returns
+    -------
+    SymbolicResult or None
+        ``None`` when the feature is off, the task is not ``chg2tau``, or the
+        search failed. A failure is reported and swallowed: it arrives after
+        the model is already trained, and losing a finished fit to an optional
+        analysis would be the worse outcome.
+    """
+    settings = config.symbolic
+    if not settings.enable_symbolic_distillation:
+        return None
+    if task.name != "chg2tau":
+        log(f"\n  symbolic distillation: skipped for {task.name} "
+            f"(a density functional is only meaningful for chg2tau).")
+        return None
+
+    from poraque.ml.symbolic import distill_dataset
+
+    log(f"\n{'=' * 78}")
+    log(f"SYMBOLIC DISTILLATION - {task.name}")
+    log("=" * 78)
+    start = time.time()
+    try:
+        result = distill_dataset(dataset, settings, operator=operator, log=log)
+    except ImportError as error:
+        log(f"  unavailable: {error}")
+        return None
+    except (ValueError, RuntimeError) as error:
+        log(f"  failed: {error}")
+        return None
+
+    log(f"\n{result.summary()}")
+    log(f"  search time  : {time.time() - start:.1f} s")
+    log("")
+    log("  NOTE: the features are semi-local, so this is the best semi-local")
+    log("  functional matching the operator -- not a reconstruction of it. The")
+    log("  residual measures how much of the learned map is non-local.")
+    return result
 
 
 def run_task(task_name, cache, config, log):
@@ -518,6 +654,7 @@ def run_task(task_name, cache, config, log):
     label_text, unit = FIELD_LABELS[task.target_field]
     per_material, figures = {}, []
     report = None
+    showcase = None
     if config.output.plot_dir:
         from poraque.vis import TrainingReport
 
@@ -529,32 +666,48 @@ def run_task(task_name, cache, config, log):
 
     log(f"\n  per-structure results "
         f"({'TRAINING FIT' if not validation_names else 'train / validation'}):")
+    label_width = metrics_label_width(
+        [record.identifier for record in train_records + test_records],
+        task.name, baselines=validation is not None)
+
     for index in range(len(train_set)):
         name = train_records[index].identifier
         prediction, target, values = evaluate_material(
-            operator, train_set, index, task, log, f"{name} (train)")
+            operator, train_set, index, task, log, f"{name} (train)",
+            width=label_width)
         per_material[name] = {"split": "train", "metrics": values,
                               "predicted_integral": prediction.integrate(),
                               "reference_integral": target.integrate()}
         if report is not None and index == 0:
             report.prefix = f"{task.name}_{name}"
+            showcase = (target, prediction)
             figures.append(report.field_comparison(
                 target, prediction, label=label_text, unit=unit,
                 log=(task.target_field in ("CHGCAR", "TAUCAR")),
                 title=f"{task.name} · {name}"))
-            figures.append(report.parity(
-                target, prediction, label=label_text, unit=unit,
-                log=(task.target_field in ("CHGCAR", "TAUCAR"))))
 
+    held_out = None
     if validation is not None:
         for index in range(len(validation)):
             name = test_records[index].identifier
             prediction, target, values = evaluate_material(
                 operator, validation, index, task, log, f"{name} (VALIDATION)",
-                baselines=True)
+                baselines=True, width=label_width)
             per_material[name] = {"split": "validation", "metrics": values,
                                   "predicted_integral": prediction.integrate(),
                                   "reference_integral": target.integrate()}
+            if index == 0:
+                held_out = (target, prediction)
+
+    # The parity plot is drawn after both loops so it can carry the held-out
+    # structure beside the training one. Two clouds on shared axes show the
+    # generalisation gap directly -- a validation cloud visibly wider about the
+    # identity line is the same story the aggregate numbers tell, but visible
+    # rather than inferred.
+    if report is not None and showcase is not None:
+        figures.append(report.parity(
+            *showcase, validation=held_out, label=label_text, unit=unit,
+            log=(task.target_field in ("CHGCAR", "TAUCAR"))))
 
     # ---------------- aggregate ---------------- #
     train_metrics = [v["metrics"] for v in per_material.values()
@@ -579,6 +732,9 @@ def run_task(task_name, cache, config, log):
     checkpoint = None
     if figures:
         log(f"  figures         -> {config.output.plot_dir} ({len(figures)})")
+
+    # ---------------- symbolic distillation ---------------- #
+    symbolic = run_symbolic_distillation(task, train_set, operator, config, log)
 
     # ---------------- PDF report ---------------- #
     pdf = None
@@ -609,10 +765,11 @@ def run_task(task_name, cache, config, log):
                 "training time": f"{elapsed:.1f} s",
                 "final train loss": f"{history['train_loss'][-1]:.5f}",
             },
-            configuration={f"{section}.{key}": str(value)
+            configuration={f"{section}.{key}": value
                            for section, values in config.to_dict().items()
                            if isinstance(values, dict)
                            for key, value in values.items()},
+            symbolic=symbolic,
         )
         log(f"  PDF report      -> {pdf}")
 
@@ -632,6 +789,7 @@ def run_task(task_name, cache, config, log):
         "final_train_loss": history["train_loss"][-1],
         "history": curves,
         "early_stopping": stopping,
+        "symbolic": (asdict(symbolic) if symbolic is not None else None),
         # Not serialised into the JSON summary; main() pops it to build the
         # unified bundle once every task has trained.
         "operator": operator,
@@ -703,6 +861,9 @@ def run_task_kfold(task_name, cache, config, log):
 
     label_text, unit = FIELD_LABELS[task.target_field]
     records, figures = [], []
+    # Sized once over every structure, so the column does not shift from fold
+    # to fold as different names land in the validation group.
+    label_width = metrics_label_width(names, task.name, baselines=True)
 
     for index, group in enumerate(folds, 1):
         log(f"\n  --- fold {index}/{len(folds)}: validate on {group} ---")
@@ -738,7 +899,7 @@ def run_task_kfold(task_name, cache, config, log):
             name = val_records[position].identifier
             prediction, target, values = evaluate_material(
                 operator, val_set, position, task, log, f"{name} (VALIDATION)",
-                baselines=True)
+                baselines=True, width=label_width)
             records.append({"fold": index, "material": name,
                             "split": f"fold {index}", "metrics": values,
                             "predicted_integral": prediction.integrate(),
@@ -807,7 +968,7 @@ def run_task_kfold(task_name, cache, config, log):
                 "With few folds the spread is wide; quote the standard "
                 "deviation alongside the mean.",
             ],
-            configuration={f"{section}.{key}": str(value)
+            configuration={f"{section}.{key}": value
                            for section, values in config.to_dict().items()
                            if isinstance(values, dict)
                            for key, value in values.items()},
@@ -903,6 +1064,29 @@ def build_parser():
     group.add_argument("--device", dest="training.device", default=None,
                        help="auto | cuda | mps | cpu")
 
+    group = parser.add_argument_group("symbolic distillation")
+    group.add_argument("--symbolic",
+                       dest="symbolic.enable_symbolic_distillation",
+                       action="store_const", const=True, default=None,
+                       help="after training, search for a closed-form "
+                            "expression reproducing the chg2tau operator "
+                            "(requires PySR)")
+    group.add_argument("--symbolic-target", dest="symbolic.target",
+                       choices=["model", "reference"], default=None,
+                       help="fit the operator's predictions (model) or the "
+                            "DFT data (reference)")
+    group.add_argument("--symbolic-features", dest="symbolic.features",
+                       choices=["gga", "enhancement", "raw"], default=None,
+                       help="variables handed to the engine: (rho, p, q), the "
+                            "enhancement factor on (p, q), or the dimensional "
+                            "(rho, |grad rho|, lap rho)")
+    group.add_argument("--symbolic-epsilon", dest="symbolic.epsilon",
+                       type=float, default=None, metavar="RHO",
+                       help="vacuum threshold in e/a0^3; denominators are "
+                            "clamped at it and voxels below it dropped")
+    group.add_argument("--symbolic-iterations", dest="symbolic.iterations",
+                       type=int, default=None, metavar="N")
+
     group = parser.add_argument_group("output overrides")
     group.add_argument("--log", dest="output.log", default=None)
     group.add_argument("--json", dest="output.json", default=None)
@@ -934,6 +1118,7 @@ def run(argv=None):
     config.apply_overrides(overrides)
     if args.no_plots:
         config.output.plot_dir = None
+    validate_symbolic_settings(config.symbolic)
 
     log = Tee(config.output.log)
     try:

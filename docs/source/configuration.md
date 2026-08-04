@@ -172,8 +172,8 @@ the training log reports any reference points that violate it.
 | `enable_kfold` | `false` | run K-fold cross-validation instead; ignores `valid_fraction` |
 | `k_folds` | `5` | number of folds, capped at the structure count |
 | `eval_epoch` | `10` | evaluate and log every N epochs |
-| `early_stopping` | `50` | stop after N epochs without validation improvement; `0` disables |
-| `epochs` | `200` | passes over the training set |
+| `early_stopping` | `100` | stop after N epochs without validation improvement; `0` disables |
+| `epochs` | `300` | passes over the training set |
 | `batch_size` | `4` | maximum samples per grid-shape bucket |
 | `learning_rate` | `0.002` | AdamW step size |
 | `weight_decay` | `0.0001` | AdamW weight decay |
@@ -233,8 +233,8 @@ without a current number.
     train loss: mean PhysicsInformedLoss per batch   |   val rel L2: held-out error, physical units
           epoch     train loss     val rel L2
     -----------------------------------------
-         10/200        0.31745        0.34118
-         20/200        0.18902        0.21447  *
+         10/300        0.31745        0.34118
+         20/300        0.18902        0.21447  *
 ```
 
 ### `early_stopping`
@@ -243,12 +243,12 @@ Stop after this many epochs without an improvement in the **validation** error,
 and restore the best weights seen:
 
 ```text
-         30/200        0.03173        0.03659  *
+         30/300        0.03173        0.03659  *
          ...
-         38/200        0.02249        0.06568
+         38/300        0.02249        0.06568
     stopped early at epoch 38: no improvement in 8 epochs (best 0.03659 at epoch 30)
 
-  trained 38/200 epochs in 12.0 s   loss 0.8599 -> 0.0225
+  trained 38/300 epochs in 12.0 s   loss 0.8599 -> 0.0225
 ```
 
 ```{warning}
@@ -258,8 +258,10 @@ and so can never signal that training should stop — asking for early stopping
 anyway **warns** rather than silently doing nothing and leaving you believing
 the run was protected.
 
-With the shipped default `valid_fraction: 0.0`, early stopping is therefore
-inactive. Set a split to use it.
+The shipped default holds a fifth of the structures out (`valid_fraction:
+0.2`), so early stopping is active out of the box. It goes inactive only if you
+set `valid_fraction: 0` to train on every structure, and the run says so rather
+than appearing to be protected.
 ```
 
 Patience is counted in *epochs* but checked only on the epochs where validation
