@@ -89,6 +89,12 @@ _LAZY = {
     "FieldOperator": "poraque.ml.training",
     "evaluate": "poraque.ml.training",
     "train": "poraque.ml.training",
+    # query by committee
+    "Committee": "poraque.ml.committee",
+    "committee_spread": "poraque.ml.committee",
+    "committee_integrals": "poraque.ml.committee",
+    "disagreement_error_correlation": "poraque.ml.committee",
+    "jensen_shannon_spread": "poraque.ml.committee",
     # unified checkpoint
     "BUNDLE_FILENAME": "poraque.ml.training",
     "BUNDLE_FORMAT": "poraque.ml.training",

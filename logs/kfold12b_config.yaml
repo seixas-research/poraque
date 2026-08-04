@@ -28,13 +28,12 @@ training:
   weight_decay: 0.0001
   scheduler: cosine
   grad_clip: 1.0
-  mode: universal
-  holdout: null
   valid_fraction: 0.2
-  enable_kfold: false
+  enable_kfold: true
   k_folds: 5
   eval_epoch: 10
-  seed: 33
+  early_stopping: 50
+  seed: 0
   device: auto
   loss: relative_l2
   sobolev_weight: 0.1
@@ -44,10 +43,10 @@ training:
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0
 output:
-  log: logs/fno_training.log
-  json: logs/fno_training.json
-  checkpoint_dir: models
-  plot_dir: results/plots
-  report_dir: reports
+  log: logs/kfold12b.log
+  json: logs/kfold12b.json
+  checkpoint_dir: ''
+  plot_dir: ''
+  report_dir: ''
   plot_format: png
   dpi: 160

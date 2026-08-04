@@ -57,23 +57,32 @@ Three mechanisms deliver grid independence:
 `GroupNorm` is used throughout: batch statistics are meaningless when every
 sample has a different spatial extent.
 
-## Universal training
+## Training
 
-**One model is trained on the combined data of all structures.** Batches are
-drawn across materials, so a gradient step generally mixes several.
+**One model per task is trained across all the structures**, never one per
+material. Batches are drawn across materials, so a gradient step generally
+mixes several.
 
 ```bash
-python scripts/run_train.py --config configs/train_config.yaml   # mode: universal
+python scripts/run_train.py --config configs/train_config.yaml
 ```
 
-This writes a single unified checkpoint, `models/poraque_models.pth`,
-holding both operators under the keys `ext2chg` and `chg2tau`.
+A fifth of the structures is held back for validation (`valid_fraction`), so
+the reported score is genuinely held out. The run writes a single unified
+checkpoint, `models/poraque_models.pth`, holding both operators under the keys
+`ext2chg` and `chg2tau`.
+
+K-fold cross-validation is the only variation on this:
+
+```bash
+python scripts/run_train.py --config configs/train_config.yaml --kfold
+```
 
 ```{warning}
-With no structure held out, the reported metrics are **training fit**. They
-show the model can represent the data; they are not a generalisation estimate.
-Use `--mode leave_one_out` for that, or name structures in
-`training.holdout`.
+With `valid_fraction: 0` nothing is held out and the reported metrics are
+**training fit**. They show the model can represent the data; they are not a
+generalisation estimate. That setting is for the final artefact, which uses all
+the data — quote a `--kfold` run for the number.
 ```
 
 ## Constraints enforced by construction

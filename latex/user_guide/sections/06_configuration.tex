@@ -220,15 +220,14 @@ head --- the training log reports any reference points that violate it.
 \toprule
 Key & Default & Meaning \\
 \midrule
-\opt{mode} & \opt{universal} & \opt{universal} or \opt{leave\_one\_out}. \\
-\opt{holdout} & \opt{null} & Structure names excluded from universal
-training. \\
-\opt{valid\_fraction} & \opt{0.0} & Fraction of structures drawn at random for
-validation. \\
-\opt{enable\_kfold} & \opt{false} & Run K-fold cross-validation; takes
-precedence over \opt{mode}. \\
+\opt{valid\_fraction} & \opt{0.2} & Fraction of structures held out for
+validation; \opt{0} uses every structure. \\
+\opt{enable\_kfold} & \opt{false} & Run K-fold cross-validation instead;
+ignores \opt{valid\_fraction}. \\
 \opt{k\_folds} & \opt{5} & Number of folds, capped at the structure count. \\
 \opt{eval\_epoch} & \opt{10} & Evaluate and log every this many epochs. \\
+\opt{early\_stopping} & \opt{50} & Stop after this many epochs without
+validation improvement; \opt{0} disables. \\
 \opt{epochs} & \opt{200} & Passes over the training set. \\
 \opt{batch\_size} & \opt{4} & Maximum samples per grid-shape bucket. \\
 \opt{learning\_rate} & \opt{0.002} & AdamW step size. \\
@@ -249,36 +248,35 @@ below. \\
 
 \subsection{The validation split}
 
-These keys decide \emph{what question the run answers}, and are the settings
-most worth getting right.
+There is \textbf{one} training protocol and \textbf{one} variation on it.
 
-\begin{description}
-  \item[\opt{universal}] Trains \textbf{one} model per task on the combined
-    data of every structure and saves a single checkpoint. This is the
-    deployable artefact. Poraqu\^e never trains a separate model per material.
-  \item[\opt{holdout}] A list of structure names excluded from that training
-    and scored separately, which turns the reported number into a
-    generalisation estimate.
-  \item[\opt{valid\_fraction}] The same, but drawing the structures at random,
-    shuffling with \opt{seed}. \opt{0} keeps everything for training.
-  \item[\opt{enable\_kfold}] Each fold trains a fresh model on $K-1$ groups and
-    scores it on the group held out. Produces a generalisation estimate with a
-    spread --- but no single model to ship.
-  \item[\opt{leave\_one\_out}] The same protocol with $K$ equal to the number
-    of structures.
-\end{description}
+By default a run trains a single model per task, holding back
+\opt{valid\_fraction} of the structures for validation. That is all there is to
+it --- no mode to select, no structures to name.
 
-Both are worth running: cross-validation says whether the architecture
-generalises, \opt{universal} produces the model that uses all the data.
+\opt{enable\_kfold} swaps that for K-fold cross-validation: each fold trains a
+fresh model on $K-1$ groups and scores it on the group held out. It answers a
+different question --- whether the architecture generalises --- and produces
+$K$ models rather than one to deploy. \opt{valid\_fraction} is ignored, since
+the folds define the splits. Setting \opt{k\_folds} to the number of structures
+gives leave-one-out.
 
-\begin{pnote}
-\opt{holdout} and \opt{valid\_fraction} both define a validation split and are
-\textbf{mutually exclusive} --- setting both is an error rather than a silent
-precedence rule, so the protocol cannot depend on which key the reader happened
-to look at. \opt{valid\_fraction} always keeps at least one structure on each
-side, so a fraction that would round to zero gives 1 rather than degrading into
-a universal fit while the config claims otherwise.
-\end{pnote}
+\begin{ptip}
+Splitting is always at the \emph{structure} level: whole materials move
+together. A voxel-level split would place the same crystal on both sides, and
+since neighbouring voxels are strongly correlated the score would look
+excellent while saying nothing about transfer to a new material.
+\end{ptip}
+
+\begin{pwarn}
+\opt{valid\_fraction} defaults to \textbf{0.2}, so an ordinary run reports a
+genuine held-out score and \opt{early\_stopping} is active. The trade-off is
+that the model has then seen only $80\,\%$ of the data. For the final
+deployable artefact set \opt{valid\_fraction: 0} --- accepting that its own
+metrics become a \textbf{training fit} carrying no generalisation claim, about
+four times better than the cross-validated score on the reference dataset ---
+and quote a separate \opt{--kfold} run for the number.
+\end{pwarn}
 
 \subsection{\opt{eval\_epoch}}
 
@@ -289,27 +287,50 @@ ends without a current number.
 
 \begin{lstlisting}
   progress (every 10 epochs):
-    epoch    10/200  train 0.31745  val_rel_L2 0.34118
-    epoch    20/200  train 0.18902  val_rel_L2 0.21447  *
+    train loss: mean PhysicsInformedLoss per batch   |   val rel L2: held-out error, physical units
+          epoch     train loss     val rel L2
+    -----------------------------------------
+         10/200        0.31745        0.34118
+         20/200        0.18902        0.21447  *
 \end{lstlisting}
+
+\subsection{\opt{early\_stopping}}
+
+Stop after this many epochs without an improvement in the \textbf{validation}
+error, and restore the best weights seen:
+
+\begin{lstlisting}
+         30/200        0.03173        0.03659  *
+         ...
+         38/200        0.02249        0.06568
+    stopped early at epoch 38: no improvement in 8 epochs
+                                 (best 0.03659 at epoch 30)
+
+  trained 38/200 epochs in 12.0 s   loss 0.8599 -> 0.0225
+\end{lstlisting}
+
+\begin{pwarn}
+It needs a validation split (\opt{valid\_fraction > 0}). With
+nothing held out there is only the training loss, which falls monotonically by
+construction and so can never signal that training should stop --- asking for
+early stopping anyway \textbf{warns} rather than silently doing nothing and
+leaving you believing the run was protected.
+
+With the shipped default \opt{valid\_fraction: 0.0}, early stopping is
+therefore inactive. Set a split to use it.
+\end{pwarn}
+
+Patience is counted in \emph{epochs} but checked only on the epochs where
+validation is computed, so a value below \opt{eval\_epoch} behaves like
+\opt{eval\_epoch}.
+
+The best weights are restored on exit, so the operator you get is the best one
+\emph{measured} rather than merely the last one reached --- stopping partway
+down a degrading curve would otherwise hand back the degraded model.
 
 The \opt{*} marks an epoch that improved on the best validation score. Only
 epochs on which validation was actually measured can do so --- a checkpoint is
 written against a measured score, never an assumed one.
-
-\begin{pwarn}
-With \opt{mode: universal} and \opt{holdout: null}, nothing is held out and the
-reported metrics are \textbf{training fit}, carrying no generalisation claim.
-On the reference dataset they are four to five times better than the
-cross-validated score. Quote the cross-validated numbers.
-\end{pwarn}
-
-\begin{ptip}
-Splitting is always at the \emph{structure} level: whole materials move
-together. A voxel-level split would place the same crystal on both sides of the
-split, and since neighbouring voxels are strongly correlated the score would
-look excellent while saying nothing about transfer to a new material.
-\end{ptip}
 
 \subsection{\opt{batch\_size}}
 
@@ -391,7 +412,7 @@ left behind.
 \begin{lstlisting}
 task: all
 model:    {pauli_residual: true}
-training: {mode: universal, epochs: 200}
+training: {valid_fraction: 0, epochs: 200}
 \end{lstlisting}
 
 \paragraph{Measure generalisation.}

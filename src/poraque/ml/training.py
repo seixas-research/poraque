@@ -17,6 +17,7 @@ with :mod:`poraque.fields`.
 """
 
 import os
+import warnings
 
 import numpy as np
 import torch
@@ -120,6 +121,18 @@ class FieldOperator:
         has actually seen: an FNO is resolution-*flexible* but not
         resolution-*indifferent*, and nothing downstream can detect that it is
         being extrapolated.
+    init_seed : int, optional
+        Seed for the **weight initialisation only**. The global RNG state is
+        saved and restored around the draw, so everything downstream — batch
+        order, any stochastic layer — is left on the stream it would otherwise
+        have had.
+
+        That isolation is what makes a *query-by-committee* ensemble
+        interpretable: members share a seed for the data pipeline and differ
+        only in ``init_seed``, so their disagreement measures the spread of
+        optimisation outcomes rather than a confounded mixture of that and a
+        reshuffled dataset. ``None`` leaves initialisation on the ambient
+        stream.
     **model_kwargs
         Forwarded to :class:`~poraque.ml.fno.FNO3d`.
     """
@@ -127,19 +140,36 @@ class FieldOperator:
     def __init__(self, task, model=None, input_transform=None,
                  target_transform=None, device=None, pauli_residual=False,
                  pauli_scale=1.0, learn_pauli_scale=True,
-                 training_resolution=None, **model_kwargs):
+                 training_resolution=None, init_seed=None, **model_kwargs):
         self.task = resolve_task(task)
         self.device = resolve_device(device)
         self.input_transform = input_transform or Identity()
         self.target_transform = target_transform or Identity()
         self.training_resolution = (None if training_resolution is None
                                     else int(training_resolution))
+        self.init_seed = None if init_seed is None else int(init_seed)
 
         self.pauli_residual = bool(pauli_residual)
         self.pauli_scale = float(pauli_scale)
         self.learn_pauli_scale = bool(learn_pauli_scale)
 
-        backbone = model if model is not None else FNO3d(**model_kwargs)
+        if model is not None:
+            backbone = model
+        elif self.init_seed is None:
+            backbone = FNO3d(**model_kwargs)
+        else:
+            # Seed the draw, then hand the global stream back untouched. A bare
+            # manual_seed would also re-align every later consumer of the RNG,
+            # so two committee members would differ in their batch order as
+            # well as their weights -- and the disagreement would no longer
+            # isolate the effect it is meant to measure.
+            state = torch.random.get_rng_state()
+            try:
+                torch.manual_seed(self.init_seed)
+                backbone = FNO3d(**model_kwargs)
+            finally:
+                torch.random.set_rng_state(state)
+
         if self.pauli_residual:
             if self.task.name != "chg2tau":
                 raise ValueError(
@@ -226,6 +256,7 @@ class FieldOperator:
             "pauli_scale": self.pauli_scale,
             "learn_pauli_scale": self.learn_pauli_scale,
             "training_resolution": self.training_resolution,
+            "init_seed": self.init_seed,
         }
 
     @classmethod
@@ -266,6 +297,7 @@ class FieldOperator:
             pauli_scale=state.get("pauli_scale", 1.0),
             learn_pauli_scale=state.get("learn_pauli_scale", True),
             training_resolution=state.get("training_resolution"),
+            init_seed=state.get("init_seed"),
             **inferred,
         )
         operator.model.load_state_dict(state["model_state"])
@@ -469,8 +501,8 @@ def load_bundle(path, task, model=None, device=None, **model_kwargs):
 
 def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
           weight_decay=1e-4, validation=None, loss=None, scheduler="cosine",
-          grad_clip=1.0, eval_every=1, checkpoint=None, seed=0, verbose=True,
-          log=None):
+          grad_clip=1.0, eval_every=1, early_stopping=0, checkpoint=None,
+          seed=0, verbose=True, log=None):
     """
     Train a :class:`FieldOperator`.
 
@@ -501,6 +533,18 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         *only* on these epochs, so this is a real saving on a large validation
         set, not merely a quieter log. The final epoch is always reported, so
         a run never ends without a current number.
+    early_stopping : int, optional
+        Stop after this many epochs without an improvement in the validation
+        error, and restore the best weights seen. ``0`` (default) disables it.
+
+        Requires ``validation``: without it the only measurable quantity is the
+        training loss, which falls monotonically by construction and therefore
+        can never signal that training should stop. Asking for early stopping
+        with no validation set warns rather than silently doing nothing.
+
+        Because the best weights are restored, the operator returned is the
+        best one *measured*, not merely the last one reached — stopping partway
+        down a degrading curve would otherwise hand back the degraded model.
     checkpoint : str, optional
         Path to save the best-validation model to. Only epochs on which
         validation was computed can improve on the best, which is the intended
@@ -524,6 +568,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         and shorter than ``train_loss`` whenever ``eval_every > 1``, so
         anything plotting them must use ``val_epoch`` for the x-axis rather
         than assuming one point per epoch.
+
+        When validating, also ``best_epoch`` and ``best_error``, and
+        ``stopped_early`` recording whether patience ran out.
     """
     torch.manual_seed(seed)
     criterion = loss or PhysicsInformedLoss(task=operator.task.name)
@@ -542,8 +589,45 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
     history = {"train_loss": [], "val_error": [], "val_epoch": []}
     best_error = float("inf")
+    best_epoch, best_state, stopped_early = 0, None, False
     emit = log if log is not None else print
     eval_every = max(1, int(eval_every))
+    early_stopping = max(0, int(early_stopping))
+
+    if early_stopping and validation_loader is None:
+        warnings.warn(
+            "early_stopping was requested without a validation split, so it "
+            "cannot act: the training loss falls monotonically by construction "
+            "and never signals that training should stop. Set holdout or "
+            "valid_fraction, or set early_stopping=0 to silence this.",
+            RuntimeWarning, stacklevel=2,
+        )
+        early_stopping = 0
+
+    # Column header, emitted next to the row formatter below so the two cannot
+    # drift apart. A bare column of numbers is not self-describing: the two
+    # quantities are measured differently -- one is the *objective*, whatever
+    # that has been configured to be, the other a plain relative L2 in physical
+    # units -- and reading the second as if it were the first is an easy and
+    # expensive mistake.
+    validating = validation_loader is not None
+    header = f"    {'epoch':>11s}  {'train loss':>13s}"
+    if validating:
+        header += f"  {'val rel L2':>13s}"
+    if verbose:
+        legend = (f"    train loss: mean {type(criterion).__name__} per batch")
+        if validating:
+            legend += "   |   val rel L2: held-out error, physical units"
+        else:
+            legend += "   |   no validation split: this is a TRAINING FIT"
+        emit(legend)
+        if validating and (checkpoint or early_stopping):
+            emit("    * marks an epoch that improved on the best score so far")
+        if early_stopping:
+            emit(f"    early stopping: after {early_stopping} epochs without "
+                 f"improvement; the best weights are restored")
+        emit(header)
+        emit("    " + "-" * (len(header) - 4))
 
     for epoch in range(int(epochs)):
         if hasattr(loader.batch_sampler, "set_epoch"):
@@ -588,23 +672,49 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         if not reporting:
             continue
 
-        message = f"    epoch {epoch + 1:5d}/{epochs}  train {mean_loss:.5f}"
-        if validation_loader is not None:
+        # Columns line up under `header` above; widths are shared with it.
+        message = f"    {f'{epoch + 1}/{epochs}':>11s}  {mean_loss:>13.5f}"
+        exhausted = False
+        if validating:
             error = evaluate(operator, validation_loader)
             history["val_error"].append(error)
             history["val_epoch"].append(epoch + 1)
-            message += f"  val_rel_L2 {error:.5f}"
-            if checkpoint and error < best_error:
-                best_error = error
-                operator.save(checkpoint)
+            message += f"  {error:>13.5f}"
+
+            if error < best_error:
+                best_error, best_epoch = error, epoch + 1
+                if early_stopping:
+                    # Kept in memory so the best model can be returned even
+                    # when no checkpoint path was given.
+                    best_state = {k: v.detach().clone()
+                                  for k, v in operator.model.state_dict().items()}
+                if checkpoint:
+                    operator.save(checkpoint)
                 message += "  *"
-        else:
-            # Without a validation set the training-set error is the only
-            # measurable quantity, and it is not a generalisation estimate.
-            message += "  (no validation split)"
+            elif early_stopping and (epoch + 1) - best_epoch >= early_stopping:
+                exhausted = True
 
         if verbose:
             emit(message)
+
+        if exhausted:
+            stopped_early = True
+            if verbose:
+                emit(f"    stopped early at epoch {epoch + 1}: no improvement "
+                     f"in {early_stopping} epochs "
+                     f"(best {best_error:.5f} at epoch {best_epoch})")
+            break
+
+    if early_stopping and best_state is not None:
+        operator.model.load_state_dict(best_state)
+        if verbose and not stopped_early and best_epoch != len(history["train_loss"]):
+            emit(f"    restored the best weights, from epoch {best_epoch} "
+                 f"(val rel L2 {best_error:.5f})")
+
+    if validating:
+        history["best_epoch"] = best_epoch
+        history["best_error"] = best_error
+        history["stopped_early"] = stopped_early
 
     return history
 

@@ -28,12 +28,11 @@ training:
   weight_decay: 0.0001
   scheduler: cosine
   grad_clip: 1.0
-  mode: universal
-  holdout: null
   valid_fraction: 0.0
   enable_kfold: false
   k_folds: 5
   eval_epoch: 10
+  early_stopping: 50
   seed: 0
   device: auto
   loss: relative_l2

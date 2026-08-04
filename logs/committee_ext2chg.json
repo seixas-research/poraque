@@ -1,0 +1,125 @@
+{
+  "task": "ext2chg",
+  "members": [
+    "models/committee_0/poraque_models.pth",
+    "models/committee_1/poraque_models.pth",
+    "models/committee_2/poraque_models.pth",
+    "models/committee_3/poraque_models.pth"
+  ],
+  "init_seeds": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "records": [
+    {
+      "material": "struct_000",
+      "jsd": 5.039510257079172e-06,
+      "jsd_normalised": 3.6352382281985933e-06,
+      "relative": 0.0036673239573937065,
+      "integral_relative": 0.0009613976863035407,
+      "error": 0.007197281862923058,
+      "ratio": 0.5095429117881293
+    },
+    {
+      "material": "struct_001",
+      "jsd": 3.588328500159235e-06,
+      "jsd_normalised": 2.5884318661301304e-06,
+      "relative": 0.0032071424233997363,
+      "integral_relative": 0.0006467996992387262,
+      "error": 0.00448317632943911,
+      "ratio": 0.715372804397587
+    },
+    {
+      "material": "struct_002",
+      "jsd": 4.278475382297909e-06,
+      "jsd_normalised": 3.0862676083033524e-06,
+      "relative": 0.0035992229895033677,
+      "integral_relative": 0.0008765672690190612,
+      "error": 0.005757684235669053,
+      "ratio": 0.6251164256639947
+    },
+    {
+      "material": "struct_003",
+      "jsd": 6.167697011149247e-06,
+      "jsd_normalised": 4.44905294584535e-06,
+      "relative": 0.0039471375636548805,
+      "integral_relative": 0.0005463884203886041,
+      "error": 0.005754907282207848,
+      "ratio": 0.6858733547033926
+    },
+    {
+      "material": "struct_004",
+      "jsd": 5.037054771533273e-06,
+      "jsd_normalised": 3.633466969788572e-06,
+      "relative": 0.0037337108326127503,
+      "integral_relative": 0.0006623374319417781,
+      "error": 0.004837648878408505,
+      "ratio": 0.7718027757816667
+    },
+    {
+      "material": "struct_005",
+      "jsd": 2.417058267939199e-06,
+      "jsd_normalised": 1.7435389883477749e-06,
+      "relative": 0.002600843489538244,
+      "integral_relative": 0.0001258635119603548,
+      "error": 0.004435826111582246,
+      "ratio": 0.5863267459351625
+    },
+    {
+      "material": "struct_006",
+      "jsd": 3.427024520315306e-06,
+      "jsd_normalised": 2.472075640231885e-06,
+      "relative": 0.003116259173858518,
+      "integral_relative": 0.0006326462011157738,
+      "error": 0.004589790748559959,
+      "ratio": 0.6789545198408534
+    },
+    {
+      "material": "struct_007",
+      "jsd": 6.537260812491413e-06,
+      "jsd_normalised": 4.715636877589559e-06,
+      "relative": 0.005427264426186571,
+      "integral_relative": 0.002564096481356464,
+      "error": 0.0049634362518363884,
+      "ratio": 1.0934490040400082
+    },
+    {
+      "material": "struct_008",
+      "jsd": 3.860559957313325e-06,
+      "jsd_normalised": 2.7848053527352216e-06,
+      "relative": 0.0035256208770604426,
+      "integral_relative": 0.0010281883015772115,
+      "error": 0.005154533888622719,
+      "ratio": 0.683984420946834
+    },
+    {
+      "material": "struct_009",
+      "jsd": 5.738311328152839e-06,
+      "jsd_normalised": 4.139316648101531e-06,
+      "relative": 0.003883262378669368,
+      "integral_relative": 0.0004124277785497039,
+      "error": 0.005032292375470073,
+      "ratio": 0.7716686728295725
+    },
+    {
+      "material": "struct_010",
+      "jsd": 6.933641800534851e-06,
+      "jsd_normalised": 5.001565320466027e-06,
+      "relative": 0.004021225111810928,
+      "integral_relative": 0.0006053399210856669,
+      "error": 0.0048954710926971635,
+      "ratio": 0.8214173949080417
+    },
+    {
+      "material": "struct_011",
+      "jsd": 5.570514748083635e-06,
+      "jsd_normalised": 4.018277001129547e-06,
+      "relative": 0.0037100988580202063,
+      "integral_relative": 0.00024038416164314807,
+      "error": 0.00570664056140039,
+      "ratio": 0.6501371197469918
+    }
+  ]
+}

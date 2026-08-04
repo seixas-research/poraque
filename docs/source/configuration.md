@@ -168,12 +168,11 @@ the training log reports any reference points that violate it.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `mode` | `universal` | `universal` or `leave_one_out` |
-| `holdout` | `null` | structure names excluded from universal training |
-| `valid_fraction` | `0.0` | fraction of structures drawn at random for validation |
-| `enable_kfold` | `false` | run K-fold cross-validation; takes precedence over `mode` |
+| `valid_fraction` | `0.2` | fraction of structures held out for validation; `0` uses every structure |
+| `enable_kfold` | `false` | run K-fold cross-validation instead; ignores `valid_fraction` |
 | `k_folds` | `5` | number of folds, capped at the structure count |
 | `eval_epoch` | `10` | evaluate and log every N epochs |
+| `early_stopping` | `50` | stop after N epochs without validation improvement; `0` disables |
 | `epochs` | `200` | passes over the training set |
 | `batch_size` | `4` | maximum samples per grid-shape bucket |
 | `learning_rate` | `0.002` | AdamW step size |
@@ -186,33 +185,40 @@ the training log reports any reference points that violate it.
 | `sobolev_weight` | `0.1` | gradient-term weight when `loss: sobolev` |
 | `physics` | all `0.0` | physics-informed loss weights |
 
-### `mode`, `holdout`, `valid_fraction`, `enable_kfold`, `k_folds`
+### `valid_fraction`, `enable_kfold`, `k_folds`
 
-These decide *what question the run answers*, and are the settings most worth
-getting right.
+There is **one** training protocol and **one** variation on it.
 
-- **`universal`** trains **one** model per task on the combined data of every
-  structure and saves a single checkpoint. This is the deployable artefact.
-  Poraquê never trains a separate model per material.
-- **`holdout`** is a list of structure names excluded from that training and
-  scored separately, which turns the reported number into a generalisation
-  estimate.
-- **`valid_fraction`** does the same but draws the structures at random,
-  shuffling with `seed`. `0` keeps everything for training — the plain
-  universal fit.
-- **`enable_kfold`** trains a fresh model per fold on *K*−1 groups and scores it
-  on the group held out. Produces a generalisation estimate with a spread — but
-  no single model to ship.
-- **`leave_one_out`** is the same protocol with *K* equal to the number of
-  structures.
+By default a run trains a single model per task, holding back `valid_fraction`
+of the structures for validation. That is all there is to it — no mode to
+select, no structures to name.
 
-```{note}
-`holdout` and `valid_fraction` both define a validation split and are
-**mutually exclusive** — setting both is an error rather than a silent
-precedence rule, so the protocol cannot depend on which key the reader happened
-to look at. `valid_fraction` always keeps at least one structure on each side,
-so a fraction that would round to zero gives 1 rather than degrading into a
-universal fit while the config claims otherwise.
+`enable_kfold` swaps that for K-fold cross-validation: each fold trains a fresh
+model on *K*−1 groups and scores it on the group held out. It answers a
+different question — whether the architecture generalises — and produces *K*
+models rather than one to deploy. `valid_fraction` is ignored, since the folds
+define the splits. Setting `k_folds` to the number of structures gives
+leave-one-out.
+
+```{tip}
+Splitting is always at the *structure* level: whole materials move together. A
+voxel-level split would place the same crystal on both sides, and since
+neighbouring voxels are strongly correlated the score would look excellent
+while saying nothing about transfer to a new material.
+```
+
+```{important}
+`valid_fraction` defaults to **0.2**, so an ordinary run reports a genuine
+held-out score and `early_stopping` is active. The trade-off is that the model
+has then seen only 80% of the data. For the final deployable artefact set
+`valid_fraction: 0` — accepting that its own metrics become a training fit —
+and quote a separate `--kfold` run for the generalisation number.
+```
+
+```{warning}
+With `valid_fraction: 0` the reported metrics are **training fit**, carrying no
+generalisation claim. On the reference dataset they are about four times better
+than the cross-validated score. Quote the cross-validated numbers.
 ```
 
 ### `eval_epoch`
@@ -224,28 +230,49 @@ without a current number.
 
 ```text
   progress (every 10 epochs):
-    epoch    10/200  train 0.31745  val_rel_L2 0.34118
-    epoch    20/200  train 0.18902  val_rel_L2 0.21447  *
+    train loss: mean PhysicsInformedLoss per batch   |   val rel L2: held-out error, physical units
+          epoch     train loss     val rel L2
+    -----------------------------------------
+         10/200        0.31745        0.34118
+         20/200        0.18902        0.21447  *
 ```
+
+### `early_stopping`
+
+Stop after this many epochs without an improvement in the **validation** error,
+and restore the best weights seen:
+
+```text
+         30/200        0.03173        0.03659  *
+         ...
+         38/200        0.02249        0.06568
+    stopped early at epoch 38: no improvement in 8 epochs (best 0.03659 at epoch 30)
+
+  trained 38/200 epochs in 12.0 s   loss 0.8599 -> 0.0225
+```
+
+```{warning}
+It needs a validation split (`valid_fraction > 0`). With nothing held
+out there is only the training loss, which falls monotonically by construction
+and so can never signal that training should stop — asking for early stopping
+anyway **warns** rather than silently doing nothing and leaving you believing
+the run was protected.
+
+With the shipped default `valid_fraction: 0.0`, early stopping is therefore
+inactive. Set a split to use it.
+```
+
+Patience is counted in *epochs* but checked only on the epochs where validation
+is computed, so a value below `eval_epoch` behaves like `eval_epoch`.
+
+The best weights are restored on exit, so the operator you get is the best one
+*measured* rather than merely the last one reached — stopping partway down a
+degrading curve would otherwise hand back the degraded model. `history` records
+`best_epoch`, `best_error` and `stopped_early`.
 
 The `*` marks an epoch that improved on the best validation score. Only epochs
 on which validation was actually measured can do so — a checkpoint is written
 against a measured score, never an assumed one.
-
-Both are worth running: cross-validation says whether the architecture
-generalises, `universal` produces the model that uses all the data.
-
-```{warning}
-With `mode: universal` and `holdout: null`, nothing is held out and the
-reported metrics are **training fit**, carrying no generalisation claim. On the
-reference dataset they are four to five times better than the cross-validated
-score. Quote the cross-validated numbers.
-```
-
-Splitting is always at the *structure* level: whole materials move together. A
-voxel-level split would place the same crystal on both sides, and since
-neighbouring voxels are strongly correlated the score would look excellent
-while saying nothing about transfer to a new material.
 
 ### `batch_size`
 
@@ -310,7 +337,7 @@ Train the deployable models:
 ```yaml
 task: all
 model:    {pauli_residual: true}
-training: {mode: universal, epochs: 200}
+training: {valid_fraction: 0, epochs: 200}
 ```
 
 Measure generalisation:

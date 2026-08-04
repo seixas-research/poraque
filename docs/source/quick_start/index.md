@@ -78,18 +78,20 @@ energy density (Model 2). Every output is a `CHGCAR`-format file.
 
 ## 5. Evaluate generalisation
 
-Training on everything produces the best model but no held-out data, so its
-metrics are a training fit. For a generalisation estimate run the
-cross-validation protocol instead:
+Step 2 already holds back a fifth of the structures, so its score is genuinely
+held out. For a tighter estimate — every structure scored by a model that never
+saw it — run the cross-validation protocol instead:
 
 ```bash
-python scripts/run_train.py --config configs/train_config.yaml \
-    --mode leave_one_out
+python scripts/run_train.py --config configs/train_config.yaml --kfold
 ```
 
-Each structure is held out in turn and scored against a model that never saw
-it. Use `universal` for the model you deploy and `leave_one_out` for the number
-you quote.
+That is the only variation on the training protocol. It fits *K* models and
+reports a spread, so it produces a number to quote rather than a model to
+deploy; set `k_folds` to the number of structures for leave-one-out.
+
+For the artefact you actually ship, set `valid_fraction: 0` so training uses
+every structure — accepting that its own metrics are then a training fit.
 
 ## 6. Drive it from ASE
 

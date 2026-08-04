@@ -156,40 +156,47 @@ class TrainingConfig_:
         ``"cosine"`` or ``null``.
     grad_clip : float
         Global gradient-norm clip; ``0`` disables.
-    mode : str
-        ``"universal"`` (default) trains **one** model on the combined data of
-        every structure and saves a single checkpoint per task — the
-        deployable artefact. ``"leave_one_out"`` instead runs the
-        cross-validation protocol, training N models each holding one structure
-        out; it produces a generalisation *estimate*, not a model to ship.
-
-        The two answer different questions and are both worth running: LOO says
-        whether the architecture generalises, ``universal`` produces the model
-        that uses all available data.
-    holdout : list or None
-        Structure names excluded from universal training and used for
-        validation. ``null`` trains on everything, in which case the reported
-        metrics are **training fit** and carry no generalisation claim.
-
-        Mutually exclusive with ``valid_fraction``: both name a validation
-        split, and silently letting one win would make the run's protocol
-        depend on which key the reader happened to look at.
     valid_fraction : float
-        Fraction of structures reserved for validation, drawn by shuffling the
-        structure list with ``seed``. ``0`` (default) keeps every structure for
-        training — the "universal" fit, whose metrics are a training fit.
+        Fraction of structures held out for validation, drawn by shuffling the
+        structure list with ``seed``. Defaults to ``0.2``, so an ordinary run
+        reports a genuine held-out score rather than a training fit, and
+        ``early_stopping`` has something to watch.
+
+        Set it to ``0`` to train on **every** structure. That is the right
+        choice for the final deployable artefact — it uses all the data — but
+        its metrics are then a training fit and carry no generalisation claim,
+        and early stopping cannot act.
 
         The split is at the **structure level**, like ``k_folds``: whole
         materials move together. At least one structure is always kept on each
         side, so a non-zero fraction on a two-structure dataset gives 1 + 1
         rather than an empty validation set.
+
+        Ignored when ``enable_kfold`` is set, which supplies its own splits.
     eval_epoch : int
         Evaluate and log every this many epochs. Validation is *only* computed
         on those epochs, so raising it on a large validation set is a genuine
         speed-up rather than only a quieter log.
+    early_stopping : int
+        Stop after this many epochs without an improvement in the **validation**
+        error, and restore the best weights seen. ``0`` disables it and always
+        runs the full ``epochs``.
+
+        Requires a validation split (``valid_fraction > 0``): with
+        nothing held out there is only the training loss, which falls
+        monotonically by construction and so can never signal that training
+        should stop. The run says so rather than appearing to be protected.
+
+        Counted in epochs, but only *checked* on the epochs where validation is
+        computed, so a patience shorter than ``eval_epoch`` behaves like
+        ``eval_epoch``.
     enable_kfold : bool
-        Run K-fold cross-validation instead of a single universal fit. Takes
-        precedence over ``mode``.
+        Run K-fold cross-validation instead of a single fit. This is the only
+        variation on the training protocol: every other run trains once on the
+        ``valid_fraction`` split.
+
+        It answers a different question — whether the architecture generalises
+        — and produces *K* models rather than one to deploy.
     k_folds : int
         Number of folds. Splitting is at the **structure level**: each fold
         holds out whole materials, never a subset of voxels from a material
@@ -201,7 +208,18 @@ class TrainingConfig_:
         Capped at the number of structures; ``k_folds`` equal to that count is
         leave-one-out.
     seed : int
-        Seed for weight initialisation and batching.
+        Seed for the data pipeline: the validation draw, the fold partition and
+        the batch order. Also seeds the weight initialisation unless
+        ``init_seed`` overrides it.
+    init_seed : int or None
+        Seed for the **weight initialisation only**, leaving everything else on
+        ``seed``. ``null`` means "use ``seed``".
+
+        Separating the two is what makes a *query-by-committee* ensemble
+        interpretable: train N models that share ``seed`` and differ only in
+        ``init_seed``, and their disagreement isolates the spread of
+        optimisation outcomes instead of confounding it with a reshuffled
+        dataset.
     device : str
         ``"auto"`` (CUDA, then Apple MPS, then CPU), or an explicit backend.
     loss : str
@@ -219,13 +237,13 @@ class TrainingConfig_:
     weight_decay: float = 1e-4
     scheduler: str = "cosine"
     grad_clip: float = 1.0
-    mode: str = "universal"
-    holdout: list = None
-    valid_fraction: float = 0.0
+    valid_fraction: float = 0.2
     enable_kfold: bool = False
     k_folds: int = 5
     eval_epoch: int = 10
+    early_stopping: int = 50
     seed: int = 0
+    init_seed: int = None
     device: str = "auto"
     loss: str = "relative_l2"
     sobolev_weight: float = 0.1

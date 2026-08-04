@@ -30,9 +30,11 @@ for a plane-wave field: periodicity and the electron count survive to machine
 precision. Interpolation would alias, break periodicity at the cell boundary
 and shift the integral.
 
-**Evaluation is leave-one-out.** With a handful of materials there is no
-meaningful random split, so each material is held out in turn and metrics are
-reported in **physical units** on the held-out material.
+**One protocol, one variation.** A run trains a single model per task on a
+train/validation split sized by ``data.valid_fraction`` (a fifth by default),
+and reports metrics in **physical units** on the held-out structures. Setting
+``enable_kfold`` swaps that for K-fold cross-validation, which is the only
+other protocol; nothing else changes how training is organised.
 
 **Physics baselines are reported alongside.** A relative error means little in
 isolation, so ``chg2tau`` is compared against the analytic Thomas-Fermi, von
@@ -47,6 +49,7 @@ Usage
     python scripts/run_train.py --config configs/train_config.yaml
     python scripts/run_train.py --config configs/train_config.yaml --epochs 500
     python scripts/run_train.py --config configs/train_config.yaml --device mps
+    python scripts/run_train.py --config configs/train_config.yaml --kfold
 """
 
 import argparse
@@ -296,11 +299,15 @@ def build_operator(task, train_set, config, log):
                     f"{entry['violations']}/{entry['points']} points "
                     f"({100 * entry['fraction']:.4f} %)")
 
+    # init_seed reaches FieldOperator, which isolates the draw from the global
+    # stream; the manual_seed here keeps the ambient behaviour when it is unset.
     torch.manual_seed(config.training.seed)
     operator = FieldOperator(
         task, input_transform=source_transform, target_transform=target_transform,
         device=config.training.device,
-        training_resolution=config.data.resolution, **config.model_kwargs(), **head,
+        training_resolution=config.data.resolution,
+        init_seed=config.training.init_seed,
+        **config.model_kwargs(), **head,
     )
     log(f"      model: {type(operator.model).__name__} width={config.model.width} "
         f"modes={config.model.modes} layers={config.model.n_layers}  "
@@ -310,13 +317,11 @@ def build_operator(task, train_set, config, log):
 
 def resolve_validation_split(dataset, config):
     """
-    Decide which structures are held out for validation.
+    Choose the structures held out for validation.
 
-    Two keys can define the split and they are mutually exclusive:
-    ``training.holdout`` names structures explicitly, ``training.valid_fraction``
-    draws them at random. Letting one silently win would make the run's
-    protocol depend on which key the reader happened to look at, so setting
-    both is an error.
+    The split is defined by one number, ``training.valid_fraction``: that share
+    of the structures is drawn at random and kept back. ``0`` trains on every
+    structure, at the cost of turning the reported metrics into a training fit.
 
     The draw is at the **structure level**: whole materials move together.
     Splitting voxels instead would put the same crystal on both sides, and
@@ -332,30 +337,13 @@ def resolve_validation_split(dataset, config):
     Returns
     -------
     tuple of (set of str, str)
-        Held-out identifiers, and a human-readable description of where the
-        split came from — printed so the log records the protocol, not just
-        the result.
+        Held-out identifiers, and a human-readable description of the split —
+        logged so the record shows the protocol, not only the result.
     """
     names = [m.identifier for m in dataset.materials]
-    holdout = set(config.training.holdout or [])
     fraction = float(config.training.valid_fraction or 0.0)
 
-    if holdout and fraction > 0.0:
-        raise SystemExit(
-            "training.holdout and training.valid_fraction both define a "
-            "validation split; set exactly one. Use holdout to name specific "
-            "structures, valid_fraction to draw them at random."
-        )
-
-    if holdout:
-        unknown = holdout - set(names)
-        if unknown:
-            raise SystemExit(
-                f"holdout names not present in the dataset: {sorted(unknown)}"
-            )
-        return holdout, "explicit holdout"
-
-    # Range-check before the zero fallback: a negative value is a typo, and
+    # Range-check before the zero case: a negative value is a typo, and
     # treating it as "no split" would silently change the protocol rather than
     # reporting the mistake.
     if not 0.0 <= fraction < 1.0:
@@ -364,7 +352,7 @@ def resolve_validation_split(dataset, config):
         )
 
     if fraction == 0.0:
-        return set(), "none - universal fit, metrics are TRAINING FIT"
+        return set(), "none - trained on every structure, metrics are TRAINING FIT"
     if len(names) < 2:
         raise SystemExit(
             f"valid_fraction needs at least two structures to split; the "
@@ -372,8 +360,8 @@ def resolve_validation_split(dataset, config):
         )
 
     # Round to nearest, then clamp so neither side is empty: a fraction that
-    # rounds to zero would silently degrade to a universal fit while the
-    # config claims a validation split.
+    # rounds to zero would silently train on everything while the config
+    # claims a validation split.
     count = int(round(fraction * len(names)))
     count = max(1, min(count, len(names) - 1))
 
@@ -384,41 +372,62 @@ def resolve_validation_split(dataset, config):
                       f"structures, seed={seed}")
 
 
-def evaluate_material(operator, dataset, index, task, log, label):
-    """Predict one material and report metrics against its reference field."""
+def evaluate_material(operator, dataset, index, task, log, label,
+                      baselines=False):
+    """
+    Predict one material and report metrics against its reference field.
+
+    Parameters
+    ----------
+    baselines : bool, optional
+        Also report the analytic orbital-free functionals on the same input.
+        A relative error means little in isolation: beating Thomas-Fermi and
+        von Weizsäcker is the bar, and printing them beside the model is the
+        only way the reader can tell whether it was cleared. Worth the extra
+        lines on validation structures, noise on training ones.
+    """
     source, target = dataset.load_fields(index)
     prediction = operator.predict(source)
     values = metrics(prediction.data, target.data)
     log(format_metrics(label, values, task.target_unit))
+
+    if baselines:
+        for name, reference in physics_baselines(task, source, target).items():
+            log(format_metrics(f"  baseline: {name}",
+                               metrics(reference, target.data),
+                               task.target_unit))
     return prediction, target, values
 
 
-def run_task_universal(task_name, cache, config, log):
+def run_task(task_name, cache, config, log):
     r"""
-    Train **one** model on the combined data of every structure.
+    Train one model for ``task_name`` on a train/validation split.
 
-    This is the deployable artefact: a single set of weights that has seen all
-    available materials. Batches are drawn across structures — the sampler
-    groups by grid shape and shuffles both within and across those groups — so
-    a gradient step generally mixes several materials.
+    This is the ordinary path; K-fold cross-validation is the only variation on
+    it. **One** model is fitted across all the training structures, never one
+    per material: batches are drawn across structures — the sampler groups by
+    grid shape and shuffles both within and across those groups — so a gradient
+    step generally mixes several.
 
-    With ``training.holdout`` unset the model trains on everything, and the
-    metrics reported here are **training fit**. They say the model has capacity
-    to represent the data; they say nothing about generalisation. Use
-    ``mode: leave_one_out`` for that, or name structures in ``holdout``.
+    ``training.valid_fraction`` holds back a fifth of the structures by
+    default, so the reported score is genuinely held out and ``early_stopping``
+    has something to watch. Set it to ``0`` when the goal is the final artefact
+    trained on *all* the data — in which case the metrics become a **training
+    fit** and carry no generalisation claim.
     """
     task = resolve_task(task_name)
     log(f"\n{'=' * 78}")
-    log(f"TASK  {task.name}:  {task.input_field} -> {task.target_field}   "
-        f"[UNIVERSAL: one model, all structures]")
+    log(f"TASK  {task.name}:  {task.input_field} -> {task.target_field}")
     log(f"      {task.description}")
     log("=" * 78)
 
     dataset = FieldPairDataset(cache, task=task)
-    holdout, split_origin = resolve_validation_split(dataset, config)
+    validation_names, split_origin = resolve_validation_split(dataset, config)
 
-    train_records = [m for m in dataset.materials if m.identifier not in holdout]
-    test_records = [m for m in dataset.materials if m.identifier in holdout]
+    train_records = [m for m in dataset.materials
+                     if m.identifier not in validation_names]
+    test_records = [m for m in dataset.materials
+                    if m.identifier in validation_names]
 
     train_set = FieldPairDataset(cache, task=task, materials=train_records)
     source_transform, target_transform = train_set.fit_transforms()
@@ -434,7 +443,8 @@ def run_task_universal(task_name, cache, config, log):
 
     log(f"  training structures : {len(train_set)}  "
         f"{[m.identifier for m in train_records]}")
-    log(f"  validation          : {sorted(holdout) if holdout else 'none'} "
+    log(f"  validation          : "
+        f"{sorted(validation_names) if validation_names else 'none'} "
         f"({split_origin})")
     log(f"  grid shapes         : {shapes}")
     log(f"  shape buckets       : "
@@ -445,6 +455,16 @@ def run_task_universal(task_name, cache, config, log):
 
     operator = build_operator(task, train_set, config, log)
 
+    # Early stopping needs something to watch. With no validation split the
+    # library would warn -- rightly, for a caller who asked for both -- but here
+    # the two are merely the shipped defaults, and a default configuration must
+    # not warn. Say it plainly in the log instead.
+    patience = config.training.early_stopping
+    if patience and validation is None:
+        log(f"  early stopping      : inactive ({patience} epochs requested, "
+            f"but nothing is held out to measure improvement against)")
+        patience = 0
+
     log(f"\n  progress (every {config.training.eval_epoch} epochs):")
     start = time.time()
     history = train(
@@ -454,10 +474,11 @@ def run_task_universal(task_name, cache, config, log):
         weight_decay=config.training.weight_decay,
         scheduler=config.training.scheduler, grad_clip=config.training.grad_clip,
         loss=build_loss(config, task.name), seed=config.training.seed,
-        eval_every=config.training.eval_epoch, log=log, verbose=True,
+        eval_every=config.training.eval_epoch, early_stopping=patience,
+        log=log, verbose=True,
     )
     elapsed = time.time() - start
-    log(f"\n  trained {config.training.epochs} epochs in {elapsed:.1f} s   "
+    log(f"\n  trained {len(history['train_loss'])}/{config.training.epochs} epochs in {elapsed:.1f} s   "
         f"loss {history['train_loss'][0]:.4f} -> {history['train_loss'][-1]:.4f}")
 
     # ---------------- per-material evaluation ---------------- #
@@ -469,11 +490,12 @@ def run_task_universal(task_name, cache, config, log):
 
         report = TrainingReport(config.output.plot_dir, dpi=config.output.dpi,
                                 fmt=config.output.plot_format,
-                                prefix=f"{task.name}_universal")
+                                prefix=f"{task.name}")
         figures.append(report.loss_curves(
-            history, title=f"{task.name} (universal, {len(train_set)} structures)"))
+            history, title=f"{task.name} ({len(train_set)} training structures)"))
 
-    log(f"\n  per-structure results ({'TRAINING FIT' if not holdout else 'train / held out'}):")
+    log(f"\n  per-structure results "
+        f"({'TRAINING FIT' if not validation_names else 'train / validation'}):")
     for index in range(len(train_set)):
         name = train_records[index].identifier
         prediction, target, values = evaluate_material(
@@ -482,7 +504,7 @@ def run_task_universal(task_name, cache, config, log):
                               "predicted_integral": prediction.integrate(),
                               "reference_integral": target.integrate()}
         if report is not None and index == 0:
-            report.prefix = f"{task.name}_universal_{name}"
+            report.prefix = f"{task.name}_{name}"
             figures.append(report.field_comparison(
                 target, prediction, label=label_text, unit=unit,
                 log=(task.target_field in ("CHGCAR", "TAUCAR")),
@@ -495,8 +517,9 @@ def run_task_universal(task_name, cache, config, log):
         for index in range(len(validation)):
             name = test_records[index].identifier
             prediction, target, values = evaluate_material(
-                operator, validation, index, task, log, f"{name} (HELD OUT)")
-            per_material[name] = {"split": "holdout", "metrics": values,
+                operator, validation, index, task, log, f"{name} (VALIDATION)",
+                baselines=True)
+            per_material[name] = {"split": "validation", "metrics": values,
                                   "predicted_integral": prediction.integrate(),
                                   "reference_integral": target.integrate()}
 
@@ -509,10 +532,11 @@ def run_task_universal(task_name, cache, config, log):
         log(f"      {key:<12s} mean {np.mean(values):12.5g}   "
             f"min {np.min(values):11.5g}   max {np.max(values):11.5g}")
 
-    if not holdout:
-        log("\n      NOTE: no structure was held out, so these are TRAINING-FIT")
-        log("      numbers. They show the model can represent the data; they are")
-        log("      not a generalisation estimate. Run mode: leave_one_out for that.")
+    if not validation_names:
+        log("\n      NOTE: valid_fraction is 0, so nothing was held out and these")
+        log("      are TRAINING-FIT numbers. They show the model can represent the")
+        log("      data; they are not a generalisation estimate. Raise")
+        log("      valid_fraction, or run --kfold, for that.")
 
     # ---------------- persist ---------------- #
     # The operator is handed back to main(), which writes every task into one
@@ -532,7 +556,7 @@ def run_task_universal(task_name, cache, config, log):
             f"{len(train_set)} structure(s), all of one element: nothing here "
             f"speaks to transfer across chemistry.",
         ]
-        if not holdout:
+        if not validation_names:
             caveats.append(
                 "No structure was held out, so every number in the table is "
                 "training fit, not a generalisation estimate."
@@ -561,11 +585,11 @@ def run_task_universal(task_name, cache, config, log):
 
     return {
         "task": task.name,
-        "mode": "universal",
+        "mode": "split",
         "report": pdf,
         "n_train": len(train_set),
         "train_structures": [m.identifier for m in train_records],
-        "holdout": sorted(holdout),
+        "validation": sorted(validation_names),
         "grid_shapes": [list(s) for s in shapes],
         "per_material": per_material,
         "checkpoint": checkpoint,
@@ -617,8 +641,10 @@ def run_task_kfold(task_name, cache, config, log):
 
     Each fold trains a fresh model on :math:`K-1` groups of structures and
     scores it on the held-out group, in physical units. The result is a
-    *generalisation estimate* with a spread, not a deployable model; use
-    ``mode: universal`` for the artefact to ship.
+    *generalisation estimate* with a spread, not a deployable model: it fits
+    *K* of them. Leave ``enable_kfold`` off for the artefact to ship.
+
+    ``valid_fraction`` is ignored here — the folds define the splits.
     """
     task = resolve_task(task_name)
     dataset = FieldPairDataset(cache, task=task)
@@ -665,16 +691,19 @@ def run_task_kfold(task_name, cache, config, log):
             scheduler=config.training.scheduler,
             grad_clip=config.training.grad_clip,
             loss=build_loss(config, task.name), seed=config.training.seed,
-            eval_every=config.training.eval_epoch, log=log, verbose=True,
+            eval_every=config.training.eval_epoch,
+            early_stopping=config.training.early_stopping,
+            log=log, verbose=True,
         )
         elapsed = time.time() - start
-        log(f"      trained {config.training.epochs} epochs in {elapsed:.1f} s   "
+        log(f"      trained {len(history['train_loss'])}/{config.training.epochs} epochs in {elapsed:.1f} s   "
             f"loss {history['train_loss'][0]:.4f} -> {history['train_loss'][-1]:.4f}")
 
         for position in range(len(val_set)):
             name = val_records[position].identifier
             prediction, target, values = evaluate_material(
-                operator, val_set, position, task, log, f"{name} (VALIDATION)")
+                operator, val_set, position, task, log, f"{name} (VALIDATION)",
+                baselines=True)
             records.append({"fold": index, "material": name,
                             "split": f"fold {index}", "metrics": values,
                             "predicted_integral": prediction.integrate(),
@@ -757,166 +786,6 @@ def run_task_kfold(task_name, cache, config, log):
             "report": pdf, "figures": figures}
 
 
-def run_task(task_name, cache, config, log):
-    """Train and evaluate one task with leave-one-out cross-validation."""
-    task = resolve_task(task_name)
-    log(f"\n{'=' * 78}")
-    log(f"TASK  {task.name}:  {task.input_field} -> {task.target_field}")
-    log(f"      {task.description}")
-    log("=" * 78)
-
-    dataset = FieldPairDataset(cache, task=task)
-    log(f"  materials: {len(dataset)}   grids: {dataset.shapes()}")
-    log(f"  units: input [{task.input_unit}]  target [{task.target_unit}]")
-    if len(dataset) < 2:
-        log("  !! need at least 2 materials for leave-one-out; skipping")
-        return None
-
-    label, unit = FIELD_LABELS[task.target_field]
-    folds = []
-
-    for held_out in range(len(dataset)):
-        name = dataset.materials[held_out].identifier
-        log(f"\n  --- fold {held_out + 1}/{len(dataset)}: hold out {name} ---")
-
-        train_records = [m for i, m in enumerate(dataset.materials) if i != held_out]
-        train_set = FieldPairDataset(cache, task=task, materials=train_records)
-        source_transform, target_transform = train_set.fit_transforms()
-        test_set = FieldPairDataset(cache, task=task,
-                                    materials=[dataset.materials[held_out]],
-                                    input_transform=source_transform,
-                                    target_transform=target_transform)
-        log(f"      train {[m.identifier for m in train_records]}  test [{name}]")
-        log(f"      transforms: in {source_transform}  out {target_transform}")
-
-        # tau = tau_vW + s*softplus(f) makes the Hoffmann-Ostenhof bound
-        # structural. The scale is fitted on the TRAINING split only; fitting
-        # it on the held-out material would leak the answer.
-        head = {}
-        if config.model.pauli_residual and task.name == "chg2tau":
-            from poraque.ml import fit_pauli_scale, pauli_bound_violation
-
-            scale = (config.model.pauli_scale if config.model.pauli_scale
-                     else fit_pauli_scale(train_set))
-            head = {"pauli_residual": True, "pauli_scale": scale,
-                    "learn_pauli_scale": config.model.learn_pauli_scale}
-            log(f"      head: tau = tau_vW[rho] + s*softplus(f)   "
-                f"s = {scale:.4f} eV/Ang^3")
-            for entry in pauli_bound_violation(test_set):
-                log(f"      reference bound check ({entry['material']}): "
-                    f"{entry['violations']}/{entry['points']} points below "
-                    f"tau_vW ({100 * entry['fraction']:.4f} %), "
-                    f"tau_vW supplies {100 * entry['vw_fraction']:.1f} % of tau")
-
-        torch.manual_seed(config.training.seed)
-        operator = FieldOperator(
-            task, input_transform=source_transform,
-            target_transform=target_transform, device=config.training.device,
-            training_resolution=config.data.resolution,
-            **config.model_kwargs(), **head,
-        )
-        log(f"      model: {type(operator.model).__name__} "
-            f"width={config.model.width} modes={config.model.modes} "
-            f"layers={config.model.n_layers}  "
-            f"({operator.model.n_parameters():,} parameters)")
-
-        start = time.time()
-        history = train(
-            operator, train_set, validation=test_set,
-            epochs=config.training.epochs, batch_size=config.training.batch_size,
-            learning_rate=config.training.learning_rate,
-            weight_decay=config.training.weight_decay,
-            scheduler=config.training.scheduler,
-            grad_clip=config.training.grad_clip,
-            loss=build_loss(config, task.name),
-            seed=config.training.seed,
-            eval_every=config.training.eval_epoch, log=log, verbose=True,
-        )
-        elapsed = time.time() - start
-        log(f"      trained {config.training.epochs} epochs in {elapsed:.1f} s   "
-            f"loss {history['train_loss'][0]:.4f} -> {history['train_loss'][-1]:.4f}")
-
-        # ---------------- evaluation in physical units ---------------- #
-        source, target = test_set.load_fields(0)
-        prediction = operator.predict(source)
-        test_metrics = metrics(prediction.data, target.data)
-        train_source, train_target = train_set.load_fields(0)
-        train_metrics = metrics(operator.predict(train_source).data,
-                                train_target.data)
-
-        log(f"      results on the HELD-OUT material ({name}):")
-        log(format_metrics("FNO (test)", test_metrics, task.target_unit))
-        log(format_metrics("FNO (train fit)", train_metrics, task.target_unit))
-        for baseline_name, values in physics_baselines(task, source, target).items():
-            log(format_metrics(f"baseline: {baseline_name}",
-                               metrics(values, target.data), task.target_unit))
-
-        predicted_integral = prediction.integrate()
-        reference_integral = target.integrate()
-        log(f"      integral: predicted {predicted_integral:12.4f}   "
-            f"reference {reference_integral:12.4f}   error "
-            f"{100 * abs(predicted_integral - reference_integral) / abs(reference_integral):.3f} %")
-
-        constraint = None
-        if task.name == "chg2tau":
-            bound = von_weizsacker_tau(source.data, source.grid)
-            deficit = prediction.data - bound
-            violations = int(np.count_nonzero(deficit < -1e-6))
-            constraint = {"violations": violations, "points": int(deficit.size),
-                          "fraction": violations / deficit.size,
-                          "worst_deficit": float(deficit.min())}
-            log(f"      constraint tau >= tau_vW: {violations}/{deficit.size} "
-                f"violated ({100 * violations / deficit.size:.4f} %), "
-                f"min margin {deficit.min():+.4g} eV/Ang^3")
-
-        # ---------------- figures ---------------- #
-        figures = []
-        if config.output.plot_dir:
-            from poraque.vis import TrainingReport
-
-            report = TrainingReport(
-                config.output.plot_dir, dpi=config.output.dpi,
-                fmt=config.output.plot_format,
-                prefix=f"{task.name}_{name}",
-            )
-            figures = report.full_report(
-                history=history, reference=target, prediction=prediction,
-                label=label, unit=unit,
-                log_field=(task.target_field in ("CHGCAR", "TAUCAR")),
-                title=f"{task.name} · held out {name}",
-            )
-            log(f"      figures: {len(figures)} written to {config.output.plot_dir}")
-
-        folds.append({
-            "held_out": name,
-            "train": [m.identifier for m in train_records],
-            "test_metrics": test_metrics, "train_metrics": train_metrics,
-            "baselines": {n: metrics(v, target.data) for n, v
-                          in physics_baselines(task, source, target).items()},
-            "predicted_integral": predicted_integral,
-            "reference_integral": reference_integral,
-            "constraint": constraint, "pauli_head": bool(head),
-            "figures": figures, "seconds": elapsed,
-            "final_train_loss": history["train_loss"][-1],
-            "history": {k: list(map(float, v)) for k, v in history.items()},
-        })
-
-        if config.output.checkpoint_dir:
-            os.makedirs(config.output.checkpoint_dir, exist_ok=True)
-            path = os.path.join(config.output.checkpoint_dir,
-                                f"{task.name}_holdout_{name}.pt")
-            operator.save(path)
-            log(f"      checkpoint -> {path}")
-
-    log(f"\n  --- {task.name}: leave-one-out summary ---")
-    for key in ("mse", "mae", "rmse", "relative_l2", "r2"):
-        values = [fold["test_metrics"][key] for fold in folds]
-        log(f"      {key:<12s} mean {np.mean(values):12.5g}   "
-            f"per fold {['%.5g' % v for v in values]}")
-
-    return {"task": task.name, "folds": folds}
-
-
 # ===================================================================== #
 # Entry point
 # ===================================================================== #
@@ -967,29 +836,35 @@ def build_parser():
                        default=None)
     group.add_argument("--learning-rate", dest="training.learning_rate",
                        type=float, default=None)
-    group.add_argument("--mode", dest="training.mode", default=None,
-                       choices=["universal", "leave_one_out"],
-                       help="universal: one model on all structures (default); "
-                            "leave_one_out: cross-validation estimate")
-    group.add_argument("--kfold", dest="training.enable_kfold",
-                       action="store_const", const=True, default=None,
-                       help="run K-fold cross-validation over structures")
-    group.add_argument("--k-folds", dest="training.k_folds", type=int,
-                       default=None, help="number of folds (capped at the "
-                                          "number of structures)")
-    group.add_argument("--holdout", dest="training.holdout", nargs="*",
-                       default=None, metavar="NAME",
-                       help="structures excluded from universal training and "
-                            "used for validation")
     group.add_argument("--valid-fraction", dest="training.valid_fraction",
                        type=float, default=None, metavar="F",
-                       help="fraction of structures drawn at random for "
-                            "validation; 0 trains on everything. Mutually "
-                            "exclusive with --holdout")
+                       help="fraction of structures held out for validation "
+                            "(default 0.2); 0 trains on every structure and "
+                            "reports a training fit")
+    group.add_argument("--kfold", dest="training.enable_kfold",
+                       action="store_const", const=True, default=None,
+                       help="run K-fold cross-validation instead, ignoring "
+                            "--valid-fraction")
+    group.add_argument("--k-folds", dest="training.k_folds", type=int,
+                       default=None, help="number of folds (capped at the "
+                                          "number of structures; equal to it "
+                                          "is leave-one-out)")
     group.add_argument("--eval-epoch", dest="training.eval_epoch", type=int,
                        default=None, metavar="N",
                        help="evaluate and log every N epochs (default 10)")
-    group.add_argument("--seed", dest="training.seed", type=int, default=None)
+    group.add_argument("--early-stopping", dest="training.early_stopping",
+                       type=int, default=None, metavar="N",
+                       help="stop after N epochs without validation "
+                            "improvement and restore the best weights "
+                            "(default 50); 0 disables. Needs a validation "
+                            "split")
+    group.add_argument("--seed", dest="training.seed", type=int, default=None,
+                       help="seeds the split, the folds and the batch order")
+    group.add_argument("--init-seed", dest="training.init_seed", type=int,
+                       default=None, metavar="N",
+                       help="seed the weight initialisation only, leaving the "
+                            "data pipeline on --seed. Vary it across runs to "
+                            "build a query-by-committee ensemble")
     group.add_argument("--device", dest="training.device", default=None,
                        help="auto | cuda | mps | cpu")
 
@@ -1041,12 +916,8 @@ def main(argv=None):
 
         cache = build_cache(config, log)
         names = (["ext2chg", "chg2tau"] if config.task == "all" else [config.task])
-        if config.training.enable_kfold:
-            driver = run_task_kfold
-        elif config.training.mode == "universal":
-            driver = run_task_universal
-        else:
-            driver = run_task
+        # One protocol, one variation: K-fold cross-validation.
+        driver = run_task_kfold if config.training.enable_kfold else run_task
         results = [result for result in
                    (driver(name, cache, config, log) for name in names)
                    if result is not None]
@@ -1081,13 +952,11 @@ def main(argv=None):
                 values = [r["metrics"] for r in result["records"]]
                 basis = (f"{result['n_folds']}-fold CV, "
                          f"{len(values)} validation structures")
-            elif result.get("mode") == "universal":
+            else:
                 values = [v["metrics"] for v in result["per_material"].values()]
                 basis = (f"training fit, {result['n_train']} structures"
-                         if not result["holdout"] else "train + holdout")
-            else:
-                values = [f["test_metrics"] for f in result["folds"]]
-                basis = f"leave-one-out, {len(result['folds'])} folds"
+                         if not result["validation"] else
+                         f"train + {len(result['validation'])} validation")
             log(f"  {result['task']:<12s} "
                 f"{np.mean([m['relative_l2'] for m in values]):14.4f} "
                 f"{np.mean([m['r2'] for m in values]):12.4f} "
@@ -1098,7 +967,7 @@ def main(argv=None):
         log(f"  NOTE: {n_materials} material(s), all of one element. These numbers")
         log("  characterise the pipeline, not the science: they say nothing about")
         log("  transfer to new chemistry.")
-        if any(r.get("mode") == "universal" and not r.get("holdout")
+        if any(r.get("mode") == "split" and not r.get("validation")
                for r in results):
             log("  For the runs marked 'training fit' above, no structure was held")
             log("  out, so those are not generalisation estimates at all.")

@@ -114,12 +114,12 @@ grid shapes. 5-fold cross-validation, whole structures held out:
 
 | Model | relative L² | R² |
 | --- | --- | --- |
-| `ext2chg` | 0.0231 ± 0.0127 | 0.9989 |
-| `chg2tau` | 0.0469 ± 0.0273 | 0.9947 |
+| `ext2chg` | 0.0245 ± 0.0130 | 0.9987 |
+| `chg2tau` | 0.0444 ± 0.0271 | 0.9951 |
 
 The learned kinetic functional beats the analytic orbital-free functionals by a
 wide margin on this system — Thomas-Fermi scores 1.348 and von Weizsäcker
-0.738 on the same fields, so `chg2tau` is **29×** and **16×** better
+0.738 on the same fields, so `chg2tau` is **30×** and **17×** better
 respectively.
 
 ### Cell size dominates the error
@@ -128,10 +128,10 @@ The aggregate above hides the only interesting thing in it. Split by cell size:
 
 | Subset | `ext2chg` | `chg2tau` |
 | --- | --- | --- |
-| 27-atom (10 structures) | 0.0189 ± 0.0047 | 0.0379 ± 0.0077 |
-| 32-atom (2 structures) | 0.0441 ± 0.0180 | 0.0920 ± 0.0415 |
+| 27-atom (10 structures) | 0.0205 ± 0.0064 | 0.0355 ± 0.0069 |
+| 32-atom (2 structures) | 0.0445 ± 0.0182 | 0.0894 ± 0.0420 |
 
-Held out, a 32-atom cell is **~2.4× harder** than a 27-atom one. That is the
+Held out, a 32-atom cell is **2.2–2.5× harder** than a 27-atom one. That is the
 first transfer measurement this project has: with only two examples of that
 cell size, holding one out leaves a single sibling, and the operator has to
 extrapolate to a grid shape it has barely seen.
@@ -143,7 +143,12 @@ numbers are the best yet recorded:
 | --- | --- | --- |
 | 5 structures | 0.0295 ± 0.0025 | 0.0525 ± 0.0031 |
 | 9 structures | 0.0219 ± 0.0046 | 0.0400 ± 0.0069 |
-| 12 structures, 27-atom subset | 0.0189 ± 0.0047 | 0.0379 ± 0.0077 |
+| 12 structures, 27-atom subset | 0.0205 ± 0.0064 | 0.0355 ± 0.0069 |
+
+> The three rows differ in protocol as well as in data — the 12-structure run
+> holds out 3 structures per fold against 1 for the 5-structure run, and uses
+> early stopping, which the earlier runs predate. Read the trend, not the
+> third decimal.
 
 > Still one element. These numbers measure interpolation between geometries of
 > gold and now, weakly, extrapolation across cell size. They say nothing about

@@ -7,9 +7,10 @@
   \item[``No struct* directories''] Check \opt{data.root} and
     \opt{data.pattern}. The pattern is a prefix, not a glob.
   \item[``Unknown key(s) in section \ldots''] A configuration key was
-    removed. \opt{use\_vasp\_extcar}, \opt{train\_fraction} and \opt{split}
-    no longer exist; regenerate the file with \opt{--write-config}.
-    \file{EXTCAR} is now always computed.
+    removed. \opt{mode}, \opt{holdout}, \opt{use\_vasp\_extcar},
+    \opt{train\_fraction} and \opt{split} no longer exist; regenerate the
+    file with \opt{--write-config}. The split is now one number,
+    \opt{valid\_fraction}, and \file{EXTCAR} is always computed.
   \item[``No valence charge for \ldots''] No \file{POTCAR} was found. Supply one,
     or pass \opt{--zval Au=11}.
   \item[``Unknown key(s) in section \ldots''] A typo in the YAML. The message
@@ -25,8 +26,8 @@
   \item[The electron count is far off] Nothing constrains it by default. A few
     per cent is normal; tens of per cent means the model is extrapolating,
     typically because the evaluation grid is far from the training resolution.
-  \item[The numbers seem too good] Check whether anything was held out. In
-    universal mode with \opt{holdout: null} they are training fit. The report's
+  \item[The numbers seem too good] Check whether anything was held out. With
+    \opt{valid\_fraction: 0} they are a training fit. The report's
     \emph{What these numbers do not show} section states this explicitly.
 \end{description}
 

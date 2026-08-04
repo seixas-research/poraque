@@ -27,29 +27,44 @@ Path & Contents \\
 
 \section{One model, all structures}
 
-Training is \emph{universal}: a single set of weights is fitted to every
-structure at once, and batches mix materials. That is the deployable artefact.
+A single set of weights is fitted across every training structure at once, and
+batches mix materials --- never one model per material.
+
+\begin{pnote}
+There is \textbf{one} training protocol and \textbf{one} variation on it. By
+default a fifth of the structures (\opt{valid\_fraction}) is held back for
+validation, so the printed score is genuinely held out and
+\opt{early\_stopping} has something to watch. Nothing else needs selecting.
+\end{pnote}
 
 \begin{pwarn}
-By default nothing is held out, so the metrics printed at the end are
-\textbf{training fit}. They show the model can represent the data; they are not
-a measure of how it will do on a new material. On the reference data the
-training fit is $4$--$5\times$ better than the cross-validated score, which is
-the size of the mistake if the two are confused.
+Set \opt{valid\_fraction: 0} and nothing is held out, so the metrics become a
+\textbf{training fit}: they show the model can represent the data, not how it
+will do on a new material. On the reference data the training fit is about
+$4\times$ better than the cross-validated score, which is the size of the
+mistake if the two are confused.
+
+That setting is still the right one for the artefact you ship, since it uses
+all the data --- just quote a cross-validated number alongside it.
 \end{pwarn}
 
 \section{Measuring generalisation}
 
-Two options, both splitting at the \emph{structure} level.
+Splitting is always at the \emph{structure} level.
 
-\subsection{Hold out named structures}
+\subsection{The default split}
 
 \begin{lstlisting}
 python scripts/run_train.py --config configs/train_config.yaml \
-       --holdout struct_004
+       --valid-fraction 0.2
 \end{lstlisting}
 
+Structures are shuffled with \opt{seed} and that share is kept back.
+
 \subsection{K-fold cross-validation}
+
+This is the only variation on the protocol; \opt{valid\_fraction} is ignored,
+since the folds define the splits.
 
 \begin{lstlisting}
 python scripts/run_train.py --config configs/train_config.yaml \
@@ -94,7 +109,7 @@ at $32^3$ working resolution, 200 epochs:
 \begin{center}
 \begin{tabular}{@{}lrr@{}}
 \toprule
-Model & 5-fold CV & universal (training fit) \\
+Model & 5-fold CV & all structures (training fit) \\
 \midrule
 \opt{ext2chg} & $0.0231 \pm 0.0127$ & $0.0059$ \\
 \opt{chg2tau} & $0.0469 \pm 0.0273$ & $0.0128$ \\

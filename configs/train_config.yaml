@@ -38,13 +38,13 @@ training:
   weight_decay: 0.0001
   scheduler: cosine
   grad_clip: 1.0
-  mode: universal
-  holdout: null
-  valid_fraction: 0.0
+  valid_fraction: 0.2
   enable_kfold: false
   k_folds: 5
   eval_epoch: 10
+  early_stopping: 50
   seed: 0
+  init_seed: null
   device: auto
   loss: relative_l2
   sobolev_weight: 0.1

@@ -148,15 +148,20 @@ option is worth revisiting only at higher resolution or larger \opt{modes},
 where the model could actually use those frequencies.
 \end{pnote}
 
-\section{Universal training}
+\section{Training}
 \label{sec:universal}
 
-\textbf{One model per task is trained on the combined data of every
-structure.} This is the deployable artefact.
+\textbf{One model per task is trained across all the training structures},
+never one per material.
 
 \begin{lstlisting}
-python scripts/run_train.py --config configs/train_config.yaml   # mode: universal
+python scripts/run_train.py --config configs/train_config.yaml
 \end{lstlisting}
+
+There is one protocol and one variation on it: \opt{valid\_fraction} holds back
+a fifth of the structures by default, and \opt{enable\_kfold}
+(Section~\ref{sec:kfold}) swaps the whole thing for cross-validation. Nothing
+else selects a training mode.
 
 Batches are drawn \emph{across} materials: the sampler groups structures by
 grid shape and shuffles both within and across those groups, so a gradient step
@@ -169,12 +174,12 @@ The run writes a single unified checkpoint,
 \opt{ext2chg} and \opt{chg2tau}.
 
 \begin{pwarn}
-With \opt{holdout: null} every structure is in training, so the reported
+With \opt{valid\_fraction: 0} every structure is in training, so the reported
 metrics are \textbf{training fit}. They show the model can represent the data;
-they are not a generalisation estimate. Name structures in \opt{holdout}, or
-use the cross-validation of Section~\ref{sec:kfold}, for that.
+they are not a generalisation estimate. Raise \opt{valid\_fraction}, or use the
+cross-validation of Section~\ref{sec:kfold}, for that.
 
-Measured on twelve gold structures: universal training fit gives relative
+Measured on twelve gold structures: the all-structure training fit gives relative
 $L^2$ of $0.0059$ (\opt{ext2chg}) and $0.0128$ (\opt{chg2tau}), against
 cross-validated values roughly four times larger. That gap is the memorisation
 margin, and quoting the training-fit number as a result would be a serious
@@ -251,7 +256,7 @@ were, and whether the figures support a generalisation claim.
 \toprule
 Path & Contents \\
 \midrule
-\file{models/*.pt} & trained operators (one per task in universal mode) \\
+\file{models/poraque\_models.pth} & both trained operators, in one file \\
 \file{logs/*.log} & human-readable training log \\
 \file{logs/*.json} & machine-readable metrics and full history \\
 \file{logs/*\_config.yaml} & the resolved configuration, for reproduction \\

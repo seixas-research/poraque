@@ -11,5 +11,6 @@ guides in `latex/`.
 | [`pi_fno.md`](pi_fno.md) | How KS-DFT and OF-DFT enter as constraints; the staged plan |
 | [`fno_physics.md`](fno_physics.md) | What each model corresponds to in DFT terms |
 | [`vasp_analysis_report.md`](vasp_analysis_report.md) | How VASP writes `EXTCAR` and `TAUCAR`, from the Fortran source |
+| [`committee.md`](committee.md) | Query by committee: `init_seed`, disagreement on 3D fields, and how to validate it |
 
 Start with `roadmap.md`.
