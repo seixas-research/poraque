@@ -90,10 +90,15 @@ class TestAseProtocol:
         # No POTCAR, so the G=0 remainder is unavailable and must say so.
         assert "alpha_z" in payload["missing"]
 
-    def test_forces_raise_not_implemented(self, atoms, calculator):
+    def test_forces_need_a_potcar(self, atoms, calculator):
+        """
+        Forces exist now (see tests/test_forces.py), but not from the Gaussian
+        fallback: it has no tabulated form factor to differentiate.
+        """
         atoms.calc = calculator
-        with pytest.raises(NotImplementedError, match="forces"):
-            calculator.get_forces(atoms)
+        with pytest.warns(RuntimeWarning):
+            with pytest.raises(ValueError, match="POTCAR"):
+                calculator.compute_forces(atoms)
 
     def test_stress_raises_not_implemented(self, atoms, calculator):
         atoms.calc = calculator
@@ -117,7 +122,9 @@ class TestPipeline:
     def test_predicts_three_fields_on_one_grid(self, atoms, calculator):
         with pytest.warns(RuntimeWarning):
             fields = calculator.predict_fields(atoms)
-        assert set(fields) == {"external", "density", "tau"}
+        # 'density_raw' is the prediction before charge normalization, kept so
+        # the electron-count drift stays inspectable after the fact.
+        assert set(fields) == {"external", "density", "tau", "density_raw"}
         grids = {tuple(field.grid.shape) for field in fields.values()}
         assert len(grids) == 1, "the three fields must share one mesh"
 
@@ -125,7 +132,8 @@ class TestPipeline:
         atoms.calc = calculator
         with pytest.warns(RuntimeWarning):
             atoms.get_potential_energy()
-        assert set(calculator.fields) == {"external", "density", "tau"}
+        assert set(calculator.fields) == {"external", "density", "tau",
+                                          "density_raw"}
 
     def test_resolution_comes_from_the_checkpoint(self, operators):
         calculator = Poraque(operators,

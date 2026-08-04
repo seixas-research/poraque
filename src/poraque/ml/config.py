@@ -71,6 +71,14 @@ class DataConfig:
         (:func:`scipy.ndimage.gaussian_filter` with ``mode="wrap"``, which
         blurs along grid axes and is therefore anisotropic in Cartesian space
         unless the cell is orthogonal).
+    spin : str or bool
+        Whether the densities are spin-polarised (``ISPIN = 2``), in which case
+        a ``CHGCAR`` carries two channels — the total density and the
+        magnetisation density — and the operator is built with two channels to
+        match. ``"auto"`` (the default) reads the answer off the data, since a
+        spin-polarised ``CHGCAR`` has a second grid block and a collinear one
+        does not. Set ``true`` or ``false`` to require one, turning a
+        mislabelled dataset into an error rather than a silent reinterpretation.
     """
 
     root: str = "data/vasp"
@@ -80,6 +88,7 @@ class DataConfig:
     resolution: int = 32
     gaussian_blur: float = None
     blur_method: str = "spectral"
+    spin: str = "auto"
 
 
 @dataclass

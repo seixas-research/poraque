@@ -225,6 +225,10 @@ class SymbolicResult:
     full_latex: str = ""
     parity_plot: str = None
     validation: dict = field(default_factory=dict)
+    #: The same scoring as :attr:`validation`, but on the voxels the search was
+    #: fitted to. Present even when nothing was held out, so a parity plot can
+    #: always be drawn; read it as a training fit, not a generalisation score.
+    fitted: dict = field(default_factory=dict)
 
     def summary(self):
         """Multi-line text block, for the log and the terminal."""
@@ -807,8 +811,6 @@ def _limit_to(target_expression, name, expected, tolerance, analytic, numeric,
     ``expected`` is compared on an **absolute** tolerance. A relative one would
     be meaningless for the von Weizsacker limit, whose target is zero.
     """
-    import sympy
-
     value, method = None, "undetermined"
     try:
         result = analytic()
@@ -1098,16 +1100,18 @@ def result_to_dict(result):
     """
     Serialisable form of a :class:`SymbolicResult`.
 
-    The validation entry carries the two voxel arrays a parity plot is drawn
-    from. They belong in a figure, not in a JSON summary -- thousands of floats
-    that no reader consults, and which ``json.dump`` cannot encode anyway.
+    The validation and fitted entries carry the two voxel arrays a parity plot
+    is drawn from. They belong in a figure, not in a JSON summary -- thousands
+    of floats that no reader consults, and which ``json.dump`` cannot encode
+    anyway.
     """
     from dataclasses import asdict
 
     payload = asdict(result)
-    validation = payload.get("validation") or {}
-    payload["validation"] = {key: value for key, value in validation.items()
-                             if not isinstance(value, np.ndarray)}
+    for key in ("validation", "fitted"):
+        section = payload.get(key) or {}
+        payload[key] = {name: value for name, value in section.items()
+                        if not isinstance(value, np.ndarray)}
     return payload
 
 
@@ -1209,6 +1213,12 @@ def distill_dataset(dataset, config, operator=None, log=None, engine=None,
          f"({config.iterations} iterations)")
 
     result = SymbolicDistiller(config, engine=engine).fit(table)
+
+    # Always scored on the data it was fitted to, so a parity plot can be drawn
+    # even for a run with no validation split. It is a weaker statement than the
+    # held-out score and is labelled as such wherever it is used, but "no plot"
+    # is not a better answer than "a plot that says which data it is".
+    result.fitted = _score_on(result.expression, table)
 
     # Score the winner on the held-out structures, against the DFT reference
     # rather than against whatever was fitted: the question a parity plot

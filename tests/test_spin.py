@@ -1,0 +1,351 @@
+# -*- coding: utf-8 -*-
+# file: test_spin.py
+
+# This code is part of Poraquê.
+# MIT License
+#
+# Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
+
+r"""
+Spin-polarised (``ISPIN = 2``) support, end to end.
+
+No spin-polarised reference calculation ships with this repository — every
+``INCAR`` in ``data/vasp`` sets ``ISPIN = 1`` — so the fixtures here build a
+two-block ``CHGCAR`` from known arrays. That is enough to pin everything the
+code path is responsible for:
+
+* the file format round-trips through VASP's own layout;
+* :math:`(\rho, m)` and :math:`(\rho_\uparrow, \rho_\downarrow)` are consistent
+  views of one another;
+* the dataset detects two channels from the data rather than from a flag;
+* the two channels are normalized *separately*;
+* an operator can be built, trained and reloaded with two channels.
+
+What it cannot test is accuracy, which needs real ``ISPIN = 2`` data.
+"""
+
+import numpy as np
+import pytest
+import torch
+
+from poraque.fields import (
+    ChargeDensity,
+    ExternalPotential,
+    FieldGrid,
+    KineticEnergyDensity,
+    SpinDensity,
+    is_spin_polarized,
+)
+from poraque.fields.vasp.poscar import Poscar
+from poraque.ml import FieldOperator, FieldPairDataset
+from poraque.ml.transforms import Asinh, Channelwise
+
+
+@pytest.fixture
+def grid():
+    return FieldGrid((8, 8, 8), np.eye(3) * 4.0)
+
+
+@pytest.fixture
+def poscar():
+    return Poscar(cell=np.eye(3) * 4.0, symbols=["Fe"], counts=[2],
+                  scaled_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]])
+
+
+@pytest.fixture
+def spin_density(grid, poscar):
+    """A field with a genuinely non-zero, sign-changing magnetisation."""
+    rng = np.random.default_rng(0)
+    up = rng.random(grid.shape) + 0.5
+    down = rng.random(grid.shape) + 0.5
+    return SpinDensity.from_up_down(up, down, grid, poscar)
+
+
+@pytest.fixture
+def spin_dataset(tmp_path, grid, poscar):
+    """Three synthetic materials with spin-polarised CHGCARs."""
+    rng = np.random.default_rng(1)
+    for index in range(3):
+        directory = tmp_path / f"struct_{index:03d}"
+        directory.mkdir()
+        ExternalPotential(rng.normal(size=grid.shape) * 5.0, grid,
+                          poscar).write(str(directory / "EXTCAR"))
+        SpinDensity.from_up_down(rng.random(grid.shape) + 0.5,
+                                 rng.random(grid.shape) * 0.4,
+                                 grid, poscar).write(str(directory / "CHGCAR"))
+        KineticEnergyDensity(rng.random(grid.shape) * 3.0, grid,
+                             poscar).write(str(directory / "TAUCAR"))
+    return str(tmp_path)
+
+
+# ===================================================================== #
+# The field
+# ===================================================================== #
+class TestSpinDensity:
+    def test_up_down_round_trip(self, grid, poscar):
+        r"""
+        :math:`(\rho, m)` and :math:`(\rho_\uparrow, \rho_\downarrow)` are the
+        same information.
+        """
+        rng = np.random.default_rng(0)
+        up, down = rng.random(grid.shape), rng.random(grid.shape)
+        density = SpinDensity.from_up_down(up, down, grid, poscar)
+        assert np.allclose(density.up, up)
+        assert np.allclose(density.down, down)
+        assert np.allclose(density.total, up + down)
+        assert np.allclose(density.magnetization, up - down)
+
+    def test_integrals(self, grid, poscar):
+        """Electron count from the total, moment from the magnetisation."""
+        up = np.full(grid.shape, 0.5)
+        down = np.full(grid.shape, 0.25)
+        density = SpinDensity.from_up_down(up, down, grid, poscar)
+        volume = grid.volume
+        assert density.electron_count() == pytest.approx(0.75 * volume)
+        assert density.magnetic_moment() == pytest.approx(0.25 * volume)
+
+    def test_file_round_trip(self, tmp_path, spin_density):
+        """Through VASP's two-block layout and back, to full precision."""
+        path = str(tmp_path / "CHGCAR")
+        spin_density.write(path)
+        assert is_spin_polarized(path)
+
+        back = SpinDensity.read(path)
+        assert np.allclose(back.total, spin_density.total, rtol=1e-9)
+        assert np.allclose(back.magnetization, spin_density.magnetization,
+                           rtol=1e-9)
+
+    def test_a_collinear_file_is_not_read_as_spin_polarised(self, tmp_path,
+                                                            grid, poscar):
+        """
+        Refusing is the point.
+
+        Reading a one-block CHGCAR as spin-polarised would hand back a zero
+        magnetisation — a physical claim ("this system is non-magnetic") that
+        the file never made.
+        """
+        path = str(tmp_path / "CHGCAR")
+        ChargeDensity(np.ones(grid.shape), grid, poscar).write(path)
+        assert not is_spin_polarized(path)
+        with pytest.raises(ValueError, match="not a spin-polarised"):
+            SpinDensity.read(path)
+
+    def test_normalization_preserves_local_polarisation(self, spin_density):
+        r"""
+        Scaling both channels together is what makes it a *normalisation*.
+
+        Rescaling :math:`\rho` alone would change :math:`m/\rho` at every
+        point, which is a different prediction rather than a repaired one.
+        """
+        before = spin_density.magnetization / spin_density.total
+        after = spin_density.normalized(20.0)
+        assert after.electron_count() == pytest.approx(20.0)
+        assert np.allclose(after.magnetization / after.total, before)
+
+    def test_normalization_keeps_both_spins_non_negative(self, grid, poscar):
+        """Clipping acts on up/down, the quantities that cannot be negative."""
+        rng = np.random.default_rng(3)
+        density = SpinDensity(rng.random(grid.shape),
+                              rng.normal(size=grid.shape) * 4.0,
+                              grid, poscar)
+        fixed = density.normalized(10.0)
+        assert fixed.up.min() >= -1e-12
+        assert fixed.down.min() >= -1e-12
+
+    def test_channel_stack_shape(self, spin_density, grid):
+        assert spin_density.data.shape == (2,) + tuple(grid.shape)
+
+    def test_as_charge_density_keeps_the_electron_count(self, spin_density):
+        total = spin_density.as_charge_density()
+        assert isinstance(total, ChargeDensity)
+        assert total.electron_count() == pytest.approx(
+            spin_density.electron_count())
+
+    def test_rejects_mismatched_shapes(self, grid, poscar):
+        with pytest.raises(ValueError, match="does not match the grid"):
+            SpinDensity(np.ones(grid.shape), np.ones((4, 4, 4)), grid, poscar)
+
+
+# ===================================================================== #
+# Per-channel normalization
+# ===================================================================== #
+class TestChannelwiseTransform:
+    def test_applies_one_transform_per_channel(self):
+        transform = Channelwise([Asinh(1.0), Asinh(10.0)])
+        values = np.stack([np.full((4, 4, 4), 2.0),
+                           np.full((4, 4, 4), 2.0)], axis=0)
+        out = transform(values)
+        assert not np.allclose(out[0], out[1]), (
+            "two different scales must give two different results")
+
+    def test_round_trips(self):
+        transform = Channelwise([Asinh(0.5), Asinh(3.0)])
+        rng = np.random.default_rng(0)
+        values = rng.normal(size=(2, 4, 4, 4))
+        assert np.allclose(transform.inverse(transform(values)), values)
+
+    def test_works_batched_and_unbatched(self):
+        """The channel axis is -4 either way, which is why it is counted so."""
+        transform = Channelwise([Asinh(0.5), Asinh(3.0)])
+        rng = np.random.default_rng(0)
+        single = rng.normal(size=(2, 4, 4, 4))
+        batched = single[None]
+        assert np.allclose(transform(batched)[0], transform(single))
+
+    def test_works_on_torch_tensors(self):
+        transform = Channelwise([Asinh(0.5), Asinh(3.0)])
+        values = torch.randn(1, 2, 4, 4, 4)
+        assert torch.allclose(transform.inverse(transform(values)), values,
+                              atol=1e-5)
+
+    def test_state_dict_round_trip(self):
+        from poraque.ml.transforms import FieldTransform
+
+        transform = Channelwise([Asinh(0.5), Asinh(3.0)])
+        rebuilt = FieldTransform.from_state_dict(transform.state_dict())
+        assert isinstance(rebuilt, Channelwise)
+        assert [t.scale for t in rebuilt.transforms] == [0.5, 3.0]
+
+    def test_rejects_a_channel_count_mismatch(self):
+        transform = Channelwise([Asinh(1.0), Asinh(1.0)])
+        with pytest.raises(ValueError, match="channels"):
+            transform(np.zeros((3, 4, 4, 4)))
+
+
+# ===================================================================== #
+# The dataset
+# ===================================================================== #
+class TestSpinDataset:
+    def test_detects_spin_from_the_data(self, spin_dataset):
+        dataset = FieldPairDataset(spin_dataset, task="ext2chg")
+        assert dataset.spin is True
+        assert dataset.channels == (1, 2)
+
+    def test_chg2tau_is_two_in_one_out(self, spin_dataset):
+        r""":math:`\tau` stays a single block even under ``ISPIN = 2``."""
+        dataset = FieldPairDataset(spin_dataset, task="chg2tau")
+        assert dataset.channels == (2, 1)
+
+    def test_samples_carry_the_channel_axis(self, spin_dataset):
+        dataset = FieldPairDataset(spin_dataset, task="ext2chg")
+        sample = dataset[0]
+        assert sample["input"].shape[0] == 1
+        assert sample["target"].shape[0] == 2
+
+    def test_transforms_are_fitted_per_channel(self, spin_dataset):
+        """
+        The reason :class:`Channelwise` exists.
+
+        One scale across both channels would be set by whichever dominates the
+        sample and would normalize neither.
+        """
+        dataset = FieldPairDataset(spin_dataset, task="ext2chg")
+        _, target_transform = dataset.fit_transforms()
+        assert isinstance(target_transform, Channelwise)
+        assert len(target_transform.transforms) == 2
+
+    def test_a_collinear_dataset_stays_single_channel(self, tmp_path, grid,
+                                                      poscar):
+        """The default path must be untouched by any of this."""
+        rng = np.random.default_rng(2)
+        for index in range(2):
+            directory = tmp_path / f"struct_{index:03d}"
+            directory.mkdir()
+            ExternalPotential(rng.normal(size=grid.shape), grid,
+                              poscar).write(str(directory / "EXTCAR"))
+            ChargeDensity(rng.random(grid.shape), grid,
+                          poscar).write(str(directory / "CHGCAR"))
+            KineticEnergyDensity(rng.random(grid.shape), grid,
+                                 poscar).write(str(directory / "TAUCAR"))
+
+        dataset = FieldPairDataset(str(tmp_path), task="ext2chg")
+        assert dataset.spin is False
+        assert dataset.channels == (1, 1)
+        assert dataset[0]["target"].shape[0] == 1
+        _, target_transform = dataset.fit_transforms()
+        assert not isinstance(target_transform, Channelwise)
+
+    def test_requesting_the_wrong_spin_is_an_error(self, spin_dataset):
+        """A flag must not be able to contradict the data."""
+        with pytest.raises(ValueError, match="spin-polarised"):
+            FieldPairDataset(spin_dataset, task="ext2chg", spin=False)
+
+
+# ===================================================================== #
+# The operator
+# ===================================================================== #
+class TestSpinOperator:
+    def test_predicts_a_spin_density(self, spin_dataset, grid):
+        operator = FieldOperator("ext2chg", in_channels=1, out_channels=2,
+                                 width=6, modes=3, n_layers=1,
+                                 projection_channels=8, device="cpu")
+        import os
+
+        potential = ExternalPotential.read(
+            os.path.join(spin_dataset, "struct_000", "EXTCAR"))
+        prediction = operator.predict(potential)
+        assert isinstance(prediction, SpinDensity)
+        assert prediction.data.shape == (2,) + tuple(grid.shape)
+
+    def test_consumes_a_spin_density(self, spin_dataset, grid):
+        """``chg2tau`` takes two channels in and gives one out."""
+        import os
+
+        operator = FieldOperator("chg2tau", in_channels=2, out_channels=1,
+                                 width=6, modes=3, n_layers=1,
+                                 projection_channels=8, device="cpu")
+        density = SpinDensity.read(
+            os.path.join(spin_dataset, "struct_000", "CHGCAR"))
+        prediction = operator.predict(density)
+        assert isinstance(prediction, KineticEnergyDensity)
+        assert prediction.data.shape == tuple(grid.shape)
+
+    def test_trains(self, spin_dataset):
+        from poraque.ml import train
+
+        dataset = FieldPairDataset(spin_dataset, task="ext2chg")
+        source_transform, target_transform = dataset.fit_transforms()
+        operator = FieldOperator("ext2chg", in_channels=1, out_channels=2,
+                                 width=6, modes=3, n_layers=1,
+                                 projection_channels=8, device="cpu",
+                                 input_transform=source_transform,
+                                 target_transform=target_transform)
+        history = train(operator, dataset, epochs=2, batch_size=1,
+                        learning_rate=1e-3, verbose=False)
+        assert len(history["train_loss"]) == 2
+        assert np.isfinite(history["train_loss"]).all()
+
+    def test_channel_counts_survive_a_bundle_round_trip(self, tmp_path,
+                                                        spin_dataset):
+        """
+        The regression this guards against is silent.
+
+        ``in_channels`` cannot be read back off the lifting layer, which sees
+        ``in_channels + 3`` when coordinates are on. Inferring it would turn a
+        two-channel model into a one-channel model with coordinates and load
+        the weights into the wrong slots.
+        """
+        import os
+
+        from poraque.ml import BUNDLE_FILENAME, load_bundle, save_bundle
+
+        operator = FieldOperator("ext2chg", in_channels=1, out_channels=2,
+                                 width=6, modes=3, n_layers=1,
+                                 projection_channels=8, device="cpu")
+        partner = FieldOperator("chg2tau", in_channels=2, out_channels=1,
+                                width=6, modes=3, n_layers=1,
+                                projection_channels=8, device="cpu")
+        path = str(tmp_path / BUNDLE_FILENAME)
+        save_bundle(path, {"ext2chg": operator, "chg2tau": partner})
+
+        potential = ExternalPotential.read(
+            os.path.join(spin_dataset, "struct_000", "EXTCAR"))
+        expected = operator.predict(potential)
+
+        reloaded = load_bundle(path, "ext2chg", device="cpu")
+        assert (reloaded.in_channels, reloaded.out_channels) == (1, 2)
+        assert np.allclose(reloaded.predict(potential).data, expected.data,
+                           atol=1e-5)
+
+        other = load_bundle(path, "chg2tau", device="cpu")
+        assert (other.in_channels, other.out_channels) == (2, 1)

@@ -129,57 +129,118 @@ class ModelReport:
     # LaTeX generation
     # ------------------------------------------------------------------ #
     def _preamble(self, title, subtitle):
+        r"""
+        Preamble matching the Poraquê User Guide.
+
+        The palette, the rules, the heading treatment and the header/footer are
+        taken from ``latex/user_guide/poraque_user_guide.tex`` so that a
+        generated report and the hand-written guides read as one family of
+        documents. The brand accent is ``poraquered``, the logo's own colour --
+        the earlier blue matched nothing.
+
+        Two things stay deliberately different from the guide. The class is
+        ``article`` rather than ``report``, because a single-model report has no
+        chapters; and there is no title *page*, because a two-page report with a
+        full-bleed cover is mostly cover.
+        """
+        has_logo = bool(self.logo and os.path.exists(self.logo))
         logo_line = ""
-        if self.logo and os.path.exists(self.logo):
+        header_logo = r"\fancyhead[L]{}"
+        if has_logo:
             logo_line = (r"\includegraphics[width=0.34\textwidth]{logo.png}\par"
-                         "\n" r"\vspace{0.7cm}")
+                         "\n" r"\vspace{0.55cm}")
+            header_logo = (r"\fancyhead[L]{\raisebox{-4pt}"
+                           r"{\includegraphics[height=14pt]{logo.png}}}")
 
         stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
         return rf"""\documentclass[11pt,a4paper]{{article}}
-\usepackage[margin=2.2cm]{{geometry}}
+\usepackage[margin=2.5cm,headheight=26pt,headsep=16pt]{{geometry}}
 \usepackage{{lmodern}}
 \usepackage[T1]{{fontenc}}
 \usepackage[utf8]{{inputenc}}
+\usepackage{{microtype}}
 \usepackage{{amsmath}}
+\usepackage{{amssymb}}
 \usepackage{{graphicx}}
 \usepackage{{xcolor}}
 \usepackage{{booktabs}}
 \usepackage{{array}}
 \usepackage{{longtable}}
+\usepackage{{enumitem}}
 % Defines the starred \caption* used for the unnumbered figure captions
 % below. Without it LaTeX prints a literal "Figure N: *" above the text.
 \usepackage{{caption}}
 \usepackage{{titlesec}}
 \usepackage{{fancyhdr}}
+\usepackage{{tcolorbox}}
 \usepackage{{parskip}}
-\usepackage[colorlinks=true,linkcolor=poraqueblue,urlcolor=poraqueblue]{{hyperref}}
+\usepackage[colorlinks=true,linkcolor=poraquered,urlcolor=poraquered,
+            citecolor=poraquered]{{hyperref}}
 \usepackage{{float}}
 
-\definecolor{{poraqueblue}}{{RGB}}{{42,120,214}}
+\tcbuselibrary{{skins,breakable}}
+
+% --- Brand palette, shared with the user and technical guides --------------
+\definecolor{{poraquered}}{{RGB}}{{248,65,55}}
+\definecolor{{poraqueamber}}{{RGB}}{{235,104,52}}
 \definecolor{{poraquedark}}{{RGB}}{{30,34,40}}
 \definecolor{{shadegray}}{{RGB}}{{90,96,104}}
+\definecolor{{codebg}}{{RGB}}{{245,246,248}}
+\definecolor{{warnamber}}{{RGB}}{{176,125,42}}
 
+% --- Heading typography, as in the guides ----------------------------------
 \titleformat{{\section}}
   {{\Large\bfseries\color{{poraquedark}}}}
-  {{\textcolor{{poraqueblue}}{{\thesection}}}}{{0.7em}}{{}}
-  [\vspace{{-6pt}}{{\color{{poraqueblue!35}}\rule{{\textwidth}}{{0.8pt}}}}]
+  {{\textcolor{{poraquered}}{{\thesection}}}}{{0.8em}}{{}}
+  [\vspace{{-6pt}}{{\color{{poraquered!35}}\rule{{\textwidth}}{{0.8pt}}}}]
 \titleformat{{\subsection}}
   {{\large\bfseries\color{{poraquedark}}}}
-  {{\textcolor{{poraqueblue}}{{\thesubsection}}}}{{0.7em}}{{}}
+  {{\textcolor{{poraquered}}{{\thesubsection}}}}{{0.8em}}{{}}
+\titleformat{{\subsubsection}}
+  {{\normalsize\bfseries\color{{poraquedark}}}}
+  {{\textcolor{{poraquered}}{{\thesubsubsection}}}}{{0.7em}}{{}}
+\titlespacing*{{\section}}{{0pt}}{{18pt}}{{10pt}}
+\titlespacing*{{\subsection}}{{0pt}}{{12pt}}{{6pt}}
 
+% --- Running header / footer, with the guide's red rule --------------------
 \pagestyle{{fancy}}
 \fancyhf{{}}
+{header_logo}
+\fancyhead[R]{{\small\color{{shadegray}}\nouppercase{{\leftmark}}}}
 \fancyfoot[L]{{\small\color{{shadegray}}Poraqu\^e model report}}
 \fancyfoot[R]{{\small\color{{shadegray}}\thepage}}
-\renewcommand{{\headrulewidth}}{{0pt}}
+\renewcommand{{\headrulewidth}}{{0.8pt}}
+\renewcommand{{\headrule}}{{{{\color{{poraquered}}%
+  \hrule width\headwidth height\headrulewidth}}}}
+\renewcommand{{\footrulewidth}}{{0pt}}
+\markboth{{{title}}}{{}}
+
+% --- Callout boxes, matching the guides ------------------------------------
+\newtcolorbox{{pwarn}}[1][]{{%
+  breakable, enhanced, colback=warnamber!7, colframe=warnamber,
+  boxrule=0pt, leftrule=3pt, arc=1pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\bfseries\small, title={{Caveat}}, coltitle=warnamber,
+  attach title to upper=\par\vspace{{2pt}}, #1}}
+\newtcolorbox{{pnote}}[1][]{{%
+  breakable, enhanced, colback=poraquered!5, colframe=poraquered,
+  boxrule=0pt, leftrule=3pt, arc=1pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\bfseries\small, title={{Note}}, coltitle=poraquered,
+  attach title to upper=\par\vspace{{2pt}}, #1}}
+
+\setlist[itemize]{{itemsep=2pt,topsep=4pt}}
+\setlist[enumerate]{{itemsep=3pt,topsep=4pt}}
 
 \begin{{document}}
 
 \begin{{center}}
 {logo_line}
+{{\color{{poraquered}}\rule{{0.74\textwidth}}{{1.6pt}}}}\par
+\vspace{{0.7cm}}
 {{\Huge\bfseries {title}\par}}
 \vspace{{0.35cm}}
 {{\large\color{{shadegray}} {subtitle}\par}}
+\vspace{{0.7cm}}
+{{\color{{poraquered}}\rule{{0.74\textwidth}}{{1.6pt}}}}\par
 \vspace{{0.25cm}}
 {{\small\color{{shadegray}} generated {stamp}\par}}
 \end{{center}}
@@ -312,11 +373,18 @@ class ModelReport:
 
         parity = get("parity_plot")
         if parity and os.path.exists(parity):
+            # Which data the plot is drawn from depends on whether anything was
+            # held out; saying "held-out" regardless would overstate a training
+            # fit, which is the one thing a parity plot must not do.
+            on_held_out = bool(held_out.get("n_points"))
+            provenance = ("on held-out structures" if on_held_out else
+                          "on the voxels it was fitted to --- a training fit, "
+                          "since this run held nothing out")
             body.append(self._figure_block(
                 parity,
-                "The distilled formula against the DFT reference on held-out "
-                "structures. Read it beside the operator's own parity plot: "
-                "the gap between them is what the closed form gives up."))
+                f"The distilled formula against the DFT reference "
+                f"{provenance}. Read it beside the operator's own parity plot: "
+                f"the gap between them is what the closed form gives up."))
 
         body.append(self._asymptotic_block(get("limits") or {}))
 
@@ -470,11 +538,16 @@ class ModelReport:
         body.append(self._metrics_table(per_material, unit))
 
         if caveats:
-            body.append(r"\subsection*{What these numbers do not show}" "\n")
+            # The guides put this class of statement in a `pwarn` box rather
+            # than a bare list, and it is the part of the report most likely to
+            # be skipped -- so it gets the same amber rule here.
+            body.append(r"\begin{pwarn}[title={What these numbers do not show}]"
+                        "\n")
             body.append(r"\begin{itemize}" "\n")
             for caveat in caveats:
                 body.append(f"\\item {_escape(caveat)}\n")
             body.append(r"\end{itemize}" "\n")
+            body.append(r"\end{pwarn}" "\n")
 
         captions = {
             "loss_curves": "Training objective and validation error against epoch.",

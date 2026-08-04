@@ -49,6 +49,60 @@ class ChargeDensity(ScalarField):
         """Number of valence electrons in the cell."""
         return self.integrate()
 
+    def normalized(self, n_electrons, clip_negative=True):
+        r"""
+        Rescale so the density integrates to exactly ``n_electrons``.
+
+        A Kohn-Sham density integrates to the valence count the
+        pseudopotentials fix; that number is an input to a DFT calculation, not
+        an output of one. A *predicted* density has no such guarantee, and the
+        error it carries is not benign: every electrostatic term is at least
+        linear in :math:`\rho` and the Hartree energy is quadratic, so a 1 %
+        drift moves a total energy by tens of eV — orders of magnitude more
+        than the differences the energy is wanted for. Worse, the drift varies
+        from structure to structure, so it does not cancel in a difference.
+
+        Rescaling by a single global factor is the minimal repair: it restores
+        the one exactly-known integral property without touching the shape of
+        the field, which is what the operator was actually trained to predict.
+
+        Parameters
+        ----------
+        n_electrons : float
+            Target valence electron count, :math:`\sum_s N_s Z^{\rm val}_s`.
+        clip_negative : bool, optional
+            First clip small negative values to zero. Fourier-truncated
+            densities ring slightly negative in the interstitial, which is
+            unphysical and makes :math:`\rho^{4/3}` in the exchange energy
+            ill-defined. On by default.
+
+        Returns
+        -------
+        ChargeDensity
+            A new field; ``self`` is unchanged.
+
+        Raises
+        ------
+        ValueError
+            If the density integrates to zero, leaving nothing to rescale.
+        """
+        values = np.asarray(self.data, dtype=float)
+        if clip_negative:
+            values = np.clip(values, 0.0, None)
+
+        current = float(self.grid.integrate(values))
+        if abs(current) < 1e-30:
+            raise ValueError(
+                "The density integrates to zero, so it cannot be normalized "
+                "to a finite electron count."
+            )
+
+        metadata = dict(self.metadata or {})
+        metadata["electron_count_before_normalization"] = current
+        metadata["electron_count"] = float(n_electrons)
+        return type(self)(values * (float(n_electrons) / current), self.grid,
+                          self.structure, metadata=metadata)
+
     @classmethod
     def compute(cls, *args, **kwargs):
         """

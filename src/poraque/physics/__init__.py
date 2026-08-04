@@ -36,15 +36,25 @@ from .energy import (
     pw92_correlation_energy,
     xc_energy,
 )
+from .forces import (
+    ewald_forces,
+    force_consistency_error,
+    hellmann_feynman_forces,
+    local_potential_forces,
+)
 
 __all__ = [
     "XC_FUNCTIONALS",
     "EnergyComponents",
     "EnergyCalculator",
     "ewald_energy",
+    "ewald_forces",
+    "force_consistency_error",
     "hartree_energy",
     "hartree_potential",
+    "hellmann_feynman_forces",
     "lda_exchange_energy",
+    "local_potential_forces",
     "pbe_correlation_energy",
     "pbe_exchange_energy",
     "pw92_correlation_energy",

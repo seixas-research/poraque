@@ -654,7 +654,7 @@ class TrainingReport:
             panel.axvline(float(difference.mean()), color=series_color(1),
                           linewidth=1.8,
                           label=f"mean {difference.mean():+.3g}")
-            panel.set_xlabel(f"prediction $-$ reference"
+            panel.set_xlabel("prediction $-$ reference"
                              + (f" [{unit}]" if unit else ""))
             panel.set_ylabel("voxel count")
             panel.set_yscale("log")

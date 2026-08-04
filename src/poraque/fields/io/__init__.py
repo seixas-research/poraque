@@ -30,8 +30,6 @@ After that, ``ExternalPotential.from_calculation(directory, code="mycode")``
 and :class:`~poraque.ml.data.FieldPairDataset` work unchanged.
 """
 
-import os
-
 from .base import (
     FIELD_KINDS,
     CalculationParameters,

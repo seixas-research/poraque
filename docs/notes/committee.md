@@ -41,8 +41,8 @@ there are four distinct things to measure, not one.
 
 $$\sigma(\mathbf r) = \mathrm{std}_k\, f_k(\mathbf r)$$
 
-A field, on the same grid as the prediction, written out in `CHGCAR` format and
-opened in VESTA like anything else. It answers *where* the committee is unsure.
+A field, on the same grid as the prediction, written out in `CHGCAR` format
+like anything else. It answers *where* the committee is unsure.
 
 This is worth more than it sounds. We already know the failure modes are
 spatially structured — the density peaks at the ionic cores, the Gibbs ringing

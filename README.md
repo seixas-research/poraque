@@ -58,7 +58,7 @@ poraque-train --config configs/train_config.yaml --kfold --k-folds 5
 poraque-inference new_structure/ --output predictions/new_structure
 ```
 
-Every predicted field is written in `CHGCAR` format and opens in VESTA.
+Every predicted field is written in `CHGCAR` format.
 
 Or drive it from ASE:
 

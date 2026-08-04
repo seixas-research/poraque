@@ -37,7 +37,7 @@ print(potential)                 # range, units, grid
 print(potential.mean())          # ~1e-16 eV: the G=0 convention
 ```
 
-The result is written in `CHGCAR` format and opens directly in VESTA.
+The result is written in `CHGCAR` format.
 
 ## 3. Train
 

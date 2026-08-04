@@ -120,20 +120,44 @@ class FieldPairDataset(Dataset):
         for datasets that fit.
     dtype : torch.dtype, optional
         Output tensor dtype.
+    spin : {"auto", True, False}, optional
+        Whether the ``CHGCAR`` fields carry two channels
+        (:math:`\\rho`, :math:`m`) from an ``ISPIN = 2`` run. ``"auto"``, the
+        default, inspects the first material's file: a spin-polarised
+        ``CHGCAR`` has a second grid block and a collinear one does not, so the
+        data answers the question and no flag can contradict it. Pass ``True``
+        or ``False`` to require one or the other, which turns a mixed or
+        mislabelled dataset into an error instead of a silent half-conversion.
+
+    Attributes
+    ----------
+    spin : bool
+        Resolved answer. :attr:`channels` follows from it.
+    channels : tuple of int
+        ``(input_channels, target_channels)`` — what an operator trained on
+        this dataset must be built with.
 
     Notes
     -----
     On every load the input and target grids are compared and a mismatch is a
     hard error: a silently misaligned pair would train the operator on
     nonsense.
+
+    A spin-polarised dataset is only meaningful where the field *is* a density.
+    ``EXTCAR`` is the ionic potential, which does not depend on spin, so the
+    ``ext2chg`` task is one channel in and two out; ``chg2tau`` is two in and,
+    for now, one out — :math:`\\tau` is written by VASP as a single block even
+    under ``ISPIN = 2``.
     """
 
     def __init__(self, root, task, input_transform=None, target_transform=None,
-                 materials=None, cache=False, dtype=torch.float32):
+                 materials=None, cache=False, dtype=torch.float32,
+                 spin="auto"):
         from .tasks import resolve_task
 
         self.root = str(root)
         self.task = resolve_task(task)
+        self._requested_spin = spin
         self.materials = (materials if materials is not None
                           else discover_materials(root, self.task.required_files))
         if not self.materials:
@@ -147,6 +171,39 @@ class FieldPairDataset(Dataset):
         self.cache = bool(cache)
         self.dtype = dtype
         self._cache = {}
+        self.spin = self._resolve_spin(spin)
+
+    def _resolve_spin(self, requested):
+        """Decide whether this dataset's densities are two-channel."""
+        from poraque.fields import is_spin_polarized
+
+        density_files = [name for name in
+                         (self.task.input_field, self.task.target_field)
+                         if name == "CHGCAR"]
+        if not density_files:
+            return False
+
+        detected = is_spin_polarized(self.materials[0].files["CHGCAR"])
+        if requested == "auto":
+            return detected
+        if bool(requested) != detected:
+            raise ValueError(
+                f"spin={requested!r} was requested but "
+                f"{self.materials[0].files['CHGCAR']} "
+                f"{'is' if detected else 'is not'} spin-polarised. A CHGCAR "
+                f"either carries a magnetisation block or it does not; "
+                f"overriding that would train on a channel the data has no "
+                f"values for."
+            )
+        return bool(requested)
+
+    @property
+    def channels(self):
+        """``(input_channels, target_channels)`` for this task and dataset."""
+        if not self.spin:
+            return (1, 1)
+        return (2 if self.task.input_field == "CHGCAR" else 1,
+                2 if self.task.target_field == "CHGCAR" else 1)
 
     # ------------------------------------------------------------------ #
     def __len__(self):
@@ -171,13 +228,21 @@ class FieldPairDataset(Dataset):
         # The shared grid is taken from the input file and *imposed* on the
         # target, so any inconsistency raises instead of passing silently.
         grid = FieldGrid.from_file(record.files[source_name])
-        source = FIELD_CLASSES[source_name].read(record.files[source_name], grid=grid)
-        target = FIELD_CLASSES[target_name].read(record.files[target_name], grid=grid)
+        source = self._read_field(source_name, record.files[source_name], grid)
+        target = self._read_field(target_name, record.files[target_name], grid)
 
         record.shape = grid.shape
         if self.cache:
             self._cache[index] = (source, target)
         return source, target
+
+    def _read_field(self, name, path, grid):
+        """Read one field, as a spin pair when the dataset is spin-polarised."""
+        if self.spin and name == "CHGCAR":
+            from poraque.fields import SpinDensity
+
+            return SpinDensity.read(path, grid=grid)
+        return FIELD_CLASSES[name].read(path, grid=grid)
 
     def __getitem__(self, index):
         """
@@ -186,22 +251,26 @@ class FieldPairDataset(Dataset):
         Returns
         -------
         dict
-            ``input`` ``(1, Nx, Ny, Nz)``, ``target`` ``(1, Nx, Ny, Nz)``,
-            ``cell`` ``(3, 3)`` in Å, plus ``volume``, ``shape`` and
+            ``input`` ``(C_in, Nx, Ny, Nz)``, ``target`` ``(C_out, Nx, Ny,
+            Nz)``, ``cell`` ``(3, 3)`` in Å, plus ``volume``, ``shape`` and
             ``material``. Fields are normalized; ``target_physical`` carries
-            the untransformed target for physics losses.
+            the untransformed target for physics losses. The channel counts
+            are :attr:`channels`, which is ``(1, 1)`` unless the dataset is
+            spin-polarised.
         """
         source, target = self.load_fields(index)
 
-        source_values = torch.as_tensor(np.ascontiguousarray(source.data),
-                                        dtype=self.dtype)
-        target_values = torch.as_tensor(np.ascontiguousarray(target.data),
-                                        dtype=self.dtype)
+        source_values = _with_channel_axis(
+            torch.as_tensor(np.ascontiguousarray(source.data),
+                            dtype=self.dtype))
+        target_values = _with_channel_axis(
+            torch.as_tensor(np.ascontiguousarray(target.data),
+                            dtype=self.dtype))
 
         return {
-            "input": self.input_transform(source_values).unsqueeze(0),
-            "target": self.target_transform(target_values).unsqueeze(0),
-            "target_physical": target_values.unsqueeze(0),
+            "input": self.input_transform(source_values),
+            "target": self.target_transform(target_values),
+            "target_physical": target_values,
             "cell": torch.as_tensor(source.grid.cell, dtype=self.dtype),
             "volume": torch.tensor(source.grid.volume, dtype=self.dtype),
             "shape": tuple(source.grid.shape),
@@ -249,20 +318,27 @@ class FieldPairDataset(Dataset):
         """
         rng = np.random.default_rng(seed)
         indices = rng.permutation(len(self))[:max_materials]
+        per_material = max_points // max(len(indices), 1)
 
+        # One bucket per channel, so a multi-channel field gets one transform
+        # per channel rather than a single scale fitted across all of them.
         source_values, target_values = [], []
         for index in indices:
             source, target = self.load_fields(int(index))
             for values, sink in ((source.data, source_values),
                                  (target.data, target_values)):
-                flat = values.ravel()
-                take = min(max_points // max(len(indices), 1), flat.size)
-                sink.append(rng.choice(flat, size=take, replace=False))
+                channels = values if values.ndim == 4 else values[None]
+                if not sink:
+                    sink.extend([] for _ in range(channels.shape[0]))
+                for channel, bucket in zip(channels, sink):
+                    flat = channel.ravel()
+                    take = min(per_material, flat.size)
+                    bucket.append(rng.choice(flat, size=take, replace=False))
 
-        self.input_transform = DEFAULT_TRANSFORMS[self.task.input_field](
-            np.concatenate(source_values))
-        self.target_transform = DEFAULT_TRANSFORMS[self.task.target_field](
-            np.concatenate(target_values))
+        self.input_transform = _fit_transform(self.task.input_field,
+                                              source_values)
+        self.target_transform = _fit_transform(self.task.target_field,
+                                               target_values)
         return self.input_transform, self.target_transform
 
     def split(self, fraction=0.8, seed=0):
@@ -440,6 +516,33 @@ def make_dataloader(dataset, batch_size=1, shuffle=True, num_workers=0, seed=0):
                                  seed=seed)
     return DataLoader(dataset, batch_sampler=sampler, collate_fn=collate_fields,
                       num_workers=num_workers)
+
+
+def _fit_transform(field_name, per_channel):
+    """
+    Fit ``field_name``'s default transform to each channel's samples.
+
+    A single-channel field gets the transform itself, not a
+    :class:`~poraque.ml.transforms.Channelwise` of length one: wrapping it
+    would change the serialized form of every existing checkpoint for no gain.
+    """
+    from .transforms import Channelwise
+
+    fitted = [DEFAULT_TRANSFORMS[field_name](np.concatenate(samples))
+              for samples in per_channel]
+    return fitted[0] if len(fitted) == 1 else Channelwise(fitted)
+
+
+def _with_channel_axis(values):
+    """
+    Ensure a leading channel axis.
+
+    A scalar field arrives as ``(Nx, Ny, Nz)`` and a spin pair already as
+    ``(2, Nx, Ny, Nz)``, so the axis is added from the rank rather than
+    assumed — an unconditional ``unsqueeze(0)`` would turn the spin pair into a
+    single sample of two "grids" and silently reinterpret the data.
+    """
+    return values.unsqueeze(0) if values.ndim == 3 else values
 
 
 def _peek_shape(path):

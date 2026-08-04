@@ -27,7 +27,6 @@ from poraque.ml.symbolic import (
     DEFAULT_BINARY,
     check_asymptotic_limits,
     DEFAULT_UNARY,
-    FeatureTable,
     SymbolicDistiller,
     build_features,
     expression_to_latex,
@@ -416,9 +415,6 @@ class TestAsymptoticLimits:
     von Weizsäcker the reverse. A checker that passed both on either one would
     be measuring nothing.
     """
-
-    def check(self, expression, scheme="enhancement"):
-        return check_asymptotic_limits(expression, ["rho", "p", "q"], scheme)
 
     def check(self, expression, scheme="reduced", template="pauli"):
         return check_asymptotic_limits(expression, ["rho", "p", "q"], scheme,

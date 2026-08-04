@@ -226,7 +226,10 @@ class TestClipGradients:
         from poraque.ml.training import clip_gradients
 
         torch.manual_seed(0)
-        make = lambda: [torch.nn.Parameter(torch.randn(4, 4)) for _ in range(3)]
+        def make():
+            return [torch.nn.Parameter(torch.randn(4, 4)) for _ in range(3)]
+
+
         ours, theirs = make(), make()
         for a, b in zip(ours, theirs):
             b.data.copy_(a.data)

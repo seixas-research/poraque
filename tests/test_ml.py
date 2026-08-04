@@ -156,7 +156,7 @@ class TestGridShapeInvariance:
         small = model.physical_modes(torch.eye(3).unsqueeze(0) * 5.0, (16, 16, 16))
         large = model.physical_modes(torch.eye(3).unsqueeze(0) * 15.0, (32, 32, 32))
         # A larger cell has a denser reciprocal lattice -> more modes below g_max.
-        assert all(l > s for l, s in zip(large, small))
+        assert all(big > few for big, few in zip(large, small))
 
     def test_physical_mode_selection_requires_g_max(self):
         with pytest.raises(ValueError, match="requires g_max"):

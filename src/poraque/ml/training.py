@@ -153,8 +153,20 @@ class FieldOperator:
         self.pauli_scale = float(pauli_scale)
         self.learn_pauli_scale = bool(learn_pauli_scale)
 
+        # Channel counts are part of the architecture and are recorded in
+        # state(); two of them means a spin-polarised (rho, m) field.
+        self.in_channels = int(model_kwargs.get("in_channels", 1))
+        self.out_channels = int(model_kwargs.get("out_channels", 1))
+        self.use_coordinates = bool(model_kwargs.get("use_coordinates", True))
+
         if model is not None:
             backbone = model
+            self.in_channels = int(getattr(model, "in_channels",
+                                           self.in_channels))
+            self.out_channels = int(getattr(model, "out_channels",
+                                            self.out_channels))
+            self.use_coordinates = bool(getattr(model, "use_coordinates",
+                                                self.use_coordinates))
         elif self.init_seed is None:
             backbone = FNO3d(**model_kwargs)
         else:
@@ -201,8 +213,11 @@ class FieldOperator:
 
         Returns
         -------
-        ScalarField
-            An instance of the task's target class, in physical units.
+        ScalarField or SpinDensity
+            An instance of the task's target class, in physical units. A
+            two-channel operator returns a
+            :class:`~poraque.fields.SpinDensity` carrying
+            :math:`(\\rho, m)`; a one-channel operator returns the plain field.
         """
         self.model.eval()
         values = torch.as_tensor(np.ascontiguousarray(field.data),
@@ -210,18 +225,41 @@ class FieldOperator:
         cell = torch.as_tensor(field.grid.cell, dtype=torch.float32,
                                device=self.device).unsqueeze(0)
 
-        normalized = self.input_transform(values).unsqueeze(0).unsqueeze(0)
-        prediction = self.model(normalized, cell)
-        physical = self.target_transform.inverse(prediction)[0, 0]
+        # A field is either (Nx, Ny, Nz) or, when spin-polarised, already
+        # (C, Nx, Ny, Nz). Only the batch axis has to be added in the second
+        # case, so the channel axis is inserted from the field's own rank
+        # rather than assumed.
+        normalized = self.input_transform(values)
+        if normalized.ndim == 3:
+            normalized = normalized.unsqueeze(0)
+        normalized = normalized.unsqueeze(0)
+
+        prediction = self.target_transform.inverse(self.model(normalized, cell))
 
         # .float() before .numpy(): accelerators may hand back a dtype numpy
         # cannot consume directly, and .cpu() alone does not convert it.
-        return _OUTPUT_CLASSES[self.task.target_field](
-            physical.detach().to("cpu", torch.float32).numpy(),
-            field.grid, field.structure,
-            metadata={"predicted_by": type(self.model).__name__,
-                      "task": self.task.name,
-                      "device": str(self.device)},
+        channels = prediction[0].detach().to("cpu", torch.float32).numpy()
+        metadata = {"predicted_by": type(self.model).__name__,
+                    "task": self.task.name,
+                    "device": str(self.device)}
+
+        if channels.shape[0] == 1:
+            return _OUTPUT_CLASSES[self.task.target_field](
+                channels[0], field.grid, field.structure, metadata=metadata)
+
+        if channels.shape[0] == 2 and self.task.target_field == "CHGCAR":
+            from ..fields import SpinDensity
+
+            metadata["ispin"] = 2
+            return SpinDensity.from_channels(channels, field.grid,
+                                             field.structure,
+                                             metadata=metadata)
+
+        raise ValueError(
+            f"An operator with {channels.shape[0]} output channels has no "
+            f"field representation for target {self.task.target_field!r}. "
+            f"One channel is a scalar field; two on CHGCAR is a spin-polarised "
+            f"(rho, m) density."
         )
 
     @property
@@ -250,6 +288,13 @@ class FieldOperator:
             "task": self.task.name,
             "model_state": self.model.state_dict(),
             "model_class": type(self.model).__name__,
+            # Recorded rather than inferred: the lifting layer cannot tell
+            # in_channels apart from the coordinate channels, so a spin model
+            # reloaded by inference alone would silently become a one-channel
+            # model with coordinates. See infer_backbone_kwargs.
+            "in_channels": self.in_channels,
+            "out_channels": self.out_channels,
+            "use_coordinates": self.use_coordinates,
             "input_transform": self.input_transform.state_dict(),
             "target_transform": self.target_transform.state_dict(),
             "pauli_residual": self.pauli_residual,
@@ -285,6 +330,11 @@ class FieldOperator:
         FieldOperator
         """
         inferred = infer_backbone_kwargs(state["model_state"])
+        # Explicitly recorded channel counts win over the inference, which
+        # cannot separate in_channels from the coordinate channels.
+        for key in ("in_channels", "out_channels", "use_coordinates"):
+            if state.get(key) is not None:
+                inferred[key] = state[key]
         inferred.update(model_kwargs)
         if model is not None:
             inferred = model_kwargs
@@ -410,8 +460,18 @@ def infer_backbone_kwargs(model_state):
     Returns
     -------
     dict
-        ``width``, ``modes``, ``n_layers``, ``projection_channels`` and
-        ``use_coordinates``, where each can be determined.
+        ``width``, ``modes``, ``n_layers``, ``projection_channels``,
+        ``out_channels`` and ``use_coordinates``, where each can be determined.
+
+    Notes
+    -----
+    ``in_channels`` and ``use_coordinates`` are **not** separable from the
+    tensors alone: the lifting layer sees ``in_channels + 3*use_coordinates``
+    channels, and 4 could be either one field with coordinates or four fields
+    without. A single-channel model is assumed here, which is what every
+    checkpoint written before spin support contains.
+    :meth:`FieldOperator.from_state` prefers the values recorded in the state
+    payload and only falls back to this.
     """
     prefix = "backbone." if any(k.startswith("backbone.") for k in model_state) else ""
     spectral = [v for k, v in model_state.items()
@@ -428,10 +488,11 @@ def infer_backbone_kwargs(model_state):
         kwargs["modes"] = int(spectral[0].shape[3])
         kwargs["n_layers"] = len(spectral)
     if projection:
+        # First conv widens to projection_channels, last narrows to the output.
         kwargs["projection_channels"] = int(projection[0].shape[0])
+        kwargs["out_channels"] = int(projection[-1].shape[0])
     if lift is not None:
-        # One field channel, plus three fractional-coordinate channels when
-        # they are in use.
+        # Assumes one field channel; see the note above.
         kwargs["use_coordinates"] = bool(int(lift.shape[1]) > 1)
     return kwargs
 

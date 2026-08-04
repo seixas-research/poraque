@@ -39,13 +39,18 @@ Differences from a conventional MLIP
 It behaves like MACE or NequIP at the interface, but not underneath. Two
 consequences are worth stating plainly before anyone runs a relaxation:
 
-**No forces.** A machine-learned interatomic potential differentiates a scalar
-energy with respect to the positions it was built from. Here the positions
-enter through :math:`V_{\rm ext}` on a *fixed grid*, and the energy also
-depends on them through the Ewald sum and the grid discretisation. The
-derivative is well defined but is not wired up, so :meth:`get_forces` raises.
-Geometry optimisation and molecular dynamics are therefore out of reach; single
-points, energy-volume curves and ranking of fixed geometries are not.
+**Forces are Hellmann-Feynman, and incomplete for PAW.** A machine-learned
+interatomic potential differentiates a scalar energy with respect to the
+positions it was built from. Here the positions enter :math:`V_{\rm ext}`
+analytically, so the electron-ion and ion-ion terms are differentiated in
+closed form (:mod:`poraque.physics.forces`) rather than by finite differences
+on a fixed grid. That construction is exact for a *local* pseudopotential and
+verified to :math:`10^{-7}` eV/Å against finite differences of the term it
+differentiates — but a PAW calculation adds projector and one-centre forces
+that no grid-based field carries. On the shipped gold structures the result
+gets the magnitude and not the direction. Read
+:meth:`Poraque.compute_forces` before using them for anything; geometry
+optimisation and molecular dynamics are *not* yet supportable.
 
 **Absolute energies are not DFT energies.** The fields are pseudo-valence
 quantities, so the PAW one-centre terms are missing. See
@@ -65,7 +70,7 @@ except ImportError as error:                              # pragma: no cover
     Calculator, all_changes = object, None
     _ASE_ERROR = error
 
-from .fields import ChargeDensity, ExternalPotential, FieldGrid
+from .fields import ExternalPotential, FieldGrid
 from .fields.structure import Structure
 from .ml import BUNDLE_FILENAME, resolve_bundle_path
 from .physics import EnergyCalculator
@@ -115,15 +120,26 @@ class Poraque(Calculator):
         dataset.
     device : str, optional
         ``"auto"`` (default), ``"cuda"``, ``"mps"`` or ``"cpu"``.
+    normalize_density : bool, optional
+        Rescale the predicted density to the valence electron count the
+        pseudopotentials fix, before any energy is integrated from it.
+        **On by default, and turning it off is only for diagnosis.** The
+        shipped operators predict a density whose electron count drifts by up
+        to ~2 %, and because the electrostatic terms are of order
+        :math:`10^{4}` eV that drift alone moves a total energy by tens of eV
+        — far more than the differences the energy exists to resolve, and by a
+        different amount for every structure, so it does not cancel. See
+        :meth:`~poraque.fields.ChargeDensity.normalized`.
     **kwargs
         Passed to :class:`ase.calculators.calculator.Calculator`.
 
     Attributes
     ----------
     implemented_properties : list of str
-        ``["energy", "free_energy"]``. ``free_energy`` is the same number:
-        there is no electronic entropy in this pipeline, and ASE optimisers ask
-        for it by name.
+        ``["energy", "free_energy", "forces"]``. ``free_energy`` is the same
+        number as ``energy``: there is no electronic entropy in this pipeline,
+        and ASE optimisers ask for it by name. See :meth:`compute_forces` for
+        what ``forces`` is and is not.
     fields : dict
         ``{"external", "density", "tau"}`` from the most recent evaluation,
         each a :class:`~poraque.fields.base.ScalarField`.
@@ -151,11 +167,17 @@ class Poraque(Calculator):
     >>> print(atoms.calc.components)                              # doctest: +SKIP
     """
 
-    implemented_properties = ["energy", "free_energy"]
+    implemented_properties = ["energy", "free_energy", "forces"]
+
+    #: Relative electron-count drift above which the energy is warned about.
+    #: Set where it is because the electrostatic terms are of order 1e4 eV, so
+    #: 1e-3 already corresponds to a ~10 eV shift in the total.
+    _DRIFT_WARNING = 1e-3
 
     def __init__(self, models=None, ext2chg=None, chg2tau=None, potcar=None,
                  potcar_dir=None, charges=None, resolution=None,
-                 functional="pbe", device="auto", **kwargs):
+                 functional="pbe", device="auto", normalize_density=True,
+                 **kwargs):
         if _ASE_ERROR is not None:                        # pragma: no cover
             raise ImportError(
                 "The Poraque ASE calculator requires ASE: pip install ase"
@@ -164,10 +186,12 @@ class Poraque(Calculator):
 
         self.device = device
         self.functional = functional
+        self.normalize_density = bool(normalize_density)
         self.charges = dict(charges) if charges else None
         self.potcar_dir = str(potcar_dir) if potcar_dir else None
         self.fields = {}
         self.components = None
+        self.raw_electron_drift = None
         self._warned_gaussian = False
         self._potcar_cache = {}
 
@@ -365,9 +389,52 @@ class Poraque(Calculator):
             self._warned_gaussian = True
         return ExternalPotential.compute(structure, grid, self.charges)
 
+    def valence_electrons(self, structure):
+        r"""
+        :math:`\sum_s N_s Z^{\rm val}_s` for ``structure``, or ``None``.
+
+        Read from the ``POTCAR`` when one covers the composition, else from an
+        explicit ``charges=`` mapping.
+
+        Parameters
+        ----------
+        structure : Structure
+
+        Returns
+        -------
+        float or None
+        """
+        charges = None
+        potcar = self._potcar_for(structure)
+        if potcar is not None:
+            charges = {entry.element: entry.zval for entry in potcar}
+        elif self.charges:
+            charges = self.charges
+        if not charges:
+            return None
+
+        total = 0.0
+        for symbol, atom_slice in structure.species_slices():
+            element = symbol.split("_")[0].split(".")[0]
+            if element not in charges:
+                return None
+            count = atom_slice.stop - atom_slice.start
+            total += count * float(charges[element])
+        return total
+
     def predict_fields(self, atoms):
         r"""
         Run the full chain and return the three fields.
+
+        The predicted density is rescaled to the valence electron count the
+        pseudopotentials fix before :math:`\tau` is predicted from it — see
+        :meth:`~poraque.fields.ChargeDensity.normalized` for why this is a
+        correction rather than a cosmetic touch-up. The count is exactly known
+        from the ``POTCAR``, so nothing is being assumed here that the
+        calculation does not already state. When no valence charges are
+        available the raw prediction is used and
+        :attr:`~poraque.physics.energy.EnergyComponents.electron_drift`
+        reports ``None``.
 
         Parameters
         ----------
@@ -376,16 +443,44 @@ class Poraque(Calculator):
         Returns
         -------
         dict
-            ``{"external", "density", "tau"}``.
+            ``{"external", "density", "tau"}``. ``density`` is the normalized
+            field; the raw one is kept under ``"density_raw"``.
         """
         potential = self.build_external_potential(atoms)
-        density = self.ext2chg.predict(potential)
+        raw = self.ext2chg.predict(potential)
+
+        density = raw
+        nominal = self.valence_electrons(potential.structure)
+        if nominal is not None and self.normalize_density:
+            try:
+                density = raw.normalized(nominal)
+            except ValueError:
+                # An untrained or badly broken operator can predict a field
+                # that integrates to zero, which no rescaling can repair. The
+                # normalization is a correction, not a precondition, so a
+                # failure here degrades to the raw prediction rather than
+                # taking down a pipeline that would otherwise return a number.
+                # The drift check below reports it either way.
+                warnings.warn(
+                    "The predicted density integrates to zero, so it could "
+                    "not be normalized to the valence electron count. The raw "
+                    "prediction is being used and the energy is meaningless.",
+                    RuntimeWarning, stacklevel=3,
+                )
+
         tau = self.chg2tau.predict(density)
-        return {"external": potential, "density": density, "tau": tau}
+        return {"external": potential, "density": density, "tau": tau,
+                "density_raw": raw}
 
     def energy_components(self, atoms):
         """
         Full energy decomposition for ``atoms``.
+
+        Also records :attr:`raw_electron_drift`, the relative electron-count
+        error of the density *before* normalization. That is the honest
+        measure of how well the ``ext2chg`` operator did on this structure;
+        after normalization the count is exact by construction and no longer
+        tells you anything.
 
         Returns
         -------
@@ -411,6 +506,31 @@ class Poraque(Calculator):
         )
         components = calculator.compute(fields["density"], fields["tau"],
                                         potential)
+
+        nominal = calculator.nominal_electrons
+        raw_count = float(fields["density_raw"].integrate())
+        self.raw_electron_drift = (
+            None if not nominal else (raw_count - nominal) / nominal)
+
+        # The total is a cancellation of terms of order 1e4 eV down to order
+        # 1 eV, so the fields need a relative accuracy of ~1e-5 for the result
+        # to mean anything. The electron count is the only component of that
+        # accuracy which can be checked without a reference calculation, so it
+        # is checked: a density that misses the count it is *known* to have has
+        # certainly not got the rest right either.
+        if (self.raw_electron_drift is not None
+                and abs(self.raw_electron_drift) > self._DRIFT_WARNING):
+            warnings.warn(
+                f"The predicted density integrates to {raw_count:.3f} "
+                f"electrons against a nominal {nominal:.3f} "
+                f"({self.raw_electron_drift:+.2%}). It has been rescaled to "
+                f"the nominal count, but a drift this large means the shape is "
+                f"also wrong, and the energy terms it is integrated into are "
+                f"of order 1e4 eV. Treat this total energy as indicative only "
+                f"— see Poraque.get_potential_energy's accuracy note.",
+                RuntimeWarning, stacklevel=3,
+            )
+
         self.fields = fields
         return components
 
@@ -441,28 +561,73 @@ class Poraque(Calculator):
         # calculator that can in fact answer.
         self.results["free_energy"] = energy
         self.results["n_electrons"] = components.n_electrons
+        self.results["raw_electron_drift"] = self.raw_electron_drift
         self.results["energy_components"] = components.as_dict()
 
-    def get_forces(self, atoms=None):
+        # Computed only on request: it costs one extra pass over the grid per
+        # atom, which an energy-only scan should not pay for.
+        if "forces" in properties:
+            self.results["forces"] = self.compute_forces(self.atoms)
+
+    def compute_forces(self, atoms):
         r"""
-        Not implemented.
+        Hellmann-Feynman forces on every atom, in eV/Å.
+
+        Uses the fields of the most recent evaluation, so it is the caller's
+        job to have run :meth:`energy_components` for ``atoms`` first;
+        :meth:`calculate` does that.
+
+        .. warning::
+
+           **These forces are not accurate for PAW datasets with strong
+           non-locality**, which includes every transition metal. The
+           Hellmann-Feynman construction is complete only for a *local*
+           pseudopotential; a PAW calculation adds a projector (non-local)
+           force and a one-centre force, and neither is recoverable from
+           :math:`\rho`, :math:`\tau` and :math:`V_{\rm loc}` on a grid.
+           Measured against VASP on the shipped gold structures — using VASP's
+           *own* density, so with no model error at all — this reproduces the
+           magnitude but not the direction: mean absolute error ~0.7 eV/Å
+           against forces of ~1.4 eV/Å.
+
+           The cancellation is the reason it is delicate. The electron-ion and
+           ion-ion terms are each ~100 eV/Å and cancel to ~0.5 eV/Å, a residual
+           of half a percent, so a relative error :math:`\epsilon` in
+           :math:`\rho` arrives in the force amplified roughly 200-fold.
+
+        Parameters
+        ----------
+        atoms : ase.Atoms
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(natoms, 3)`` in eV/Å.
 
         Raises
         ------
-        NotImplementedError
-            Always. Two independent pieces are missing: the derivative of
-            :math:`V_{\rm ext}` with respect to the ionic positions (analytic,
-            a Hellmann-Feynman term), and back-propagation of
-            :math:`\partial E/\partial\rho` through both operators. Neither is
-            wired up, and a finite-difference stand-in on a fixed grid would
-            be dominated by the grid's own discontinuity as atoms move between
-            voxels.
+        ValueError
+            Without a ``POTCAR``. The Gaussian pseudo-ion fallback has no
+            tabulated form factor to differentiate, and the electron-ion term
+            is not optional — it cancels almost all of the Ewald force.
         """
-        raise NotImplementedError(
-            "Poraque does not compute forces yet, so geometry optimisation and "
-            "molecular dynamics are unavailable. Single-point energies and "
-            "energy-volume scans work."
-        )
+        from .physics import hellmann_feynman_forces
+
+        fields = self.fields or self.predict_fields(atoms)
+        potential = fields["external"]
+        structure = potential.structure
+
+        potcar = self._potcar_for(structure)
+        if potcar is None:
+            raise ValueError(
+                "Forces need the tabulated local potential from a POTCAR. The "
+                "Gaussian pseudo-ion fallback cannot supply the form factor "
+                "the Hellmann-Feynman term differentiates, and the ion-ion "
+                "force alone is wrong by two orders of magnitude."
+            )
+
+        return hellmann_feynman_forces(
+            fields["density"].data, structure, potential.grid, potcar=potcar)
 
     def get_stress(self, atoms=None):
         """

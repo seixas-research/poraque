@@ -36,11 +36,6 @@ and reports metrics in **physical units** on the held-out structures. Setting
 ``enable_kfold`` swaps that for K-fold cross-validation, which is the only
 other protocol; nothing else changes how training is organised.
 
-**Physics baselines are reported alongside.** A relative error means little in
-isolation, so ``chg2tau`` is compared against the analytic Thomas-Fermi, von
-Weizsäcker and ``TF + vW/9`` functionals evaluated on the same input, and
-``ext2chg`` against predicting the mean density. Beating those is the bar.
-
 Usage
 -----
 Installed (``pip install -e .``), this is the ``poraque-train`` console command
@@ -61,7 +56,6 @@ import json
 import os
 import sys
 import time
-from dataclasses import asdict
 
 import numpy as np
 
@@ -121,8 +115,6 @@ from poraque.fields import (  # noqa: E402
     ExternalPotential,
     FieldGrid,
     KineticEnergyDensity,
-    thomas_fermi_tau,
-    von_weizsacker_tau,
 )
 from poraque.fields.io import resolve_reader  # noqa: E402
 from poraque.fields.resample import downsample_shape, resample_field  # noqa: E402
@@ -362,41 +354,21 @@ def metrics(prediction, target):
 #: Fallback width of the label column, used when the caller does not size it.
 MIN_LABEL_WIDTH = 22
 
-#: Names of the analytic references reported beside the model, per task. Kept
-#: separate from their computation so the column can be sized before any
-#: structure has been evaluated.
-BASELINE_NAMES = {"chg2tau": ("Thomas-Fermi", "von Weizsacker", "TF + vW/9")}
-DEFAULT_BASELINE_NAMES = ("mean density",)
-
-
-def baseline_names(task_name):
-    """Labels of the analytic baselines for ``task_name``."""
-    return BASELINE_NAMES.get(task_name, DEFAULT_BASELINE_NAMES)
-
-
-def metrics_label_width(names, task_name, baselines=True):
+def metrics_label_width(names):
     """
     Width of the label column, sized so every row of the table lines up.
 
-    Computed rather than fixed because the baseline rows are what broke the
-    alignment: they are indented under their structure *and* carry a functional
-    name, so ``"  baseline: von Weizsacker"`` is 26 characters against a
-    hard-coded 22 and quietly shoved the numeric columns four places right.
-    A structure named more descriptively than ``struct_000`` would do the same.
+    Computed rather than fixed because a structure named more descriptively
+    than ``struct_000`` would otherwise overflow the hard-coded width and
+    quietly shove the numeric columns to the right.
 
     Parameters
     ----------
     names : iterable of str
         Every structure identifier the section will print.
-    task_name : str
-        Selects the baseline labels.
-    baselines : bool, optional
-        Whether baseline rows will be printed at all.
     """
     labels = [f"{name} ({tag})" for name in names
               for tag in ("train", "VALIDATION")]
-    if baselines:
-        labels += [f"  baseline: {label}" for label in baseline_names(task_name)]
     return max([MIN_LABEL_WIDTH] + [len(label) for label in labels])
 
 
@@ -406,19 +378,6 @@ def format_metrics(name, values, unit, width=MIN_LABEL_WIDTH):
             f"MAE {values['mae']:10.5g}  "
             f"RMSE {values['rmse']:10.5g}  relL2 {values['relative_l2']:8.4f}  "
             f"R2 {values['r2']:8.4f}   [{unit}]")
-
-
-def physics_baselines(task, source, target):
-    """Analytic reference predictions for the same mapping."""
-    if task.name == "chg2tau":
-        tf = thomas_fermi_tau(source.data)
-        vw = von_weizsacker_tau(source.data, source.grid)
-        fields = (tf, vw, tf + vw / 9.0)
-    else:
-        fields = (np.full_like(target.data, target.data.mean()),)
-    # Zipped against the shared name table, so the labels the column was sized
-    # for and the labels actually printed cannot drift apart.
-    return dict(zip(baseline_names(task.name), fields))
 
 
 def build_loss(config, task_name):
@@ -663,33 +622,21 @@ def resolve_validation_split(dataset, config):
 
 
 def evaluate_material(operator, dataset, index, task, log, label,
-                      baselines=False, width=MIN_LABEL_WIDTH):
+                      width=MIN_LABEL_WIDTH):
     """
     Predict one material and report metrics against its reference field.
 
     Parameters
     ----------
-    baselines : bool, optional
-        Also report the analytic orbital-free functionals on the same input.
-        A relative error means little in isolation: beating Thomas-Fermi and
-        von Weizsäcker is the bar, and printing them beside the model is the
-        only way the reader can tell whether it was cleared. Worth the extra
-        lines on validation structures, noise on training ones.
     width : int, optional
         Label-column width, from :func:`metrics_label_width`. Pass the width
-        computed for the whole section, not per row, or the baseline rows will
-        not line up with the structure rows above them.
+        computed for the whole section, not per row, or the rows will not line
+        up with one another.
     """
     source, target = dataset.load_fields(index)
     prediction = operator.predict(source)
     values = metrics(prediction.data, target.data)
     log(format_metrics(label, values, task.target_unit, width))
-
-    if baselines:
-        for name, reference in physics_baselines(task, source, target).items():
-            log(format_metrics(f"  baseline: {name}",
-                               metrics(reference, target.data),
-                               task.target_unit, width))
     return prediction, target, values
 
 
@@ -794,6 +741,23 @@ def save_task_checkpoint(task, operator, config, log):
     return path
 
 
+def _figure_sink(config):
+    """
+    Somewhere to write the symbolic parity plot when no plot directory is set.
+
+    Returns ``None`` when no PDF report is being built either — with neither
+    output configured there is nothing the figure could appear in, and writing
+    it would only litter.
+    """
+    if not config.output.report_dir:
+        return None
+
+    from poraque.vis import TrainingReport
+
+    return TrainingReport(os.path.join(config.output.report_dir, "figures"),
+                          dpi=config.output.dpi, fmt=config.output.plot_format)
+
+
 def run_symbolic_distillation(task, dataset, operator, config, log,
                               validation=None, report=None):
     r"""
@@ -839,18 +803,33 @@ def run_symbolic_distillation(task, dataset, operator, config, log,
     # The formula gets the same parity plot the network does, against the same
     # DFT reference, so the two are read on one scale rather than through two
     # differently-defined summary numbers.
-    if report is not None and result.validation.get("reference") is not None:
-        label_text, unit = FIELD_LABELS[task.target_field]
-        previous, report.prefix = report.prefix, f"{task.name}_symbolic"
-        try:
-            result.parity_plot = report.parity(
-                result.validation["reference"], result.validation["predicted"],
-                name="parity", label=label_text, unit=unit, log=True,
-                prediction_label="symbolic formula",
-                title=f"{task.name} · distilled formula on held-out data")
-        finally:
-            report.prefix = previous
-        log(f"  parity plot  : {result.parity_plot}")
+    #
+    # It is drawn whenever distillation produced something to draw, not only
+    # when figures were asked for: the PDF report is meant to carry it, and
+    # `plot_dir` and `report_dir` are independent settings, so a run with a
+    # report but no figure directory would otherwise silently lose the one plot
+    # that shows whether the formula is any good. Held-out data is used when
+    # there is any, and the fitted voxels otherwise, with the caption saying
+    # which.
+    scored, provenance = result.validation, "held-out data"
+    if scored.get("reference") is None:
+        scored, provenance = result.fitted, "the fitted voxels (training fit)"
+
+    if scored.get("reference") is not None:
+        destination = report if report is not None else _figure_sink(config)
+        if destination is not None:
+            label_text, unit = FIELD_LABELS[task.target_field]
+            previous, destination.prefix = (destination.prefix,
+                                            f"{task.name}_symbolic")
+            try:
+                result.parity_plot = destination.parity(
+                    scored["reference"], scored["predicted"],
+                    name="parity", label=label_text, unit=unit, log=True,
+                    prediction_label="symbolic formula",
+                    title=f"{task.name} · distilled formula on {provenance}")
+            finally:
+                destination.prefix = previous
+            log(f"  parity plot  : {result.parity_plot}  [{provenance}]")
 
     log(f"\n{result.summary()}")
     log(f"  search time  : {time.time() - start:.1f} s")
@@ -909,7 +888,7 @@ def run_task(task_name, cache, config, log):
         f"{sorted(validation_names) if validation_names else 'none'} "
         f"({split_origin})")
     log(f"  grid shapes         : {shapes}")
-    log(f"  shape buckets       : "
+    log("  shape buckets       : "
         + ", ".join(f"{s}x{n}" for s, n in sorted(buckets.items())))
     log(f"  batch size          : {config.training.batch_size} "
         f"(capped per bucket; batches mix structures of equal shape)")
@@ -975,8 +954,7 @@ def run_task(task_name, cache, config, log):
     log(f"\n  per-structure results "
         f"({'TRAINING FIT' if not validation_names else 'train / validation'}):")
     label_width = metrics_label_width(
-        [record.identifier for record in train_records + test_records],
-        task.name, baselines=validation is not None)
+        [record.identifier for record in train_records + test_records])
 
     for index in range(len(train_set)):
         name = train_records[index].identifier
@@ -1000,7 +978,7 @@ def run_task(task_name, cache, config, log):
             name = test_records[index].identifier
             prediction, target, values = evaluate_material(
                 operator, validation, index, task, log, f"{name} (VALIDATION)",
-                baselines=True, width=label_width)
+                width=label_width)
             per_material[name] = {"split": "validation", "metrics": values,
                                   "predicted_integral": prediction.integrate(),
                                   "reference_integral": target.integrate()}
@@ -1048,7 +1026,7 @@ def run_task(task_name, cache, config, log):
     # can take the whole process down; losing a finished fit to a post-hoc
     # analysis is not a trade worth making, so a single-task copy goes to disk
     # first and the unified bundle supersedes it.
-    safety = save_task_checkpoint(task, operator, config, log)
+    save_task_checkpoint(task, operator, config, log)
 
     # ---------------- symbolic distillation ---------------- #
     symbolic = run_symbolic_distillation(task, train_set, operator, config, log,
@@ -1193,7 +1171,7 @@ def run_task_kfold(task_name, cache, config, log):
     records, figures = [], []
     # Sized once over every structure, so the column does not shift from fold
     # to fold as different names land in the validation group.
-    label_width = metrics_label_width(names, task.name, baselines=True)
+    label_width = metrics_label_width(names)
 
     for index, group in enumerate(folds, 1):
         log(f"\n  --- fold {index}/{len(folds)}: validate on {group} ---")
@@ -1229,7 +1207,7 @@ def run_task_kfold(task_name, cache, config, log):
             name = val_records[position].identifier
             prediction, target, values = evaluate_material(
                 operator, val_set, position, task, log, f"{name} (VALIDATION)",
-                baselines=True, width=label_width)
+                width=label_width)
             records.append({"fold": index, "material": name,
                             "split": f"fold {index}", "metrics": values,
                             "predicted_integral": prediction.integrate(),

@@ -30,8 +30,8 @@ SCF cycle, no prior DFT run on this structure. The first step is *analytic* —
 :class:`~poraque.fields.ExternalPotential` builds the local ionic potential in
 closed form — and only the two field-to-field maps are learned.
 
-Every output is written in ``CHGCAR`` format, so the predictions open directly
-in VESTA, VMD or any tool that reads VASP volumetric files.
+Every output is written in ``CHGCAR`` format, so the predictions are read by
+any tool that handles VASP volumetric files.
 
 Both operators are read from a **single unified checkpoint**,
 ``models/poraque_models.pfno``, written by ``poraque-train``. One file for the
@@ -111,7 +111,6 @@ from poraque.fields import (  # noqa: E402
     ExternalPotential,
     FieldGrid,
     KineticEnergyDensity,
-    thomas_fermi_tau,
     von_weizsacker_tau,
 )
 from poraque.fields.io import resolve_reader  # noqa: E402
@@ -284,9 +283,9 @@ def augmentation_from_bundle(bundle, structure, log):
         f"{entry['structures']} structures)"
         for element, entry in sorted(reference.items()))
     log(f"        using the bundle's PAW reference: {covered}")
-    log(f"        !! these are AVERAGED on-site terms, not this structure's. "
-        f"They are a starting guess for ICHARG=1, not a converged on-site "
-        f"density — about 9 % RMS from the truth on the reference dataset.")
+    log("        !! these are AVERAGED on-site terms, not this structure's. "
+        "They are a starting guess for ICHARG=1, not a converged on-site "
+        "density — about 9 % RMS from the truth on the reference dataset.")
     return lines
 
 
@@ -753,7 +752,7 @@ def run(args, log):
             "\n  figures: none (no reference fields to compare against)")
 
     log(f"\n{'=' * 78}")
-    log("Predicted fields are in CHGCAR format and open directly in VESTA.")
+    log("Predicted fields are in CHGCAR format.")
     log("=" * 78)
     return results
 

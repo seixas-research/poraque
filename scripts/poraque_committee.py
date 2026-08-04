@@ -79,8 +79,6 @@ import json
 import os
 import sys
 
-import numpy as np
-
 # Run straight from a checkout, without installing, by preferring the in-tree
 # package. Installed as the ``poraque-committee`` console script this module
 # sits in site-packages, that directory does not exist, and the installed
@@ -186,7 +184,7 @@ def rank(argv=None):
         })
 
     order = sorted(records, key=lambda r: -r["jsd"])
-    print(f"\n  ranked by Jensen-Shannon divergence (most uncertain first):")
+    print("\n  ranked by Jensen-Shannon divergence (most uncertain first):")
     print(f"    {'structure':<14s} {'JSD':>10s} {'JSD/lnK':>9s} "
           f"{'L2 spread':>10s} {'int spread':>11s} {'error':>9s}")
     print("    " + "-" * 68)
@@ -196,7 +194,7 @@ def rank(argv=None):
               f"{record['integral_relative']:11.4f} {record['error']:9.4f}")
 
     # ---------------- does the ranking mean anything? ---------------- #
-    print(f"\n  calibration (committee spread vs its own error):")
+    print("\n  calibration (committee spread vs its own error):")
     for key, label in (("jsd", "JSD"), ("relative", "L2 spread")):
         scored = [{"relative": r[key], "error": r["error"]} for r in records]
         stats = disagreement_error_correlation(scored)

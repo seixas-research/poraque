@@ -403,3 +403,151 @@ class TestDescribeNesting:
         inlined = len(training) + len(str(config.training.physics))
         assert len(training) < inlined - 100
         assert "electron_count_weight" not in training
+
+
+# ===================================================================== #
+# Report style and the symbolic parity plot
+# ===================================================================== #
+class TestReportStyle:
+    """
+    The generated report must read as part of the same family as the guides.
+
+    Checked on the LaTeX source rather than the rendered PDF: these are
+    statements about which palette and furniture the document declares, and
+    reading them off the source is exact where pixel comparison is not.
+    """
+
+    @pytest.fixture
+    def preamble(self):
+        from poraque.vis.pdf_report import ModelReport
+
+        return ModelReport("reports", logo=None)._preamble("chg2tau", "subtitle")
+
+    def test_uses_the_brand_red_not_the_old_blue(self, preamble):
+        """
+        The accent is the logo's own colour.
+
+        The report previously used a blue that appears nowhere else in the
+        project, which is what made it look like a different document.
+        """
+        assert r"\definecolor{poraquered}{RGB}{248,65,55}" in preamble
+        assert "poraqueblue" not in preamble
+
+    def test_shares_the_guides_geometry(self, preamble):
+        assert "margin=2.5cm" in preamble
+        assert "headheight=26pt" in preamble
+
+    def test_has_the_guides_red_header_rule(self, preamble):
+        assert r"\renewcommand{\headrulewidth}{0.8pt}" in preamble
+        assert r"\headrule" in preamble
+
+    def test_defines_the_guides_callout_boxes(self, preamble):
+        assert r"\newtcolorbox{pwarn}" in preamble
+        assert r"\newtcolorbox{pnote}" in preamble
+
+    def test_section_numbers_take_the_accent(self, preamble):
+        assert r"\textcolor{poraquered}{\thesection}" in preamble
+
+    def test_caveats_go_in_the_warning_box(self, tmp_path):
+        """
+        The most skippable part of the report gets the most visible frame.
+
+        Asserted on the source through a stubbed compile, since a caveat list
+        that silently became a plain itemize would still produce a valid PDF.
+        """
+        from poraque.vis.pdf_report import ModelReport
+
+        report = ModelReport(str(tmp_path), logo=None)
+        captured = {}
+
+        def fake_compile(source, figures, target):
+            captured["source"] = source
+            return target
+
+        report._compile = fake_compile
+        report.build(task="chg2tau", per_material={}, unit="eV",
+                     caveats=["one element only"])
+        assert r"\begin{pwarn}" in captured["source"]
+        assert "one element only" in captured["source"]
+
+
+class TestSymbolicParityPlot:
+    """
+    The parity plot must reach the PDF whenever distillation produced one.
+
+    It is the only figure that shows whether the closed form tracks the data,
+    so a report that quietly omits it is worse than one that says it is a
+    training fit.
+    """
+
+    @pytest.fixture
+    def report_source(self, tmp_path):
+        from poraque.vis.pdf_report import ModelReport
+
+        def build(symbolic):
+            report = ModelReport(str(tmp_path), logo=None)
+            captured = {}
+
+            def fake_compile(source, figures, target):
+                captured["source"] = source
+                captured["figures"] = list(figures)
+                return target
+
+            report._compile = fake_compile
+            report.build(task="chg2tau", per_material={}, unit="eV",
+                         symbolic=symbolic)
+            return captured
+
+        return build
+
+    @pytest.fixture
+    def parity_file(self, tmp_path):
+        path = tmp_path / "chg2tau_symbolic_parity.png"
+        plt.figure()
+        plt.plot([0, 1], [0, 1])
+        plt.savefig(path)
+        plt.close()
+        return str(path)
+
+    def _symbolic(self, parity, validated):
+        payload = {
+            "expression": "1 - 5*p**2/3", "latex": "1", "full_latex": r"\tau = 1",
+            "complexity": 7, "r2": 0.98, "relative_l2": 0.04,
+            "n_samples": 1000, "scheme": "reduced", "units": "atomic",
+            "target": "model", "target_name": "tau", "template": "pauli",
+            "parity_plot": parity, "validation": {}, "fitted": {},
+        }
+        if validated:
+            payload["validation"] = {"n_points": 500, "relative_l2": 0.06,
+                                     "r2": 0.95}
+        return payload
+
+    def test_is_embedded_and_shipped_to_the_compiler(self, report_source,
+                                                     parity_file):
+        captured = report_source(self._symbolic(parity_file, validated=True))
+        assert os.path.basename(parity_file) in captured["source"]
+        assert parity_file in captured["figures"], (
+            "the plot must also be copied into the compile directory")
+
+    def test_caption_says_held_out_when_something_was(self, report_source,
+                                                     parity_file):
+        captured = report_source(self._symbolic(parity_file, validated=True))
+        assert "on held-out structures" in captured["source"]
+
+    def test_caption_admits_a_training_fit_when_nothing_was_held_out(
+            self, report_source, parity_file):
+        """
+        The distinction the caption must not blur.
+
+        With no validation split the plot is drawn on the voxels the search was
+        fitted to, and calling that "held-out" would overstate it.
+        """
+        captured = report_source(self._symbolic(parity_file, validated=False))
+        assert "voxels it was fitted to" in captured["source"]
+        assert "on held-out structures" not in captured["source"]
+
+    def test_a_missing_file_is_skipped_rather_than_breaking_the_build(
+            self, report_source):
+        captured = report_source(self._symbolic("/nonexistent/parity.png",
+                                                validated=True))
+        assert "nonexistent" not in captured["source"]

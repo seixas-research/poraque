@@ -68,8 +68,12 @@ class FieldTransform(ABC):
         """Rebuild a transform from :meth:`state_dict`."""
         state = dict(state)
         registry = {cls.__name__: cls for cls in
-                    (Identity, Standardize, Asinh, Log, SymmetricLog)}
+                    (Identity, Standardize, Asinh, Log, SymmetricLog,
+                     Channelwise)}
         cls = registry[state.pop("type")]
+        if cls is Channelwise:
+            return cls([FieldTransform.from_state_dict(entry)
+                        for entry in state["transforms"]])
         return cls(**state)
 
     def __repr__(self):
@@ -198,6 +202,65 @@ class SymmetricLog(FieldTransform):
     def inverse(self, y):
         backend = torch if torch.is_tensor(y) else np
         return backend.sign(y) * (backend.exp(backend.abs(y)) - 1.0) * self.scale
+
+
+class Channelwise(FieldTransform):
+    r"""
+    One transform per channel, applied along the channel axis.
+
+    Needed as soon as a field has more than one channel whose components live
+    on different scales. The spin-polarised density is the motivating case:
+    :math:`\rho` integrates to hundreds of electrons while :math:`m` integrates
+    to a few :math:`\mu_B`, so a single :class:`Asinh` scale fitted on both at
+    once lands in between and normalizes neither. The magnetisation would
+    arrive at the network an order of magnitude below unity, contribute almost
+    nothing to the loss, and be learned as approximately zero — which is a
+    plausible-looking answer for a weakly magnetic system and wrong for
+    everything else.
+
+    Parameters
+    ----------
+    transforms : sequence of FieldTransform
+        One per channel, in channel order.
+
+    Notes
+    -----
+    The channel axis is taken as ``-4``, which is the same axis for an
+    unbatched ``(C, X, Y, Z)`` sample and a batched ``(B, C, X, Y, Z)`` one.
+    Counting from the right avoids having to know which of the two is being
+    handed over — the dataset produces the first and the model consumes the
+    second.
+    """
+
+    def __init__(self, transforms):
+        self.transforms = list(transforms)
+        if not self.transforms:
+            raise ValueError("Channelwise needs at least one transform.")
+
+    def _apply(self, values, method):
+        backend = torch if torch.is_tensor(values) else np
+        if values.shape[-4] != len(self.transforms):
+            raise ValueError(
+                f"Channelwise has {len(self.transforms)} transforms but the "
+                f"field has {values.shape[-4]} channels."
+            )
+        parts = [getattr(transform, method)(values[..., index, :, :, :])
+                 for index, transform in enumerate(self.transforms)]
+        return backend.stack(parts, axis=-4) if backend is np else \
+            backend.stack(parts, dim=-4)
+
+    def forward(self, x):
+        return self._apply(x, "forward")
+
+    def inverse(self, y):
+        return self._apply(y, "inverse")
+
+    def state_dict(self):
+        return {"type": "Channelwise",
+                "transforms": [t.state_dict() for t in self.transforms]}
+
+    def __repr__(self):
+        return f"Channelwise({self.transforms!r})"
 
 
 def _to_python(value):

@@ -630,6 +630,10 @@ class EnergyComponents:
         equal the total ``ZVAL`` to a few parts in :math:`10^{4}`. A
         predicted density that has drifted off it invalidates every
         electrostatic term below.
+    nominal_electrons : float or None
+        :math:`\\sum_s N_s Z^{\\rm val}_s`, the count the pseudopotentials fix.
+        ``None`` when no valence charges were supplied. Compare against
+        :attr:`n_electrons` through :attr:`electron_drift`.
     functional : str
         Which exchange-correlation approximation was used.
     """
@@ -641,7 +645,22 @@ class EnergyComponents:
     alpha_z: float = None
     ewald: float = None
     n_electrons: float = None
+    nominal_electrons: float = None
     functional: str = "pbe"
+
+    @property
+    def electron_drift(self):
+        """
+        Relative electron-count error of the density, or ``None``.
+
+        ``(n_electrons - nominal_electrons) / nominal_electrons``. Anything
+        above ~1e-3 means the electrostatic terms are being integrated against
+        a density that does not hold the right amount of charge, and the
+        energy should not be trusted at the accuracy of an energy difference.
+        """
+        if self.nominal_electrons in (None, 0.0) or self.n_electrons is None:
+            return None
+        return (self.n_electrons - self.nominal_electrons) / self.nominal_electrons
 
     @property
     def electronic(self):
@@ -702,6 +721,8 @@ class EnergyComponents:
             "potential": self.potential,
             "total": self.total,
             "n_electrons": self.n_electrons,
+            "nominal_electrons": self.nominal_electrons,
+            "electron_drift": self.electron_drift,
             "functional": self.functional,
             "missing": list(self.missing),
         }
@@ -723,6 +744,10 @@ class EnergyComponents:
         lines.append(f"  {'TOTAL':<22s} {self.total:16.6f} eV")
         if self.n_electrons is not None:
             lines.append(f"  {'electrons':<22s} {self.n_electrons:16.6f}")
+        drift = self.electron_drift
+        if drift is not None:
+            lines.append(f"  {'  nominal':<22s} {self.nominal_electrons:16.6f}"
+                         f"   (drift {drift:+.3e})")
         if self.missing:
             lines.append(f"  incomplete: missing {', '.join(self.missing)}")
         return "\n".join(lines)
@@ -841,6 +866,20 @@ class EnergyCalculator:
             return None
         return ewald_energy(self.structure, self.charges)
 
+    @property
+    def nominal_electrons(self):
+        r"""
+        Valence electron count implied by the pseudopotentials,
+        :math:`\sum_s N_s Z^{\rm val}_s`, or ``None`` without charges.
+
+        This is ``NELECT``: a fixed property of the cell and the ``POTCAR``,
+        not something a calculation converges to. It is the count the
+        :math:`\mathbf G = 0` bookkeeping must use — see :meth:`compute`.
+        """
+        if self.structure is None or not self.charges:
+            return None
+        return float(np.sum(_per_atom_charges(self.structure, self.charges)))
+
     def compute(self, density, tau, potential):
         r"""
         Every component at once.
@@ -857,13 +896,30 @@ class EnergyCalculator:
         Returns
         -------
         EnergyComponents
+
+        Notes
+        -----
+        :math:`E_{\alpha Z}` is scaled by the **nominal** valence count
+        :attr:`nominal_electrons`, not by :math:`\int\rho\,d^3r`. The two agree
+        for a reference density but not for a predicted one, and the
+        distinction is not cosmetic: the prefactor multiplies a quantity of
+        order :math:`10^3` eV, so a density carrying a 0.1 % electron-count
+        drift would move :math:`E_{\alpha Z}` by a couple of eV — larger than
+        the energy differences this calculator exists to resolve, and varying
+        from structure to structure in a way that does not cancel. The
+        measured integral is still reported as
+        :attr:`EnergyComponents.n_electrons`, where it belongs: as a
+        diagnostic of the prediction, not as a factor inside it.
         """
         rho = np.asarray(density, dtype=float)
         n_electrons = self.grid.integrate(rho)
+        nominal = self.nominal_electrons
 
         alpha_z = None
         if self.structure is not None and self.pscore:
-            alpha_z = alpha_z_energy(self.structure, self.pscore, n_electrons)
+            alpha_z = alpha_z_energy(
+                self.structure, self.pscore,
+                nominal if nominal is not None else n_electrons)
 
         return EnergyComponents(
             kinetic=self.kinetic_energy(tau),
@@ -873,6 +929,7 @@ class EnergyCalculator:
             alpha_z=alpha_z,
             ewald=self.ewald_energy(),
             n_electrons=n_electrons,
+            nominal_electrons=nominal,
             functional=self.functional,
         )
 

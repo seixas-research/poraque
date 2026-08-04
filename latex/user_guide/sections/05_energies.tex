@@ -169,7 +169,7 @@ rho = atoms.calc.fields["density"]    # the predicted CHGCAR
 Each call runs \opt{Atoms} $\to$ \opt{Structure} $\to$ \opt{FieldGrid} $\to$
 $\vext$ $\to$ $\rho$ $\to$ $\tau$ $\to$ $E$. The three fields stay on the
 calculator afterwards, so a prediction can be written out with
-\opt{rho.write("CHGCAR")} and opened in VESTA.
+\opt{rho.write("CHGCAR")}.
 
 \begin{center}
 \begin{tabular}{@{}lp{8.0cm}@{}}
