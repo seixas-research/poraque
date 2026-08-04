@@ -79,7 +79,8 @@ class ScalarField(ABC):
     # ------------------------------------------------------------------ #
     # I/O
     # ------------------------------------------------------------------ #
-    def write(self, path=None, comment=None, columns=5, fmt="%18.11E"):
+    def write(self, path=None, comment=None, columns=5, fmt="%18.11E",
+              augmentation=None):
         """
         Write the field in ``CHGCAR`` format.
 
@@ -96,6 +97,10 @@ class ScalarField(ABC):
             Values per line (5 = ``CHGCAR`` style, 10 = ``CHG`` style).
         fmt : str, optional
             ``printf`` format per value.
+        augmentation : sequence of str, optional
+            PAW augmentation records to append, from
+            :func:`~poraque.fields.vasp.volumetric.read_augmentation`. Needed
+            when the file is to seed a VASP run with ``ICHARG=1``.
 
         Returns
         -------
@@ -116,6 +121,7 @@ class ScalarField(ABC):
             comment=comment,
             columns=columns,
             fmt=fmt,
+            augmentation=augmentation,
         )
 
     @classmethod

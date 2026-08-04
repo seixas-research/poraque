@@ -76,6 +76,34 @@ Pass `--resolution 32` to evaluate exactly where they were fitted.
 Geometry → external potential (analytic) → charge density (Model 1) → kinetic
 energy density (Model 2). Every output is a `CHGCAR`-format file.
 
+### Restarting VASP from the prediction
+
+```bash
+poraque-inference new_structure/ --like new_structure/CHGCAR --add-paw
+```
+
+A `CHGCAR` that VASP accepts for `ICHARG=1` carries, after the grid block, one
+*augmentation occupancies* record per atom — the one-centre PAW terms, inside
+the augmentation spheres.
+
+```{warning}
+Those terms are **not representable on the plane-wave grid**, so no grid-based
+model predicts them. `--add-paw` copies them verbatim from a reference
+calculation in the same directory; the result is interstitial density from the
+model and core-region occupancies from the reference.
+
+It follows that `--add-paw` needs a converged `CHGCAR` for the geometry — and
+if you have one, you do not need a prediction to restart from. The flag is for
+the case where the reference is a *near-neighbour* geometry whose on-site
+occupancies are still a good approximation.
+```
+
+Three checks run first, each refusing rather than writing a file VASP would
+reject: no reference present, a record count that disagrees with the atom
+count, or a grid that differs from the reference (a warning — the records are
+grid-independent, but `ICHARG=1` wants the CHGCAR grid to be the run's `NGXF`;
+use `--like`).
+
 ## 5. Evaluate generalisation
 
 Step 3 already holds back a fifth of the structures, so its score is genuinely

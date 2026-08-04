@@ -274,11 +274,14 @@ class ModelReport:
             f"{get('full_latex') or (symbol + ' = ' + get('latex', ''))}\n",
             r"\end{equation*}" "\n\n",
         ]
-        if get("template", "none") != "none":
+        template = get("template", "none")
+        if template != "none":
+            supplied = (r"$\tau_{\mathrm{vW}}$ and $\tau_{\mathrm{TF}}$"
+                        if template == "pauli" else r"$\tau_{\mathrm{TF}}$")
             body.append(
-                f"Fitted under the {_escape(get('template'))} template: the "
-                f"search saw {_escape(get('target_name', 'y'))} alone, with "
-                f"$\\tau_{{\\mathrm{{TF}}}}$ supplied exactly.\n\n")
+                f"Fitted under the {_escape(template)} template: the search "
+                f"saw {_escape(get('target_name', 'y'))} alone, with "
+                f"{supplied} supplied exactly.\n\n")
 
         r2, relative = get("r2", float("nan")), get("relative_l2", float("nan"))
         body.append(
@@ -355,13 +358,13 @@ class ModelReport:
         body = [
             r"\subsection*{Physical asymptotic compliance}" "\n",
             "A kinetic functional is pinned at two ends. Where the density is "
-            "uniform ($p,q \\to 0$) it must collapse to Thomas--Fermi; where it "
-            "varies rapidly ($p \\to \\infty$) it must become von "
-            "Weizs\\\"acker. Both are statements about the enhancement factor "
-            "$F = \\tau/\\tau_{\\mathrm{TF}}$:\n\n",
+            "uniform ($p,q \\to 0$) it must collapse to Thomas--Fermi; where "
+            "it varies rapidly ($p \\to \\infty$) it must become von "
+            "Weizs\\\"acker. Both are statements about the \\emph{Pauli} "
+            "enhancement factor "
+            "$F = (\\tau - \\tau_{\\mathrm{vW}})/\\tau_{\\mathrm{TF}}$:\n\n",
             r"\begin{equation*}" "\n",
-            r"F(0,0) = 1, \qquad F \to \tfrac{5}{3}p^{2} "
-            r"\ \text{as}\ p \to \infty." "\n",
+            r"F(0,0) = 1, \qquad F \to 0 \ \text{as}\ p \to \infty." "\n",
             r"\end{equation*}" "\n\n",
             r"\begin{center}\begin{tabular}"
             r"{@{}l c >{\raggedright\arraybackslash}p{8.2cm}@{}}\toprule" "\n",
@@ -377,21 +380,25 @@ class ModelReport:
         score = limits.get("score", 0.0)
         body.append(f"Compliance score: {_number(score, 2)} of 1.\n\n")
 
-        if limits.get("quadratic_scaling") and not von_weizsacker.get("passes"):
+        if (limits.get("bounded_at_infinity")
+                and not von_weizsacker.get("passes")):
             body.append(
                 r"\begin{quote}\small\color{shadegray}" "\n"
-                "The expression does grow as $p^{2}$, but with the wrong "
-                "coefficient, so it is not von Weizs\\\"acker. That "
-                "combination is not unusual: the second-order gradient "
-                "expansion has exactly the right scaling with coefficient "
-                "$1/9$.\n" r"\end{quote}" "\n\n")
+                "The Pauli term does settle on a finite value as "
+                "$p \\to \\infty$, just not zero --- so the functional stays "
+                "bounded but never reduces to von Weizs\\\"acker. That is a "
+                "repairable failure, unlike one that diverges.\n"
+                r"\end{quote}" "\n\n")
 
         if not (thomas_fermi.get("passes") and von_weizsacker.get("passes")):
             body.append(
                 r"\begin{quote}\small\color{shadegray}" "\n"
                 "Neither known functional satisfies both limits on its own --- "
-                "Thomas--Fermi fails the second, von Weizs\\\"acker the first "
-                "--- so failing one is not by itself damning. Failing both "
+                "as a Pauli factor Thomas--Fermi is $1 - 5p^{2}/3$, correct at "
+                "the origin and divergent at infinity, while von "
+                "Weizs\\\"acker is $0$, correct at infinity and wrong at the "
+                "origin --- so failing one is not by itself damning. Failing "
+                "both "
                 "means the expression reproduces the training data without "
                 "reproducing the physics that constrains it outside that "
                 "range, and it should not be extrapolated.\n"

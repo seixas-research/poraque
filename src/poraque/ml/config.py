@@ -337,16 +337,26 @@ class SymbolicConfig:
     template : str
         Factorisation of the target before the search sees it.
 
-        ``"none"`` fits the target directly. ``"thomas_fermi"`` fits the
-        **enhancement factor** :math:`F` in
-        :math:`\tau = \tau_{\rm TF}\,F`, dividing the target by
-        :math:`\tau_{\rm TF} = C_{\rm TF}\rho^{5/3}` first and multiplying the
-        discovered expression back in when the result is reported.
+        ``"pauli"`` fits the **Pauli enhancement factor**
 
-        The template is a way of *giving away* the part of the physics that is
-        already known. Thomas-Fermi supplies the density scaling exactly, so
-        the search stops spending its budget rediscovering :math:`\rho^{5/3}`
-        and works on the part that is actually unknown — and every constant it
+        .. math::
+
+            F = \frac{\tau - \tau_{\rm vW}}{\tau_{\rm TF}},
+            \qquad
+            \tau = \tau_{\rm vW} + \tau_{\rm TF}\,F,
+
+        which is the well-posed target of orbital-free DFT:
+        :math:`\tau_{\rm vW} = |\nabla\rho|^2/8\rho` is known in closed form,
+        and :math:`\tau - \tau_{\rm vW} \ge 0` by Hoffmann-Ostenhof. Leaving
+        :math:`\tau_{\rm vW}` in the target means fitting a quantity that is
+        mostly already known, and near the von Weizsäcker limit it means
+        fitting a near-cancellation between two large numbers.
+
+        ``"thomas_fermi"`` fits the plain ratio :math:`F = \tau/\tau_{\rm TF}`.
+        ``"none"`` fits the target directly.
+
+        A template *gives away* the part of the physics that is already known,
+        so the search works on the part that is not — and every constant it
         must find becomes order unity.
     epsilon : float
         Vacuum threshold in atomic units. Denominators are clamped at it and

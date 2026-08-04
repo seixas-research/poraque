@@ -99,16 +99,25 @@ Two independent knobs: \opt{features} picks the \textbf{input variables},
 \end{center}
 
 \begin{center}
-\begin{tabular}{@{}llp{5.6cm}@{}}
+\begin{tabular}{@{}llp{5.4cm}@{}}
 \toprule
 \opt{template} & Fitted target & Reported formula \\
 \midrule
 \opt{none} (default) & $\tau$ & $\tau = f(\dots)$ \\
+\opt{pauli}          & $F = \dfrac{\tau - \tauvW}{\tauTF}$ &
+  $\tau = \tauvW + \tauTF\, f(\dots)$ \\
 \opt{thomas\_fermi}  & $F = \tau/\tauTF$ &
   $\tau = C_{\mathrm{TF}}\rho^{5/3} f(\dots)$ \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\opt{pauli} is the physically right choice. $\tauvW = |\nabla\rho|^2/8\rho$ is
+known in closed form and $\tau - \tauvW \ge 0$ by Hoffmann--Ostenhof, so
+subtracting it leaves exactly the quantity a kinetic functional actually has to
+model --- the Pauli term. Leaving it in means fitting something mostly already
+known, and near the von Weizs\"acker limit it means fitting a near-cancellation
+between two large numbers.
 
 A template \textbf{gives away the part of the physics that is already known}.
 Thomas--Fermi supplies the density scaling exactly, so the search stops
@@ -187,7 +196,7 @@ symbolic:
   enable_symbolic_distillation: false
   target: model          # model | reference
   features: gga          # gga | reduced | raw
-  template: none         # none | thomas_fermi
+  template: none         # none | pauli | thomas_fermi
   epsilon: 1.0e-08       # vacuum threshold, e/a0^3
   constraints:           # per-operator argument-complexity limits
     "^": [-1, 1]
@@ -243,17 +252,23 @@ was never shown. Every candidate on the front is tested against the two limits
 that pin a kinetic functional, both written for the enhancement factor
 $F = \tau/\tauTF$:
 %
+Both are statements about the \emph{Pauli} enhancement factor
+$F = (\tau - \tauvW)/\tauTF$:
+%
 \begin{equation}
   \underbrace{F(0,0) = 1}_{\text{Thomas--Fermi}},
   \qquad
-  \underbrace{F \to \tfrac{5}{3}p^{2}\ \text{as}\ p \to \infty}
-             _{\text{von Weizs\"acker}}.
+  \underbrace{F \to 0 \ \text{as}\ p \to \infty}_{\text{von Weizs\"acker}}.
 \end{equation}
 
-The first is the uniform electron gas: no density variation, so the functional
-must collapse to Thomas--Fermi exactly. The second is the rapidly varying
-limit --- a single orbital, an exponential tail --- where von Weizs\"acker is
-exact.
+The first is the uniform electron gas: no density variation, $\tauvW$ vanishes
+and the functional must collapse to Thomas--Fermi exactly. The second is the
+rapidly varying limit --- a single orbital, an exponential tail --- where
+$\tau \to \tauvW$, so the Pauli term added to it must vanish.
+
+Every template is converted to this one convention before checking, using
+$\tauvW/\tauTF = 5p^2/3$ exactly, so a \opt{thomas\_fermi} or \opt{none} fit is
+held to the same physical standard.
 
 The check is analytic, through \opt{sympy.limit} with the symbols bound at
 parse time, falling back to a converged numerical probe when \textsc{SymPy}
@@ -261,16 +276,22 @@ cannot resolve a deeply nested expression. Which route was taken is recorded:
 an analytic limit is a proof, a numerical one is evidence.
 
 \begin{pwarn}
-\textbf{Neither textbook functional passes both.} Thomas--Fermi ($F=1$)
-satisfies the first and fails the second; von Weizs\"acker ($F = 5p^2/3$) does
-the reverse. Failing one limit is not damning on its own. Failing \emph{both}
-means the expression reproduces the training data without the physics that
-constrains it outside that range, and it must not be extrapolated.
+\textbf{Neither textbook functional passes both.} As a Pauli factor
+Thomas--Fermi is $F = 1 - 5p^2/3$ --- correct at the origin, divergent at
+infinity; von Weizs\"acker is $F = 0$ --- correct at infinity, wrong at the
+origin. Failing one limit is not damning on its own. Failing \emph{both} means
+the expression reproduces the training data without the physics that constrains
+it outside that range, and it must not be extrapolated.
+
+A form that passes both, such as $F = e^{-p^2}$ or $F = 1/(1+p^2)$,
+interpolates between the two regimes --- which is what a usable semi-local
+kinetic functional has to do.
 \end{pwarn}
 
-Scaling and coefficient are reported separately, because the distinction is
-real: the second-order gradient expansion grows as $p^{2}$ with coefficient
-$1/9$, so it has exactly the right shape and is \emph{not} von Weizs\"acker.
+Whether $F$ tends to \emph{any} finite limit is reported apart from whether
+that limit is zero: a functional settling on a finite non-zero constant stays
+bounded but never reduces to von Weizs\"acker, a repairable failure --- unlike
+one that diverges.
 
 Each candidate carries a \opt{TF}/\opt{vW} badge in the console, the JSON
 summary and the PDF report, which gains a dedicated \emph{Physical asymptotic

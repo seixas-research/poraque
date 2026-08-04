@@ -86,7 +86,15 @@ picks how the **target is factorised**.
 | `template` | Fitted target | Reported formula |
 | --- | --- | --- |
 | `none` (default) | $\tau$ | $\tau = f(\dots)$ |
+| **`pauli`** | $F = \dfrac{\tau - \tau_\mathrm{vW}}{\tau_\mathrm{TF}}$ | $\tau = \tau_\mathrm{vW} + \tau_\mathrm{TF}\,f(\dots)$ |
 | `thomas_fermi` | $F = \tau/\tau_\mathrm{TF}$ | $\tau = C_\mathrm{TF}\rho^{5/3}\,f(\dots)$ |
+
+`pauli` is the physically right choice. $\tau_\mathrm{vW} =
+|\nabla\rho|^2/8\rho$ is known in closed form and $\tau - \tau_\mathrm{vW}
+\ge 0$ by Hoffmann–Ostenhof, so subtracting it leaves exactly the quantity a
+kinetic functional actually has to model. Leaving it in means fitting something
+mostly already known — and near the von Weizsäcker limit, fitting a
+near-cancellation between two large numbers.
 
 A template **gives away the part of the physics that is already known**.
 Thomas–Fermi supplies the density scaling exactly, so the search stops spending
@@ -148,7 +156,7 @@ symbolic:
   enable_symbolic_distillation: false
   target: model          # model | reference
   features: gga          # gga | reduced | raw
-  template: none         # none | thomas_fermi
+  template: none         # none | pauli | thomas_fermi
   epsilon: 1.0e-08       # vacuum threshold, e/a0^3
   constraints:           # per-operator argument-complexity limits
     "^": [-1, 1]
@@ -200,10 +208,17 @@ was never shown. Every candidate on the front is tested against the two limits
 that pin a kinetic functional, both written for the enhancement factor
 $F = \tau/\tau_\mathrm{TF}$:
 
+Both are statements about the **Pauli** enhancement factor
+$F = (\tau - \tau_\mathrm{vW})/\tau_\mathrm{TF}$:
+
 | Limit | Condition | Physical regime |
 | --- | --- | --- |
-| Thomas–Fermi | $F(0,0) = 1$ | uniform density: $p, q \to 0$ |
-| von Weizsäcker | $F \to \tfrac{5}{3}p^2$ as $p \to \infty$ | rapidly varying density, single orbital |
+| Thomas–Fermi | $F(0,0) = 1$ | uniform density: $\tau_\mathrm{vW}\to0$, $\tau\to\tau_\mathrm{TF}$ |
+| von Weizsäcker | $F \to 0$ as $p \to \infty$ | single orbital: $\tau\to\tau_\mathrm{vW}$, nothing left over |
+
+Every template is converted to this one convention before checking, using
+$\tau_\mathrm{vW}/\tau_\mathrm{TF} = 5p^2/3$ exactly — so a `thomas_fermi`
+or `none` fit is held to the same physical standard.
 
 The check is analytic — `sympy.limit`, with the symbols bound at parse time —
 falling back to a converged numerical probe when SymPy cannot resolve a deeply
@@ -211,16 +226,22 @@ nested expression. Which route was used is recorded, because an analytic limit
 is a proof and a numerical one is evidence.
 
 ```{important}
-**Neither textbook functional passes both.** Thomas–Fermi ($F = 1$) satisfies
-the first and fails the second; von Weizsäcker ($F = 5p^2/3$) does the reverse.
-Failing one limit is therefore not damning on its own — failing *both* means
-the expression reproduces the training data without the physics that
-constrains it outside that range, and it should not be extrapolated.
+**Neither textbook functional passes both.** As a Pauli factor Thomas–Fermi is
+$F = 1 - 5p^2/3$ — correct at the origin, divergent at infinity; von Weizsäcker
+is $F = 0$ — correct at infinity, wrong at the origin. Failing one limit is
+therefore not damning on its own. Failing *both* means the expression
+reproduces the training data without the physics that constrains it outside
+that range, and it should not be extrapolated.
+
+A form that passes both, such as $F = e^{-p^2}$ or $F = 1/(1+p^2)$,
+interpolates between the two regimes — which is what a usable semi-local
+kinetic functional has to do.
 ```
 
-Scaling and coefficient are reported separately, because the distinction is
-real: the second-order gradient expansion grows as $p^2$ with coefficient
-$1/9$, so it has exactly the right shape and is *not* von Weizsäcker.
+Whether $F$ tends to *any* finite limit is reported apart from whether that
+limit is zero: a functional settling on a finite non-zero constant stays
+bounded but never reduces to von Weizsäcker, which is a repairable failure —
+unlike one that diverges.
 
 Each front entry carries a `TF`/`vW` badge in the console, the JSON summary and
 the PDF:
@@ -256,8 +277,8 @@ features cannot resolve the core peaks.
 ```python
 from poraque.ml.symbolic import check_asymptotic_limits
 
-result = check_asymptotic_limits("1 + 5*p**2/3", ["rho", "p", "q"],
-                                 scheme="enhancement")
+result = check_asymptotic_limits("exp(-p**2)", ["rho", "p", "q"],
+                                 scheme="reduced", template="pauli")
 result.passes        # True
 result.badge()       # 'TF/vW'
 ```

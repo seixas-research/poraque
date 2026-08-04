@@ -93,14 +93,23 @@ DEFAULT_BINARY = ("+", "-", "*", "/", "^")
 #: *input* variables; :data:`TEMPLATES` selects how the target is factorised.
 FEATURE_SCHEMES = ("gga", "reduced", "raw", "enhancement")
 
-#: Target factorisations. ``"thomas_fermi"`` fits the enhancement factor
-#: ``F`` in ``tau = tau_TF * F``; ``"none"`` fits the target directly.
-TEMPLATES = ("none", "thomas_fermi")
+#: Target factorisations.
+#:
+#: ``"pauli"``
+#:     The **Pauli enhancement factor**, ``F = (tau - tau_vW) / tau_TF``. This
+#:     is the well-posed object of orbital-free DFT: ``tau_P = tau - tau_vW``
+#:     is non-negative by Hoffmann-Ostenhof, so the search cannot spend its
+#:     budget on a quantity that has to cancel against a larger one.
+#: ``"thomas_fermi"``
+#:     The plain ratio ``F = tau / tau_TF``. Simpler, and the older form.
+#: ``"none"``
+#:     Fit the target directly.
+TEMPLATES = ("none", "thomas_fermi", "pauli")
 
 #: ``features: enhancement`` predates the split between inputs and target
 #: factorisation. It is kept as an alias so an existing config keeps working
 #: and keeps meaning exactly what it did.
-_FEATURE_ALIASES = {"enhancement": ("reduced", "thomas_fermi")}
+_FEATURE_ALIASES = {"enhancement": ("reduced", "pauli")}
 
 #: Density below which a voxel is vacuum: dropped, and used to clamp every
 #: denominator. In atomic units (:math:`e/a_0^3`).
@@ -144,6 +153,10 @@ class FeatureTable:
     physical_target : numpy.ndarray or None
         The target in its physical form (:math:`\tau` in eV/Å³), before any
         template divided it. What a parity plot has to be drawn against.
+    tau_vw : numpy.ndarray or None
+        :math:`\tau_{\rm vW}` in atomic units, retained so the ``pauli``
+        template can be undone: reconstructing :math:`\tau` needs the term
+        that was subtracted, not just the one that was divided out.
     """
 
     features: np.ndarray
@@ -156,6 +169,7 @@ class FeatureTable:
     template: str = "none"
     density: np.ndarray = None
     physical_target: np.ndarray = None
+    tau_vw: np.ndarray = None
 
     def __len__(self):
         return int(self.features.shape[0])
@@ -428,7 +442,19 @@ def build_features(density, target, grid, scheme="gga",
     # scaling exactly; without it the search spends its budget rediscovering
     # rho^(5/3) and every constant it finds carries units.
     tau_tf = C_TF * rho_safe ** (5.0 / 3.0)
-    if template == "thomas_fermi":
+    # von Weizsacker on the grid, from its definition. Equivalent to
+    # (5/3) p^2 tau_TF -- a test pins the two against each other -- but written
+    # out so the quantity being subtracted is the one the name says.
+    tau_vw = grad_norm ** 2 / (8.0 * rho_safe)
+
+    if template == "pauli":
+        # The Pauli term is what a kinetic functional actually has to model:
+        # tau_vW is known in closed form, so leaving it in the target means
+        # fitting a quantity that is mostly already known, and near the vW
+        # limit means fitting a near-cancellation.
+        fitted, target_name = (tau - tau_vw) / tau_tf, "F"
+        units = f"{units}; F = (tau - tau_vW) / tau_TF, dimensionless"
+    elif template == "thomas_fermi":
         fitted, target_name = tau / tau_tf, "F"
         units = f"{units}; F = tau / tau_TF, dimensionless"
     else:
@@ -439,7 +465,8 @@ def build_features(density, target, grid, scheme="gga",
         features=np.column_stack([column[keep] for column in columns]),
         target=fitted[keep], feature_names=names, target_name=target_name,
         scheme=scheme, units=units, template=template,
-        density=rho[keep], physical_target=tau_ang[keep])
+        density=rho[keep], physical_target=tau_ang[keep],
+        tau_vw=tau_vw[keep])
 
 
 def sample_rows(table, n_samples, seed=0):
@@ -460,7 +487,8 @@ def sample_rows(table, n_samples, seed=0):
         source=table.source, template=table.template,
         density=None if table.density is None else table.density[picked],
         physical_target=(None if table.physical_target is None
-                         else table.physical_target[picked]))
+                         else table.physical_target[picked]),
+        tau_vw=None if table.tau_vw is None else table.tau_vw[picked])
 
 
 def stack_tables(tables):
@@ -481,7 +509,8 @@ def stack_tables(tables):
         feature_names=list(first.feature_names),
         target_name=first.target_name, scheme=first.scheme, units=first.units,
         source=first.source, template=first.template,
-        density=join("density"), physical_target=join("physical_target"))
+        density=join("density"), physical_target=join("physical_target"),
+        tau_vw=join("tau_vw"))
 
 
 # ===================================================================== #
@@ -602,7 +631,8 @@ class AsymptoticCompliance:
     r"""
     Whether an expression obeys the two limits that pin a kinetic functional.
 
-    Both are statements about :math:`F = \tau/\tau_{\rm TF}`:
+    Both are statements about the Pauli enhancement factor
+    :math:`F = (\tau - \tau_{\rm vW})/\tau_{\rm TF}`:
 
     ``thomas_fermi``
         :math:`F(0,0) = 1`. A uniform electron gas has no density variation, so
@@ -619,19 +649,18 @@ class AsymptoticCompliance:
 
     Attributes
     ----------
-    quadratic_scaling : bool
-        Whether :math:`F` grows as :math:`p^2` at all, regardless of the
-        coefficient. Reported separately because the distinction is real: the
-        second-order gradient expansion has exactly the right scaling with
-        coefficient :math:`1/9`, so it is *not* von Weizsäcker while looking
-        superficially similar.
+    bounded_at_infinity : bool
+        Whether :math:`F` tends to *any* finite limit as :math:`p\to\infty`.
+        Reported separately from whether that limit is zero: a functional that
+        settles on a finite non-zero constant is qualitatively different from
+        one that diverges, and only the first is a candidate for repair.
     score : float
         Fraction of the two limits satisfied — 0, 0.5 or 1.
     """
 
     thomas_fermi: LimitCheck
     von_weizsacker: LimitCheck
-    quadratic_scaling: bool = False
+    bounded_at_infinity: bool = False
     score: float = 0.0
 
     @property
@@ -645,8 +674,7 @@ class AsymptoticCompliance:
                 f"/{'vW' if self.von_weizsacker.passes else '--'}")
 
 
-def enhancement_form(expression, feature_names, scheme,
-                     template="none"):
+def pauli_form(expression, feature_names, scheme, template="none"):
     r"""
     Rewrite a candidate as the enhancement factor :math:`F = \tau/\tau_{\rm TF}`.
 
@@ -680,10 +708,14 @@ def enhancement_form(expression, feature_names, scheme,
     p, q, rho = symbols["p"], symbols["q"], symbols["rho"]
 
     scheme, template = resolve_scheme(scheme, template)
+    # tau_vW / tau_TF = 5 p^2 / 3 exactly, which is what lets every template be
+    # brought to one convention without needing the density.
+    vw_ratio = sympy.Rational(5, 3) * p ** 2
+
+    if template == "pauli":
+        return parsed, symbols                 # already the Pauli factor
     if template == "thomas_fermi":
-        # The expression already *is* F; the template divided tau_TF out
-        # before the search ever saw the data.
-        return parsed, symbols
+        return parsed - vw_ratio, symbols      # F = tau/tau_TF -> F - 5p^2/3
 
     if scheme == "raw":
         k_f = (3 * sympy.pi ** 2 * rho) ** sympy.Rational(1, 3)
@@ -692,7 +724,8 @@ def enhancement_form(expression, feature_names, scheme,
             symbols.get("lap_rho", sympy.Symbol("lap_rho")): 4 * k_f ** 2 * rho * q,
         })
 
-    return parsed / (sympy.Float(C_TF) * rho ** sympy.Rational(5, 3)), symbols
+    return (parsed / (sympy.Float(C_TF) * rho ** sympy.Rational(5, 3))
+            - vw_ratio), symbols
 
 
 def check_asymptotic_limits(expression, feature_names, scheme,
@@ -725,8 +758,8 @@ def check_asymptotic_limits(expression, feature_names, scheme,
     import sympy
 
     try:
-        enhancement, symbols = enhancement_form(expression, feature_names,
-                                                scheme, template)
+        enhancement, symbols = pauli_form(expression, feature_names,
+                                          scheme, template)
     except Exception:                                   # noqa: BLE001
         unparsed = LimitCheck("thomas_fermi",
                               detail="expression could not be parsed")
@@ -735,33 +768,37 @@ def check_asymptotic_limits(expression, feature_names, scheme,
                                  detail="expression could not be parsed"))
 
     p, q = symbols["p"], symbols["q"]
-    thomas_fermi = _limit_to_one(
-        enhancement, "thomas_fermi", tolerance,
+    thomas_fermi = _limit_to(
+        enhancement, "thomas_fermi", expected=1.0, tolerance=tolerance,
         analytic=lambda: sympy.limit(sympy.limit(enhancement, p, 0), q, 0),
         numeric=lambda scale: _evaluate(enhancement, symbols,
                                         {p: scale, q: scale}),
         probes=(1e-3, 1e-5, 1e-7),
         target="F(0,0) = 1")
 
-    ratio = enhancement / (sympy.Rational(5, 3) * p ** 2)
-    von_weizsacker = _limit_to_one(
-        ratio, "von_weizsacker", tolerance,
-        analytic=lambda: sympy.limit(ratio, p, sympy.oo),
-        numeric=lambda scale: _evaluate(ratio, symbols, {p: scale, q: 0.0}),
+    von_weizsacker = _limit_to(
+        enhancement, "von_weizsacker", expected=0.0, tolerance=tolerance,
+        analytic=lambda: sympy.limit(enhancement, p, sympy.oo),
+        numeric=lambda scale: _evaluate(enhancement, symbols,
+                                        {p: scale, q: 0.0}),
         probes=(1e3, 1e4, 1e5),
-        target="F -> 5p^2/3 as p -> infinity")
+        target="F -> 0 as p -> infinity")
 
-    quadratic = (von_weizsacker.value is not None
-                 and np.isfinite(von_weizsacker.value)
-                 and abs(von_weizsacker.value) > 1e-9)
+    bounded = (von_weizsacker.value is not None
+               and np.isfinite(von_weizsacker.value))
     score = 0.5 * (thomas_fermi.passes + von_weizsacker.passes)
     return AsymptoticCompliance(thomas_fermi, von_weizsacker,
-                                quadratic_scaling=bool(quadratic), score=score)
+                                bounded_at_infinity=bool(bounded), score=score)
 
 
-def _limit_to_one(target_expression, name, tolerance, analytic, numeric,
-                  probes, target):
-    """Resolve one limit, analytically if possible and numerically if not."""
+def _limit_to(target_expression, name, expected, tolerance, analytic, numeric,
+              probes, target):
+    """
+    Resolve one limit, analytically if possible and numerically if not.
+
+    ``expected`` is compared on an **absolute** tolerance. A relative one would
+    be meaningless for the von Weizsacker limit, whose target is zero.
+    """
     import sympy
 
     value, method = None, "undetermined"
@@ -794,7 +831,7 @@ def _limit_to_one(target_expression, name, tolerance, analytic, numeric,
         return LimitCheck(name, None, False, "undetermined",
                           f"could not resolve {target}")
 
-    passes = abs(value - 1.0) <= tolerance
+    passes = abs(value - expected) <= tolerance
     verdict = "satisfied" if passes else "violated"
     return LimitCheck(name, value, passes, method,
                       f"{target}: found {value:.4g} ({verdict}, {method})")
@@ -1004,12 +1041,21 @@ def reconstruct_tau(values, table):
     """
     if values is None:
         return None
-    if table.template != "thomas_fermi":
+    if table.template == "none":
         return np.asarray(values) * _HA_PER_BOHR3_TO_EV_PER_ANG3
     if table.density is None:
         return None
+
     tau_tf = C_TF * np.clip(table.density, DEFAULT_EPSILON, None) ** (5.0 / 3.0)
-    return np.asarray(values) * tau_tf * _HA_PER_BOHR3_TO_EV_PER_ANG3
+    tau = np.asarray(values) * tau_tf
+    if table.template == "pauli":
+        # tau = tau_vW + tau_TF * F. The subtracted term has to be added back,
+        # not just the divided one -- reporting tau_TF * F alone would be the
+        # Pauli term mislabelled as the whole kinetic energy density.
+        if table.tau_vw is None:
+            return None
+        tau = tau + table.tau_vw
+    return tau * _HA_PER_BOHR3_TO_EV_PER_ANG3
 
 
 def full_expression(expression, template, target_name="tau"):
@@ -1021,6 +1067,8 @@ def full_expression(expression, template, target_name="tau"):
     :math:`\\tau_{\\rm TF}` back in gives :math:`\\tau`, and labelling that
     line ``F =`` would state an identity that is false.
     """
+    if template == "pauli":
+        return f"tau = tau_vW + C_TF * rho^(5/3) * ({expression})"
     if template == "thomas_fermi":
         return f"tau = C_TF * rho^(5/3) * ({expression})"
     return f"{target_name} = {expression}"
@@ -1028,6 +1076,9 @@ def full_expression(expression, template, target_name="tau"):
 
 def full_latex(latex, template):
     r"""The same, as LaTeX: :math:`\tau = C_{\rm TF}\rho^{5/3}\,(F)`."""
+    if template == "pauli":
+        return (r"\tau = \tau_{\mathrm{vW}} + C_{\mathrm{TF}}\,\rho^{5/3}"
+                r"\left(" + latex + r"\right)")
     if template == "thomas_fermi":
         return (r"\tau = C_{\mathrm{TF}}\,\rho^{5/3}\left(" + latex +
                 r"\right)")

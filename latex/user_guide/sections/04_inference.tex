@@ -56,6 +56,55 @@ poraque-inference run/ \
 bringing them onto the prediction grid by spectral truncation. \opt{--plot-dir}
 adds cross-section and parity figures.
 
+\section{Restarting VASP from a predicted density}
+\label{sec:add-paw}
+
+\begin{lstlisting}
+poraque-inference struct/ --like struct/CHGCAR --add-paw
+\end{lstlisting}
+
+A \file{CHGCAR} that VASP will accept for \opt{ICHARG=1} is not just a density
+on a grid. After the grid block it carries one \emph{augmentation occupancies}
+record per atom: the one-centre PAW terms, the part of the density inside the
+augmentation spheres.
+
+\begin{pwarn}
+Those terms are \textbf{not representable on the plane-wave grid at all}, so no
+grid-based model predicts them --- ours included. \opt{--add-paw} does not
+generate them. It copies them verbatim from a reference calculation in the same
+directory, and the resulting file is a hybrid: interstitial density from the
+model, core-region occupancies from the reference.
+\end{pwarn}
+
+This has a consequence worth stating plainly. \opt{--add-paw} requires a
+converged \file{CHGCAR} for the geometry, and if you already have one you do
+not need a prediction to restart from. The flag earns its place when the
+reference is a \emph{near-neighbour} --- a slightly displaced geometry, a
+nearby volume --- where the on-site occupancies are a good approximation and
+the interstitial density is what you want the model to supply.
+
+Three checks run before anything is appended, and each refuses rather than
+writing a file VASP would reject:
+
+\begin{itemize}
+  \item \textbf{No reference.} If nothing in the directory carries
+        augmentation records, the run stops and says why.
+  \item \textbf{Wrong atom count.} If the record count does not match the
+        structure, the reference is a different system and its occupancies do
+        not correspond to these positions.
+  \item \textbf{Grid mismatch.} The records are on-site and grid-independent,
+        so this is a warning rather than an error --- but VASP reads the
+        density on the grid the file declares, and \opt{ICHARG=1} wants that
+        to be the run's own \opt{NGXF}. Use \opt{--like} to match it.
+\end{itemize}
+
+\begin{pnote}
+The predicted density integrates to the electron count only approximately
+(about $1\,\%$ out on the current models). VASP renormalises the charge it
+reads, so this is not fatal for a restart, but a density that far from
+normalised is a poor starting guess and may cost more SCF steps than it saves.
+\end{pnote}
+
 \section{Sanity checks the script performs}
 
 \begin{itemize}

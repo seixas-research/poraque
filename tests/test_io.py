@@ -361,3 +361,133 @@ class TestSpectralResample:
     def test_downsample_shape_requires_an_argument(self):
         with pytest.raises(ValueError, match="factor.*target_max"):
             downsample_shape((32, 32, 32))
+
+
+# ===================================================================== #
+# PAW augmentation records
+# ===================================================================== #
+class TestAugmentation:
+    """
+    The one-centre PAW terms live inside the augmentation spheres and are not
+    representable on the plane-wave grid, so no grid-based model produces
+    them. VASP's ``ICHARG=1`` needs them, which is why they are borrowed from
+    a reference calculation rather than predicted.
+    """
+
+    def _chgcar(self, path, shape=(2, 2, 2), columns=5, augmentation=(),
+                spin=False):
+        """A minimal CHGCAR-format file, optionally with a spin channel."""
+        import numpy as np
+
+        n = int(np.prod(shape))
+        values = [f"{i:.5E}" for i in range(n)]
+        lines = ["Au", "   1.0", "  2.0 0.0 0.0", "  0.0 2.0 0.0",
+                 "  0.0 0.0 2.0", "  Au", "   1", "Direct",
+                 "  0.0 0.0 0.0", ""]
+        lines.append("  {}  {}  {}".format(*shape))
+        for start in range(0, n, columns):
+            lines.append(" ".join(values[start:start + columns]))
+        lines.extend(augmentation)
+        if spin:
+            lines.append("  {}  {}  {}".format(*shape))
+            for start in range(0, n, columns):
+                lines.append(" ".join(values[start:start + columns]))
+        path.write_text("\n".join(lines) + "\n")
+        return str(path)
+
+    def test_extracts_the_records(self, tmp_path):
+        from poraque.fields.vasp.volumetric import read_augmentation
+
+        block = ["augmentation occupancies   1  4",
+                 "  0.1 0.2 0.3 0.4"]
+        path = self._chgcar(tmp_path / "CHGCAR", augmentation=block)
+        shape, extracted = read_augmentation(path)
+        assert shape == (2, 2, 2)
+        assert extracted == block
+
+    def test_a_file_without_records_yields_nothing(self, tmp_path):
+        """A CHG has the same layout and never carries them."""
+        from poraque.fields.vasp.volumetric import read_augmentation
+
+        path = self._chgcar(tmp_path / "CHG")
+        assert read_augmentation(path)[1] == []
+
+    def test_a_spin_channel_is_not_dragged_along(self, tmp_path):
+        """
+        The second grid block is the reference's magnetisation, which has
+        nothing to do with a prediction; extraction stops before it.
+        """
+        from poraque.fields.vasp.volumetric import read_augmentation
+
+        block = ["augmentation occupancies   1  2", "  0.5 0.5"]
+        path = self._chgcar(tmp_path / "CHGCAR", augmentation=block, spin=True)
+        assert read_augmentation(path)[1] == block
+
+    def test_column_width_does_not_shift_the_boundary(self, tmp_path):
+        """
+        CHGCAR writes 5 values a line and CHG 10. Counting lines instead of
+        values would land in the middle of the grid on one of them.
+        """
+        from poraque.fields.vasp.volumetric import read_augmentation
+
+        block = ["augmentation occupancies   1  1", "  0.25"]
+        for columns in (5, 10, 3):
+            path = self._chgcar(tmp_path / f"CHGCAR{columns}",
+                                columns=columns, augmentation=block)
+            assert read_augmentation(path)[1] == block
+
+    def test_counts_the_records(self, tmp_path):
+        from poraque.fields.vasp.volumetric import count_augmentation_records
+
+        block = ["augmentation occupancies   1  1", " 0.1",
+                 "augmentation occupancies   2  1", " 0.2"]
+        assert count_augmentation_records(block) == 2
+
+    def test_written_records_round_trip(self, tmp_path):
+        """Appended verbatim, and readable back out unchanged."""
+        import numpy as np
+
+        from poraque.fields import ChargeDensity, FieldGrid
+        from poraque.fields.vasp.poscar import Poscar
+        from poraque.fields.vasp.volumetric import read_augmentation
+
+        grid = FieldGrid((4, 4, 4), np.eye(3) * 5.0)
+        structure = Poscar(np.eye(3) * 5.0, ["Au"], [1], np.zeros((1, 3)))
+        density = ChargeDensity(np.ones(grid.shape) * 0.5, grid, structure)
+
+        block = ["augmentation occupancies   1  3", "  0.1 0.2 0.3"]
+        path = str(tmp_path / "CHGCAR")
+        density.write(path, augmentation=block)
+        assert read_augmentation(path)[1] == block
+
+    def test_writing_without_records_is_unchanged(self, tmp_path):
+        import numpy as np
+
+        from poraque.fields import ChargeDensity, FieldGrid
+        from poraque.fields.vasp.poscar import Poscar
+
+        grid = FieldGrid((4, 4, 4), np.eye(3) * 5.0)
+        structure = Poscar(np.eye(3) * 5.0, ["Au"], [1], np.zeros((1, 3)))
+        density = ChargeDensity(np.ones(grid.shape) * 0.5, grid, structure)
+
+        plain = density.write(str(tmp_path / "a"))
+        with_none = density.write(str(tmp_path / "b"), augmentation=None)
+        assert open(plain).read() == open(with_none).read()
+
+    def test_the_density_still_reads_back(self, tmp_path):
+        """Appending must not disturb the grid block above it."""
+        import numpy as np
+
+        from poraque.fields import ChargeDensity, FieldGrid
+        from poraque.fields.vasp.poscar import Poscar
+
+        grid = FieldGrid((4, 4, 4), np.eye(3) * 5.0)
+        structure = Poscar(np.eye(3) * 5.0, ["Au"], [1], np.zeros((1, 3)))
+        values = np.random.default_rng(0).random(grid.shape)
+        density = ChargeDensity(values, grid, structure)
+
+        path = str(tmp_path / "CHGCAR")
+        density.write(path, augmentation=["augmentation occupancies   1  1",
+                                          "  0.5"])
+        restored = ChargeDensity.read(path, grid=FieldGrid.from_file(path))
+        assert np.allclose(restored.data, values, rtol=1e-8)

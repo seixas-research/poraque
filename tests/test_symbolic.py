@@ -105,20 +105,51 @@ class TestFeatures:
         rho = table.features[:, 0]
         assert np.allclose(C_TF * rho ** (5.0 / 3.0), table.target, rtol=1e-12)
 
-    def test_enhancement_is_unity_for_thomas_fermi(self, cell):
-        """Thomas-Fermi is F = 1 by definition; anything else is a bug."""
+    def test_pauli_factor_on_thomas_fermi_data(self, cell):
+        r"""
+        :math:`F = (\tau_{\rm TF} - \tau_{\rm vW})/\tau_{\rm TF}
+        = 1 - 5p^2/3` exactly.
+        """
         grid, density = cell
         table = build_features(density, thomas_fermi_tau(density), grid,
                                scheme="enhancement")
-        assert np.allclose(table.target, 1.0, atol=1e-10)
+        p = table.features[:, 0]
+        assert np.allclose(table.target, 1.0 - 5.0 * p ** 2 / 3.0, atol=1e-10)
 
-    def test_enhancement_gives_the_von_weizsacker_form(self, cell):
-        r""":math:`\tau_{\rm vW}/\tau_{\rm TF} = 5p^2/3` exactly."""
+    def test_pauli_factor_vanishes_on_von_weizsacker_data(self, cell):
+        """
+        The Pauli term is what is left after von Weizsacker is removed, so on
+        pure vW data there is nothing left. Exactly zero, not approximately.
+        """
         grid, density = cell
         table = build_features(density, von_weizsacker_tau(density, grid), grid,
                                scheme="enhancement")
-        p = table.features[:, 0]
-        assert np.allclose(table.target, 5.0 * p ** 2 / 3.0, atol=1e-10)
+        assert np.abs(table.target).max() < 1e-12
+
+    def test_tau_vw_matches_the_library_implementation(self, cell):
+        """
+        Computed here from |grad rho|^2 / 8 rho on the grid; pinned against
+        the field-level implementation so the two cannot drift.
+        """
+        from poraque.fields.constants import BOHR_TO_ANGSTROM, HARTREE_TO_EV
+
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="gga", template="pauli")
+        conversion = HARTREE_TO_EV / BOHR_TO_ANGSTROM ** 3
+        assert np.allclose(table.tau_vw * conversion,
+                           von_weizsacker_tau(density, grid).ravel())
+
+    def test_the_pauli_template_round_trips(self, cell):
+        r""":math:`\tau = \tau_{\rm vW} + \tau_{\rm TF} F` must give the
+        original field back."""
+        from poraque.ml.symbolic import reconstruct_tau
+
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="gga", template="pauli")
+        assert np.allclose(reconstruct_tau(table.target, table),
+                           table.physical_target)
 
     def test_gga_is_the_default_and_names_are_rho_p_q(self, cell):
         """PySR uses these names verbatim, so they are part of the contract."""
@@ -389,40 +420,57 @@ class TestAsymptoticLimits:
     def check(self, expression, scheme="enhancement"):
         return check_asymptotic_limits(expression, ["rho", "p", "q"], scheme)
 
+    def check(self, expression, scheme="reduced", template="pauli"):
+        return check_asymptotic_limits(expression, ["rho", "p", "q"], scheme,
+                                       template=template)
+
     def test_thomas_fermi_passes_only_its_own_limit(self):
-        result = self.check("1")
+        """As a Pauli factor Thomas-Fermi is 1 - 5p^2/3: right at 0, diverges."""
+        result = self.check("1 - 5*p**2/3")
         assert result.thomas_fermi.passes
         assert not result.von_weizsacker.passes
         assert result.score == 0.5
 
     def test_von_weizsacker_passes_only_its_own_limit(self):
-        result = self.check("5*p**2/3")
+        """Pure von Weizsacker leaves no Pauli term at all: F = 0."""
+        result = self.check("0")
         assert not result.thomas_fermi.passes
         assert result.von_weizsacker.passes
         assert result.score == 0.5
 
     def test_an_interpolating_form_passes_both(self):
-        result = self.check("1 + 5*p**2/3")
-        assert result.passes
-        assert result.score == 1.0
-        assert result.badge() == "TF/vW"
+        """1 at the origin, decaying to 0 — what a usable KEDF must do."""
+        for expression in ("exp(-p**2)", "1/(1 + p**2)"):
+            result = self.check(expression)
+            assert result.passes, expression
+            assert result.badge() == "TF/vW"
 
-    def test_gradient_expansion_has_the_scaling_but_not_the_coefficient(self):
-        r"""
-        The second-order gradient expansion goes as :math:`p^2` with
-        coefficient :math:`1/9`. Right shape, wrong size — and reporting it as
-        "von Weizsäcker satisfied" would be wrong, so the two are separate.
+    def test_a_finite_non_zero_limit_is_bounded_but_not_compliant(self):
         """
-        result = self.check("1 + 5*p**2/27 + 20*q/9")
+        F -> 1 stays bounded yet never reduces to von Weizsacker. Reported
+        apart from a divergence, because only this one is repairable.
+        """
+        result = self.check("1")
         assert result.thomas_fermi.passes
         assert not result.von_weizsacker.passes
-        assert result.quadratic_scaling
-        assert result.von_weizsacker.value == pytest.approx(1.0 / 9.0, rel=1e-6)
+        assert result.bounded_at_infinity
+        assert result.von_weizsacker.value == pytest.approx(1.0)
+
+    def test_the_old_convention_is_converted(self):
+        r"""
+        A ``thomas_fermi`` template fits :math:`\tau/\tau_{\rm TF}`, which is
+        the Pauli factor plus :math:`5p^2/3`. Converting it must give the same
+        verdicts as fitting the Pauli factor directly.
+        """
+        old = self.check("5*p**2/3", template="thomas_fermi")
+        new = self.check("0", template="pauli")
+        assert old.badge() == new.badge() == "--/vW"
 
     def test_works_on_the_gga_scheme(self):
-        """tau = C_TF rho^(5/3) (1 + 5p^2/3) is the same functional."""
-        result = self.check(f"{C_TF} * rho**(5/3) * (1 + 5*p**2/3)",
-                            scheme="gga")
+        """tau = tau_vW + tau_TF exp(-p^2), written out in full."""
+        result = self.check(
+            f"{C_TF} * rho**(5/3) * (5*p**2/3 + exp(-p**2))",
+            scheme="gga", template="none")
         assert result.passes
 
     def test_a_density_dependent_limit_fails_and_says_why(self):
@@ -469,7 +517,7 @@ class TestComplianceInThePipeline:
         table = build_features(density, thomas_fermi_tau(density), grid,
                                scheme="enhancement")
         front = [{"complexity": 1, "loss": 0.5, "expression": "1"},
-                 {"complexity": 5, "loss": 0.1, "expression": "1 + 5*p**2/3"}]
+                 {"complexity": 5, "loss": 0.1, "expression": "exp(-p**2)"}]
         result = SymbolicDistiller(SymbolicConfig(),
                                    engine=lambda *a: front).fit(table)
         assert all("limits" in entry for entry in result.pareto)
@@ -481,19 +529,19 @@ class TestComplianceInThePipeline:
         grid, density = cell
         table = build_features(density, thomas_fermi_tau(density), grid,
                                scheme="enhancement")
-        front = [{"complexity": 3, "loss": 0.5, "expression": "1 + 5*p**2/3"},
+        front = [{"complexity": 3, "loss": 0.5, "expression": "exp(-p**2)"},
                  {"complexity": 9, "loss": 0.01, "expression": "0.4 + q"}]
         result = SymbolicDistiller(SymbolicConfig(),
                                    engine=lambda *a: front).fit(table)
         assert result.expression == "0.4 + q"          # best loss wins
         assert not result.limits["passes"]             # ... and fails physics
-        assert result.compliant_expressions == ["1 + 5*p**2/3"]
+        assert result.compliant_expressions == ["exp(-p**2)"]
 
     def test_summary_shows_the_badges(self, cell):
         grid, density = cell
         table = build_features(density, thomas_fermi_tau(density), grid,
                                scheme="enhancement")
-        front = [{"complexity": 3, "loss": 0.1, "expression": "1 + 5*p**2/3"}]
+        front = [{"complexity": 3, "loss": 0.1, "expression": "exp(-p**2)"}]
         summary = SymbolicDistiller(SymbolicConfig(),
                                     engine=lambda *a: front).fit(table).summary()
         assert "TF/vW" in summary
@@ -515,7 +563,7 @@ class TestComplianceInThePipeline:
         grid, density = cell
         table = build_features(density, thomas_fermi_tau(density), grid,
                                scheme="enhancement")
-        front = [{"complexity": 3, "loss": 0.1, "expression": "1 + 5*p**2/3"}]
+        front = [{"complexity": 3, "loss": 0.1, "expression": "exp(-p**2)"}]
         result = SymbolicDistiller(SymbolicConfig(),
                                    engine=lambda *a: front).fit(table)
         payload = json.loads(json.dumps(asdict(result), default=float))

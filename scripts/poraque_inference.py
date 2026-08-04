@@ -72,6 +72,11 @@ command and runs from any directory::
     # match an existing calculation's grid, for a direct comparison
     poraque-inference run/ --like run/CHGCAR --compare
 
+    # a CHGCAR VASP will restart from with ICHARG=1: the PAW augmentation
+    # records are copied from the reference, since no grid-based model can
+    # produce the one-centre terms
+    poraque-inference run/ --like run/CHGCAR --add-paw
+
 Running this file directly — ``python scripts/poraque_inference.py`` — is
 equivalent, and needs nothing installed.
 """
@@ -171,6 +176,78 @@ def load_operator(bundle, task, device):
 # ===================================================================== #
 # Grid resolution
 # ===================================================================== #
+#: Files a reference PAW augmentation record may be taken from, best first.
+#: ``CHG`` is listed because it shares the layout, but it never carries the
+#: records in practice -- VASP writes them only to ``CHGCAR``.
+AUGMENTATION_SOURCES = ("CHGCAR", "AECCAR0", "CHG")
+
+
+def collect_augmentation(directory, structure, shape, log):
+    r"""
+    Take the PAW one-centre records from a reference calculation.
+
+    The model predicts :math:`\rho` on the plane-wave grid. VASP's
+    ``ICHARG=1`` also wants the augmentation occupancies — the part of the
+    density inside the PAW spheres, which is not representable on that grid at
+    all and which no grid-based model can produce. They have to be borrowed.
+
+    Returns
+    -------
+    list of str or None
+        The records, or ``None`` when none could be used. Every rejection is
+        explained rather than silently yielding a file VASP would refuse.
+    """
+    from poraque.fields.vasp.volumetric import (
+        count_augmentation_records,
+        read_augmentation,
+    )
+
+    log("\n        --add-paw: looking for reference augmentation records")
+    for name in AUGMENTATION_SOURCES:
+        path = os.path.join(directory, name)
+        if not os.path.exists(path):
+            continue
+        try:
+            reference_shape, block = read_augmentation(path)
+        except (OSError, ValueError, IndexError) as error:
+            log(f"        !! {name}: could not be parsed ({error})")
+            continue
+        if not block:
+            log(f"        {name}: no augmentation records (not a PAW CHGCAR)")
+            continue
+
+        records = count_augmentation_records(block)
+        atoms = int(sum(structure.counts))
+        if records != atoms:
+            log(f"        !! {name}: {records} augmentation records for "
+                f"{atoms} atoms — the reference is a different structure, "
+                f"so its on-site occupancies do not correspond to these "
+                f"positions. Skipping.")
+            continue
+
+        log(f"        {name}: {records} records for {atoms} atoms "
+            f"({len(block)} lines)")
+        # The records are on-site and grid-independent, so a mismatch here is
+        # not an error in them -- but VASP reads the density on the grid the
+        # file declares, and ICHARG=1 wants that to be the run's own FFT grid.
+        if tuple(reference_shape) != tuple(shape):
+            log(f"        !! the prediction is on {tuple(shape)} and the "
+                f"reference on {tuple(reference_shape)}. The records are "
+                f"still valid, but VASP expects the CHGCAR grid to match "
+                f"NGXF/NGYF/NGZF — rerun with --like {path} to match it.")
+        return block
+
+    raise SystemExit(
+        f"--add-paw needs a reference calculation to take the PAW "
+        f"augmentation records from, and none of "
+        f"{list(AUGMENTATION_SOURCES)} in {directory!r} has any.\n"
+        f"The records are the one-centre part of the density, inside the PAW "
+        f"spheres; they are not representable on the plane-wave grid, so no "
+        f"model predicts them. Run VASP once on this geometry (LCHARG=.TRUE.) "
+        f"and point at that directory, or drop --add-paw and use the file for "
+        f"visualisation rather than as an ICHARG=1 restart.")
+
+
 def read_reference(path, field_class, grid):
     """
     Read a reference field and bring it onto ``grid``.
@@ -353,8 +430,16 @@ def run(args, log):
             f"({100 * negative / density.data.size:.4f} %), min "
             f"{density.data.min():.4g} e/A^3")
 
+    augmentation = None
+    if getattr(args, "add_paw", False):
+        augmentation = collect_augmentation(args.directory, structure,
+                                            grid.shape, log)
+        results["paw_augmentation"] = {
+            "records": len(augmentation) if augmentation else 0,
+        }
+
     chgcar = os.path.join(args.output, "CHGCAR")
-    density.write(chgcar)
+    density.write(chgcar, augmentation=augmentation)
     results["outputs"]["CHGCAR"] = chgcar
     log(f"        -> {chgcar}")
 
@@ -522,6 +607,11 @@ def predict(argv=None):
     parser.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
     parser.add_argument("--write-chg", action="store_true",
                         help="also write a CHG-formatted copy of the density")
+    parser.add_argument("--add-paw", action="store_true",
+                        help="append the PAW augmentation records from a "
+                             "reference CHGCAR in the input directory, which "
+                             "VASP requires to restart from the predicted "
+                             "density with ICHARG=1")
     parser.add_argument("--compare", action="store_true",
                         help="compare against reference files in the input directory")
     parser.add_argument("--functional", default="pbe",
