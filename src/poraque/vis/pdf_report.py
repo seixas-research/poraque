@@ -269,9 +269,16 @@ class ModelReport:
             f"{_escape(get('scheme', ''))} feature scheme "
             f"({_escape(get('units', ''))}):\n\n",
             r"\begin{equation*}" "\n",
-            f"{symbol} = {get('latex', '')}\n",
+            # The template is folded back in, so the equation on the page is
+            # the whole physical formula rather than the factor that was fitted.
+            f"{get('full_latex') or (symbol + ' = ' + get('latex', ''))}\n",
             r"\end{equation*}" "\n\n",
         ]
+        if get("template", "none") != "none":
+            body.append(
+                f"Fitted under the {_escape(get('template'))} template: the "
+                f"search saw {_escape(get('target_name', 'y'))} alone, with "
+                f"$\\tau_{{\\mathrm{{TF}}}}$ supplied exactly.\n\n")
 
         r2, relative = get("r2", float("nan")), get("relative_l2", float("nan"))
         body.append(
@@ -292,18 +299,103 @@ class ModelReport:
             "map is semi-local, not how well the search performed.\n"
             r"\end{quote}" "\n\n")
 
+        held_out = get("validation") or {}
+        if held_out.get("n_points"):
+            body.append(
+                f"On {held_out['n_points']} voxels of the held-out structures, "
+                f"against the DFT reference: relative "
+                f"$L^2 = {self._math_number(held_out.get('relative_l2'))}$, "
+                f"$R^2 = {self._math_number(held_out.get('r2'))}$.\n\n")
+
+        parity = get("parity_plot")
+        if parity and os.path.exists(parity):
+            body.append(self._figure_block(
+                parity,
+                "The distilled formula against the DFT reference on held-out "
+                "structures. Read it beside the operator's own parity plot: "
+                "the gap between them is what the closed form gives up."))
+
+        body.append(self._asymptotic_block(get("limits") or {}))
+
         front = get("pareto") or []
         if front:
             body.append(r"\subsection*{Accuracy against complexity}" "\n")
             body.append(r"\begin{center}\begin{longtable}"
-                        r"{@{}rr>{\raggedright\arraybackslash}p{9.6cm}@{}}"
+                        r"{@{}rrc>{\raggedright\arraybackslash}p{8.4cm}@{}}"
                         r"\toprule" "\n")
-            body.append(r"Nodes & Loss & Expression \\" "\n" r"\midrule" "\n")
+            body.append(r"Nodes & Loss & Limits & Expression \\" "\n"
+                        r"\midrule" "\n")
             for entry in front:
+                limits = entry.get("limits") or {}
                 body.append(f"{entry['complexity']} & "
                             f"{_number(entry['loss'], 4)} & "
+                            f"{_escape(limits.get('badge', '--/--'))} & "
                             f"{_wrappable(entry['expression'])} \\\\\n")
             body.append(r"\bottomrule\end{longtable}\end{center}" "\n")
+            body.append(r"\emph{\small Limits: \texttt{TF} = recovers "
+                        r"Thomas-Fermi as $p,q\to0$; \texttt{vW} = recovers "
+                        r"von Weizs\"acker as $p\to\infty$.}" "\n\n")
+        return "".join(body)
+
+    def _asymptotic_block(self, limits):
+        r"""
+        Report the two asymptotic limits for the chosen expression.
+
+        A symbolic fit is a numerical statement until it is checked against
+        physics it was never shown. These two limits are the cheapest such
+        check available, and a candidate that fails them is a curve through the
+        data rather than a functional -- so the section is written to say that
+        plainly rather than to decorate a good $R^2$.
+        """
+        if not limits:
+            return ""
+
+        thomas_fermi = limits.get("thomas_fermi") or {}
+        von_weizsacker = limits.get("von_weizsacker") or {}
+        body = [
+            r"\subsection*{Physical asymptotic compliance}" "\n",
+            "A kinetic functional is pinned at two ends. Where the density is "
+            "uniform ($p,q \\to 0$) it must collapse to Thomas--Fermi; where it "
+            "varies rapidly ($p \\to \\infty$) it must become von "
+            "Weizs\\\"acker. Both are statements about the enhancement factor "
+            "$F = \\tau/\\tau_{\\mathrm{TF}}$:\n\n",
+            r"\begin{equation*}" "\n",
+            r"F(0,0) = 1, \qquad F \to \tfrac{5}{3}p^{2} "
+            r"\ \text{as}\ p \to \infty." "\n",
+            r"\end{equation*}" "\n\n",
+            r"\begin{center}\begin{tabular}"
+            r"{@{}l c >{\raggedright\arraybackslash}p{8.2cm}@{}}\toprule" "\n",
+            r"Limit & Satisfied & Finding \\" "\n" r"\midrule" "\n",
+        ]
+        for label, check in (("Thomas--Fermi", thomas_fermi),
+                             ("von Weizs\\\"acker", von_weizsacker)):
+            mark = r"\textbf{yes}" if check.get("passes") else "no"
+            body.append(f"{label} & {mark} & "
+                        f"{_escape(check.get('detail', 'not evaluated'))} \\\\\n")
+        body.append(r"\bottomrule\end{tabular}\end{center}" "\n\n")
+
+        score = limits.get("score", 0.0)
+        body.append(f"Compliance score: {_number(score, 2)} of 1.\n\n")
+
+        if limits.get("quadratic_scaling") and not von_weizsacker.get("passes"):
+            body.append(
+                r"\begin{quote}\small\color{shadegray}" "\n"
+                "The expression does grow as $p^{2}$, but with the wrong "
+                "coefficient, so it is not von Weizs\\\"acker. That "
+                "combination is not unusual: the second-order gradient "
+                "expansion has exactly the right scaling with coefficient "
+                "$1/9$.\n" r"\end{quote}" "\n\n")
+
+        if not (thomas_fermi.get("passes") and von_weizsacker.get("passes")):
+            body.append(
+                r"\begin{quote}\small\color{shadegray}" "\n"
+                "Neither known functional satisfies both limits on its own --- "
+                "Thomas--Fermi fails the second, von Weizs\\\"acker the first "
+                "--- so failing one is not by itself damning. Failing both "
+                "means the expression reproduces the training data without "
+                "reproducing the physics that constrains it outside that "
+                "range, and it should not be extrapolated.\n"
+                r"\end{quote}" "\n\n")
         return "".join(body)
 
     def _figure_block(self, path, caption):
@@ -409,13 +501,27 @@ class ModelReport:
                         r"{@{}p{4.6cm}>{\raggedright\arraybackslash}p{11.4cm}@{}}"
                         r"\toprule" "\n")
             for key, value in sorted(configuration.items()):
-                body.append(f"{_escape(key)} & {_format_value(value)} \\\\\n")
+                # The key needs the same break opportunities as the value.
+                # `symbolic.enable_symbolic_distillation` is 37 characters with
+                # no space in it, so escaping alone leaves one unbreakable word
+                # that overruns its column and prints on top of the value.
+                body.append(f"{_wrappable(key)} & {_format_value(value)} \\\\\n")
             body.append(r"\bottomrule\end{longtable}\end{center}" "\n")
 
         body.append(r"\end{document}" "\n")
         source = "".join(body)
 
-        return self._compile(source, figures, target)
+        # The symbolic parity plot is referenced by basename like every other
+        # figure, so it has to reach the compile directory too -- but it is not
+        # in `figures`, which drives the "Comparison with DFT" section and
+        # would render it a second time there.
+        embedded = list(figures)
+        extra = (symbolic or {}).get("parity_plot") if isinstance(
+            symbolic, dict) else getattr(symbolic, "parity_plot", None)
+        if extra and extra not in embedded:
+            embedded.append(extra)
+
+        return self._compile(source, embedded, target)
 
     def _compile(self, source, figures, target):
         """

@@ -51,7 +51,7 @@ data of every structure, then writes:
 
 | Output | Contents |
 | --- | --- |
-| `models/poraque_models.pth` | both trained operators, in one file |
+| `models/poraque_models.pfno` | both trained operators, in one file |
 | `logs/*.log`, `logs/*.json` | metrics, and the resolved configuration |
 | `results/plots/` | loss curves, field cross-sections, parity plots |
 | `reports/*.pdf` | a typeset report per model |
@@ -62,7 +62,7 @@ data of every structure, then writes:
 poraque-inference new_structure/ --output predictions/new_structure
 ```
 
-Both operators come from the single `models/poraque_models.pth` written by
+Both operators come from the single `models/poraque_models.pfno` written by
 step 3. The grid is sized from `--encut` (default **200 eV**) unless `--grid`,
 `--like` or `--resolution` is given.
 
@@ -100,7 +100,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-atoms.calc = Poraque("models/poraque_models.pth", potcar="POTCAR")
+atoms.calc = Poraque("models/poraque_models.pfno", potcar="POTCAR")
 
 energy = atoms.get_potential_energy()
 print(atoms.calc.components)          # the full energy decomposition

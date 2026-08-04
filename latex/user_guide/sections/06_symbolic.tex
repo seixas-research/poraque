@@ -82,22 +82,78 @@ model as physics.
 
 \subsection{Feature schemes}
 
+Two independent knobs: \opt{features} picks the \textbf{input variables},
+\opt{template} picks how the \textbf{target is factorised}.
+
 \begin{center}
-\begin{tabular}{@{}llp{5.4cm}@{}}
+\begin{tabular}{@{}lp{7.4cm}@{}}
 \toprule
-\opt{features} & Variables & Target \\
+\opt{features} & Variables given to the engine \\
 \midrule
-\opt{gga} (default) & \opt{rho}, \opt{p}, \opt{q} & $\tau$ \\
-\opt{enhancement}   & \opt{p}, \opt{q}            & $F = \tau/\tauTF$ \\
-\opt{raw}           & \opt{rho}, \opt{grad\_rho}, \opt{lap\_rho} & $\tau$ \\
+\opt{gga} (default) & \opt{rho}, \opt{p}, \opt{q} \\
+\opt{reduced}       & \opt{p}, \opt{q} \\
+\opt{raw}           & \opt{rho}, \opt{grad\_rho}, \opt{lap\_rho}
+                      (dimensional) \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\opt{enhancement} is worth knowing: it is the form the literature writes
-kinetic functionals in, so the answer is directly comparable --- Thomas--Fermi
-is $F = 1$ and von Weizs\"acker is $F = 5p^2/3$ --- and every constant to be
-found is order unity.
+\begin{center}
+\begin{tabular}{@{}llp{5.6cm}@{}}
+\toprule
+\opt{template} & Fitted target & Reported formula \\
+\midrule
+\opt{none} (default) & $\tau$ & $\tau = f(\dots)$ \\
+\opt{thomas\_fermi}  & $F = \tau/\tauTF$ &
+  $\tau = C_{\mathrm{TF}}\rho^{5/3} f(\dots)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A template \textbf{gives away the part of the physics that is already known}.
+Thomas--Fermi supplies the density scaling exactly, so the search stops
+spending its budget rediscovering $\rho^{5/3}$ and works on what is actually
+unknown --- and every constant it must find becomes order unity. It is also the
+form the literature writes kinetic functionals in, so the answer is directly
+comparable: Thomas--Fermi is $F = 1$, von Weizs\"acker is $F = 5p^2/3$.
+
+The discovered expression is multiplied back into the template before it is
+reported, so the console, the JSON and the PDF all show the complete physical
+formula rather than the factor that was fitted.
+
+\begin{pnote}
+\opt{features: enhancement} is kept as an alias for \opt{features: reduced}
+plus \opt{template: thomas\_fermi}, which is exactly what it used to mean.
+\end{pnote}
+
+\section{Operator constraints}
+
+\begin{lstlisting}
+constraints:
+  "^": [-1, 1]
+\end{lstlisting}
+
+Per-operator limits on argument complexity, passed straight to the engine. The
+default holds the \textbf{exponent} of \opt{\textasciicircum} to a single node
+while leaving the base unconstrained (\opt{-1}).
+
+Unconstrained exponents are the main source of nonsense from a power operator:
+a fractional power of a negative quantity leaves the reals, and an exponent
+that is itself a subtree is unreadable and almost never physical. Real
+functionals have simple exponents --- $5/3$, $4/3$, $2$.
+
+\section{Parity plot for the distilled formula}
+
+After the search, the winning expression is evaluated on the \textbf{held-out}
+structures and compared against the DFT reference --- not against whatever was
+fitted, since with \opt{target: model} the two are different things. The plot
+is written as \file{<task>\_symbolic\_parity.png} and embedded in the report's
+Symbolic Distillation section.
+
+Read it beside the operator's own parity plot: the gap between them is what the
+closed form gives up. A formula that tracks the identity line through the bulk
+and bends away at the high-density end is the usual picture --- semi-local
+features cannot resolve the core peaks.
 
 \section{Regularization in vacuum}
 \label{sec:symbolic-vacuum}
@@ -130,8 +186,11 @@ threshold. It matters for slabs, molecules and anything with real vacuum.
 symbolic:
   enable_symbolic_distillation: false
   target: model          # model | reference
-  features: gga          # gga | enhancement | raw
+  features: gga          # gga | reduced | raw
+  template: none         # none | thomas_fermi
   epsilon: 1.0e-08       # vacuum threshold, e/a0^3
+  constraints:           # per-operator argument-complexity limits
+    "^": [-1, 1]
   unary_operations: [exp, log, sqrt, abs]
   binary_operations: ['+', '-', '*', /, ^]
   iterations: 40
@@ -175,6 +234,61 @@ report as display mathematics with $\rho$, $p$ and $q$ rendered properly.
 Read the front, not just the winner. A single expression hides the trade that
 produced it; the front shows what each extra node bought.
 \end{pnote}
+
+\section{Physical asymptotic compliance}
+\label{sec:symbolic-limits}
+
+A symbolic fit is a numerical statement until it is checked against physics it
+was never shown. Every candidate on the front is tested against the two limits
+that pin a kinetic functional, both written for the enhancement factor
+$F = \tau/\tauTF$:
+%
+\begin{equation}
+  \underbrace{F(0,0) = 1}_{\text{Thomas--Fermi}},
+  \qquad
+  \underbrace{F \to \tfrac{5}{3}p^{2}\ \text{as}\ p \to \infty}
+             _{\text{von Weizs\"acker}}.
+\end{equation}
+
+The first is the uniform electron gas: no density variation, so the functional
+must collapse to Thomas--Fermi exactly. The second is the rapidly varying
+limit --- a single orbital, an exponential tail --- where von Weizs\"acker is
+exact.
+
+The check is analytic, through \opt{sympy.limit} with the symbols bound at
+parse time, falling back to a converged numerical probe when \textsc{SymPy}
+cannot resolve a deeply nested expression. Which route was taken is recorded:
+an analytic limit is a proof, a numerical one is evidence.
+
+\begin{pwarn}
+\textbf{Neither textbook functional passes both.} Thomas--Fermi ($F=1$)
+satisfies the first and fails the second; von Weizs\"acker ($F = 5p^2/3$) does
+the reverse. Failing one limit is not damning on its own. Failing \emph{both}
+means the expression reproduces the training data without the physics that
+constrains it outside that range, and it must not be extrapolated.
+\end{pwarn}
+
+Scaling and coefficient are reported separately, because the distinction is
+real: the second-order gradient expansion grows as $p^{2}$ with coefficient
+$1/9$, so it has exactly the right shape and is \emph{not} von Weizs\"acker.
+
+Each candidate carries a \opt{TF}/\opt{vW} badge in the console, the JSON
+summary and the PDF report, which gains a dedicated \emph{Physical asymptotic
+compliance} section:
+
+\begin{lstlisting}
+  accuracy/complexity front (TF/vW = asymptotic limits satisfied):
+      nodes          loss   limits  expression
+          1          0.45    TF/--  1.0
+          5          0.09    TF/--  1 + 5*p**2/27 + 20*q/9
+          9         0.012    TF/vW  1 + 5*p**2/3
+  2 of 4 candidates satisfy BOTH limits; the simplest is:
+      1 + 5*p**2/3
+\end{lstlisting}
+
+The most accurate expression is frequently the least physical, so the compliant
+candidates are listed separately --- a slightly worse expression that obeys
+both limits is usually the better functional.
 
 \begin{pwarn}
 The search is stochastic. Two runs with the same \opt{seed} can still differ

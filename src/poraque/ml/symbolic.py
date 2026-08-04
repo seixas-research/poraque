@@ -89,8 +89,18 @@ from ..fields.constants import (
 DEFAULT_UNARY = ("exp", "log", "sqrt", "abs")
 DEFAULT_BINARY = ("+", "-", "*", "/", "^")
 
-#: Feature schemes understood by :func:`build_features`.
-FEATURE_SCHEMES = ("gga", "enhancement", "raw")
+#: Feature schemes understood by :func:`build_features`. These select the
+#: *input* variables; :data:`TEMPLATES` selects how the target is factorised.
+FEATURE_SCHEMES = ("gga", "reduced", "raw", "enhancement")
+
+#: Target factorisations. ``"thomas_fermi"`` fits the enhancement factor
+#: ``F`` in ``tau = tau_TF * F``; ``"none"`` fits the target directly.
+TEMPLATES = ("none", "thomas_fermi")
+
+#: ``features: enhancement`` predates the split between inputs and target
+#: factorisation. It is kept as an alias so an existing config keeps working
+#: and keeps meaning exactly what it did.
+_FEATURE_ALIASES = {"enhancement": ("reduced", "thomas_fermi")}
 
 #: Density below which a voxel is vacuum: dropped, and used to clamp every
 #: denominator. In atomic units (:math:`e/a_0^3`).
@@ -124,6 +134,16 @@ class FeatureTable:
         Where the fitted values came from — ``"model"`` or ``"reference"``.
         Carried on the table rather than read back off the config, so a table
         built by hand cannot be reported as something it is not.
+    template : str
+        Which of :data:`TEMPLATES` factorised the target.
+    density : numpy.ndarray or None
+        :math:`\rho` in atomic units for every retained voxel, kept even when
+        it is not a feature. Reconstructing :math:`\tau` from an enhancement
+        factor needs :math:`\tau_{\rm TF}`, and that needs the density — which
+        the ``reduced`` scheme does not otherwise pass on.
+    physical_target : numpy.ndarray or None
+        The target in its physical form (:math:`\tau` in eV/Å³), before any
+        template divided it. What a parity plot has to be drawn against.
     """
 
     features: np.ndarray
@@ -133,6 +153,9 @@ class FeatureTable:
     scheme: str
     units: str
     source: str = ""
+    template: str = "none"
+    density: np.ndarray = None
+    physical_target: np.ndarray = None
 
     def __len__(self):
         return int(self.features.shape[0])
@@ -181,23 +204,59 @@ class SymbolicResult:
     target: str = ""
     n_samples: int = 0
     engine: str = ""
+    limits: dict = field(default_factory=dict)
+    compliant_expressions: list = field(default_factory=list)
+    template: str = "none"
+    full_expression: str = ""
+    full_latex: str = ""
+    parity_plot: str = None
+    validation: dict = field(default_factory=dict)
 
     def summary(self):
         """Multi-line text block, for the log and the terminal."""
         lines = [
-            f"  expression   : {self.target_name} = {self.expression}",
+            f"  expression   : {self.full_expression or self.expression}",]
+        if self.template != "none":
+            lines.append(f"  fitted        : {self.target_name} = "
+                         f"{self.expression}   (template: {self.template})")
+        lines += [
             f"  variables    : {', '.join(self.feature_names)}  [{self.units}]",
             f"  complexity   : {self.complexity} nodes",
             f"  fit          : R2 {self.r2:.4f}   relative L2 {self.relative_l2:.4f}",
             f"  fitted on    : {self.n_samples} voxels of the "
             f"{'operator prediction' if self.target == 'model' else 'DFT reference'}",
         ]
+        if self.validation:
+            lines.append(
+                f"  held out     : relative L2 "
+                f"{self.validation.get('relative_l2', float('nan')):.4f}   "
+                f"R2 {self.validation.get('r2', float('nan')):.4f}   "
+                f"on {self.validation.get('n_points', 0)} voxels vs DFT")
+        if self.limits:
+            lines.append(f"  limits       : {self.limits.get('badge', '--/--')}"
+                         f"   (score {self.limits.get('score', 0.0):.1f} of 1)")
+            for key in ("thomas_fermi", "von_weizsacker"):
+                check = self.limits.get(key) or {}
+                if check.get("detail"):
+                    lines.append(f"      {key:<16s} {check['detail']}")
         if self.pareto:
-            lines.append("  accuracy/complexity front:")
-            lines.append(f"      {'nodes':>5s}  {'loss':>12s}  expression")
+            lines.append("  accuracy/complexity front "
+                         "(TF/vW = asymptotic limits satisfied):")
+            lines.append(f"      {'nodes':>5s}  {'loss':>12s}  {'limits':>7s}"
+                         f"  expression")
             for entry in self.pareto:
+                badge = (entry.get("limits") or {}).get("badge", "--/--")
                 lines.append(f"      {entry['complexity']:5d}  "
-                             f"{entry['loss']:12.5g}  {entry['expression']}")
+                             f"{entry['loss']:12.5g}  {badge:>7s}  "
+                             f"{entry['expression']}")
+        if self.compliant_expressions:
+            lines.append(f"  {len(self.compliant_expressions)} of "
+                         f"{len(self.pareto)} candidates satisfy BOTH limits; "
+                         f"the simplest is:")
+            lines.append(f"      {self.compliant_expressions[0]}")
+        elif self.pareto:
+            lines.append("  no candidate satisfies both limits — the front is "
+                         "numerically good and physically incomplete.")
         return "\n".join(lines)
 
 
@@ -232,8 +291,27 @@ def spectral_laplacian(field, grid, length_unit="angstrom"):
     return np.real(np.fft.ifftn(-g_squared * transformed))
 
 
+def resolve_scheme(scheme, template="none"):
+    """
+    Split a feature scheme into ``(inputs, template)``, expanding aliases.
+
+    Returns
+    -------
+    tuple of (str, str)
+    """
+    if scheme in _FEATURE_ALIASES:
+        return _FEATURE_ALIASES[scheme]
+    if scheme not in FEATURE_SCHEMES:
+        raise ValueError(f"Unknown feature scheme {scheme!r}; "
+                         f"expected one of {list(FEATURE_SCHEMES)}.")
+    if template not in TEMPLATES:
+        raise ValueError(f"Unknown template {template!r}; "
+                         f"expected one of {list(TEMPLATES)}.")
+    return scheme, template
+
+
 def build_features(density, target, grid, scheme="gga",
-                   epsilon=DEFAULT_EPSILON):
+                   epsilon=DEFAULT_EPSILON, template="none"):
     r"""
     Assemble the design matrix from a density and a target field.
 
@@ -304,9 +382,7 @@ def build_features(density, target, grid, scheme="gga",
     -------
     FeatureTable
     """
-    if scheme not in FEATURE_SCHEMES:
-        raise ValueError(f"Unknown feature scheme {scheme!r}; "
-                         f"expected one of {list(FEATURE_SCHEMES)}.")
+    scheme, template = resolve_scheme(scheme, template)
 
     from ..fields.density import spectral_gradient
 
@@ -339,27 +415,31 @@ def build_features(density, target, grid, scheme="gga",
             f"Every voxel is at or below the vacuum threshold "
             f"epsilon={epsilon:g} e/a0^3; nothing to fit.")
 
-    if scheme == "gga":
-        return FeatureTable(
-            features=np.column_stack([rho[keep], p[keep], q[keep]]),
-            target=tau[keep], feature_names=["rho", "p", "q"],
-            target_name="tau", scheme=scheme,
-            units="rho in e/a0^3, tau in Ha/a0^3; p and q dimensionless")
+    columns, names, units = {
+        "gga": ([rho, p, q], ["rho", "p", "q"],
+                "rho in e/a0^3; p and q dimensionless"),
+        "reduced": ([p, q], ["p", "q"], "dimensionless"),
+        "raw": ([rho, grad_norm, laplacian], ["rho", "grad_rho", "lap_rho"],
+                "atomic units"),
+    }[scheme]
 
-    if scheme == "raw":
-        return FeatureTable(
-            features=np.column_stack(
-                [rho[keep], grad_norm[keep], laplacian[keep]]),
-            target=tau[keep],
-            feature_names=["rho", "grad_rho", "lap_rho"],
-            target_name="tau", scheme=scheme,
-            units="atomic units: rho in e/a0^3, tau in Ha/a0^3")
+    # The template divides the target by the part of the physics already known,
+    # so the search works on what is not. Thomas-Fermi supplies the density
+    # scaling exactly; without it the search spends its budget rediscovering
+    # rho^(5/3) and every constant it finds carries units.
+    tau_tf = C_TF * rho_safe ** (5.0 / 3.0)
+    if template == "thomas_fermi":
+        fitted, target_name = tau / tau_tf, "F"
+        units = f"{units}; F = tau / tau_TF, dimensionless"
+    else:
+        fitted, target_name = tau, "tau"
+        units = f"{units}; tau in Ha/a0^3"
 
-    enhancement = tau[keep] / (C_TF * rho_safe[keep] ** (5.0 / 3.0))
     return FeatureTable(
-        features=np.column_stack([p[keep], q[keep]]), target=enhancement,
-        feature_names=["p", "q"], target_name="F", scheme=scheme,
-        units="dimensionless (F = tau / tau_TF)")
+        features=np.column_stack([column[keep] for column in columns]),
+        target=fitted[keep], feature_names=names, target_name=target_name,
+        scheme=scheme, units=units, template=template,
+        density=rho[keep], physical_target=tau_ang[keep])
 
 
 def sample_rows(table, n_samples, seed=0):
@@ -377,7 +457,10 @@ def sample_rows(table, n_samples, seed=0):
         features=table.features[picked], target=table.target[picked],
         feature_names=list(table.feature_names),
         target_name=table.target_name, scheme=table.scheme, units=table.units,
-        source=table.source)
+        source=table.source, template=table.template,
+        density=None if table.density is None else table.density[picked],
+        physical_target=(None if table.physical_target is None
+                         else table.physical_target[picked]))
 
 
 def stack_tables(tables):
@@ -388,12 +471,17 @@ def stack_tables(tables):
     first = tables[0]
     if any(table.feature_names != first.feature_names for table in tables):
         raise ValueError("Cannot stack tables built with different schemes.")
+    def join(attribute):
+        parts = [getattr(t, attribute) for t in tables]
+        return None if any(p is None for p in parts) else np.concatenate(parts)
+
     return FeatureTable(
         features=np.concatenate([t.features for t in tables]),
         target=np.concatenate([t.target for t in tables]),
         feature_names=list(first.feature_names),
         target_name=first.target_name, scheme=first.scheme, units=first.units,
-        source=first.source)
+        source=first.source, template=first.template,
+        density=join("density"), physical_target=join("physical_target"))
 
 
 # ===================================================================== #
@@ -437,6 +525,12 @@ def pysr_engine(features, target, feature_names, parameters):
             maxdepth=parameters["max_depth"],
             parsimony=parameters["parsimony"],
             random_state=parameters["seed"],
+            # Argument-complexity limits, `{"^": (-1, 1)}` by default: the
+            # exponent is held to a single node. An unconstrained exponent is
+            # the main source of nonsense from a power operator -- a fractional
+            # power of a negative quantity leaves the reals, and an exponent
+            # that is itself a subtree is unreadable and almost never physical.
+            constraints=parameters.get("constraints") or None,
             output_directory=workdir,
             progress=False,
             verbosity=0,
@@ -472,6 +566,268 @@ def expression_to_latex(expression, feature_names=()):
         return rf"\texttt{{{escaped}}}"
 
 
+# ===================================================================== #
+# Physical asymptotic limits
+# ===================================================================== #
+@dataclass
+class LimitCheck:
+    """
+    One asymptotic limit, tested on a candidate expression.
+
+    Attributes
+    ----------
+    name : str
+        ``"thomas_fermi"`` or ``"von_weizsacker"``.
+    value : float or None
+        The limit that was found: :math:`F(0,0)` for Thomas-Fermi, and the
+        coefficient of :math:`5p^2/3` for von Weizsäcker. ``None`` when it
+        could not be determined.
+    passes : bool
+        Whether ``value`` is 1 to within the tolerance.
+    method : str
+        ``"analytic"`` (SymPy), ``"numeric"`` (probed), or ``"undetermined"``.
+    detail : str
+        One line for the report, including *why* when it fails.
+    """
+
+    name: str
+    value: float = None
+    passes: bool = False
+    method: str = "undetermined"
+    detail: str = ""
+
+
+@dataclass
+class AsymptoticCompliance:
+    r"""
+    Whether an expression obeys the two limits that pin a kinetic functional.
+
+    Both are statements about :math:`F = \tau/\tau_{\rm TF}`:
+
+    ``thomas_fermi``
+        :math:`F(0,0) = 1`. A uniform electron gas has no density variation, so
+        the functional must collapse to Thomas-Fermi exactly.
+    ``von_weizsacker``
+        :math:`F \to 5p^2/3` as :math:`p \to \infty`. Where the density varies
+        rapidly — a single orbital, an exponential tail — the exact answer is
+        von Weizsäcker.
+
+    Neither known functional passes both: Thomas-Fermi fails the second and von
+    Weizsäcker fails the first. That is the point. An expression passing both
+    interpolates between the two regimes, which is what a usable semi-local
+    kinetic functional has to do.
+
+    Attributes
+    ----------
+    quadratic_scaling : bool
+        Whether :math:`F` grows as :math:`p^2` at all, regardless of the
+        coefficient. Reported separately because the distinction is real: the
+        second-order gradient expansion has exactly the right scaling with
+        coefficient :math:`1/9`, so it is *not* von Weizsäcker while looking
+        superficially similar.
+    score : float
+        Fraction of the two limits satisfied — 0, 0.5 or 1.
+    """
+
+    thomas_fermi: LimitCheck
+    von_weizsacker: LimitCheck
+    quadratic_scaling: bool = False
+    score: float = 0.0
+
+    @property
+    def passes(self):
+        """Both limits satisfied."""
+        return self.thomas_fermi.passes and self.von_weizsacker.passes
+
+    def badge(self):
+        """Compact ``TF``/``vW`` indicator for a console table."""
+        return (f"{'TF' if self.thomas_fermi.passes else '--'}"
+                f"/{'vW' if self.von_weizsacker.passes else '--'}")
+
+
+def enhancement_form(expression, feature_names, scheme,
+                     template="none"):
+    r"""
+    Rewrite a candidate as the enhancement factor :math:`F = \tau/\tau_{\rm TF}`.
+
+    The limits are statements about :math:`F`, so every scheme is converted to
+    it and one checker serves all three:
+
+    - ``enhancement`` already fits :math:`F`; returned as is.
+    - ``gga`` fits :math:`\tau`, so it is divided by
+      :math:`C_{\rm TF}\rho^{5/3}`.
+    - ``raw`` fits :math:`\tau` on dimensional derivatives, so those are first
+      substituted — :math:`|\nabla\rho| = 2k_F\rho\,p` and
+      :math:`\nabla^2\rho = 4k_F^2\rho\,q` — and then divided.
+
+    Returns
+    -------
+    tuple of (sympy.Expr, dict)
+        The expression and the symbol table it was built with. Symbols are
+        created here and passed to ``sympify``: parsing without them yields
+        *different* ``Symbol`` objects, and a limit taken against those
+        silently returns the expression unchanged.
+    """
+    import sympy
+
+    symbols = {"p": sympy.Symbol("p", positive=True),
+               "q": sympy.Symbol("q", real=True),
+               "rho": sympy.Symbol("rho", positive=True)}
+    for name in feature_names:
+        symbols.setdefault(name, sympy.Symbol(name, real=True))
+
+    parsed = sympy.sympify(str(expression), locals=symbols)
+    p, q, rho = symbols["p"], symbols["q"], symbols["rho"]
+
+    scheme, template = resolve_scheme(scheme, template)
+    if template == "thomas_fermi":
+        # The expression already *is* F; the template divided tau_TF out
+        # before the search ever saw the data.
+        return parsed, symbols
+
+    if scheme == "raw":
+        k_f = (3 * sympy.pi ** 2 * rho) ** sympy.Rational(1, 3)
+        parsed = parsed.subs({
+            symbols.get("grad_rho", sympy.Symbol("grad_rho")): 2 * k_f * rho * p,
+            symbols.get("lap_rho", sympy.Symbol("lap_rho")): 4 * k_f ** 2 * rho * q,
+        })
+
+    return parsed / (sympy.Float(C_TF) * rho ** sympy.Rational(5, 3)), symbols
+
+
+def check_asymptotic_limits(expression, feature_names, scheme,
+                            tolerance=0.05, template="none"):
+    r"""
+    Test a candidate against the Thomas-Fermi and von Weizsäcker limits.
+
+    Analytic first, via :func:`sympy.limit`. A genetic search produces deeply
+    nested expressions that SymPy can fail or stall on, so a numerical probe is
+    the fallback: :math:`F` evaluated at successively smaller :math:`p, q` and
+    at successively larger :math:`p`, accepted only when the values converge.
+    Which route was taken is recorded, because an analytic limit is a proof and
+    a numerical one is evidence.
+
+    Parameters
+    ----------
+    expression : str
+        Candidate, in the engine's notation.
+    feature_names : sequence of str
+        Its variables.
+    scheme : str
+        One of :data:`FEATURE_SCHEMES`; selects the conversion to :math:`F`.
+    tolerance : float, optional
+        Relative tolerance on "equals 1".
+
+    Returns
+    -------
+    AsymptoticCompliance
+    """
+    import sympy
+
+    try:
+        enhancement, symbols = enhancement_form(expression, feature_names,
+                                                scheme, template)
+    except Exception:                                   # noqa: BLE001
+        unparsed = LimitCheck("thomas_fermi",
+                              detail="expression could not be parsed")
+        return AsymptoticCompliance(
+            unparsed, LimitCheck("von_weizsacker",
+                                 detail="expression could not be parsed"))
+
+    p, q = symbols["p"], symbols["q"]
+    thomas_fermi = _limit_to_one(
+        enhancement, "thomas_fermi", tolerance,
+        analytic=lambda: sympy.limit(sympy.limit(enhancement, p, 0), q, 0),
+        numeric=lambda scale: _evaluate(enhancement, symbols,
+                                        {p: scale, q: scale}),
+        probes=(1e-3, 1e-5, 1e-7),
+        target="F(0,0) = 1")
+
+    ratio = enhancement / (sympy.Rational(5, 3) * p ** 2)
+    von_weizsacker = _limit_to_one(
+        ratio, "von_weizsacker", tolerance,
+        analytic=lambda: sympy.limit(ratio, p, sympy.oo),
+        numeric=lambda scale: _evaluate(ratio, symbols, {p: scale, q: 0.0}),
+        probes=(1e3, 1e4, 1e5),
+        target="F -> 5p^2/3 as p -> infinity")
+
+    quadratic = (von_weizsacker.value is not None
+                 and np.isfinite(von_weizsacker.value)
+                 and abs(von_weizsacker.value) > 1e-9)
+    score = 0.5 * (thomas_fermi.passes + von_weizsacker.passes)
+    return AsymptoticCompliance(thomas_fermi, von_weizsacker,
+                                quadratic_scaling=bool(quadratic), score=score)
+
+
+def _limit_to_one(target_expression, name, tolerance, analytic, numeric,
+                  probes, target):
+    """Resolve one limit, analytically if possible and numerically if not."""
+    import sympy
+
+    value, method = None, "undetermined"
+    try:
+        result = analytic()
+        leftover = getattr(result, "free_symbols", set())
+        if leftover:
+            return LimitCheck(
+                name, None, False, "analytic",
+                f"limit still depends on {sorted(str(s) for s in leftover)} — "
+                f"a functional must satisfy {target} for every density")
+        candidate = complex(result)
+        if abs(candidate.imag) < 1e-12 and np.isfinite(candidate.real):
+            value, method = float(candidate.real), "analytic"
+    except Exception:                                   # noqa: BLE001
+        value = None
+
+    if value is None:
+        # Converged probe: three shrinking (or growing) evaluations that agree
+        # to 1% are a limit; anything else is a value that has not settled.
+        samples = [numeric(scale) for scale in probes]
+        usable = [s for s in samples if s is not None and np.isfinite(s)]
+        if len(usable) == len(probes):
+            spread = max(usable) - min(usable)
+            reference = max(abs(usable[-1]), 1e-12)
+            if spread / reference < 1e-2:
+                value, method = float(usable[-1]), "numeric"
+
+    if value is None:
+        return LimitCheck(name, None, False, "undetermined",
+                          f"could not resolve {target}")
+
+    passes = abs(value - 1.0) <= tolerance
+    verdict = "satisfied" if passes else "violated"
+    return LimitCheck(name, value, passes, method,
+                      f"{target}: found {value:.4g} ({verdict}, {method})")
+
+
+def _evaluate(expression, symbols, substitutions):
+    """Numeric value of ``expression`` at a point, or ``None``."""
+    import sympy
+
+    try:
+        # Any symbol left unfixed -- `rho` in the gga scheme -- is swept, and
+        # the point is accepted only if the value does not depend on it: the
+        # limits must hold at every density, not at one convenient one.
+        free = expression.free_symbols - set(substitutions)
+        densities = [0.05, 0.2, 0.8] if free else [None]
+        values = []
+        for density in densities:
+            point = dict(substitutions)
+            for symbol in free:
+                point[symbol] = density
+            with np.errstate(all="ignore"):
+                values.append(float(sympy.N(expression.subs(point))))
+        if not all(np.isfinite(v) for v in values):
+            return None
+        if len(values) > 1:
+            spread = max(values) - min(values)
+            if spread / max(abs(values[-1]), 1e-12) > 1e-6:
+                return None                 # genuinely density-dependent
+        return values[0]
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
 class SymbolicDistiller:
     """
     Search for a closed-form expression reproducing a fitted mapping.
@@ -493,11 +849,12 @@ class SymbolicDistiller:
     >>> print(result.expression)                              # doctest: +SKIP
     """
 
-    def __init__(self, config=None, engine=None):
+    def __init__(self, config=None, engine=None, limit_tolerance=0.05):
         from .config import SymbolicConfig
 
         self.config = config if config is not None else SymbolicConfig()
         self.engine = engine if engine is not None else pysr_engine
+        self.limit_tolerance = float(limit_tolerance)
 
     def parameters(self):
         """Search settings as a plain dict, as handed to the engine."""
@@ -514,6 +871,15 @@ class SymbolicDistiller:
             "max_depth": int(config.max_depth),
             "parsimony": float(config.parsimony),
             "seed": int(config.seed),
+            # PySR wants tuples for a binary operator's (left, right) limits;
+            # YAML can only give lists, so they are converted here rather than
+            # asking the user to write something YAML cannot express.
+            "constraints": {
+                str(name): (tuple(limit) if isinstance(limit, (list, tuple))
+                            else limit)
+                for name, limit in (getattr(config, "constraints", None)
+                                    or {}).items()
+            },
         }
 
     def fit(self, table):
@@ -536,7 +902,18 @@ class SymbolicDistiller:
             raise ValueError("The symbolic engine returned no expression.")
 
         front = sorted(front, key=lambda entry: entry["complexity"])
+
+        # Every candidate is checked, not only the winner: the most accurate
+        # expression is frequently the least physical, and a slightly worse one
+        # that obeys both limits is usually the better functional.
+        for entry in front:
+            compliance = check_asymptotic_limits(
+                entry["expression"], table.feature_names, table.scheme,
+                tolerance=self.limit_tolerance, template=table.template)
+            entry["limits"] = _compliance_to_dict(compliance)
+
         best = min(front, key=lambda entry: entry["loss"])
+        compliant = [entry for entry in front if entry["limits"]["passes"]]
 
         predicted = self.evaluate(best["expression"], table)
         return SymbolicResult(
@@ -555,6 +932,14 @@ class SymbolicDistiller:
                     or getattr(self.config, "target", "")),
             n_samples=len(table),
             engine=getattr(self.engine, "__name__", str(self.engine)),
+            limits=best["limits"],
+            compliant_expressions=[entry["expression"] for entry in compliant],
+            template=table.template,
+            full_expression=full_expression(best["expression"], table.template,
+                                            table.target_name),
+            full_latex=full_latex(
+                expression_to_latex(best["expression"], table.feature_names),
+                table.template),
         )
 
     @staticmethod
@@ -595,6 +980,87 @@ class SymbolicDistiller:
             return None
 
 
+def reconstruct_tau(values, table):
+    r"""
+    Undo the template, returning :math:`\tau` in the units the files carry.
+
+    An expression fitted under ``template: thomas_fermi`` predicts the
+    enhancement factor, not :math:`\tau`. Comparing that against a DFT
+    :math:`\tau` without multiplying :math:`\tau_{\rm TF}` back in would put
+    two different quantities on one axis and call the result a parity plot.
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        What the expression returned, in the target's fitted form.
+    table : FeatureTable
+        Supplies the template and the density it needs.
+
+    Returns
+    -------
+    numpy.ndarray or None
+        :math:`\tau` in eV/Å³, or ``None`` when the density needed to rebuild
+        it was not retained.
+    """
+    if values is None:
+        return None
+    if table.template != "thomas_fermi":
+        return np.asarray(values) * _HA_PER_BOHR3_TO_EV_PER_ANG3
+    if table.density is None:
+        return None
+    tau_tf = C_TF * np.clip(table.density, DEFAULT_EPSILON, None) ** (5.0 / 3.0)
+    return np.asarray(values) * tau_tf * _HA_PER_BOHR3_TO_EV_PER_ANG3
+
+
+def full_expression(expression, template, target_name="tau"):
+    """
+    Rebuild the complete formula by folding the template back in.
+
+    The left-hand side is whatever the reconstruction *yields*, not what was
+    fitted: under a template the search returns ``F``, but multiplying
+    :math:`\\tau_{\\rm TF}` back in gives :math:`\\tau`, and labelling that
+    line ``F =`` would state an identity that is false.
+    """
+    if template == "thomas_fermi":
+        return f"tau = C_TF * rho^(5/3) * ({expression})"
+    return f"{target_name} = {expression}"
+
+
+def full_latex(latex, template):
+    r"""The same, as LaTeX: :math:`\tau = C_{\rm TF}\rho^{5/3}\,(F)`."""
+    if template == "thomas_fermi":
+        return (r"\tau = C_{\mathrm{TF}}\,\rho^{5/3}\left(" + latex +
+                r"\right)")
+    return latex
+
+
+def result_to_dict(result):
+    """
+    Serialisable form of a :class:`SymbolicResult`.
+
+    The validation entry carries the two voxel arrays a parity plot is drawn
+    from. They belong in a figure, not in a JSON summary -- thousands of floats
+    that no reader consults, and which ``json.dump`` cannot encode anyway.
+    """
+    from dataclasses import asdict
+
+    payload = asdict(result)
+    validation = payload.get("validation") or {}
+    payload["validation"] = {key: value for key, value in validation.items()
+                             if not isinstance(value, np.ndarray)}
+    return payload
+
+
+def _compliance_to_dict(compliance):
+    """Flatten an :class:`AsymptoticCompliance` for JSON and the report."""
+    from dataclasses import asdict
+
+    payload = asdict(compliance)
+    payload["passes"] = compliance.passes
+    payload["badge"] = compliance.badge()
+    return payload
+
+
 def _r2(predicted, reference):
     """Coefficient of determination, NaN when the prediction is unusable."""
     if predicted is None:
@@ -624,7 +1090,8 @@ def _relative_l2(predicted, reference):
 # ===================================================================== #
 # Driver
 # ===================================================================== #
-def distill_dataset(dataset, config, operator=None, log=None, engine=None):
+def distill_dataset(dataset, config, operator=None, log=None, engine=None,
+                    validation=None):
     r"""
     Build the design matrix over a dataset and search it.
 
@@ -656,22 +1123,71 @@ def distill_dataset(dataset, config, operator=None, log=None, engine=None):
                          "operator is required. Use target='reference' to fit "
                          "the DFT data instead.")
 
-    tables = []
-    for index in range(len(dataset)):
-        source, reference = dataset.load_fields(index)
-        target = (operator.predict(source) if config.target == "model"
-                  else reference)
-        built = build_features(
-            source, target, source.grid, scheme=config.features,
-            epsilon=getattr(config, "epsilon", DEFAULT_EPSILON))
-        built.source = config.target
-        tables.append(built)
+    scheme, template = resolve_scheme(config.features,
+                                      getattr(config, "template", "none"))
 
-    table = stack_tables(tables)
+    def tabulate(source_dataset, fit_target):
+        """One stacked table over a dataset, fitting the requested target."""
+        built = []
+        for index in range(len(source_dataset)):
+            source, reference = source_dataset.load_fields(index)
+            values = (operator.predict(source) if fit_target == "model"
+                      else reference)
+            entry = build_features(
+                source, values, source.grid, scheme=scheme, template=template,
+                epsilon=getattr(config, "epsilon", DEFAULT_EPSILON))
+            entry.source = fit_target
+            built.append(entry)
+        return stack_tables(built)
+
+    table = tabulate(dataset, config.target)
     emit(f"  built {len(table)} usable voxels from {len(dataset)} structure(s)"
-         f"  [scheme: {config.features}, target: {config.target}]")
+         f"  [features: {scheme}, template: {template}, "
+         f"target: {config.target}]")
     table = sample_rows(table, config.n_samples, seed=config.seed)
     emit(f"  searching on {len(table)} sampled voxels "
          f"({config.iterations} iterations)")
 
-    return SymbolicDistiller(config, engine=engine).fit(table)
+    result = SymbolicDistiller(config, engine=engine).fit(table)
+
+    # Score the winner on the held-out structures, against the DFT reference
+    # rather than against whatever was fitted: the question a parity plot
+    # answers is how the formula does against ground truth, and when
+    # `target: model` was fitted the two are not the same thing.
+    if validation is not None and len(validation):
+        held_out = sample_rows(tabulate(validation, "reference"),
+                               config.n_samples, seed=config.seed)
+        result.validation = _score_on(result.expression, held_out)
+        emit(f"  validated on {len(held_out)} held-out voxels: "
+             f"relative L2 {result.validation.get('relative_l2', float('nan')):.4f}")
+    return result
+
+
+def _score_on(expression, table):
+    """
+    Evaluate an expression on a table and score it in physical units.
+
+    Returns
+    -------
+    dict
+        ``reference`` and ``predicted`` arrays of :math:`\\tau` in eV/Å³ plus
+        the usual metrics, or an empty dict when the expression could not be
+        evaluated there.
+    """
+    values = SymbolicDistiller.evaluate(expression, table)
+    predicted = reconstruct_tau(values, table)
+    reference = table.physical_target
+    if predicted is None or reference is None:
+        return {}
+    finite = np.isfinite(predicted) & np.isfinite(reference)
+    if not finite.any():
+        return {}
+    predicted, reference = predicted[finite], reference[finite]
+    return {
+        "n_points": int(finite.sum()),
+        "relative_l2": _relative_l2(predicted, reference),
+        "r2": _r2(predicted, reference),
+        "mae": float(np.mean(np.abs(predicted - reference))),
+        "predicted": predicted,
+        "reference": reference,
+    }

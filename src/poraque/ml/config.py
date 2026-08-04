@@ -334,11 +334,35 @@ class SymbolicConfig:
         ``"raw"`` regresses :math:`\tau` on
         :math:`(\rho, |\nabla\rho|, \nabla^2\rho)`: dimensional, kept for
         checking the reduced forms against something unprocessed.
+    template : str
+        Factorisation of the target before the search sees it.
+
+        ``"none"`` fits the target directly. ``"thomas_fermi"`` fits the
+        **enhancement factor** :math:`F` in
+        :math:`\tau = \tau_{\rm TF}\,F`, dividing the target by
+        :math:`\tau_{\rm TF} = C_{\rm TF}\rho^{5/3}` first and multiplying the
+        discovered expression back in when the result is reported.
+
+        The template is a way of *giving away* the part of the physics that is
+        already known. Thomas-Fermi supplies the density scaling exactly, so
+        the search stops spending its budget rediscovering :math:`\rho^{5/3}`
+        and works on the part that is actually unknown — and every constant it
+        must find becomes order unity.
     epsilon : float
         Vacuum threshold in atomic units. Denominators are clamped at it and
         voxels at or below it are dropped, because :math:`p` and :math:`q` in
         vacuum are ratios of two vanishing numbers — noise with a plausible
         magnitude, which corrupts a fit more quietly than a gap would.
+    constraints : dict
+        Per-operator limits on argument complexity, passed to the engine.
+        ``{"^": [-1, 1]}`` by default: the base is unconstrained (``-1``) and
+        the **exponent** is held to complexity 1.
+
+        Unconstrained exponents are the main source of nonsense in a power
+        operator — a fractional power of a negative quantity leaves the reals,
+        and an exponent that is itself a subtree is unreadable and almost never
+        physical. Real functionals have simple exponents: ``5/3``, ``4/3``,
+        ``2``.
     unary_operations, binary_operations : list of str
         The operator alphabet handed to the engine. Keep it small: the search
         space grows combinatorially, and an operator that cannot appear in the
@@ -365,7 +389,9 @@ class SymbolicConfig:
     enable_symbolic_distillation: bool = False
     target: str = "model"
     features: str = "gga"
+    template: str = "none"
     epsilon: float = 1e-8
+    constraints: dict = field(default_factory=lambda: {"^": [-1, 1]})
     unary_operations: list = field(
         default_factory=lambda: ["exp", "log", "sqrt", "abs"])
     binary_operations: list = field(
@@ -378,6 +404,57 @@ class SymbolicConfig:
     parsimony: float = 0.0032
     n_samples: int = 4000
     seed: int = 0
+
+
+@dataclass
+class FineTuningConfig:
+    r"""
+    Adapt a trained operator to a narrower class of materials.
+
+    A model fitted across a broad dataset is a good *starting point* for a
+    specific family, and a poor substitute for one. Fine-tuning continues that
+    fit on the smaller set at a much lower learning rate, keeping what the base
+    model learned about the general map while letting it specialise.
+
+    .. important::
+       The **normalizations come from the checkpoint**, not from the new
+       dataset. Refitting them would rescale the network's inputs out from
+       under weights that were trained against the old scale, which destroys
+       most of what the pre-training bought. It also means the new data must
+       fall in a comparable range: fine-tuning on a family whose densities are
+       an order of magnitude away is transfer learning in name only.
+
+    Attributes
+    ----------
+    enable : bool
+        Start from ``pretrained_checkpoint`` instead of a fresh
+        initialisation.
+    pretrained_checkpoint : str
+        Bundle to start from. The **architecture is read from its tensors**,
+        so the ``model`` section of this config is ignored for the shape of
+        the network — a remembered hyper-parameter that disagreed with the
+        weights could only load mismatched tensors.
+    learning_rate : float
+        Optimiser step for the fine-tune, replacing ``training.learning_rate``.
+        Much smaller by default: the base learning rate would walk the weights
+        away from the solution being adapted before the small dataset could
+        constrain them.
+    freeze_lifting_layers : bool
+        Hold the input lifting layer fixed and train the rest. The lifting map
+        is the most general part of the network — it embeds the input field
+        before any operator acts — so it is the part least in need of
+        specialisation, and freezing it leaves fewer parameters for a small
+        dataset to overfit.
+
+        The projection head is deliberately *not* frozen: it decodes to
+        physical units, which is exactly what differs between material
+        families.
+    """
+
+    enable: bool = False
+    pretrained_checkpoint: str = "models/poraque_models.pfno"
+    learning_rate: float = 1e-5
+    freeze_lifting_layers: bool = False
 
 
 @dataclass
@@ -405,10 +482,11 @@ class TrainingConfig:
     training: TrainingConfig_ = field(default_factory=TrainingConfig_)
     output: OutputConfig = field(default_factory=OutputConfig)
     symbolic: SymbolicConfig = field(default_factory=SymbolicConfig)
+    fine_tuning: FineTuningConfig = field(default_factory=FineTuningConfig)
 
     _SECTIONS = {"data": DataConfig, "model": ModelConfig,
                  "training": TrainingConfig_, "output": OutputConfig,
-                 "symbolic": SymbolicConfig}
+                 "symbolic": SymbolicConfig, "fine_tuning": FineTuningConfig}
 
     # ------------------------------------------------------------------ #
     # Construction

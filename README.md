@@ -67,7 +67,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-atoms.calc = Poraque("models/poraque_models.pth", potcar="POTCAR")
+atoms.calc = Poraque("models/poraque_models.pfno", potcar="POTCAR")
 atoms.get_potential_energy()
 print(atoms.calc.components)     # T_s, E_ext, alpha Z, E_H, E_xc, Ewald
 ```

@@ -72,18 +72,53 @@ This is *exact* for the band-limited periodic fields a plane-wave grid carries;
 a finite-difference stencil would introduce an error that the search would then
 model as physics.
 
-### Feature schemes
+### Feature schemes and templates
 
-| `features` | Variables | Target |
+Two independent knobs: `features` picks the **input variables**, `template`
+picks how the **target is factorised**.
+
+| `features` | Variables given to the engine |
+| --- | --- |
+| `gga` (default) | `rho`, `p`, `q` |
+| `reduced` | `p`, `q` |
+| `raw` | `rho`, `grad_rho`, `lap_rho` (dimensional) |
+
+| `template` | Fitted target | Reported formula |
 | --- | --- | --- |
-| `gga` (default) | `rho`, `p`, `q` | $\tau$ |
-| `enhancement` | `p`, `q` | $F = \tau/\tau_\mathrm{TF}$ |
-| `raw` | `rho`, `grad_rho`, `lap_rho` | $\tau$ |
+| `none` (default) | $\tau$ | $\tau = f(\dots)$ |
+| `thomas_fermi` | $F = \tau/\tau_\mathrm{TF}$ | $\tau = C_\mathrm{TF}\rho^{5/3}\,f(\dots)$ |
 
-`enhancement` is worth knowing: it is the form the literature writes kinetic
-functionals in, so the answer is directly comparable — Thomas–Fermi is $F = 1$
-and von Weizsäcker is $F = 5p^2/3$ — and every constant to be found is order
-unity.
+A template **gives away the part of the physics that is already known**.
+Thomas–Fermi supplies the density scaling exactly, so the search stops spending
+its budget rediscovering $\rho^{5/3}$ and works on what is actually unknown —
+and every constant it must find becomes order unity. It is also the form the
+literature writes kinetic functionals in, so the answer is directly comparable:
+Thomas–Fermi is $F = 1$, von Weizsäcker is $F = 5p^2/3$.
+
+The discovered expression is multiplied back into the template before it is
+reported, so the console, the JSON and the PDF all show the complete physical
+formula rather than the factor that was fitted.
+
+```{note}
+`features: enhancement` is kept as an alias for `features: reduced` plus
+`template: thomas_fermi`, which is exactly what it used to mean.
+```
+
+### Operator constraints
+
+```yaml
+constraints:
+  "^": [-1, 1]
+```
+
+Per-operator limits on argument complexity, passed straight to the engine. The
+default holds the **exponent** of `^` to a single node while leaving the base
+unconstrained (`-1`).
+
+Unconstrained exponents are the main source of nonsense from a power operator:
+a fractional power of a negative quantity leaves the reals, and an exponent
+that is itself a subtree is unreadable and almost never physical. Real
+functionals have simple exponents — $5/3$, $4/3$, $2$.
 
 ## Regularization in vacuum
 
@@ -112,8 +147,11 @@ threshold. It matters for slabs, molecules and anything with real vacuum.
 symbolic:
   enable_symbolic_distillation: false
   target: model          # model | reference
-  features: gga          # gga | enhancement | raw
+  features: gga          # gga | reduced | raw
+  template: none         # none | thomas_fermi
   epsilon: 1.0e-08       # vacuum threshold, e/a0^3
+  constraints:           # per-operator argument-complexity limits
+    "^": [-1, 1]
   unary_operations: [exp, log, sqrt, abs]
   binary_operations: ['+', '-', '*', /, ^]
   iterations: 40
@@ -154,6 +192,75 @@ report as display mathematics with $\rho$, $p$ and $q$ rendered properly.
 
 **Read the front, not just the winner.** A single expression hides the trade
 that produced it; the front shows what each extra node bought.
+
+## Physical asymptotic compliance
+
+A symbolic fit is a numerical statement until it is checked against physics it
+was never shown. Every candidate on the front is tested against the two limits
+that pin a kinetic functional, both written for the enhancement factor
+$F = \tau/\tau_\mathrm{TF}$:
+
+| Limit | Condition | Physical regime |
+| --- | --- | --- |
+| Thomas–Fermi | $F(0,0) = 1$ | uniform density: $p, q \to 0$ |
+| von Weizsäcker | $F \to \tfrac{5}{3}p^2$ as $p \to \infty$ | rapidly varying density, single orbital |
+
+The check is analytic — `sympy.limit`, with the symbols bound at parse time —
+falling back to a converged numerical probe when SymPy cannot resolve a deeply
+nested expression. Which route was used is recorded, because an analytic limit
+is a proof and a numerical one is evidence.
+
+```{important}
+**Neither textbook functional passes both.** Thomas–Fermi ($F = 1$) satisfies
+the first and fails the second; von Weizsäcker ($F = 5p^2/3$) does the reverse.
+Failing one limit is therefore not damning on its own — failing *both* means
+the expression reproduces the training data without the physics that
+constrains it outside that range, and it should not be extrapolated.
+```
+
+Scaling and coefficient are reported separately, because the distinction is
+real: the second-order gradient expansion grows as $p^2$ with coefficient
+$1/9$, so it has exactly the right shape and is *not* von Weizsäcker.
+
+Each front entry carries a `TF`/`vW` badge in the console, the JSON summary and
+the PDF:
+
+```text
+  accuracy/complexity front (TF/vW = asymptotic limits satisfied):
+      nodes          loss   limits  expression
+          1          0.45    TF/--  1.0
+          5          0.09    TF/--  1 + 5*p**2/27 + 20*q/9
+          9         0.012    TF/vW  1 + 5*p**2/3
+  2 of 4 candidates satisfy BOTH limits; the simplest is:
+      1 + 5*p**2/3
+```
+
+The most accurate expression is frequently the least physical, so the compliant
+candidates are listed separately — a slightly worse expression that obeys both
+limits is usually the better functional. The PDF report gets a **Physical
+asymptotic compliance** section with the per-limit findings and a score.
+
+## Parity plot
+
+After the search, the winning expression is evaluated on the **held-out**
+structures and compared against the DFT reference — not against whatever was
+fitted, since with `target: model` the two are different things. The result is
+written as `<task>_symbolic_parity.png` and embedded in the report's Symbolic
+Distillation section.
+
+Read it beside the operator's own parity plot: the gap between them is what the
+closed form gives up. A formula that tracks the identity line through the bulk
+and bends away at the high-density end is the usual picture — semi-local
+features cannot resolve the core peaks.
+
+```python
+from poraque.ml.symbolic import check_asymptotic_limits
+
+result = check_asymptotic_limits("1 + 5*p**2/3", ["rho", "p", "q"],
+                                 scheme="enhancement")
+result.passes        # True
+result.badge()       # 'TF/vW'
+```
 
 ## Engine
 

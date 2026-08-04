@@ -49,6 +49,7 @@ What Poraquê provides
    quick_start/index
    fields/index
    ml/index
+   fine_tuning/index
    energy/index
    symbolic/index
    theory

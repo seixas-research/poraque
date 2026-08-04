@@ -337,7 +337,60 @@ class FieldOperator:
 BUNDLE_FORMAT = "poraque-bundle-1"
 
 #: Conventional filename for the unified checkpoint.
-BUNDLE_FILENAME = "poraque_models.pth"
+BUNDLE_FILENAME = "poraque_models.pfno"
+
+#: Extensions Poraquê used to write bundles under. Retained only so a stale
+#: file can be *found and named*, never to change how one is read: the format
+#: is unchanged and the extension was never inspected when loading.
+LEGACY_BUNDLE_SUFFIXES = (".pth", ".pt")
+
+
+def resolve_bundle_path(path, log=None):
+    """
+    Fall back to a legacy extension when the ``.pfno`` file is absent.
+
+    Renaming the default output from ``.pth`` to ``.pfno`` would otherwise make
+    an existing trained model invisible to every default path, which reads as
+    "no model" rather than "renamed". This looks beside the requested file for
+    the same stem under an old extension and says what it did.
+
+    Parameters
+    ----------
+    path : str
+        Requested bundle.
+    log : callable, optional
+        Sink for the notice. Silent when omitted.
+
+    Returns
+    -------
+    str
+        ``path`` when it exists, the legacy file when only that does, and
+        ``path`` unchanged when neither does — so the caller still reports the
+        name the user actually asked for.
+    """
+    import os
+
+    if os.path.exists(path):
+        return path
+
+    stem = os.path.splitext(path)[0]
+    for suffix in LEGACY_BUNDLE_SUFFIXES:
+        legacy = stem + suffix
+        if os.path.exists(legacy):
+            if log is not None:
+                log(f"  NOTE: {path} does not exist, but {legacy} does — "
+                    f"using it.")
+                log(f"        Poraque now writes {os.path.basename(stem)}"
+                    f".pfno; rename the file to silence this.")
+            return legacy
+    return path
+
+
+#: Filename for a fine-tuned bundle. Deliberately distinct from
+#: :data:`BUNDLE_FILENAME`: a fine-tune is a specialisation of the base model,
+#: usually to a narrower set of materials, and writing it over the general
+#: model would silently replace something broad with something narrow.
+FINETUNED_BUNDLE_FILENAME = "poraque_finetuned.pfno"
 
 
 def infer_backbone_kwargs(model_state):
@@ -394,7 +447,7 @@ def save_bundle(path, operators, metadata=None):
     Parameters
     ----------
     path : str
-        Destination, conventionally ``models/poraque_models.pth``.
+        Destination, conventionally ``models/poraque_models.pfno``.
     operators : dict
         ``{task_name: FieldOperator}``.
     metadata : dict, optional
@@ -407,7 +460,7 @@ def save_bundle(path, operators, metadata=None):
 
     Examples
     --------
-    >>> save_bundle("models/poraque_models.pth",
+    >>> save_bundle("models/poraque_models.pfno",
     ...             {"ext2chg": first, "chg2tau": second})   # doctest: +SKIP
     """
     from ..version import __version__
@@ -499,6 +552,86 @@ def load_bundle(path, task, model=None, device=None, **model_kwargs):
                                     **model_kwargs)
 
 
+#: Submodule prefixes of :class:`~poraque.ml.fno.FNO3d` that make up the input
+#: lifting path — everything before the first Fourier block.
+LIFTING_PREFIXES = ("lift.", "cell_encoder.")
+
+
+def freeze_lifting_layers(model, freeze=True):
+    r"""
+    Hold the input lifting path fixed, leaving the rest trainable.
+
+    The lifting map embeds the input field into the network's channel space
+    before any operator acts on it, so it is the most general part of the
+    model and the part least in need of specialising to a new material family.
+    Freezing it also removes parameters a small fine-tuning set could
+    otherwise overfit.
+
+    The cell encoder goes with it: it embeds the lattice, which is a property
+    of the input rather than of the mapping being adapted.
+
+    The projection head is deliberately left trainable — it decodes to
+    physical units, which is precisely what differs between families.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Backbone. A model without these submodules is left untouched.
+    freeze : bool, optional
+        Set ``False`` to release them again.
+
+    Returns
+    -------
+    dict
+        ``{"frozen": int, "trainable": int}`` parameter counts, so a caller can
+        report what actually happened rather than what was requested. Counted
+        the way :meth:`~poraque.ml.fno.FNO3d.n_parameters` counts — a complex
+        weight is two real numbers — so the two figures sum to the total the
+        rest of the log quotes instead of appearing to differ by half a model.
+    """
+    for name, parameter in model.named_parameters():
+        if name.startswith(LIFTING_PREFIXES):
+            parameter.requires_grad = not freeze
+
+    def size(parameter):
+        return parameter.numel() * (2 if parameter.is_complex() else 1)
+
+    return {
+        "frozen": sum(size(p) for p in model.parameters()
+                      if not p.requires_grad),
+        "trainable": sum(size(p) for p in model.parameters()
+                         if p.requires_grad),
+    }
+
+
+#: Weights on :class:`~poraque.ml.losses.PhysicsInformedLoss` that, when any is
+#: positive, make the objective more than plain data fidelity.
+PHYSICS_WEIGHTS = ("positivity_weight", "electron_count_weight",
+                   "von_weizsacker_weight", "euler_lagrange_weight")
+
+
+def physics_terms_active(criterion):
+    """
+    Whether ``criterion`` adds anything to the data term.
+
+    Read from the configured weights rather than from the first batch's
+    returned components, because the console header is written before any
+    batch has run and the header and the rows must agree.
+
+    Parameters
+    ----------
+    criterion : nn.Module
+        Typically a :class:`~poraque.ml.losses.PhysicsInformedLoss`. Anything
+        without the weight attributes counts as data-only.
+
+    Returns
+    -------
+    bool
+    """
+    return any(float(getattr(criterion, name, 0.0) or 0.0) > 0.0
+               for name in PHYSICS_WEIGHTS)
+
+
 def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
           weight_decay=1e-4, validation=None, loss=None, scheduler="cosine",
           grad_clip=1.0, eval_every=1, early_stopping=0, checkpoint=None,
@@ -574,7 +707,13 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     """
     torch.manual_seed(seed)
     criterion = loss or PhysicsInformedLoss(task=operator.task.name)
-    optimizer = torch.optim.AdamW(operator.model.parameters(), lr=learning_rate,
+    # Only unfrozen parameters reach the optimiser. A frozen one would receive
+    # no gradient and so never move, but AdamW's decoupled weight decay is
+    # applied regardless of the gradient -- handing it frozen weights would
+    # shrink them towards zero every step, quietly undoing the pre-training the
+    # freeze was meant to preserve.
+    trainable = [p for p in operator.model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable, lr=learning_rate,
                                   weight_decay=weight_decay)
     lr_schedule = (
         torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -587,7 +726,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         if validation is not None else None
     )
 
-    history = {"train_loss": [], "val_error": [], "val_epoch": []}
+    history = {"train_loss": [], "val_error": [], "val_epoch": [],
+               "data_loss": [], "physics_loss": []}
+    physics_active = physics_terms_active(criterion)
     best_error = float("inf")
     best_epoch, best_state, stopped_early = 0, None, False
     emit = log if log is not None else print
@@ -611,11 +752,23 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     # units -- and reading the second as if it were the first is an easy and
     # expensive mistake.
     validating = validation_loader is not None
-    header = f"    {'epoch':>11s}  {'train loss':>13s}"
+    # With every physics weight at zero -- the shipped default -- `total` and
+    # `data` are the same number and the physics column is a column of zeros.
+    # Three columns saying that is less readable than one, so the breakdown
+    # appears only when a constraint is actually switched on. It is recorded in
+    # `history` either way.
+    loss_column = "total loss" if physics_active else "train loss"
+    header = f"    {'epoch':>11s}  {loss_column:>13s}"
+    if physics_active:
+        header += f"  {'data loss':>13s}  {'physics loss':>13s}"
     if validating:
         header += f"  {'val rel L2':>13s}"
     if verbose:
-        legend = (f"    train loss: mean {type(criterion).__name__} per batch")
+        if physics_active:
+            legend = ("    total loss = data + physics, mean per batch; "
+                      "physics is the weighted contribution")
+        else:
+            legend = f"    train loss: mean {type(criterion).__name__} per batch"
         if validating:
             legend += "   |   val rel L2: held-out error, physical units"
         else:
@@ -635,6 +788,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
         operator.model.train()
         running, batches = 0.0, 0
+        running_data, running_physics = 0.0, 0.0
+        components = {}
         for batch in loader:
             inputs = batch["input"].to(operator.device)
             targets = batch["target"].to(operator.device)
@@ -656,14 +811,35 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
                 clip_gradients(operator.model.parameters(), grad_clip)
             optimizer.step()
 
-            running += float(terms["total"].detach())
+            # The composite loss reports its parts; only `total` is
+            # differentiated. `data` is the fidelity term as the objective saw
+            # it, and the physics contribution is taken as total - data rather
+            # than by summing the components, because the components are
+            # reported *unweighted* -- summing them would give a number that
+            # is not what the optimiser stepped on.
+            total_value = float(terms["total"].detach())
+            data_value = float(terms.get("data", terms["total"]))
+            running += total_value
+            running_data += data_value
+            running_physics += total_value - data_value
+            for name, value in terms.items():
+                if name in ("total", "data"):
+                    continue
+                components[name] = components.get(name, 0.0) + float(value)
             batches += 1
 
         if lr_schedule is not None:
             lr_schedule.step()
 
-        mean_loss = running / max(batches, 1)
+        divisor = max(batches, 1)
+        mean_loss = running / divisor
         history["train_loss"].append(mean_loss)
+        history["data_loss"].append(running_data / divisor)
+        history["physics_loss"].append(running_physics / divisor)
+        # Per-term magnitudes, unweighted: what each constraint is worth before
+        # its weight scales it, which is what you need to choose that weight.
+        for name, accumulated in components.items():
+            history.setdefault(f"physics_{name}", []).append(accumulated / divisor)
 
         # The last epoch always reports, so a run never finishes without a
         # current number just because `epochs` is not a multiple of the
@@ -674,6 +850,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
         # Columns line up under `header` above; widths are shared with it.
         message = f"    {f'{epoch + 1}/{epochs}':>11s}  {mean_loss:>13.5f}"
+        if physics_active:
+            message += (f"  {history['data_loss'][-1]:>13.5f}"
+                        f"  {history['physics_loss'][-1]:>13.5f}")
         exhausted = False
         if validating:
             error = evaluate(operator, validation_loader)

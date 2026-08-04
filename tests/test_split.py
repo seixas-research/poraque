@@ -342,6 +342,106 @@ class TestEarlyStopping:
 
 
 # ===================================================================== #
+# Loss components
+# ===================================================================== #
+class TestLossBreakdown:
+    """
+    A composite objective that reports only its total is unreadable: a falling
+    total says nothing about *which* term fell, and a constraint that is being
+    outweighed rather than satisfied looks exactly like one that is working.
+    """
+
+    def _physics(self, **weights):
+        from poraque.ml.losses import PhysicsInformedLoss
+
+        return PhysicsInformedLoss(task="chg2tau", **weights)
+
+    def test_total_is_data_plus_physics(self, toy):
+        history = _train_toy(toy, epochs=2, eval_every=1, verbose=False,
+                             loss=self._physics(positivity_weight=0.5,
+                                                von_weizsacker_weight=0.25))
+        for total, data, physics in zip(history["train_loss"],
+                                        history["data_loss"],
+                                        history["physics_loss"]):
+            assert total == pytest.approx(data + physics, abs=1e-9)
+
+    def test_physics_is_zero_without_constraints(self, toy):
+        """The default objective is data-only; the series must say so."""
+        history = _train_toy(toy, epochs=2, eval_every=1, verbose=False)
+        assert history["physics_loss"] == [0.0, 0.0]
+        assert history["data_loss"] == pytest.approx(history["train_loss"])
+
+    def test_per_term_magnitudes_are_recorded(self, toy):
+        """Unweighted, because that is what you need to choose the weight."""
+        history = _train_toy(toy, epochs=2, eval_every=1, verbose=False,
+                             loss=self._physics(positivity_weight=0.5,
+                                                von_weizsacker_weight=0.25))
+        assert len(history["physics_positivity"]) == 2
+        assert len(history["physics_von_weizsacker"]) == 2
+
+    def test_columns_appear_only_when_physics_is_active(self, toy):
+        """
+        With every weight at zero the three columns would be two identical
+        numbers and a column of zeros -- less readable than one column.
+        """
+        lines = []
+        _train_toy(toy, epochs=2, eval_every=1, log=lines.append,
+                   loss=self._physics(positivity_weight=0.5))
+        header = next(line for line in lines if "epoch" in line)
+        assert "total loss" in header
+        assert "data loss" in header and "physics loss" in header
+
+        plain = []
+        _train_toy(toy, epochs=2, eval_every=1, log=plain.append)
+        plain_header = next(line for line in plain if "epoch" in line)
+        assert "train loss" in plain_header
+        assert "physics loss" not in plain_header
+
+    def test_rows_line_up_under_the_header(self, toy):
+        lines = []
+        _train_toy(toy, epochs=2, eval_every=1, log=lines.append,
+                   loss=self._physics(positivity_weight=0.5))
+        header = next(line for line in lines if "epoch" in line)
+        for row in _rows(lines):
+            assert len(row) == len(header)
+
+    def test_detects_active_physics_from_the_weights(self):
+        from poraque.ml.training import physics_terms_active
+
+        assert physics_terms_active(self._physics(positivity_weight=0.1))
+        assert not physics_terms_active(self._physics())
+        assert not physics_terms_active(object())     # a plain data loss
+
+
+class TestLossSummaryRows:
+    def test_data_only_reports_one_number(self):
+        rows = poraque_train.loss_summary({"train_loss": [0.5],
+                                           "data_loss": [0.5],
+                                           "physics_loss": [0.0]})
+        assert rows == {"final train loss": "0.50000"}
+
+    def test_physics_run_reports_the_split_and_its_share(self):
+        rows = poraque_train.loss_summary({"train_loss": [1.0],
+                                           "data_loss": [0.75],
+                                           "physics_loss": [0.25],
+                                           "physics_positivity": [0.5]})
+        assert rows["final total loss"] == "1.00000"
+        assert rows["final data loss"] == "0.75000"
+        assert "25.0%" in rows["final physics loss"]
+        assert any("positivity" in key for key in rows)
+
+    def test_the_aggregate_is_not_listed_as_a_term(self):
+        """`physics_loss` is the sum already reported, not a constraint."""
+        rows = poraque_train.loss_summary({"train_loss": [1.0],
+                                           "data_loss": [0.75],
+                                           "physics_loss": [0.25]})
+        assert not any(key.strip().startswith("loss") for key in rows)
+
+    def test_an_empty_history_yields_nothing(self):
+        assert poraque_train.loss_summary({}) == {}
+
+
+# ===================================================================== #
 # Writing the history into the JSON summary
 # ===================================================================== #
 class TestHistorySerialisation:
@@ -357,7 +457,8 @@ class TestHistorySerialisation:
                              early_stopping=2)
         curves, stopping = poraque_train.split_history(history)
 
-        assert set(curves) == {"train_loss", "val_error", "val_epoch"}
+        assert set(curves) == {"train_loss", "data_loss", "physics_loss",
+                               "val_error", "val_epoch"}
         assert all(isinstance(value, list) for value in curves.values())
         assert set(stopping) == {"best_epoch", "best_error", "stopped_early"}
 
@@ -425,7 +526,7 @@ def _rows(lines):
 
 
 def _train_toy(dataset, epochs, eval_every, log=None, validate=False,
-               verbose=True, early_stopping=0):
+               verbose=True, early_stopping=0, loss=None):
     """Run a tiny training loop and return its history."""
     torch.manual_seed(0)
     operator = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
@@ -433,4 +534,177 @@ def _train_toy(dataset, epochs, eval_every, log=None, validate=False,
     return train(operator, dataset, epochs=epochs, batch_size=1,
                  learning_rate=1e-3, eval_every=eval_every,
                  validation=dataset if validate else None,
-                 early_stopping=early_stopping, log=log, verbose=verbose)
+                 early_stopping=early_stopping, log=log, verbose=verbose,
+                 loss=loss)
+
+
+# ===================================================================== #
+# Fine-tuning
+# ===================================================================== #
+class TestFineTuning:
+    """
+    Adapting a trained operator, rather than starting from noise.
+
+    The failure modes here are silent: a refitted normalization rescales the
+    inputs out from under the loaded weights, a frozen parameter still decays
+    towards zero, and a fine-tune written under the base model's name replaces
+    something general with something narrow. None of them raises.
+    """
+
+    def _model(self):
+        return FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+                             projection_channels=8, device="cpu").model
+
+    def test_freezing_touches_only_the_lifting_path(self):
+        from poraque.ml.training import freeze_lifting_layers
+
+        model = self._model()
+        freeze_lifting_layers(model)
+        frozen = {name for name, p in model.named_parameters()
+                  if not p.requires_grad}
+        assert frozen
+        assert all(name.startswith(("lift.", "cell_encoder."))
+                   for name in frozen)
+
+    def test_the_projection_head_stays_trainable(self):
+        """It decodes to physical units, which is what differs per family."""
+        from poraque.ml.training import freeze_lifting_layers
+
+        model = self._model()
+        freeze_lifting_layers(model)
+        assert all(p.requires_grad for name, p in model.named_parameters()
+                   if name.startswith("project."))
+
+    def test_counts_reconcile_with_n_parameters(self):
+        """
+        A complex weight is two real numbers. Counting it once here and twice
+        in `n_parameters` made the log read as if half the model were frozen.
+        """
+        from poraque.ml.training import freeze_lifting_layers
+
+        model = self._model()
+        total = model.n_parameters()
+        counts = freeze_lifting_layers(model)
+        assert counts["frozen"] + counts["trainable"] == total
+        assert counts["frozen"] > 0
+
+    def test_freezing_is_reversible(self):
+        from poraque.ml.training import freeze_lifting_layers
+
+        model = self._model()
+        freeze_lifting_layers(model)
+        freeze_lifting_layers(model, freeze=False)
+        assert all(p.requires_grad for p in model.parameters())
+
+    def test_frozen_weights_do_not_move(self, toy):
+        """
+        AdamW's decoupled weight decay applies without a gradient, so frozen
+        weights would shrink every step unless they are kept out of the
+        optimiser entirely.
+        """
+        from poraque.ml.training import freeze_lifting_layers
+
+        torch.manual_seed(0)
+        operator = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+                                 projection_channels=8, device="cpu")
+        freeze_lifting_layers(operator.model)
+        before = operator.model.lift.weight.detach().clone()
+        train(operator, toy, epochs=2, batch_size=1, learning_rate=1e-2,
+              weight_decay=0.5, eval_every=1, verbose=False)
+        assert torch.equal(operator.model.lift.weight, before)
+
+    def test_unfrozen_weights_do_move(self, toy):
+        torch.manual_seed(0)
+        operator = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+                                 projection_channels=8, device="cpu")
+        before = operator.model.lift.weight.detach().clone()
+        train(operator, toy, epochs=2, batch_size=1, learning_rate=1e-2,
+              eval_every=1, verbose=False)
+        assert not torch.equal(operator.model.lift.weight, before)
+
+
+class TestBundleNaming:
+    def test_the_two_filenames_differ(self):
+        from poraque.ml import BUNDLE_FILENAME, FINETUNED_BUNDLE_FILENAME
+
+        assert BUNDLE_FILENAME != FINETUNED_BUNDLE_FILENAME
+        assert BUNDLE_FILENAME.endswith(".pfno")
+        assert FINETUNED_BUNDLE_FILENAME.endswith(".pfno")
+
+    def test_an_existing_file_is_returned_unchanged(self, tmp_path):
+        from poraque.ml import resolve_bundle_path
+
+        path = tmp_path / "m.pfno"
+        path.write_text("x")
+        assert resolve_bundle_path(str(path)) == str(path)
+
+    def test_a_legacy_file_is_found_and_announced(self, tmp_path):
+        """Renaming the default must not make an existing model invisible."""
+        from poraque.ml import resolve_bundle_path
+
+        (tmp_path / "m.pth").write_text("x")
+        lines = []
+        resolved = resolve_bundle_path(str(tmp_path / "m.pfno"), lines.append)
+        assert resolved == str(tmp_path / "m.pth")
+        assert any(".pfno" in line for line in lines)
+
+    def test_a_missing_file_keeps_the_requested_name(self, tmp_path):
+        """So the error names what the user asked for, not a guess."""
+        from poraque.ml import resolve_bundle_path
+
+        requested = str(tmp_path / "absent.pfno")
+        assert resolve_bundle_path(requested) == requested
+
+
+class TestFineTuningValidation:
+    def _config(self, tmp_path, **overrides):
+        config = TrainingConfig()
+        config.fine_tuning.enable = True
+        config.output.checkpoint_dir = str(tmp_path)
+        for key, value in overrides.items():
+            setattr(config.fine_tuning, key, value)
+        return config
+
+    def test_disabled_needs_no_checkpoint(self):
+        config = TrainingConfig()
+        config.fine_tuning.pretrained_checkpoint = "/nope.pfno"
+        poraque_train.validate_fine_tuning_settings(config)     # no raise
+
+    def test_a_missing_checkpoint_fails_before_training(self, tmp_path):
+        config = self._config(tmp_path, pretrained_checkpoint="/nope.pfno")
+        with pytest.raises(SystemExit, match="does not exist"):
+            poraque_train.validate_fine_tuning_settings(config)
+
+    def test_writing_over_the_base_is_refused(self, tmp_path):
+        from poraque.ml import FINETUNED_BUNDLE_FILENAME
+
+        base = tmp_path / FINETUNED_BUNDLE_FILENAME
+        base.write_text("x")
+        config = self._config(tmp_path, pretrained_checkpoint=str(base))
+        with pytest.raises(SystemExit, match="over its own base"):
+            poraque_train.validate_fine_tuning_settings(config)
+
+    def test_a_sibling_name_is_allowed(self, tmp_path):
+        """The base and the fine-tune coexist; only a true collision fails."""
+        from poraque.ml import BUNDLE_FILENAME
+
+        base = tmp_path / BUNDLE_FILENAME
+        base.write_text("x")
+        config = self._config(tmp_path, pretrained_checkpoint=str(base))
+        poraque_train.validate_fine_tuning_settings(config)     # no raise
+
+    def test_a_non_positive_learning_rate_fails(self, tmp_path):
+        base = tmp_path / "base.pfno"
+        base.write_text("x")
+        config = self._config(tmp_path, pretrained_checkpoint=str(base),
+                              learning_rate=0.0)
+        with pytest.raises(SystemExit, match="must be positive"):
+            poraque_train.validate_fine_tuning_settings(config)
+
+    def test_a_legacy_checkpoint_is_accepted_and_rewritten(self, tmp_path):
+        base = tmp_path / "base.pth"
+        base.write_text("x")
+        config = self._config(tmp_path,
+                              pretrained_checkpoint=str(tmp_path / "base.pfno"))
+        poraque_train.validate_fine_tuning_settings(config)
+        assert config.fine_tuning.pretrained_checkpoint == str(base)

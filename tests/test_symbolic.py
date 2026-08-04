@@ -15,6 +15,8 @@ one about the physics. So it is pinned against the two functionals whose closed
 forms are known exactly.
 """
 
+import json
+
 import numpy as np
 import pytest
 
@@ -23,6 +25,7 @@ from poraque.fields.constants import BOHR_TO_ANGSTROM, C_TF
 from poraque.ml.config import SymbolicConfig
 from poraque.ml.symbolic import (
     DEFAULT_BINARY,
+    check_asymptotic_limits,
     DEFAULT_UNARY,
     FeatureTable,
     SymbolicDistiller,
@@ -371,6 +374,152 @@ class TestDistiller:
         summary = result.summary()
         assert result.expression in summary
         assert "R2" in summary and "complexity" in summary
+
+
+class TestAsymptoticLimits:
+    r"""
+    Pinned against functionals whose limits are known exactly.
+
+    The discriminating property is that **neither** textbook functional passes
+    both: Thomas-Fermi is the :math:`p\to0` answer and fails :math:`p\to\infty`,
+    von Weizsäcker the reverse. A checker that passed both on either one would
+    be measuring nothing.
+    """
+
+    def check(self, expression, scheme="enhancement"):
+        return check_asymptotic_limits(expression, ["rho", "p", "q"], scheme)
+
+    def test_thomas_fermi_passes_only_its_own_limit(self):
+        result = self.check("1")
+        assert result.thomas_fermi.passes
+        assert not result.von_weizsacker.passes
+        assert result.score == 0.5
+
+    def test_von_weizsacker_passes_only_its_own_limit(self):
+        result = self.check("5*p**2/3")
+        assert not result.thomas_fermi.passes
+        assert result.von_weizsacker.passes
+        assert result.score == 0.5
+
+    def test_an_interpolating_form_passes_both(self):
+        result = self.check("1 + 5*p**2/3")
+        assert result.passes
+        assert result.score == 1.0
+        assert result.badge() == "TF/vW"
+
+    def test_gradient_expansion_has_the_scaling_but_not_the_coefficient(self):
+        r"""
+        The second-order gradient expansion goes as :math:`p^2` with
+        coefficient :math:`1/9`. Right shape, wrong size — and reporting it as
+        "von Weizsäcker satisfied" would be wrong, so the two are separate.
+        """
+        result = self.check("1 + 5*p**2/27 + 20*q/9")
+        assert result.thomas_fermi.passes
+        assert not result.von_weizsacker.passes
+        assert result.quadratic_scaling
+        assert result.von_weizsacker.value == pytest.approx(1.0 / 9.0, rel=1e-6)
+
+    def test_works_on_the_gga_scheme(self):
+        """tau = C_TF rho^(5/3) (1 + 5p^2/3) is the same functional."""
+        result = self.check(f"{C_TF} * rho**(5/3) * (1 + 5*p**2/3)",
+                            scheme="gga")
+        assert result.passes
+
+    def test_a_density_dependent_limit_fails_and_says_why(self):
+        """
+        `tau = 0.7 rho` gives F = 0.7 rho^(-2/3): no single F(0,0) exists, so
+        it is not a functional however well it fits.
+        """
+        result = self.check("0.7 * rho", scheme="gga")
+        assert not result.thomas_fermi.passes
+        assert "rho" in result.thomas_fermi.detail
+
+    def test_symbols_are_bound_when_parsing(self):
+        """
+        `sympify` mints fresh symbols; a limit taken against differently
+        assumed ones silently returns the expression unchanged, which would
+        read as a pass.
+        """
+        result = self.check("0.5 + 0.5*q")
+        assert result.thomas_fermi.value == pytest.approx(0.5)
+
+    def test_an_unparseable_expression_is_undetermined_not_passing(self):
+        result = self.check("!! junk !!")
+        assert not result.passes
+        assert result.thomas_fermi.method == "undetermined"
+
+    def test_tolerance_is_respected(self):
+        assert check_asymptotic_limits("0.97", ["p", "q"], "enhancement",
+                                       tolerance=0.05).thomas_fermi.passes
+        assert not check_asymptotic_limits("0.97", ["p", "q"], "enhancement",
+                                           tolerance=0.01).thomas_fermi.passes
+
+    def test_the_real_front_is_checked_without_hanging(self):
+        """A genetic search emits deeply nested expressions; SymPy must cope."""
+        gnarly = ("(rho + -0.013253311) - (q / (((-0.9693314 / rho) + "
+                  "(((0.6341423 / rho) + (((p ** p) * p) * exp(q))) - "
+                  "-0.29007912)) / rho))")
+        result = self.check(gnarly, scheme="gga")
+        assert isinstance(result.score, float)
+
+
+class TestComplianceInThePipeline:
+    def test_every_candidate_is_checked(self, cell):
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="enhancement")
+        front = [{"complexity": 1, "loss": 0.5, "expression": "1"},
+                 {"complexity": 5, "loss": 0.1, "expression": "1 + 5*p**2/3"}]
+        result = SymbolicDistiller(SymbolicConfig(),
+                                   engine=lambda *a: front).fit(table)
+        assert all("limits" in entry for entry in result.pareto)
+        assert result.pareto[0]["limits"]["badge"] == "TF/--"
+        assert result.pareto[1]["limits"]["badge"] == "TF/vW"
+
+    def test_compliant_candidates_are_collected(self, cell):
+        """The most accurate expression is often the least physical."""
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="enhancement")
+        front = [{"complexity": 3, "loss": 0.5, "expression": "1 + 5*p**2/3"},
+                 {"complexity": 9, "loss": 0.01, "expression": "0.4 + q"}]
+        result = SymbolicDistiller(SymbolicConfig(),
+                                   engine=lambda *a: front).fit(table)
+        assert result.expression == "0.4 + q"          # best loss wins
+        assert not result.limits["passes"]             # ... and fails physics
+        assert result.compliant_expressions == ["1 + 5*p**2/3"]
+
+    def test_summary_shows_the_badges(self, cell):
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="enhancement")
+        front = [{"complexity": 3, "loss": 0.1, "expression": "1 + 5*p**2/3"}]
+        summary = SymbolicDistiller(SymbolicConfig(),
+                                    engine=lambda *a: front).fit(table).summary()
+        assert "TF/vW" in summary
+        assert "limits" in summary
+
+    def test_summary_says_so_when_nothing_complies(self, cell):
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="enhancement")
+        front = [{"complexity": 3, "loss": 0.1, "expression": "0.4 + q"}]
+        summary = SymbolicDistiller(SymbolicConfig(),
+                                    engine=lambda *a: front).fit(table).summary()
+        assert "no candidate satisfies both limits" in summary
+
+    def test_the_result_is_json_serialisable(self, cell):
+        """The compliance travels into the run summary, so it must survive."""
+        from dataclasses import asdict
+
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="enhancement")
+        front = [{"complexity": 3, "loss": 0.1, "expression": "1 + 5*p**2/3"}]
+        result = SymbolicDistiller(SymbolicConfig(),
+                                   engine=lambda *a: front).fit(table)
+        payload = json.loads(json.dumps(asdict(result), default=float))
+        assert payload["limits"]["thomas_fermi"]["passes"] is True
 
 
 class TestLatex:

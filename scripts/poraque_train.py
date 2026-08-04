@@ -86,6 +86,8 @@ from poraque.fields.io import resolve_reader  # noqa: E402
 from poraque.fields.resample import downsample_shape, resample_field  # noqa: E402
 from poraque.ml import (  # noqa: E402
     BUNDLE_FILENAME,
+    FINETUNED_BUNDLE_FILENAME,
+    resolve_bundle_path,
     FieldOperator,
     FieldPairDataset,
     save_bundle,
@@ -94,6 +96,11 @@ from poraque.ml import (  # noqa: E402
 from poraque.ml.config import SAMPLE_CONFIG_HEADER, TrainingConfig  # noqa: E402
 from poraque.ml.device import describe_device, resolve_device  # noqa: E402
 from poraque.ml.losses import PhysicsInformedLoss  # noqa: E402
+from poraque.ml.symbolic import (  # noqa: E402
+    FEATURE_SCHEMES,
+    TEMPLATES,
+    result_to_dict,
+)
 from poraque.ml.tasks import resolve_task  # noqa: E402
 
 FIELD_CLASSES = {
@@ -371,6 +378,113 @@ def build_operator(task, train_set, config, log):
     return operator
 
 
+def load_pretrained_operator(task, train_set, validation, config, log):
+    r"""
+    Start from a trained checkpoint instead of a fresh initialisation.
+
+    Two things are taken from the checkpoint rather than the config, and both
+    matter:
+
+    **The architecture**, inferred from the stored tensors. A width or mode
+    count remembered in the config that disagreed with the weights could only
+    load mismatched tensors, so the tensors are the authority.
+
+    **The normalizations.** The datasets are re-pointed at the checkpoint's
+    transforms, discarding the ones just fitted to this data. Refitting would
+    rescale the network's inputs out from under weights trained against the old
+    scale, which throws away most of what pre-training bought — the model would
+    spend the fine-tune relearning the scale rather than the chemistry.
+
+    Returns
+    -------
+    tuple of (FieldOperator, dict)
+        The operator, and a record of what was loaded for the report.
+    """
+    from poraque.ml import bundle_tasks, freeze_lifting_layers, load_bundle
+
+    settings = config.fine_tuning
+    path = settings.pretrained_checkpoint
+    if not os.path.exists(path):
+        raise SystemExit(
+            f"fine_tuning.pretrained_checkpoint={path!r} does not exist. "
+            f"Train a base model first, or point at one.")
+
+    available = bundle_tasks(path)
+    if task.name not in available:
+        raise SystemExit(
+            f"{path} holds no {task.name!r} model; it contains {available}. "
+            f"Fine-tuning needs a base model for the task being trained.")
+
+    operator = load_bundle(path, task.name, device=config.training.device)
+    log(f"      fine-tuning from : {path}")
+    log(f"      architecture     : inferred from the checkpoint "
+        f"({operator.model.n_parameters():,} parameters)")
+
+    # The checkpoint's normalizations replace the ones fitted above.
+    for dataset in (train_set, validation):
+        if dataset is not None:
+            dataset.input_transform = operator.input_transform
+            dataset.target_transform = operator.target_transform
+    log(f"      transforms       : taken from the checkpoint "
+        f"(in {operator.input_transform}  out {operator.target_transform})")
+
+    counts = {"frozen": 0, "trainable": operator.model.n_parameters()}
+    if settings.freeze_lifting_layers:
+        counts = freeze_lifting_layers(operator.model)
+        log(f"      frozen           : lifting path, "
+            f"{counts['frozen']:,} parameters; {counts['trainable']:,} "
+            f"remain trainable")
+
+    return operator, {
+        "pretrained checkpoint": path,
+        "fine-tuned": "yes",
+        "fine-tuning learning rate": f"{settings.learning_rate:g}",
+        "lifting layers": ("frozen" if settings.freeze_lifting_layers
+                           else "trainable"),
+        "trainable parameters": f"{counts['trainable']:,}",
+        "frozen parameters": f"{counts['frozen']:,}",
+    }
+
+
+def loss_summary(history):
+    """
+    Final-epoch objective, split into its parts, for the report table.
+
+    A physics-informed run reports three numbers because one is not enough:
+    a falling total says nothing about *which* term fell, and a constraint that
+    is being outweighed rather than satisfied looks identical in the total. The
+    split is omitted for a data-only run, where the total is the data term and
+    repeating it twice beside a zero would be noise.
+
+    Returns
+    -------
+    dict
+        Rows to merge into the report summary.
+    """
+    if not history.get("train_loss"):
+        return {}
+
+    total = history["train_loss"][-1]
+    physics = (history.get("physics_loss") or [0.0])[-1]
+    if not physics:
+        return {"final train loss": f"{total:.5f}"}
+
+    data = (history.get("data_loss") or [total])[-1]
+    rows = {
+        "final total loss": f"{total:.5f}",
+        "final data loss": f"{data:.5f}",
+        "final physics loss": f"{physics:.5f} "
+                              f"({100.0 * physics / total:.1f}% of the total)",
+    }
+    # Per-constraint magnitudes, unweighted: which term the weight is acting
+    # on. `physics_loss` is the aggregate already reported above, not a term.
+    for key, values in sorted(history.items()):
+        if key.startswith("physics_") and key != "physics_loss" and values:
+            rows[f"  {key[len('physics_'):].replace('_', ' ')} (unweighted)"] = \
+                f"{values[-1]:.5g}"
+    return rows
+
+
 def split_history(history):
     """
     Separate the per-epoch curves in ``history`` from the scalar summaries.
@@ -483,6 +597,47 @@ def evaluate_material(operator, dataset, index, task, log, label,
     return prediction, target, values
 
 
+def validate_fine_tuning_settings(config):
+    """
+    Check the fine-tuning settings before anything is trained.
+
+    Every failure here is knowable from the config alone, and every one of them
+    would otherwise surface *after* the fit — a missing checkpoint at load time,
+    a name collision only when the result is written. Neither is worth an hour
+    of GPU to discover.
+    """
+    settings = config.fine_tuning
+    if not settings.enable:
+        return
+
+    path = settings.pretrained_checkpoint
+    if not path:
+        raise SystemExit("fine_tuning.enable is set but "
+                         "fine_tuning.pretrained_checkpoint is empty.")
+    if not os.path.exists(path):
+        legacy = resolve_bundle_path(path)
+        if legacy == path:
+            raise SystemExit(
+                f"fine_tuning.pretrained_checkpoint={path!r} does not exist. "
+                f"Train a base model first, or point at one.")
+        settings.pretrained_checkpoint = legacy
+
+    if settings.learning_rate <= 0:
+        raise SystemExit(
+            f"fine_tuning.learning_rate={settings.learning_rate!r} must be "
+            f"positive.")
+
+    if config.output.checkpoint_dir:
+        destination = os.path.join(config.output.checkpoint_dir,
+                                   FINETUNED_BUNDLE_FILENAME)
+        if os.path.abspath(destination) == os.path.abspath(
+                settings.pretrained_checkpoint):
+            raise SystemExit(
+                f"the fine-tuned model would be written over its own base "
+                f"checkpoint at {destination}. Point output.checkpoint_dir "
+                f"somewhere else.")
+
+
 def validate_symbolic_settings(settings):
     """
     Check the symbolic settings before anything is trained.
@@ -494,8 +649,10 @@ def validate_symbolic_settings(settings):
     """
     if not settings.enable_symbolic_distillation:
         return
-    from poraque.ml.symbolic import FEATURE_SCHEMES
-
+    if settings.template not in TEMPLATES:
+        raise SystemExit(
+            f"symbolic.template={settings.template!r} is not known; expected "
+            f"one of {list(TEMPLATES)}.")
     if settings.features not in FEATURE_SCHEMES:
         raise SystemExit(
             f"symbolic.features={settings.features!r} is not a known feature "
@@ -519,7 +676,8 @@ def validate_symbolic_settings(settings):
             f"than 10.")
 
 
-def run_symbolic_distillation(task, dataset, operator, config, log):
+def run_symbolic_distillation(task, dataset, operator, config, log,
+                              validation=None, report=None):
     r"""
     Search for a closed-form expression reproducing the trained operator.
 
@@ -551,13 +709,30 @@ def run_symbolic_distillation(task, dataset, operator, config, log):
     log("=" * 78)
     start = time.time()
     try:
-        result = distill_dataset(dataset, settings, operator=operator, log=log)
+        result = distill_dataset(dataset, settings, operator=operator, log=log,
+                                 validation=validation)
     except ImportError as error:
         log(f"  unavailable: {error}")
         return None
     except (ValueError, RuntimeError) as error:
         log(f"  failed: {error}")
         return None
+
+    # The formula gets the same parity plot the network does, against the same
+    # DFT reference, so the two are read on one scale rather than through two
+    # differently-defined summary numbers.
+    if report is not None and result.validation.get("reference") is not None:
+        label_text, unit = FIELD_LABELS[task.target_field]
+        previous, report.prefix = report.prefix, f"{task.name}_symbolic"
+        try:
+            result.parity_plot = report.parity(
+                result.validation["reference"], result.validation["predicted"],
+                name="parity", label=label_text, unit=unit, log=True,
+                prediction_label="symbolic formula",
+                title=f"{task.name} · distilled formula on held-out data")
+        finally:
+            report.prefix = previous
+        log(f"  parity plot  : {result.parity_plot}")
 
     log(f"\n{result.summary()}")
     log(f"  search time  : {time.time() - start:.1f} s")
@@ -622,7 +797,22 @@ def run_task(task_name, cache, config, log):
         f"(capped per bucket; batches mix structures of equal shape)")
     log(f"  transforms          : in {source_transform}  out {target_transform}")
 
-    operator = build_operator(task, train_set, config, log)
+    fine_tuning = None
+    if config.fine_tuning.enable:
+        operator, fine_tuning = load_pretrained_operator(
+            task, train_set, validation, config, log)
+    else:
+        operator = build_operator(task, train_set, config, log)
+
+    # A fine-tune replaces the base learning rate: continuing at it would walk
+    # the weights away from the solution being adapted before a small dataset
+    # could constrain them.
+    learning_rate = (config.fine_tuning.learning_rate if fine_tuning
+                     else config.training.learning_rate)
+    if fine_tuning:
+        log(f"      learning rate    : {learning_rate:g} "
+            f"(fine-tuning; base training uses "
+            f"{config.training.learning_rate:g})")
 
     # Early stopping needs something to watch. With no validation split the
     # library would warn -- rightly, for a caller who asked for both -- but here
@@ -639,7 +829,7 @@ def run_task(task_name, cache, config, log):
     history = train(
         operator, train_set, validation=validation,
         epochs=config.training.epochs, batch_size=config.training.batch_size,
-        learning_rate=config.training.learning_rate,
+        learning_rate=learning_rate,
         weight_decay=config.training.weight_decay,
         scheduler=config.training.scheduler, grad_clip=config.training.grad_clip,
         loss=build_loss(config, task.name), seed=config.training.seed,
@@ -734,7 +924,8 @@ def run_task(task_name, cache, config, log):
         log(f"  figures         -> {config.output.plot_dir} ({len(figures)})")
 
     # ---------------- symbolic distillation ---------------- #
-    symbolic = run_symbolic_distillation(task, train_set, operator, config, log)
+    symbolic = run_symbolic_distillation(task, train_set, operator, config, log,
+                                         validation=validation, report=report)
 
     # ---------------- PDF report ---------------- #
     pdf = None
@@ -751,20 +942,30 @@ def run_task(task_name, cache, config, log):
                 "training fit, not a generalisation estimate."
             )
         reporter = ModelReport(config.output.report_dir)
+        summary = {
+            "model": type(operator.model).__name__,
+            "parameters": f"{operator.model.n_parameters():,}",
+            "training structures": str(len(train_set)),
+            "grid shapes": ", ".join(str(s) for s in sorted(buckets)),
+            "epochs": str(config.training.epochs),
+            "batch size": str(config.training.batch_size),
+            "device": describe_device(operator.device),
+            "training time": f"{elapsed:.1f} s",
+        }
+        summary.update(loss_summary(history))
+        if fine_tuning:
+            # Ahead of the rest: a reader who misses this reads every number
+            # below as belonging to a model trained from scratch.
+            summary = {**fine_tuning, **summary}
+            caveats.insert(0, (
+                "This is a FINE-TUNED model, adapted from "
+                f"{fine_tuning['pretrained checkpoint']}. Its scores describe "
+                "the material family it was specialised on, and say nothing "
+                "about the broader set the base model was trained across."))
         pdf = reporter.build(
             task=task.name, per_material=per_material, figures=figures,
             unit=task.target_unit, caveats=caveats,
-            summary={
-                "model": type(operator.model).__name__,
-                "parameters": f"{operator.model.n_parameters():,}",
-                "training structures": str(len(train_set)),
-                "grid shapes": ", ".join(str(s) for s in sorted(buckets)),
-                "epochs": str(config.training.epochs),
-                "batch size": str(config.training.batch_size),
-                "device": describe_device(operator.device),
-                "training time": f"{elapsed:.1f} s",
-                "final train loss": f"{history['train_loss'][-1]:.5f}",
-            },
+            summary=summary,
             configuration={f"{section}.{key}": value
                            for section, values in config.to_dict().items()
                            if isinstance(values, dict)
@@ -789,7 +990,9 @@ def run_task(task_name, cache, config, log):
         "final_train_loss": history["train_loss"][-1],
         "history": curves,
         "early_stopping": stopping,
-        "symbolic": (asdict(symbolic) if symbolic is not None else None),
+        "fine_tuning": fine_tuning,
+        "symbolic": (result_to_dict(symbolic) if symbolic is not None
+                     else None),
         # Not serialised into the JSON summary; main() pops it to build the
         # unified bundle once every task has trained.
         "operator": operator,
@@ -1064,6 +1267,26 @@ def build_parser():
     group.add_argument("--device", dest="training.device", default=None,
                        help="auto | cuda | mps | cpu")
 
+    group = parser.add_argument_group("fine-tuning")
+    group.add_argument("--fine-tune", dest="fine_tuning.enable",
+                       action="store_const", const=True, default=None,
+                       help="start from a trained checkpoint instead of a "
+                            "fresh initialisation, to specialise it on this "
+                            "dataset")
+    group.add_argument("--pretrained", dest="fine_tuning.pretrained_checkpoint",
+                       default=None, metavar="PATH",
+                       help="base bundle to adapt (default: "
+                            "models/poraque_models.pfno)")
+    group.add_argument("--fine-tune-lr", dest="fine_tuning.learning_rate",
+                       type=float, default=None, metavar="LR",
+                       help="learning rate for the fine-tune, replacing "
+                            "--learning-rate")
+    group.add_argument("--freeze-lifting",
+                       dest="fine_tuning.freeze_lifting_layers",
+                       action="store_const", const=True, default=None,
+                       help="hold the input lifting path fixed and train the "
+                            "rest")
+
     group = parser.add_argument_group("symbolic distillation")
     group.add_argument("--symbolic",
                        dest="symbolic.enable_symbolic_distillation",
@@ -1076,10 +1299,15 @@ def build_parser():
                        help="fit the operator's predictions (model) or the "
                             "DFT data (reference)")
     group.add_argument("--symbolic-features", dest="symbolic.features",
-                       choices=["gga", "enhancement", "raw"], default=None,
+                       choices=list(FEATURE_SCHEMES), default=None,
                        help="variables handed to the engine: (rho, p, q), the "
                             "enhancement factor on (p, q), or the dimensional "
                             "(rho, |grad rho|, lap rho)")
+    group.add_argument("--symbolic-template", dest="symbolic.template",
+                       choices=list(TEMPLATES), default=None,
+                       help="factorise the target before the search: "
+                            "thomas_fermi fits the enhancement factor F in "
+                            "tau = tau_TF * F")
     group.add_argument("--symbolic-epsilon", dest="symbolic.epsilon",
                        type=float, default=None, metavar="RHO",
                        help="vacuum threshold in e/a0^3; denominators are "
@@ -1118,6 +1346,7 @@ def run(argv=None):
     config.apply_overrides(overrides)
     if args.no_plots:
         config.output.plot_dir = None
+    validate_fine_tuning_settings(config)
     validate_symbolic_settings(config.symbolic)
 
     log = Tee(config.output.log)
@@ -1150,14 +1379,35 @@ def run(argv=None):
                      if r.get("operator") is not None}
         bundle = None
         if operators and config.output.checkpoint_dir:
-            bundle = os.path.join(config.output.checkpoint_dir,
-                                  BUNDLE_FILENAME)
-            save_bundle(bundle, operators, metadata={
+            # A fine-tune is a specialisation, usually to a narrower set of
+            # materials. Writing it over the general model would replace
+            # something broad with something narrow, silently and by default.
+            filename = (FINETUNED_BUNDLE_FILENAME if config.fine_tuning.enable
+                        else BUNDLE_FILENAME)
+            bundle = os.path.join(config.output.checkpoint_dir, filename)
+
+            if (config.fine_tuning.enable
+                    and os.path.abspath(bundle) == os.path.abspath(
+                        config.fine_tuning.pretrained_checkpoint)):
+                raise SystemExit(
+                    f"refusing to write the fine-tuned model over its own base "
+                    f"checkpoint at {bundle}. Point output.checkpoint_dir "
+                    f"somewhere else.")
+
+            metadata = {
                 "structures": sorted({name for r in results
                                       for name in r.get("train_structures", [])}),
                 "resolution": config.data.resolution,
                 "epochs": config.training.epochs,
-            })
+            }
+            if config.fine_tuning.enable:
+                metadata["fine_tuned_from"] = \
+                    config.fine_tuning.pretrained_checkpoint
+                metadata["fine_tuning_learning_rate"] = \
+                    config.fine_tuning.learning_rate
+                metadata["froze_lifting_layers"] = \
+                    config.fine_tuning.freeze_lifting_layers
+            save_bundle(bundle, operators, metadata=metadata)
             for result in results:
                 result["checkpoint"] = bundle
             log(f"\n  models -> {bundle}  ({', '.join(sorted(operators))})")

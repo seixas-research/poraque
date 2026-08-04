@@ -260,3 +260,4 @@ models_blur/
 
 # PySR scratch output (symbolic distillation)
 outputs/
+*.pfno

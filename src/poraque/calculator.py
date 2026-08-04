@@ -17,7 +17,7 @@ the calculator protocol::
     from poraque.calculator import Poraque
 
     atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-    atoms.calc = Poraque("models/poraque_models.pth", potcar="POTCAR")
+    atoms.calc = Poraque("models/poraque_models.pfno", potcar="POTCAR")
     energy = atoms.get_potential_energy()
 
 Each call runs
@@ -67,7 +67,7 @@ except ImportError as error:                              # pragma: no cover
 
 from .fields import ChargeDensity, ExternalPotential, FieldGrid
 from .fields.structure import Structure
-from .ml import BUNDLE_FILENAME
+from .ml import BUNDLE_FILENAME, resolve_bundle_path
 from .physics import EnergyCalculator
 
 #: Fallback grid resolution when neither the caller nor the checkpoints say.
@@ -82,7 +82,7 @@ class Poraque(Calculator):
     ----------
     models : str, optional
         The unified checkpoint written by ``poraque-train``, holding both
-        operators. Defaults to ``models/poraque_models.pth``.
+        operators. Defaults to ``models/poraque_models.pfno``.
     ext2chg, chg2tau : FieldOperator, optional
         Already-loaded operators, overriding the corresponding entry of
         ``models``. Useful for evaluating a model that is still in memory.
@@ -144,7 +144,7 @@ class Poraque(Calculator):
     --------
     >>> from ase.build import bulk                                # doctest: +SKIP
     >>> atoms = bulk("Au", "fcc", a=4.08, cubic=True)             # doctest: +SKIP
-    >>> atoms.calc = Poraque("models/poraque_models.pth",
+    >>> atoms.calc = Poraque("models/poraque_models.pfno",
     ...                      potcar="POTCAR")                     # doctest: +SKIP
     >>> atoms.get_potential_energy()                              # doctest: +SKIP
     -123.456
@@ -172,7 +172,8 @@ class Poraque(Calculator):
         self._potcar_cache = {}
 
         if models is None and (ext2chg is None or chg2tau is None):
-            models = os.path.join("models", BUNDLE_FILENAME)
+            models = resolve_bundle_path(
+                os.path.join("models", BUNDLE_FILENAME))
         self.models = str(models) if models is not None else None
 
         self.ext2chg = self._resolve_operator(

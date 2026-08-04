@@ -89,6 +89,12 @@ _LAZY = {
     "FieldOperator": "poraque.ml.training",
     "evaluate": "poraque.ml.training",
     "train": "poraque.ml.training",
+    # fine-tuning
+    "LIFTING_PREFIXES": "poraque.ml.training",
+    "freeze_lifting_layers": "poraque.ml.training",
+    "FINETUNED_BUNDLE_FILENAME": "poraque.ml.training",
+    "LEGACY_BUNDLE_SUFFIXES": "poraque.ml.training",
+    "resolve_bundle_path": "poraque.ml.training",
     # symbolic distillation
     "FeatureTable": "poraque.ml.symbolic",
     "SymbolicDistiller": "poraque.ml.symbolic",

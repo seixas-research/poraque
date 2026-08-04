@@ -34,7 +34,7 @@ Every output is written in ``CHGCAR`` format, so the predictions open directly
 in VESTA, VMD or any tool that reads VASP volumetric files.
 
 Both operators are read from a **single unified checkpoint**,
-``models/poraque_models.pth``, written by ``poraque-train``. One file for the
+``models/poraque_models.pfno``, written by ``poraque-train``. One file for the
 whole chain means the two halves cannot be copied separately or mixed across
 training runs.
 
@@ -67,7 +67,7 @@ command and runs from any directory::
 
     # explicit bundle, and a coarser grid
     poraque-inference new_structure/ \
-        --models models/poraque_models.pth --encut 300
+        --models models/poraque_models.pfno --encut 300
 
     # match an existing calculation's grid, for a direct comparison
     poraque-inference run/ --like run/CHGCAR --compare
@@ -107,6 +107,7 @@ from poraque.fields.io import resolve_reader  # noqa: E402
 from poraque.fields.resample import downsample_shape  # noqa: E402
 from poraque.ml import (  # noqa: E402
     BUNDLE_FILENAME,
+    resolve_bundle_path,
     infer_backbone_kwargs,
     load_bundle,
     read_bundle,
@@ -139,7 +140,7 @@ def load_operator(bundle, task, device):
     Parameters
     ----------
     bundle : str
-        Path to ``poraque_models.pth``.
+        Path to ``poraque_models.pfno``.
     task : str
         ``"ext2chg"`` or ``"chg2tau"``.
     device : torch.device or str
@@ -541,6 +542,7 @@ def predict(argv=None):
         print(message)
         lines.append(str(message))
 
+    args.models = resolve_bundle_path(args.models, log)
     results = run(args, log)
 
     if args.json:

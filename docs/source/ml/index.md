@@ -69,8 +69,10 @@ poraque-train --config configs/train_config.yaml
 
 A fifth of the structures is held back for validation (`valid_fraction`), so
 the reported score is genuinely held out. The run writes a single unified
-checkpoint, `models/poraque_models.pth`, holding both operators under the keys
-`ext2chg` and `chg2tau`.
+checkpoint in Poraquê's own **`.pfno`** format (*Poraquê Fourier Neural
+Operator*) — `models/poraque_models.pfno` — holding both operators under the
+keys `ext2chg` and `chg2tau`. A [fine-tuned](../fine_tuning/index.md) model is
+written beside it as `poraque_finetuned.pfno`, never over the top of it.
 
 K-fold cross-validation is the only variation on this:
 

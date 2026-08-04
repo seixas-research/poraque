@@ -286,6 +286,50 @@ class TestWrappableValues:
         assert _escape("{") in wrapped
 
 
+class TestConfigurationKeys:
+    """
+    The key column is fixed-width, so a long key must be *breakable*, not just
+    escaped: `symbolic.enable_symbolic_distillation` is 37 characters with no
+    space, and one unbreakable word overruns its column and prints on top of
+    the value in the next one.
+    """
+
+    LONG = "symbolic.enable_symbolic_distillation"
+
+    def test_a_long_key_gains_break_points(self):
+        rendered = _wrappable(self.LONG)
+        assert r"\allowbreak{}" in rendered
+
+    def test_no_fragment_is_too_wide_for_the_column(self):
+        """Every piece between break points must fit p{4.6cm}."""
+        pieces = _wrappable(self.LONG).split(r"\allowbreak{}")
+        longest = max(len(piece.replace("\\_", "_")) for piece in pieces)
+        assert longest <= 22          # ~4.2 cm at 11pt, inside the 4.6 cm cell
+
+    def test_short_keys_are_left_alone(self):
+        for key in ("training.epochs", "model.projection_channels",
+                    "symbolic.epsilon"):
+            assert r"\allowbreak" not in _wrappable(key)
+
+    def test_decimal_values_are_never_split(self):
+        """
+        A break after `.` would fix keys and wreck numbers, so `.` is
+        deliberately not a break character.
+        """
+        for value in ("0.0032", "1e-08", "0.002", "1.0"):
+            assert r"\allowbreak" not in _wrappable(value)
+
+    def test_every_real_config_key_fits(self):
+        from poraque.ml.config import TrainingConfig
+
+        sections = TrainingConfig().to_dict()
+        keys = [f"{section}.{key}" for section, values in sections.items()
+                if isinstance(values, dict) for key in values]
+        for key in keys:
+            pieces = _wrappable(key).split(r"\allowbreak{}")
+            assert max(len(p.replace("\\_", "_")) for p in pieces) <= 26
+
+
 class TestNestedConfigValues:
     """
     `training.physics` is a dict. Printed as its repr it is one unreadable

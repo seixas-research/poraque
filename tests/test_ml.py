@@ -389,7 +389,7 @@ class TestTraining:
             os.path.join(dataset_root, "mat_00", "EXTCAR"))
         expected = operator.predict(potential).data
 
-        path = tmp_path / "operator.pt"
+        path = tmp_path / "operator.pfno"
         operator.save(path)
         restored = FieldOperator.load(path, device="cpu", **kwargs)
         assert np.abs(restored.predict(potential).data - expected).max() < 1e-6
@@ -441,7 +441,7 @@ class TestBundle:
     def test_round_trip_preserves_the_weights(self, pair, tmp_path):
         from poraque.ml import load_bundle, save_bundle
 
-        path = save_bundle(str(tmp_path / "poraque_models.pth"), pair)
+        path = save_bundle(str(tmp_path / "poraque_models.pfno"), pair)
         for task, original in pair.items():
             restored = load_bundle(path, task, device="cpu")
             for a, b in zip(original.model.state_dict().values(),
@@ -451,7 +451,7 @@ class TestBundle:
     def test_round_trip_preserves_the_metadata(self, pair, tmp_path):
         from poraque.ml import load_bundle, save_bundle
 
-        path = save_bundle(str(tmp_path / "poraque_models.pth"), pair)
+        path = save_bundle(str(tmp_path / "poraque_models.pfno"), pair)
         restored = load_bundle(path, "chg2tau", device="cpu")
         assert restored.task.name == "chg2tau"
         assert restored.training_resolution == 24
@@ -463,7 +463,7 @@ class TestBundle:
         dataset = FieldPairDataset(dataset_root, task="ext2chg")
         source, _ = dataset.load_fields(0)
 
-        path = save_bundle(str(tmp_path / "poraque_models.pth"), pair)
+        path = save_bundle(str(tmp_path / "poraque_models.pfno"), pair)
         before = pair["ext2chg"].predict(source).data
         after = load_bundle(path, "ext2chg", device="cpu").predict(source).data
         assert np.allclose(before, after, atol=1e-6)
@@ -471,13 +471,13 @@ class TestBundle:
     def test_lists_its_tasks(self, pair, tmp_path):
         from poraque.ml import bundle_tasks, save_bundle
 
-        path = save_bundle(str(tmp_path / "poraque_models.pth"), pair)
+        path = save_bundle(str(tmp_path / "poraque_models.pfno"), pair)
         assert bundle_tasks(path) == ["chg2tau", "ext2chg"]
 
     def test_missing_task_names_what_is_present(self, pair, tmp_path):
         from poraque.ml import load_bundle, save_bundle
 
-        path = save_bundle(str(tmp_path / "one.pth"),
+        path = save_bundle(str(tmp_path / "one.pfno"),
                            {"ext2chg": pair["ext2chg"]})
         with pytest.raises(KeyError, match="chg2tau"):
             load_bundle(path, "chg2tau", device="cpu")
@@ -488,7 +488,7 @@ class TestBundle:
         """
         from poraque.ml import read_bundle
 
-        path = str(tmp_path / "ext2chg.pt")
+        path = str(tmp_path / "ext2chg.pfno")
         pair["ext2chg"].save(path)
         with pytest.raises(ValueError, match="single-operator checkpoint"):
             read_bundle(path)
@@ -496,13 +496,13 @@ class TestBundle:
     def test_creates_the_directory(self, pair, tmp_path):
         from poraque.ml import save_bundle
 
-        path = save_bundle(str(tmp_path / "nested" / "dir" / "m.pth"), pair)
+        path = save_bundle(str(tmp_path / "nested" / "dir" / "m.pfno"), pair)
         assert os.path.exists(path)
 
     def test_carries_provenance(self, pair, tmp_path):
         from poraque.ml import read_bundle, save_bundle
 
-        path = save_bundle(str(tmp_path / "poraque_models.pth"), pair,
+        path = save_bundle(str(tmp_path / "poraque_models.pfno"), pair,
                            metadata={"structures": ["a", "b"]})
         payload = read_bundle(path)
         assert payload["metadata"]["structures"] == ["a", "b"]
@@ -546,7 +546,7 @@ class TestBackboneInference:
         operator = FieldOperator("chg2tau", width=6, modes=3, n_layers=2,
                                  projection_channels=12, pauli_residual=True,
                                  pauli_scale=2.5, device="cpu")
-        path = save_bundle(str(tmp_path / "m.pth"), {"chg2tau": operator})
+        path = save_bundle(str(tmp_path / "m.pfno"), {"chg2tau": operator})
         restored = load_bundle(path, "chg2tau", device="cpu")
         assert restored.pauli_residual is True
         assert restored.pauli_scale == pytest.approx(2.5)

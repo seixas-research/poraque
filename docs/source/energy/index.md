@@ -85,7 +85,7 @@ Set it wherever the energy is computed:
 
 ```python
 EnergyCalculator.from_potential(vext, functional="lda")
-Poraque("ext2chg.pt", "chg2tau.pt", potcar_dir=..., functional="lda")
+Poraque("ext2chg.pfno", "chg2tau.pfno", potcar_dir=..., functional="lda")
 ```
 ```bash
 poraque-inference run/ --functional lda
@@ -143,7 +143,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-atoms.calc = Poraque("models/poraque_models.pth", potcar="POTCAR")
+atoms.calc = Poraque("models/poraque_models.pfno", potcar="POTCAR")
 
 energy = atoms.get_potential_energy()
 print(atoms.calc.components)          # the full decomposition
@@ -174,7 +174,7 @@ entries for whatever elements an `Atoms` contains are assembled on demand and
 cached per composition:
 
 ```python
-atoms.calc = Poraque("models/poraque_models.pth",
+atoms.calc = Poraque("models/poraque_models.pfno",
                      potcar_dir="/opt/vasp/potpaw_PBE")
 ```
 

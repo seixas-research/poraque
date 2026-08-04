@@ -10,7 +10,7 @@ data:
 model:
   width: 16
   modes: 8
-  n_layers: 2
+  n_layers: 4
   projection_channels: 48
   activation: gelu
   use_coordinates: true
@@ -51,3 +51,27 @@ output:
   report_dir: reports
   plot_format: png
   dpi: 200
+symbolic:
+  enable_symbolic_distillation: true
+  target: model
+  features: gga
+  epsilon: 1.0e-08
+  unary_operations:
+  - exp
+  - log
+  - sqrt
+  - abs
+  binary_operations:
+  - +
+  - '-'
+  - '*'
+  - /
+  - ^
+  iterations: 40
+  population_size: 33
+  populations: 15
+  max_depth: 10
+  max_size: 30
+  parsimony: 0.0032
+  n_samples: 4000
+  seed: 0

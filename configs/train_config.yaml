@@ -69,7 +69,12 @@ symbolic:
   enable_symbolic_distillation: false
   target: model
   features: gga
+  template: none
   epsilon: 1.0e-08
+  constraints:
+    ^:
+    - -1
+    - 1
   unary_operations:
   - exp
   - log
@@ -89,3 +94,8 @@ symbolic:
   parsimony: 0.0032
   n_samples: 4000
   seed: 0
+fine_tuning:
+  enable: false
+  pretrained_checkpoint: models/poraque_models.pfno
+  learning_rate: 1.0e-05
+  freeze_lifting_layers: false

@@ -170,7 +170,7 @@ $(32,32,32)\times3$, $(30,32,32)\times1$ and $(32,30,32)\times1$ --- three
 distinct shapes flowing through one set of weights.
 
 The run writes a single unified checkpoint,
-\file{models/poraque\_models.pth}, holding both operators under the keys
+\file{models/poraque\_models.pfno}, holding both operators under the keys
 \opt{ext2chg} and \opt{chg2tau}.
 
 \begin{pwarn}
@@ -256,7 +256,7 @@ were, and whether the figures support a generalisation claim.
 \toprule
 Path & Contents \\
 \midrule
-\file{models/poraque\_models.pth} & both trained operators, in one file \\
+\file{models/poraque\_models.pfno} & both trained operators, in one file \\
 \file{logs/*.log} & human-readable training log \\
 \file{logs/*.json} & machine-readable metrics and full history \\
 \file{logs/*\_config.yaml} & the resolved configuration, for reproduction \\
