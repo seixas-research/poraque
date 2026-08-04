@@ -16,10 +16,12 @@ did not pin it down.
 
 ```bash
 for s in 0 1 2 3 4; do
-  python scripts/run_train.py --config configs/train_config.yaml \
+  poraque-train --config configs/train_config.yaml \
       --init-seed $s --json logs/committee_$s.json \
       --checkpoint-dir models/committee_$s
 done
+
+poraque-committee --models "models/committee_*" --task ext2chg
 ```
 
 `init_seed` is deliberately **separate from `seed`**. `FieldOperator` saves and

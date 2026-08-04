@@ -4,8 +4,8 @@
 \section{The short version}
 
 \begin{lstlisting}
-python scripts/run_train.py --write-config configs/train_config.yaml
-python scripts/run_train.py --config configs/train_config.yaml
+poraque-train --write-config configs/train_config.yaml
+poraque-train --config configs/train_config.yaml
 \end{lstlisting}
 
 This trains \textbf{one} \opt{ext2chg} model and \textbf{one} \opt{chg2tau}
@@ -55,7 +55,7 @@ Splitting is always at the \emph{structure} level.
 \subsection{The default split}
 
 \begin{lstlisting}
-python scripts/run_train.py --config configs/train_config.yaml \
+poraque-train --config configs/train_config.yaml \
        --valid-fraction 0.2
 \end{lstlisting}
 
@@ -67,7 +67,7 @@ This is the only variation on the protocol; \opt{valid\_fraction} is ignored,
 since the folds define the splits.
 
 \begin{lstlisting}
-python scripts/run_train.py --config configs/train_config.yaml \
+poraque-train --config configs/train_config.yaml \
        --kfold --k-folds 5
 \end{lstlisting}
 

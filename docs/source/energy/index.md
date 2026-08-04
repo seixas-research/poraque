@@ -88,7 +88,7 @@ EnergyCalculator.from_potential(vext, functional="lda")
 Poraque("ext2chg.pt", "chg2tau.pt", potcar_dir=..., functional="lda")
 ```
 ```bash
-python scripts/run_eval.py run/ --functional lda
+poraque-inference run/ --functional lda
 ```
 
 ## Computing energies from files

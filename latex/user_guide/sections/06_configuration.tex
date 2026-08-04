@@ -5,7 +5,7 @@ A run is defined by \file{configs/train\_config.yaml}: one top-level key and
 four sections. Generate a copy with every default written out explicitly with
 
 \begin{lstlisting}
-python scripts/run_train.py --write-config configs/train_config.yaml
+poraque-train --write-config configs/train_config.yaml
 \end{lstlisting}
 
 This chapter documents every key that file can contain.
@@ -24,7 +24,7 @@ That ordering is what lets a single committed configuration be swept from the
 shell without being edited or copied:
 
 \begin{lstlisting}
-python scripts/run_train.py --config configs/train_config.yaml --epochs 500
+poraque-train --config configs/train_config.yaml --epochs 500
 \end{lstlisting}
 
 \begin{pnote}

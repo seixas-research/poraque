@@ -146,7 +146,7 @@ capacity re-learning $\lvert\nabla\rho\rvert^2/8\rho$, which is analytically
 known and often dominates.
 
 Implemented as `poraque.ml.heads.PauliResidualOperator`; enable with
-`FieldOperator(..., pauli_residual=True)` or `run_train.py --pauli-head`.
+`FieldOperator(..., pauli_residual=True)` or `poraque-train --pauli-head`.
 Notes from the implementation:
 
 * The head consumes and returns *normalised* fields, so it is a drop-in

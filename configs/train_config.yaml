@@ -1,12 +1,16 @@
 # =====================================================================
 # Poraque - Fourier Neural Operator training configuration
 #
-#   python scripts/run_train.py --config configs/train_config.yaml
+#   poraque-train --config configs/train_config.yaml
 #
 # Command-line flags override these values, so one committed config can
 # be swept from the shell without editing it:
 #
-#   python scripts/run_train.py --config configs/train_config.yaml --epochs 500
+#   poraque-train --config configs/train_config.yaml --epochs 500
+#
+# Equivalent, from a checkout with nothing installed:
+#
+#   python scripts/poraque_train.py --config configs/train_config.yaml
 # =====================================================================
 task: all
 data:

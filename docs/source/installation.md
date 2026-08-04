@@ -13,6 +13,31 @@ pip install -e .
 
 This pulls in NumPy, SciPy, ASE, pandas, Matplotlib and PyTorch.
 
+## Console commands
+
+Installing also registers three commands, which run from **any** directory once
+the environment is active — no path to a script, no `cd` into the repository:
+
+| Command | Does | Equivalent |
+| --- | --- | --- |
+| `poraque-train` | trains the operators | `python scripts/poraque_train.py` |
+| `poraque-inference` | predicts a new structure | `python scripts/poraque_inference.py` |
+| `poraque-committee` | ranks structures by ensemble disagreement | `python scripts/poraque_committee.py` |
+
+Each is the `main()` of the corresponding script, so the two forms take
+identical arguments and behave identically. Relative paths in a configuration
+file (`data/vasp`, `models/`) are still resolved against the **working
+directory**, so run these from the project root, or give absolute paths.
+
+```bash
+poraque-train --help
+poraque-inference --help
+poraque-committee --help
+```
+
+If the commands are not found after an upgrade, re-run `pip install -e .`:
+entry points are registered at install time, not import time.
+
 ## Optional components
 
 | Component | Needed for | Install |

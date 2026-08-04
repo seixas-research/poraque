@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# file: run_train.py
+# file: poraque_train.py
 
 # This code is part of Poraquê.
 # MIT License
@@ -43,13 +43,17 @@ Weizsäcker and ``TF + vW/9`` functionals evaluated on the same input, and
 
 Usage
 -----
-::
+Installed (``pip install -e .``), this is the ``poraque-train`` console command
+and runs from any directory::
 
-    python scripts/run_train.py --write-config configs/train_config.yaml
-    python scripts/run_train.py --config configs/train_config.yaml
-    python scripts/run_train.py --config configs/train_config.yaml --epochs 500
-    python scripts/run_train.py --config configs/train_config.yaml --device mps
-    python scripts/run_train.py --config configs/train_config.yaml --kfold
+    poraque-train --write-config configs/train_config.yaml
+    poraque-train --config configs/train_config.yaml
+    poraque-train --config configs/train_config.yaml --epochs 500
+    poraque-train --config configs/train_config.yaml --device mps
+    poraque-train --config configs/train_config.yaml --kfold
+
+Running this file directly — ``python scripts/poraque_train.py`` — is
+equivalent, and needs nothing installed.
 """
 
 import argparse
@@ -60,7 +64,12 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+# Run straight from a checkout, without installing, by preferring the in-tree
+# package. Installed as the ``poraque-train`` console script this module sits in
+# site-packages, that directory does not exist, and the installed package wins.
+_SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+if os.path.isdir(_SRC):
+    sys.path.insert(0, _SRC)
 
 import torch  # noqa: E402
 
@@ -879,7 +888,8 @@ def build_parser():
     return parser
 
 
-def main(argv=None):
+def run(argv=None):
+    """Parse ``argv``, train every requested task, and return the results."""
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -991,5 +1001,16 @@ def main(argv=None):
         log.close()
 
 
+def main(argv=None):
+    """Console entry point for ``poraque-train``.
+
+    Returns a process exit status, because the ``[project.scripts]`` wrapper
+    calls ``sys.exit(main())`` and would treat any other object as an error
+    message. :func:`run` returns the result records themselves.
+    """
+    run(argv)
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

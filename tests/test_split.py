@@ -8,7 +8,7 @@ stopping.
 The split is defined by one number, ``valid_fraction``; K-fold cross-validation
 is the only variation on the protocol.
 
-The split resolver lives in ``scripts/run_train.py`` rather than the package,
+The split resolver lives in ``scripts/poraque_train.py`` rather than the package,
 so it is imported by path here — the alternative, duplicating the logic in a
 library module, would let the two drift apart and only the script's copy is
 what actually runs.
@@ -27,17 +27,17 @@ from poraque.ml.config import TrainingConfig
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _load_run_train():
-    """Import ``scripts/run_train.py`` as a module."""
-    path = os.path.join(_ROOT, "scripts", "run_train.py")
-    spec = importlib.util.spec_from_file_location("_run_train", path)
+def _load_poraque_train():
+    """Import ``scripts/poraque_train.py`` as a module."""
+    path = os.path.join(_ROOT, "scripts", "poraque_train.py")
+    spec = importlib.util.spec_from_file_location("_poraque_train", path)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["_run_train"] = module
+    sys.modules["_poraque_train"] = module
     spec.loader.exec_module(module)
     return module
 
 
-run_train = _load_run_train()
+poraque_train = _load_poraque_train()
 
 
 class _Material:
@@ -62,7 +62,7 @@ class TestValidFraction:
     def test_zero_falls_back_to_the_universal_fit(self):
         config = TrainingConfig()
         config.training.valid_fraction = 0.0
-        validation, origin = run_train.resolve_validation_split(_Dataset(5), config)
+        validation, origin = poraque_train.resolve_validation_split(_Dataset(5), config)
         assert validation == set()
         assert "TRAINING FIT" in origin
 
@@ -72,14 +72,14 @@ class TestValidFraction:
     def test_reserves_the_requested_share(self, fraction, expected):
         config = TrainingConfig()
         config.training.valid_fraction = fraction
-        validation, _ = run_train.resolve_validation_split(_Dataset(10), config)
+        validation, _ = poraque_train.resolve_validation_split(_Dataset(10), config)
         assert len(validation) == expected
 
     def test_split_is_at_the_structure_level(self):
         """Whole materials move together; identifiers come out intact."""
         config = TrainingConfig()
         config.training.valid_fraction = 0.4
-        validation, _ = run_train.resolve_validation_split(_Dataset(5), config)
+        validation, _ = poraque_train.resolve_validation_split(_Dataset(5), config)
         assert validation <= {f"struct_{i:03d}" for i in range(5)}
 
     def test_is_reproducible_for_a_given_seed(self):
@@ -87,7 +87,7 @@ class TestValidFraction:
             config = TrainingConfig()
             config.training.valid_fraction = 0.3
             config.training.seed = seed
-            return run_train.resolve_validation_split(_Dataset(10), config)[0]
+            return poraque_train.resolve_validation_split(_Dataset(10), config)[0]
 
         assert draw(0) == draw(0)
 
@@ -99,7 +99,7 @@ class TestValidFraction:
             config.training.valid_fraction = 0.3
             config.training.seed = seed
             draws.add(frozenset(
-                run_train.resolve_validation_split(_Dataset(10), config)[0]))
+                poraque_train.resolve_validation_split(_Dataset(10), config)[0]))
         assert len(draws) > 1
 
     def test_never_empties_either_side(self):
@@ -109,11 +109,11 @@ class TestValidFraction:
         """
         config = TrainingConfig()
         config.training.valid_fraction = 0.01
-        validation, _ = run_train.resolve_validation_split(_Dataset(3), config)
+        validation, _ = poraque_train.resolve_validation_split(_Dataset(3), config)
         assert len(validation) == 1
 
         config.training.valid_fraction = 0.99
-        validation, _ = run_train.resolve_validation_split(_Dataset(3), config)
+        validation, _ = poraque_train.resolve_validation_split(_Dataset(3), config)
         assert len(validation) == 2      # one structure is always kept to train on
 
     def test_rejects_a_fraction_outside_the_range(self):
@@ -121,19 +121,19 @@ class TestValidFraction:
         for bad in (1.0, 1.5, -0.2):
             config.training.valid_fraction = bad
             with pytest.raises(SystemExit, match="valid_fraction"):
-                run_train.resolve_validation_split(_Dataset(5), config)
+                poraque_train.resolve_validation_split(_Dataset(5), config)
 
     def test_rejects_a_single_structure_dataset(self):
         config = TrainingConfig()
         config.training.valid_fraction = 0.5
         with pytest.raises(SystemExit, match="two structures"):
-            run_train.resolve_validation_split(_Dataset(1), config)
+            poraque_train.resolve_validation_split(_Dataset(1), config)
 
     def test_origin_records_the_protocol(self):
         config = TrainingConfig()
         config.training.valid_fraction = 0.25
         config.training.seed = 7
-        _, origin = run_train.resolve_validation_split(_Dataset(8), config)
+        _, origin = poraque_train.resolve_validation_split(_Dataset(8), config)
         assert "valid_fraction=0.25" in origin and "seed=7" in origin
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# file: run_committee.py
+# file: poraque_committee.py
 
 # This code is part of Poraquê.
 # MIT License
@@ -53,11 +53,12 @@ an ordering.
 
 Usage
 -----
-::
+Installed (``pip install -e .``), this is the ``poraque-committee`` console
+command and runs from any directory::
 
     # 1. train the members (same seed, different init_seed)
     for s in 0 1 2 3; do
-      python scripts/run_train.py --config configs/train_config.yaml \
+      poraque-train --config configs/train_config.yaml \
           --init-seed $s --valid-fraction 0 \
           --checkpoint-dir models/committee_$s \
           --log logs/committee_$s.log --json logs/committee_$s.json \
@@ -65,8 +66,11 @@ Usage
     done
 
     # 2. rank the structures, and check the ranking against known errors
-    python scripts/run_committee.py --models "models/committee_*" \
+    poraque-committee --models "models/committee_*" \
         --task ext2chg --against logs/kfold12b.json
+
+Running this file directly — ``python scripts/poraque_committee.py`` — is
+equivalent, and needs nothing installed.
 """
 
 import argparse
@@ -77,7 +81,13 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+# Run straight from a checkout, without installing, by preferring the in-tree
+# package. Installed as the ``poraque-committee`` console script this module
+# sits in site-packages, that directory does not exist, and the installed
+# package wins.
+_SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+if os.path.isdir(_SRC):
+    sys.path.insert(0, _SRC)
 
 from poraque.fields import ChargeDensity, FieldGrid  # noqa: E402
 from poraque.ml import (  # noqa: E402
@@ -102,7 +112,7 @@ def resolve_bundles(pattern):
     if len(paths) < 2:
         raise SystemExit(
             f"{pattern!r} matched {len(paths)} checkpoint(s); a committee "
-            f"needs at least two. Train members with run_train.py --init-seed."
+            f"needs at least two. Train members with poraque-train --init-seed."
         )
     return paths
 
@@ -123,7 +133,8 @@ def reference_errors(path, task):
     return errors
 
 
-def main(argv=None):
+def rank(argv=None):
+    """Parse ``argv``, score every structure, and return the ranked records."""
     parser = argparse.ArgumentParser(
         description="Rank structures by committee disagreement (JSD).")
     parser.add_argument("--models", default="models/committee_*",
@@ -236,5 +247,16 @@ def _read(directory, filename, grid):
     return classes[filename].read(os.path.join(directory, filename), grid=grid)
 
 
+def main(argv=None):
+    """Console entry point for ``poraque-committee``.
+
+    Returns a process exit status, because the ``[project.scripts]`` wrapper
+    calls ``sys.exit(main())`` and would treat any other object as an error
+    message. :func:`rank` returns the scored records themselves.
+    """
+    rank(argv)
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

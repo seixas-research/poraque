@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# file: run_eval.py
+# file: poraque_inference.py
 
 # This code is part of Poraquê.
 # MIT License
@@ -34,7 +34,7 @@ Every output is written in ``CHGCAR`` format, so the predictions open directly
 in VESTA, VMD or any tool that reads VASP volumetric files.
 
 Both operators are read from a **single unified checkpoint**,
-``models/poraque_models.pth``, written by ``run_train.py``. One file for the
+``models/poraque_models.pth``, written by ``poraque-train``. One file for the
 whole chain means the two halves cannot be copied separately or mixed across
 training runs.
 
@@ -60,16 +60,20 @@ All three fields must share one mesh. Its shape is resolved in this order:
 
 Usage
 -----
-::
+Installed (``pip install -e .``), this is the ``poraque-inference`` console
+command and runs from any directory::
 
-    python scripts/run_eval.py new_structure/ --output predictions/new
+    poraque-inference new_structure/ --output predictions/new
 
     # explicit bundle, and a coarser grid
-    python scripts/run_eval.py new_structure/ \
+    poraque-inference new_structure/ \
         --models models/poraque_models.pth --encut 300
 
     # match an existing calculation's grid, for a direct comparison
-    python scripts/run_eval.py run/ --like run/CHGCAR --compare
+    poraque-inference run/ --like run/CHGCAR --compare
+
+Running this file directly — ``python scripts/poraque_inference.py`` — is
+equivalent, and needs nothing installed.
 """
 
 import argparse
@@ -81,7 +85,13 @@ import warnings
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+# Run straight from a checkout, without installing, by preferring the in-tree
+# package. Installed as the ``poraque-inference`` console script this module
+# sits in site-packages, that directory does not exist, and the installed
+# package wins.
+_SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
+if os.path.isdir(_SRC):
+    sys.path.insert(0, _SRC)
 
 import torch  # noqa: E402
 
@@ -474,7 +484,8 @@ def run(args, log):
     return results
 
 
-def main(argv=None):
+def predict(argv=None):
+    """Parse ``argv``, run the prediction, and return the result records."""
     parser = argparse.ArgumentParser(
         description="Predict CHGCAR and TAUCAR for a new structure from its "
                     "geometry, using the trained Fourier Neural Operators.",
@@ -545,5 +556,16 @@ def main(argv=None):
     return results
 
 
+def main(argv=None):
+    """Console entry point for ``poraque-inference``.
+
+    Returns a process exit status, because the ``[project.scripts]`` wrapper
+    calls ``sys.exit(main())`` and would treat any other object as an error
+    message. :func:`predict` returns the result records themselves.
+    """
+    predict(argv)
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

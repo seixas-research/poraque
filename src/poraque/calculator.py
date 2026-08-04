@@ -81,7 +81,7 @@ class Poraque(Calculator):
     Parameters
     ----------
     models : str, optional
-        The unified checkpoint written by ``run_train.py``, holding both
+        The unified checkpoint written by ``poraque-train``, holding both
         operators. Defaults to ``models/poraque_models.pth``.
     ext2chg, chg2tau : FieldOperator, optional
         Already-loaded operators, overriding the corresponding entry of

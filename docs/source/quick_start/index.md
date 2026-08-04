@@ -42,8 +42,8 @@ The result is written in `CHGCAR` format and opens directly in VESTA.
 ## 3. Train
 
 ```bash
-python scripts/run_train.py --write-config configs/train_config.yaml
-python scripts/run_train.py --config configs/train_config.yaml
+poraque-train --write-config configs/train_config.yaml
+poraque-train --config configs/train_config.yaml
 ```
 
 This trains **one** `ext2chg` model and **one** `chg2tau` model on the combined
@@ -59,7 +59,7 @@ data of every structure, then writes:
 ## 4. Predict a new structure
 
 ```bash
-python scripts/run_eval.py new_structure/ --output predictions/new_structure
+poraque-inference new_structure/ --output predictions/new_structure
 ```
 
 Both operators come from the single `models/poraque_models.pth` written by
@@ -83,7 +83,7 @@ held out. For a tighter estimate — every structure scored by a model that neve
 saw it — run the cross-validation protocol instead:
 
 ```bash
-python scripts/run_train.py --config configs/train_config.yaml --kfold
+poraque-train --config configs/train_config.yaml --kfold
 ```
 
 That is the only variation on the training protocol. It fits *K* models and

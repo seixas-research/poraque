@@ -1,6 +1,6 @@
 # What the two FNOs actually learn, in DFT terms
 
-**Scope:** `poraque.ml` · **Companion:** `docs/notes/pi_fno.md` (the physics-informed roadmap), `scripts/run_train.py`
+**Scope:** `poraque.ml` · **Companion:** `docs/notes/pi_fno.md` (the physics-informed roadmap), `scripts/poraque_train.py`
 
 ---
 

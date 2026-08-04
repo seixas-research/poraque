@@ -9,6 +9,40 @@ pip install -e .
 
 This installs NumPy, SciPy, ASE, Matplotlib, PyYAML and PyTorch.
 
+\section{Console commands}
+\label{sec:console-scripts}
+
+Installing also registers three commands, which run from \emph{any} directory
+once the environment is active --- no path to a script, no \opt{cd} into the
+repository:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Command & Does \\
+\midrule
+\opt{poraque-train} & trains the operators \\
+\opt{poraque-inference} & predicts a new structure \\
+\opt{poraque-committee} & ranks structures by ensemble disagreement \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Each is the \opt{main()} of the script of the same name, with the hyphen
+written as an underscore: \opt{python scripts/poraque\_train.py} is equivalent
+to \opt{poraque-train} and needs nothing installed. Both forms take identical
+arguments and behave identically.
+
+\begin{pnote}
+Relative paths inside a configuration file (\file{data/vasp}, \file{models/})
+are resolved against the \textbf{working directory}, not the installation. Run
+these commands from the project root, or give absolute paths.
+\end{pnote}
+
+If a command is not found after an upgrade, re-run \opt{pip install -e .}:
+entry points are registered when the package is installed, not when it is
+imported.
+
 \section{Python version}
 
 \begin{pnote}

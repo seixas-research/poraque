@@ -477,16 +477,20 @@ class TrainingConfig:
         return "\n".join(lines)
 
 
-#: Written by ``scripts/run_train.py --write-config``.
+#: Written by ``poraque-train --write-config``.
 SAMPLE_CONFIG_HEADER = """\
 # =====================================================================
 # Poraque - Fourier Neural Operator training configuration
 #
-#   python scripts/run_train.py --config configs/train_config.yaml
+#   poraque-train --config configs/train_config.yaml
 #
 # Command-line flags override these values, so one committed config can
 # be swept from the shell without editing it:
 #
-#   python scripts/run_train.py --config configs/train_config.yaml --epochs 500
+#   poraque-train --config configs/train_config.yaml --epochs 500
+#
+# Equivalent, from a checkout with nothing installed:
+#
+#   python scripts/poraque_train.py --config configs/train_config.yaml
 # =====================================================================
 """

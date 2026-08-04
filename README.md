@@ -38,7 +38,11 @@ cd poraque
 pip install -e .
 ```
 
-Python 3.11 or newer.
+Python 3.11 or newer. Installing registers three console commands —
+`poraque-train`, `poraque-inference` and `poraque-committee` — which run from
+any directory once the environment is active. Each is the `main()` of the
+script of the same name under `scripts/`, so `python scripts/poraque_train.py`
+is equivalent to `poraque-train` and needs nothing installed.
 
 ## Use
 
@@ -47,14 +51,14 @@ Python 3.11 or newer.
 python scripts/validate_vasp_data.py --fit-sigma --form-factor
 
 # 2. train one ext2chg and one chg2tau model on all structures
-python scripts/run_train.py --write-config configs/train_config.yaml
-python scripts/run_train.py --config configs/train_config.yaml
+poraque-train --write-config configs/train_config.yaml
+poraque-train --config configs/train_config.yaml
 
 # 3. measure generalisation
-python scripts/run_train.py --config configs/train_config.yaml --kfold --k-folds 5
+poraque-train --config configs/train_config.yaml --kfold --k-folds 5
 
 # 4. predict a structure that has never been computed
-python scripts/run_eval.py new_structure/ --output predictions/new_structure
+poraque-inference new_structure/ --output predictions/new_structure
 ```
 
 Every predicted field is written in `CHGCAR` format and opens in VESTA.

@@ -37,8 +37,25 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://github.com/seixas-research/poraque"
 
+# Console commands, available anywhere once the environment is active.
+# They call the same ``main()`` that ``python scripts/<name>.py`` calls, so the
+# two invocations are identical in behaviour and take the same arguments.
+[project.scripts]
+poraque-train = "poraque_train:main"
+poraque-inference = "poraque_inference:main"
+poraque-committee = "poraque_committee:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/poraque"]
+# Two source roots: the package itself, plus the two driver scripts, which ship
+# as top-level modules so ``[project.scripts]`` can import them. The rest of
+# ``scripts/`` stays out of the wheel -- those are repository-local utilities.
+sources = ["src", "scripts"]
+only-include = [
+    "src/poraque",
+    "scripts/poraque_train.py",
+    "scripts/poraque_inference.py",
+    "scripts/poraque_committee.py",
+]
 
 [tool.hatch.version]
 path = "src/poraque/version.py"

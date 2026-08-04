@@ -64,7 +64,7 @@ material. Batches are drawn across materials, so a gradient step generally
 mixes several.
 
 ```bash
-python scripts/run_train.py --config configs/train_config.yaml
+poraque-train --config configs/train_config.yaml
 ```
 
 A fifth of the structures is held back for validation (`valid_fraction`), so
@@ -75,7 +75,7 @@ checkpoint, `models/poraque_models.pth`, holding both operators under the keys
 K-fold cross-validation is the only variation on this:
 
 ```bash
-python scripts/run_train.py --config configs/train_config.yaml --kfold
+poraque-train --config configs/train_config.yaml --kfold
 ```
 
 ```{warning}

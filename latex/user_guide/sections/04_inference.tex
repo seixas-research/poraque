@@ -2,7 +2,7 @@
 \label{ch:inference}
 
 \begin{lstlisting}
-python scripts/run_eval.py new_structure/ \
+poraque-inference new_structure/ \
     --output predictions/new_structure
 \end{lstlisting}
 
@@ -48,7 +48,7 @@ were fitted.
 \section{Comparing against a reference}
 
 \begin{lstlisting}
-python scripts/run_eval.py run/ \
+poraque-inference run/ \
     --like run/CHGCAR --compare --plot-dir results/plots/check
 \end{lstlisting}
 
