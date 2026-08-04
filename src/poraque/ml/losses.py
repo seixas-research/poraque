@@ -110,7 +110,7 @@ class PhysicsInformedLoss(nn.Module):
     the supervised baseline until a term is switched on deliberately. That is
     intentional: physics terms should be introduced one at a time against a
     measured baseline, since a badly scaled constraint degrades accuracy while
-    looking principled. See ``plan/pi_fno.md`` for the recommended schedule.
+    looking principled. See ``docs/notes/pi_fno.md`` for the recommended schedule.
 
     Parameters
     ----------

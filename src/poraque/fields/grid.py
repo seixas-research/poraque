@@ -21,7 +21,7 @@ Units follow the VASP convention: lengths in Ångström, wavevectors in Å⁻¹.
 
 import numpy as np
 
-from .constants import ANGSTROM_TO_BOHR, HBAR2_OVER_2M_EV_ANGSTROM2
+from .constants import HBAR2_OVER_2M_EV_ANGSTROM2
 
 
 def fft_friendly_size(n, factors=(2, 3, 5, 7), force_even=True):
@@ -427,20 +427,6 @@ class FieldGrid:
             return NotImplemented
         return (self.shape == other.shape
                 and np.allclose(self.cell, other.cell, atol=tol))
-
-    def to_core_grid(self, pbc=True):
-        """
-        Bridge to :class:`poraque.core.Grid` (Hartree atomic units).
-
-        Returns
-        -------
-        poraque.core.Grid
-            The same mesh with the cell converted from Ångström to Bohr, ready
-            for the DFT engine.
-        """
-        from ..core.grid import Grid
-
-        return Grid(self.shape, self.cell * ANGSTROM_TO_BOHR, pbc=pbc)
 
     def __eq__(self, other):
         return self.matches(other) if isinstance(other, FieldGrid) else NotImplemented

@@ -1,6 +1,6 @@
 # What the two FNOs actually learn, in DFT terms
 
-**Scope:** `poraque.ml` · **Companion:** `plan/pi_fno.md` (the physics-informed roadmap), `scripts/train_fno.py`
+**Scope:** `poraque.ml` · **Companion:** `docs/notes/pi_fno.md` (the physics-informed roadmap), `scripts/train_fno.py`
 
 ---
 
@@ -84,7 +84,7 @@ Same protocol, in e/Å³ on the held-out material:
 
 The electron count $\int\rho\,d^3r$ is recovered to within 2.3–2.8 % without
 any constraint enforcing it — which is precisely the degree of freedom the
-charge-normalisation head of `plan/pi_fno.md` §3.2 would pin exactly, for free.
+charge-normalisation head of `docs/notes/pi_fno.md` §3.2 would pin exactly, for free.
 
 ### 2.4 Two caveats worth stating plainly
 
@@ -145,7 +145,7 @@ The decomposition $\tau = \tau_{\rm vW} + \tau_P$ with the Pauli term
 $\tau_P \ge 0$ is the natural target: $\tau_{\rm vW}$ is known analytically
 from $\rho$, so a network that predicts only $\tau_P$ starts from a correct
 baseline instead of re-learning a closed-form expression. See §3 of
-`plan/pi_fno.md` for the recommended $\tau = \tau_{\rm vW} + \mathrm{softplus}(f_\theta)$
+`docs/notes/pi_fno.md` for the recommended $\tau = \tau_{\rm vW} + \mathrm{softplus}(f_\theta)$
 head, which makes the bound structural rather than penalised.
 
 ### 3.3 Measured result
@@ -257,7 +257,7 @@ strongest technical argument for choosing an FNO over a CNN for this problem,
 independent of accuracy.
 
 All of the above is implemented and unit-tested in `poraque/ml/physics.py`;
-`plan/pi_fno.md` gives the staged roadmap for switching the terms on.
+`docs/notes/pi_fno.md` gives the staged roadmap for switching the terms on.
 
 ---
 

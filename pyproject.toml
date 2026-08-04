@@ -37,6 +37,9 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://github.com/seixas-research/poraque"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/poraque"]
+
 [tool.hatch.version]
 path = "src/poraque/version.py"
 

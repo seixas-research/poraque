@@ -1,7 +1,7 @@
 # Poraquê roadmap
 
 **Updated:** after the autograd functional derivative landed
-**Companions:** `docs/model2_architecture.md` (why Model 2 exists), `plan/pi_fno.md` (physics-informed detail), `plan/fno_physics.md` (DFT ↔ FNO mapping)
+**Companions:** `docs/notes/model2_architecture.md` (why Model 2 exists), `docs/notes/pi_fno.md` (physics-informed detail), `docs/notes/fno_physics.md` (DFT ↔ FNO mapping)
 
 ---
 

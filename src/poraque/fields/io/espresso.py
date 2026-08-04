@@ -42,8 +42,8 @@ straight from the XML, which removes all guesswork.
 **Pseudopotentials** — UPF files named in ``ATOMIC_SPECIES``, found under
 ``pseudo_dir``. Parse the header for ``z_valence`` (the required field) and
 ``rcloc``/``rcut`` for the core radius, converting **Bohr → Ångström**.
-Poraquê already has a UPF reader in :mod:`poraque.pseudopotentials.upf`; reuse
-it rather than writing a second parser.
+The UPF header is plain XML-ish text, so ``z_valence`` can be pulled out
+without a full parser.
 
 **Fields** — QE does not write CHGCAR-like files directly. Two viable routes:
 
@@ -114,8 +114,8 @@ class EspressoReader(CalculationReader):
         """Return ``{element: PseudopotentialInfo}`` from the UPF files."""
         raise NotImplementedError(
             "EspressoReader.read_pseudopotentials: resolve ATOMIC_SPECIES "
-            "against pseudo_dir and parse z_valence from each UPF header "
-            "(reuse poraque.pseudopotentials.upf); convert radii Bohr -> Angstrom."
+            "against pseudo_dir, parse z_valence from each UPF header, and "
+            "convert radii Bohr -> Angstrom."
         )
 
     def read_field(self, path, field_class, grid=None):

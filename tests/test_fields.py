@@ -207,12 +207,6 @@ class TestFieldGrid:
         assert not a.matches(FieldGrid((10, 10, 12), poscar.cell))
         assert not a.matches(FieldGrid((10, 10, 10), poscar.cell * 1.1))
 
-    def test_core_grid_bridge_converts_to_bohr(self, poscar):
-        grid = FieldGrid((8, 8, 8), poscar.cell)
-        core = grid.to_core_grid()
-        assert core.shape == grid.shape
-        assert np.allclose(core.cell, grid.cell / 0.529177210903)
-
 
 # --------------------------------------------------------------------- #
 # External potential

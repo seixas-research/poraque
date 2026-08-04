@@ -9,7 +9,7 @@
 r"""
 Differentiable DFT operators and physics-informed loss terms.
 
-This module is the executable half of the PI-FNO plan in ``plan/pi_fno.md``.
+This module is the executable half of the PI-FNO plan in ``docs/notes/pi_fno.md``.
 Everything here is written in PyTorch and is differentiable with respect to the
 predicted field, so each function can be dropped straight into a training
 objective.
@@ -715,7 +715,7 @@ def euler_lagrange_residual(density, v_external, cell, lam=1.0 / 9.0,
     ``TF + lam*vW``, which is an approximation — the term supplies a physically
     correct *inductive bias*, not ground truth, and should carry a modest
     weight. Supplying ``kinetic`` removes that limitation, at the cost of
-    coupling the two models; see ``docs/model2_architecture.md`` §5, including
+    coupling the two models; see ``docs/notes/model2_architecture.md`` §5, including
     the warning that the residual alone has trivial solutions and the data
     terms must stay dominant.
     """

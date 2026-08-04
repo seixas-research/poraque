@@ -9,12 +9,11 @@
 """
 Physical constants for the VASP-facing :mod:`poraque.fields` stack.
 
-The rest of Poraquê works in Hartree atomic units (see
-:mod:`poraque.core.units`). The ``fields`` package instead uses the **VASP
-convention**, i.e. Ångström for lengths and electronvolt for energies, because
-every quantity it reads or writes (``POSCAR``, ``INCAR``, ``POTCAR``,
-``CHGCAR``) is expressed that way. Conversion factors to atomic units are
-provided for bridging to :class:`poraque.core.Grid` / :class:`poraque.core.System`.
+Poraquê works in the **VASP convention** — Ångström for lengths, electronvolt
+for energies — because every quantity it reads or writes (``POSCAR``,
+``INCAR``, ``POTCAR``, ``CHGCAR``) is expressed that way. Conversion factors to
+Hartree atomic units are kept because the analytic functionals (Thomas-Fermi,
+von Weizsäcker) have their natural form there and convert internally.
 """
 
 #: Bohr radius in Ångström (CODATA 2018).

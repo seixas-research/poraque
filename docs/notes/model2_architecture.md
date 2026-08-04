@@ -1,6 +1,6 @@
 # Why Model 2 exists: `chg2tau` as a learned kinetic energy functional
 
-**Scope:** architectural rationale for `poraque.ml` · **Companions:** `plan/pi_fno.md` (roadmap), `plan/fno_physics.md` (physics mapping), `docs/ked_formulation_analysis.md` (τ representation)
+**Scope:** architectural rationale for `poraque.ml` · **Companions:** `docs/notes/pi_fno.md` (roadmap), `docs/notes/fno_physics.md` (physics mapping)
 
 ---
 
@@ -335,9 +335,12 @@ $$
 **Both representations give the same OF-DFT physics.** Verified numerically:
 $|\int\tau_L - \int\tau_{\rm PD}| = 3.6\times10^{-12}$ eV.
 
-What *does* differ is the learning problem — sign-definiteness, spectral
-content, and which structural constraints apply. That is the subject of
-`docs/ked_formulation_analysis.md`.
+What *does* differ is the learning problem. Measured on the reference data,
+$\tau_L$ is negative at 2.46 % of grid points (so the von Weizsäcker bound and
+the `softplus` head do not apply to it) and carries higher spectral content
+(rms $|G|$ of 2.98 against 2.46 Å⁻¹), making it harder to learn at a fixed mode
+truncation. The positive-definite form is therefore the better learning target
+even though the two are physically equivalent.
 
 ---
 

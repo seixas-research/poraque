@@ -63,13 +63,6 @@ class DataConfig:
     resolution : int
         Longest grid axis after spectral downsampling. The reduction is a
         Fourier truncation, exact for band-limited plane-wave fields.
-    train_fraction : float
-        Share of materials used for training when ``split`` is ``"random"``.
-    split : str
-        ``"leave_one_out"`` (default; the honest choice for small datasets) or
-        ``"random"``.
-    seed : int
-        Seed for the split.
     use_vasp_extcar : bool
         Read a reference ``EXTCAR`` written by a modified VASP instead of
         computing it. **Off by default**: standard VASP distributions do not
@@ -93,9 +86,6 @@ class DataConfig:
     pattern: str = "struct"
     code: str = "auto"
     resolution: int = 32
-    train_fraction: float = 0.8
-    split: str = "leave_one_out"
-    seed: int = 0
     use_vasp_extcar: bool = False
     gaussian_blur: float = None
     blur_method: str = "spectral"

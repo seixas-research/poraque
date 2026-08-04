@@ -13,10 +13,10 @@ Both classes are the companions of
 :class:`~poraque.fields.ExternalPotential` on the *same*
 :class:`~poraque.fields.FieldGrid`. They are fully functional for **reading and
 writing** — which is all the machine-learning pipeline in :mod:`poraque.ml`
-needs, since ``CHGCAR`` and ``TAUCAR`` come from VASP — while their
-``compute()`` constructors, i.e. actually *solving* for the fields, are the
-subject of the ongoing refactoring and raise :class:`NotImplementedError` for
-now.
+needs, since ``CHGCAR`` and ``TAUCAR`` are produced by a plane-wave DFT code
+and read from disk. Solving for these fields is outside the scope of this
+package, so the ``compute()`` constructors raise
+:class:`NotImplementedError`.
 """
 
 import numpy as np
@@ -57,13 +57,13 @@ class ChargeDensity(ScalarField):
         Raises
         ------
         NotImplementedError
-            Not yet wired to the refactored SCF engine. Read a VASP
-            ``CHGCAR`` with :meth:`~poraque.fields.base.ScalarField.read`
-            in the meantime.
+            Always. Poraquê consumes densities from a plane-wave DFT code
+            rather than computing them; read one with
+            :meth:`~poraque.fields.base.ScalarField.read`.
         """
         raise NotImplementedError(
-            "ChargeDensity.compute is not implemented yet; read a VASP CHGCAR "
-            "with ChargeDensity.read(path, grid=shared_grid)."
+            "ChargeDensity is read, not computed: use "
+            "ChargeDensity.read(path, grid=shared_grid)."
         )
 
 
@@ -97,13 +97,15 @@ class KineticEnergyDensity(ScalarField):
         Raises
         ------
         NotImplementedError
-            Not yet wired to the refactored engine. Use
+            Always. Read a reference ``TAUCAR``, use
             :func:`thomas_fermi_tau` / :func:`von_weizsacker_tau` for the
-            orbital-free approximants, or read a ``TAUCAR``.
+            orbital-free approximants, or predict one with a trained
+            ``chg2tau`` operator.
         """
         raise NotImplementedError(
-            "KineticEnergyDensity.compute is not implemented yet; read a "
-            "TAUCAR with KineticEnergyDensity.read(path, grid=shared_grid)."
+            "KineticEnergyDensity is read or predicted, not computed: use "
+            "KineticEnergyDensity.read(path, grid=shared_grid), an analytic "
+            "KEDF, or a trained chg2tau operator."
         )
 
 
@@ -111,7 +113,7 @@ class KineticEnergyDensity(ScalarField):
 # Orbital-free kinetic energy densities
 #
 # These closed-form functionals of the density are the physical anchors of the
-# PI-FNO programme (see plan/pi_fno.md): tau_vW is a rigorous *lower* bound on
+# PI-FNO programme (see docs/notes/pi_fno.md): tau_vW is a rigorous *lower* bound on
 # the exact tau, and tau_TF its high-density limit, so together they bracket
 # any prediction a network makes for TAUCAR.
 # ---------------------------------------------------------------------- #

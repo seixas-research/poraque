@@ -40,7 +40,7 @@ Quick start::
 Physics-informed training is available through
 :class:`~poraque.ml.losses.PhysicsInformedLoss` and the differentiable DFT
 operators in :mod:`poraque.ml.physics`; the accompanying technical plan is in
-``plan/pi_fno.md``.
+``docs/notes/pi_fno.md``.
 
 PyTorch is an optional dependency (``pip install poraque[ml]``); it is imported
 lazily, so ``import poraque.ml`` fails with a clear message rather than at

@@ -15,9 +15,6 @@ data:
   pattern: struct
   code: auto
   resolution: 32
-  train_fraction: 0.8
-  split: leave_one_out
-  seed: 0
   use_vasp_extcar: false
   gaussian_blur: null
   blur_method: spectral

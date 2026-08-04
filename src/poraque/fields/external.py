@@ -66,7 +66,7 @@ The form factor :math:`f_s(G)` selects the pseudo-ion model:
     short-range remainder that no analytic form factor reproduces. Requires
     ``parse_tables=True`` when reading the ``POTCAR``, which
     :meth:`ExternalPotential.from_calculation` does automatically for this
-    model. See ``docs/vasp_analysis_report.md``.
+    model. See ``docs/notes/vasp_analysis_report.md``.
 
 .. note::
    This is the *long-range, local* part of the ionic potential. It is not the

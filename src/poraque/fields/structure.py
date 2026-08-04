@@ -207,26 +207,6 @@ class Structure:
             comment=comment or atoms.get_chemical_formula(),
         )
 
-    def to_system(self, electrons=None):
-        """
-        Convert to a :class:`poraque.core.System` (Hartree atomic units, Bohr).
-
-        Parameters
-        ----------
-        electrons : int, optional
-            Electron count; defaults to the neutral all-electron value.
-        """
-        from ..core.system import System
-        from .constants import ANGSTROM_TO_BOHR
-
-        return System(
-            positions=self.positions * ANGSTROM_TO_BOHR,
-            atomic_numbers=self.atomic_numbers,
-            cell=self.cell * ANGSTROM_TO_BOHR,
-            pbc=True,
-            electrons=electrons,
-        )
-
     def __len__(self):
         return self.natoms
 
