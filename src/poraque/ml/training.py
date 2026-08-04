@@ -114,17 +114,26 @@ class FieldOperator:
         :func:`~poraque.ml.heads.fit_pauli_scale`.
     learn_pauli_scale : bool, optional
         Optimize the scale together with the backbone.
+    training_resolution : int, optional
+        Longest grid axis of the data this operator was trained on. Carried
+        into the checkpoint so a consumer can size an evaluation grid the model
+        has actually seen: an FNO is resolution-*flexible* but not
+        resolution-*indifferent*, and nothing downstream can detect that it is
+        being extrapolated.
     **model_kwargs
         Forwarded to :class:`~poraque.ml.fno.FNO3d`.
     """
 
     def __init__(self, task, model=None, input_transform=None,
                  target_transform=None, device=None, pauli_residual=False,
-                 pauli_scale=1.0, learn_pauli_scale=True, **model_kwargs):
+                 pauli_scale=1.0, learn_pauli_scale=True,
+                 training_resolution=None, **model_kwargs):
         self.task = resolve_task(task)
         self.device = resolve_device(device)
         self.input_transform = input_transform or Identity()
         self.target_transform = target_transform or Identity()
+        self.training_resolution = (None if training_resolution is None
+                                    else int(training_resolution))
 
         self.pauli_residual = bool(pauli_residual)
         self.pauli_scale = float(pauli_scale)
@@ -211,6 +220,7 @@ class FieldOperator:
                 "pauli_residual": self.pauli_residual,
                 "pauli_scale": self.pauli_scale,
                 "learn_pauli_scale": self.learn_pauli_scale,
+                "training_resolution": self.training_resolution,
             },
             path,
         )
@@ -243,6 +253,7 @@ class FieldOperator:
             pauli_residual=state.get("pauli_residual", False),
             pauli_scale=state.get("pauli_scale", 1.0),
             learn_pauli_scale=state.get("learn_pauli_scale", True),
+            training_resolution=state.get("training_resolution"),
             **model_kwargs,
         )
         operator.model.load_state_dict(state["model_state"])

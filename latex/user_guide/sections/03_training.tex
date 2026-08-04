@@ -4,8 +4,8 @@
 \section{The short version}
 
 \begin{lstlisting}
-python scripts/train_fno.py --write-config configs/train_config.yaml
-python scripts/train_fno.py --config configs/train_config.yaml
+python scripts/run_train.py --write-config configs/train_config.yaml
+python scripts/run_train.py --config configs/train_config.yaml
 \end{lstlisting}
 
 This trains \textbf{one} \opt{ext2chg} model and \textbf{one} \opt{chg2tau}
@@ -45,14 +45,14 @@ Two options, both splitting at the \emph{structure} level.
 \subsection{Hold out named structures}
 
 \begin{lstlisting}
-python scripts/train_fno.py --config configs/train_config.yaml \
+python scripts/run_train.py --config configs/train_config.yaml \
        --holdout struct_004
 \end{lstlisting}
 
 \subsection{K-fold cross-validation}
 
 \begin{lstlisting}
-python scripts/train_fno.py --config configs/train_config.yaml \
+python scripts/run_train.py --config configs/train_config.yaml \
        --kfold --k-folds 5
 \end{lstlisting}
 

@@ -20,6 +20,9 @@ self-consistency cycle.
 
 ```
 {POSCAR, INCAR, POTCAR} --analytic--> EXTCAR --Model 1--> CHGCAR --Model 2--> TAUCAR
+                                                                                 |
+                                                                        integrate v
+                                                                              energy
 ```
 
 The first step is closed-form; only the two field-to-field maps are learned.
@@ -44,19 +47,34 @@ Python 3.11 or newer.
 python scripts/validate_vasp_data.py --fit-sigma --form-factor
 
 # 2. train one ext2chg and one chg2tau model on all structures
-python scripts/train_fno.py --write-config configs/train_config.yaml
-python scripts/train_fno.py --config configs/train_config.yaml
+python scripts/run_train.py --write-config configs/train_config.yaml
+python scripts/run_train.py --config configs/train_config.yaml
 
 # 3. measure generalisation
-python scripts/train_fno.py --config configs/train_config.yaml --kfold --k-folds 5
+python scripts/run_train.py --config configs/train_config.yaml --kfold --k-folds 5
 
 # 4. predict a structure that has never been computed
-python scripts/infer_fno.py new_structure/ \
+python scripts/run_eval.py new_structure/ \
     --ext2chg models/ext2chg.pt --chg2tau models/chg2tau.pt \
     --output predictions/new_structure
 ```
 
 Every predicted field is written in `CHGCAR` format and opens in VESTA.
+
+Or drive it from ASE:
+
+```python
+from ase.build import bulk
+from poraque.calculator import Poraque
+
+atoms = bulk("Au", "fcc", a=4.08, cubic=True)
+atoms.calc = Poraque("models/ext2chg.pt", "models/chg2tau.pt", potcar="POTCAR")
+atoms.get_potential_energy()
+print(atoms.calc.components)     # T_s, E_ext, alpha Z, E_H, E_xc, Ewald
+```
+
+Forces and stress are not implemented, so this is single points, not
+relaxations.
 
 ## What is in here
 
@@ -64,6 +82,8 @@ Every predicted field is written in `CHGCAR` format and opens in VESTA.
 | --- | --- |
 | `src/poraque/fields/` | Shared-grid scalar fields, VASP I/O, pluggable ingestion |
 | `src/poraque/ml/` | Fourier neural operators, differentiable DFT operators, training |
+| `src/poraque/physics/` | Total-energy components integrated from the predicted fields |
+| `src/poraque/calculator.py` | ASE calculator wrapping the whole chain |
 | `src/poraque/vis/` | Figures and automatic PDF reports |
 | `scripts/` | Validation, training, inference, experiments |
 | `configs/` | YAML run definitions |
@@ -74,9 +94,10 @@ Every predicted field is written in `CHGCAR` format and opens in VESTA.
 
 ## Design points
 
-- **No modified VASP required.** The external potential is reconstructed from
-  the `POTCAR` tables, matching a reference `EXTCAR` to a relative
-  5×10⁻⁵.
+- **No modified VASP required.** The external potential is always reconstructed
+  from the `POTCAR` tables, matching a reference `EXTCAR` to a relative
+  5×10⁻⁵. There is no fallback to a supplied `EXTCAR`: the training input must
+  be exactly what inference produces.
 - **Grids may differ between materials.** One model serves all of them: the
   operator's weights live in Fourier-mode space, and batches are bucketed by
   grid shape.
@@ -104,6 +125,14 @@ an order of magnitude on this system.
 > These numbers measure interpolation between nearby geometries of a single
 > element. They say nothing about transfer to other chemistry. Growing the
 > dataset is the main open item — see `docs/notes/roadmap.md`.
+
+**Energies are not there yet.** The total energy is a sum of terms of order
+10⁴ eV whose physically relevant variation is a few eV — a relative 2.5×10⁻⁴.
+A field-level error of 3×10⁻² cannot survive that cancellation: across the
+seven reference structures the true energy spread is 7.9 eV and the error on
+predicted differences is 22.3 eV. The energy module is validated against exact
+Madelung constants and uniform-electron-gas limits; it is the *fields* that are
+not yet accurate enough. See `docs/source/energy/index.md`.
 
 ## License
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# file: infer_fno.py
+# file: run_eval.py
 
 # This code is part of Poraquê.
 # MIT License
@@ -56,13 +56,13 @@ Usage
 -----
 ::
 
-    python scripts/infer_fno.py new_structure/ \
+    python scripts/run_eval.py new_structure/ \
         --ext2chg models/ext2chg_holdout_struct_000.pt \
         --chg2tau models/chg2tau_holdout_struct_000.pt \
         --output predictions/new_structure
 
     # match an existing calculation's grid, for a direct comparison
-    python scripts/infer_fno.py run/ --ext2chg m1.pt --chg2tau m2.pt \
+    python scripts/run_eval.py run/ --ext2chg m1.pt --chg2tau m2.pt \
         --like run/CHGCAR --compare
 """
 

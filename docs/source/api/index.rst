@@ -92,6 +92,18 @@ Physics operators and losses
 .. automodule:: poraque.ml.losses
    :members:
 
+Energy functionals
+------------------
+
+.. automodule:: poraque.physics.energy
+   :members:
+
+ASE calculator
+--------------
+
+.. automodule:: poraque.calculator
+   :members:
+
 Visualization
 -------------
 

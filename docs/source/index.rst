@@ -31,6 +31,9 @@ What Poraquê provides
 * :doc:`ml/index` --- Fourier neural operators that handle **different grid
   shapes across materials**, with physical constraints enforced by
   construction rather than by penalty.
+* :doc:`energy/index` --- Kohn--Sham total-energy components integrated from
+  the predicted fields, and an **ASE calculator** that runs the whole chain
+  from an :class:`ase.Atoms` object.
 * A **code-agnostic ingestion layer**: VASP is implemented, Quantum ESPRESSO
   and GPAW are scaffolded behind the same four-method contract.
 * Hardware acceleration on CUDA and Apple Metal, with a graceful CPU fallback.
@@ -46,6 +49,7 @@ What Poraquê provides
    quick_start/index
    fields/index
    ml/index
+   energy/index
    theory
    configuration
    api/index

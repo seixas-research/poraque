@@ -2,7 +2,7 @@
 \label{ch:inference}
 
 \begin{lstlisting}
-python scripts/infer_fno.py new_structure/ \
+python scripts/run_eval.py new_structure/ \
     --ext2chg models/ext2chg.pt \
     --chg2tau models/chg2tau.pt \
     --output predictions/new_structure
@@ -35,7 +35,7 @@ resolution.
 \section{Comparing against a reference}
 
 \begin{lstlisting}
-python scripts/infer_fno.py run/ --ext2chg m1.pt --chg2tau m2.pt \
+python scripts/run_eval.py run/ --ext2chg m1.pt --chg2tau m2.pt \
     --like run/CHGCAR --compare --plot-dir results/plots/check
 \end{lstlisting}
 

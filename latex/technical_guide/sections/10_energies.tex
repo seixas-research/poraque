@@ -1,0 +1,267 @@
+\chapter{From fields to energies}
+\label{ch:energies}
+
+Everything up to this point produces \emph{fields}. This chapter closes the
+loop: it assembles $\rho$, $\tau$ and $\vext$ into the Kohn--Sham total-energy
+expression, states precisely which terms Poraqu\^e can and cannot evaluate, and
+quantifies how accurate the fields must be before the resulting energy means
+anything. The implementation is \pyclass{poraque.physics.energy}; the ASE
+interface built on it is \pyclass{poraque.calculator.Poraque}.
+
+\section{The expression}
+
+\begin{equation}
+  E = \underbrace{\int\tau\,d^3r}_{\Ts}
+    + \underbrace{\int\rho\vext\,d^3r + E_{\alpha Z}}_{E_{\rm ext}}
+    + \underbrace{\frac12\int\rho\vH\,d^3r}_{E_{\rm H}}
+    + E_{\rm xc}[\rho]
+    + E_{\rm Ewald}
+  \label{eq:total-energy}
+\end{equation}
+
+Only the first term uses $\tau$, and it uses it in the simplest possible way:
+$\Ts$ \emph{is} the integral of the kinetic energy density. That is the whole
+reason \opt{chg2tau} is worth training --- it makes the one term of the
+Kohn--Sham functional that has no closed form available from the density alone.
+
+\subsection{Hartree}
+
+Poisson in reciprocal space,
+\begin{equation}
+  \vH(\GG) = \frac{4\pi e^2\rho(\GG)}{G^2},
+  \qquad \vH(\GG = 0) = 0 ,
+\end{equation}
+so $E_{\rm H} = \frac12\int\rho\vH\,d^3r$. Dropping $\GG = 0$ is the
+neutralizing-background convention, chosen to match
+\pyclass{ExternalPotential} so the two potentials are directly addable.
+
+\begin{ptip}
+The implementation is validated against an exact case rather than a recorded
+output: for $\rho = \rho_0 + A\cos(\GG\cdot\rr)$ the energy is
+$\pi e^2A^2\Omega/G^2$ in closed form, and the FFT result reproduces it to
+$8\times10^{-16}$ relative. A uniform density gives exactly zero, which is the
+correct answer in this convention rather than a numerical accident.
+\end{ptip}
+
+\subsection{Exchange and correlation}
+
+Dirac exchange plus Perdew--Wang 1992 correlation, both local:
+\begin{equation}
+  \varepsilon_{\rm x} = -\frac34\left(\frac{3}{\pi}\right)^{1/3}\rho^{1/3},
+  \qquad
+  \varepsilon_{\rm c}(r_s) = -2A(1+\alpha_1 r_s)
+    \ln\!\left[1 + \frac{1}{2A\,\Phi(r_s)}\right],
+\end{equation}
+with $\Phi(r_s) = \beta_1 r_s^{1/2} + \beta_2 r_s + \beta_3 r_s^{3/2}
++ \beta_4 r_s^{2}$ and $r_s = (3/4\pi\rho)^{1/3}$.
+
+\begin{pwarn}
+LDA is used regardless of the functional the reference calculation ran with,
+and the mismatch is real: a PBE density evaluated with an LDA $E_{\rm xc}$ is
+not a PBE energy. A gradient-corrected functional needs $\nabla\rho$ of a
+\emph{predicted} field, whose noise the semilocal enhancement factor amplifies.
+That deserves its own validation rather than a silent default.
+\end{pwarn}
+
+The density is clipped at zero first. Band-limiting a field with sharp core
+peaks rings, so a resampled or predicted $\rho$ can undershoot slightly;
+$\rho^{4/3}$ of a negative number is not real, and the physical content of
+those points is ``no electrons here''.
+
+\section{The \texorpdfstring{$\GG = 0$}{G = 0} bookkeeping}
+
+This is the subtle part of Equation~\ref{eq:total-energy}, and getting it
+wrong produces a plausible number that is wrong by eV per atom.
+
+Each of the three electrostatic terms --- electron-ion, Hartree, ion-ion ---
+diverges at $\GG = 0$, and in a neutral cell the three divergences cancel
+exactly. The standard plane-wave treatment drops $\GG = 0$ from all three and
+adds back the finite remainder of the electron-ion term. Writing VASP's local
+potential as
+\begin{equation}
+  \vext(\GG) = \frac{1}{\Omega}\sum_s S_s(\GG)
+    \left[v^{s}_{\rm short}(G) - \frac{4\pi Z^{\rm val}_s e^2}{G^2}\right],
+\end{equation}
+the divergent piece is the second bracketed term and the finite remainder at
+$\GG = 0$ is $S_s(0) = N_s$ times $v^{s}_{\rm short}(0)$. Hence
+\begin{equation}
+  E_{\alpha Z} = \frac{N_{\rm elec}}{\Omega}\sum_s N_s\,\mathrm{PSCORE}_s,
+  \qquad \mathrm{PSCORE}_s = \lim_{q\to0}v^{s}_{\rm short}(q),
+\end{equation}
+which is exactly VASP's \opt{alpha Z}. It is read straight from the
+\file{POTCAR} tables --- the same tables Chapter~\ref{ch:vasp} uses for the
+potential itself --- via
+\opt{PotcarSingle.pscore}.
+
+\begin{pnote}
+When the tables are unavailable the term is reported as \opt{None}, and
+\opt{EnergyComponents.missing} names it. Defaulting to zero would look like a
+working calculation while silently dropping a term of order eV per atom, which
+is precisely the size of the effects one would want to resolve.
+\end{pnote}
+
+\section{Ewald}
+
+The ion-ion energy of point charges $q_i$ in a neutralizing background:
+\begin{align}
+  E_{\rm Ewald} = {}& \frac{e^2}{2}\sideset{}{'}\sum_{i,j,\Rv}
+      \frac{q_iq_j\,\mathrm{erfc}(\eta|\rr_{ij}+\Rv|)}{|\rr_{ij}+\Rv|}
+    + \frac{2\pi e^2}{\Omega}\sum_{\GG\neq0}
+      \frac{e^{-G^2/4\eta^2}}{G^2}\bigl|S(\GG)\bigr|^2 \nonumber\\
+   & - \frac{\eta e^2}{\sqrt\pi}\sum_i q_i^2
+     - \frac{\pi e^2}{2\eta^2\Omega}\Bigl(\sum_i q_i\Bigr)^2 .
+\end{align}
+
+The last term is the interaction with the compensating background. It is not
+optional: without it the result depends on the arbitrary splitting parameter
+$\eta$ instead of being invariant under it --- which is also the cheapest
+available test that the implementation is correct.
+
+\begin{ptip}
+Verified against tabulated Madelung constants: rocksalt $1.747564595$ to
+$8\times10^{-13}$, caesium chloride $1.762674773$ to $7\times10^{-11}$,
+zincblende $1.6380550$ to $5\times10^{-8}$; and against the jellium limit
+$E = -\xi q^2e^2/2L$, $\xi = 2.8372974795$, for a single ion in a cube. Each
+depends on every part of the sum being individually right.
+\end{ptip}
+
+\section{What the number means}
+\label{sec:energy-meaning}
+
+\subsection{It is not a DFT total energy}
+
+\file{CHGCAR} holds the valence \emph{pseudo} density and \file{TAUCAR} the
+valence pseudo kinetic energy density. The PAW one-centre terms --- the
+difference between the pseudo and all-electron descriptions inside the
+augmentation spheres --- never appear in any file Poraqu\^e reads, so they are
+absent from Equation~\ref{eq:total-energy} entirely. For the 27-atom Au
+supercell the result is $\approx -31215$ eV against a VASP \opt{TOTEN} of order
+$-100$ eV. No adjustment of the terms above closes that gap; the missing
+physics is simply not in the inputs.
+
+\subsection{The cancellation problem}
+
+The individual terms are large and of alternating sign:
+
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Term & eV \\
+\midrule
+$\Ts$          & $+6\,207$ \\
+$E_{\rm ext}$  & $-12\,635$ \\
+$E_{\alpha Z}$ & $+1\,753$ \\
+$E_{\rm H}$    & $+3\,230$ \\
+$E_{\rm xc}$   & $-3\,821$ \\
+$E_{\rm Ewald}$ & $-25\,949$ \\
+\midrule
+Total & $-31\,215$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Across the seven reference supercells the \emph{physically relevant} variation
+of that total is $7.9$ eV --- a relative $2.5\times10^{-4}$ of its own
+magnitude. That sets a brutal accuracy requirement on the fields, because every
+electrostatic term is linear or quadratic in $\rho$.
+
+Measured with the current universal models, evaluated on their own training
+data (so this is a lower bound on the true error):
+
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Quantity & Value \\
+\midrule
+True spread of $E$ across the seven structures & $7.9$ eV \\
+MAE of the predicted energy differences & $22.3$ eV ($0.83$ eV/atom) \\
+Correlation of predicted vs.\ true differences & $r = 0.61$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{pwarn}
+The error is roughly \textbf{three times the signal}. Energy differences from
+this pipeline are not yet usable. The cause is cancellation, not a defect in
+the energy module: a field-level relative $L^{2}$ of $3\times10^{-2}$ cannot
+survive a $2.5\times10^{-4}$ signal-to-total ratio. Reaching $0.01$ eV/atom
+requires densities accurate to roughly $10^{-5}$ relative --- three orders of
+magnitude beyond the current models.
+\end{pwarn}
+
+Two candidate explanations were tested and rejected:
+
+\begin{description}
+  \item[Grid resolution.] On reference fields the total energy shifts by
+    $0.08$ eV out of $31\,215$ ($0.003$ eV/atom) between \opt{resolution: 32}
+    and the native $128^3$ mesh, and both $\Ts$ and the electron count are
+    preserved \emph{exactly} --- spectral resampling is an exact band-limited
+    projection. The grid is not the limiting factor.
+  \item[Electron-count drift.] Predicted densities miss the exact valence count
+    by up to $2.8\,\%$. Rescaling $\rho$ to the known total makes the result
+    \emph{worse} ($3.20$ eV/atom, from $0.83$), because $E_{\rm ext}$ is linear
+    in $\rho$ and a $0.3\,\%$ rescale shifts a $-12\,690$ eV term by $38$ eV.
+    The drift is a symptom, not the cause.
+\end{description}
+
+\subsection{Consequences for the programme}
+
+This is the sharpest quantitative target the project has produced so far, and
+it reframes what ``accurate enough'' means. A relative $L^{2}$ of $0.03$ on the
+density is an excellent \emph{field} prediction and a useless \emph{energy}
+one. Two directions follow, and they are not equivalent:
+
+\begin{enumerate}
+  \item \textbf{Make the fields three orders of magnitude better.} Direct, and
+    almost certainly unreachable by scaling the current architecture.
+  \item \textbf{Make the energy insensitive to the field error.} Predict the
+    energy \emph{difference} from a reference state rather than the absolute
+    total, or exploit the variational property of the Kohn--Sham functional:
+    at the true density the energy is stationary, so a first-order density
+    error produces only a second-order energy error. That property is
+    available only if the energy is evaluated with a \emph{self-consistent}
+    functional, which is what the physics-informed programme of
+    Chapter~\ref{ch:pifno} is ultimately for.
+\end{enumerate}
+
+The second route is why $\delta \Ts/\delta\rho$ (Chapter~\ref{ch:model2}) is
+worth having: it is the ingredient that turns a learned $\tau$ into a
+variational object rather than a fitted one.
+
+\section{The ASE interface}
+
+\pyclass{poraque.calculator.Poraque} attaches the whole chain to an
+\opt{ase.Atoms} object:
+
+\begin{lstlisting}
+from ase.build import bulk
+from poraque.calculator import Poraque
+
+atoms = bulk("Au", "fcc", a=4.08, cubic=True)
+atoms.calc = Poraque("models/ext2chg.pt", "models/chg2tau.pt",
+                     potcar="POTCAR")
+energy = atoms.get_potential_energy()
+\end{lstlisting}
+
+Each call runs \opt{Atoms} $\to$ \opt{Structure} $\to$ \opt{FieldGrid} $\to$
+$\vext$ $\to$ $\rho$ $\to$ $\tau$ $\to$ $E$, and leaves the three fields on the
+calculator so a prediction can be written out rather than only reduced to a
+number.
+
+It resembles MACE or NequIP at the interface but not underneath.
+\opt{get\_forces()} and \opt{get\_stress()} raise \opt{NotImplementedError}, so
+geometry optimisation and molecular dynamics are out of reach. Two independent
+pieces are missing: $\partial\vext/\partial\Rv_a$ (analytic, a
+Hellmann--Feynman term) and back-propagation of $\partial E/\partial\rho$
+through both operators. A finite-difference stand-in is no shortcut --- on a
+fixed grid it would be dominated by the grid's own discontinuity as atoms cross
+voxel boundaries.
+
+\begin{pwarn}
+Without a \file{POTCAR} the calculator falls back to the Gaussian pseudo-ion
+model of Chapter~\ref{ch:vasp}, whose relative $L^{2}$ against the tabulated
+potential is $0.13$ --- four orders of magnitude worse than the
+$2\times10^{-5}$ the operators were trained on. The input is then outside the
+training distribution and the prediction is not meaningful. The calculator
+warns once and proceeds, because the fallback remains useful for smoke tests.
+\end{pwarn}

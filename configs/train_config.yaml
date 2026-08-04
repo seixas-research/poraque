@@ -1,12 +1,12 @@
 # =====================================================================
 # Poraque - Fourier Neural Operator training configuration
 #
-#   python scripts/train_fno.py --config configs/train_config.yaml
+#   python scripts/run_train.py --config configs/train_config.yaml
 #
 # Command-line flags override these values, so one committed config can
 # be swept from the shell without editing it:
 #
-#   python scripts/train_fno.py --config configs/train_config.yaml --epochs 500
+#   python scripts/run_train.py --config configs/train_config.yaml --epochs 500
 # =====================================================================
 task: all
 data:
@@ -15,7 +15,6 @@ data:
   pattern: struct
   code: auto
   resolution: 32
-  use_vasp_extcar: false
   gaussian_blur: null
   blur_method: spectral
 model:

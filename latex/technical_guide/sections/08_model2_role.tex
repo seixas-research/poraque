@@ -129,10 +129,14 @@ dTs_drho = grad / volume_element                      # see below
 
 \subsection{The discretisation factor}
 
-With $\Ts = \sum_i \tau_i \Delta v$, and the functional derivative defined by
-$\delta \Ts = \int (\delta \Ts/\delta\rho)\,\delta\rho\,\mathrm{d}\rr
-\approx \sum_i (\delta \Ts/\delta\rho)_i\,\delta\rho_i\,\Delta v$, while
-autograd returns $\delta \Ts = \sum_i (\partial \Ts/\partial\rho_i)\,\delta\rho_i$,
+Take $\Ts = \sum_i \tau_i \Delta v$. The functional derivative is defined by
+\[
+  \delta \Ts = \int \frac{\delta \Ts}{\delta\rho}\,\delta\rho\,\mathrm{d}\rr
+  \approx \sum_i \left(\frac{\delta \Ts}{\delta\rho}\right)_i
+          \delta\rho_i\,\Delta v ,
+\]
+while autograd returns
+$\delta \Ts = \sum_i (\partial \Ts/\partial\rho_i)\,\delta\rho_i$. Hence
 \begin{equation}
   \boxed{\;
     \frac{\delta \Ts}{\delta\rho}(\rr_i)

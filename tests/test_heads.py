@@ -126,8 +126,8 @@ class TestHardConstraint:
         pauli = head.pauli_term(batch["input"], batch["cell"])
         # softplus(-100) underflows to a float32 subnormal (~4e-44): zero to
         # every precision that matters, and never negative.
-        assert 0.0 <= float(pauli.min())
-        assert float(pauli.max()) < 1e-40
+        assert 0.0 <= float(pauli.min().detach())
+        assert float(pauli.max().detach()) < 1e-40
 
         tau = physical(head, batch)
         bound = head.von_weizsacker_term(batch["input"], batch["cell"])
@@ -155,11 +155,11 @@ class TestHardConstraint:
         batch = as_batch(chg2tau, 0)
 
         # Exact, no round trip through the transform.
-        assert float(head.pauli_term(batch["input"], batch["cell"]).min()) >= 0.0
+        assert float(head.pauli_term(batch["input"], batch["cell"]).min().detach()) >= 0.0
 
         tau = physical(head, batch)
         margin = tau - head.von_weizsacker_term(batch["input"], batch["cell"])
-        assert float(margin.min()) > -1e-6 * float(tau.abs().max())
+        assert float(margin.min().detach()) > -1e-6 * float(tau.abs().max().detach())
 
     def test_survives_destructive_optimizer_steps(self, chg2tau):
         """An absurd learning rate may ruin accuracy but cannot break the bound."""
@@ -209,7 +209,7 @@ class TestHardConstraint:
         density = head.decode_density(batch["input"])
         loss = von_weizsacker_bound_loss(physical(head, batch), density,
                                          batch["cell"])
-        assert float(loss) == 0.0
+        assert float(loss.detach()) == 0.0
 
 
 # --------------------------------------------------------------------- #
@@ -229,7 +229,7 @@ class TestDecomposition:
         torch.manual_seed(3)
         head = build_head(chg2tau, scale=1.0)
         batch = as_batch(chg2tau, 0)
-        assert float(head.pauli_term(batch["input"], batch["cell"]).min()) >= 0.0
+        assert float(head.pauli_term(batch["input"], batch["cell"]).min().detach()) >= 0.0
 
     def test_von_weizsacker_term_matches_the_numpy_reference(self, chg2tau):
         """The analytic part must be the same function the physics module uses."""
@@ -250,7 +250,7 @@ class TestDecomposition:
 
     def test_scale_is_positive_and_learnable(self, chg2tau):
         head = build_head(chg2tau, scale=4.0, learn_scale=True)
-        assert float(head.scale) == pytest.approx(4.0)
+        assert float(head.scale.detach()) == pytest.approx(4.0)
         assert any(p is head.log_scale for p in head.parameters())
 
         fixed = build_head(chg2tau, scale=4.0, learn_scale=False)

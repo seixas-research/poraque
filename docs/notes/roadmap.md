@@ -54,6 +54,42 @@ The definitive question — does the learned functional produce the right densit
 when placed inside a variational loop? — has never been asked. Until it is, the
 project has a well-measured proxy and no result.
 
+**Update (2026-08-03): the first downstream test now exists, and it fails.**
+`poraque.physics.energy` integrates the predicted fields into the Kohn–Sham
+total energy, and `poraque.calculator.Poraque` exposes it through ASE. On the
+seven reference structures:
+
+| Quantity | Value |
+| --- | --- |
+| True spread of $E$ across the seven | 7.9 eV |
+| MAE of predicted energy *differences* | 22.3 eV (0.83 eV/atom) |
+| Correlation of differences | $r = 0.61$ |
+
+The error is **three times the signal**. This is not a bug in the energy module
+— that is validated against exact Madelung constants ($10^{-11}$), an analytic
+Hartree integral ($10^{-16}$) and uniform-electron-gas limits. It is
+cancellation: the total is a sum of terms of order $10^4$ eV whose relevant
+variation is a relative $2.5\times10^{-4}$, and a field-level relative $L^2$ of
+$3\times10^{-2}$ cannot survive that.
+
+Two candidate explanations were tested and rejected:
+
+- **Grid resolution.** Reference-field energies shift by 0.08 eV out of 31215
+  (0.003 eV/atom) between resolution 32 and native 128³. Not the limit.
+- **Electron-count drift.** Rescaling $\rho$ to the exact valence count makes
+  it *worse* (0.83 → 3.20 eV/atom), because $E_\mathrm{ext}$ is linear in
+  $\rho$ and a 0.3 % rescale moves a $-12690$ eV term by 38 eV. The drift is a
+  symptom, not the cause.
+
+**This changes the target.** Chasing a 1000× better density is almost certainly
+unreachable. The alternative is to make the energy *insensitive* to the field
+error, which is exactly what variationality buys: at the true density the
+Kohn–Sham energy is stationary, so a first-order density error costs only
+second order in energy. That property requires evaluating the energy with a
+self-consistent functional — i.e. Phase 5 — rather than a fitted $\tau$. It
+raises Phase 5 from "the test that settles things" to "the only route to a
+usable energy".
+
 ---
 
 ## Phase 1 — Validate the derivative (days)

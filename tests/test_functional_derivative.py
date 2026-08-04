@@ -157,7 +157,7 @@ class TestEulerLagrangeIntegration:
         residual = euler_lagrange_residual(
             density, potential, cell, kinetic=thomas_fermi_tau)
         assert residual.shape == density.shape
-        assert float(residual.mean().abs()) < 1e-8      # mu removed
+        assert float(residual.mean().abs().detach()) < 1e-8      # mu removed
 
     def test_callable_matches_a_precomputed_tensor(self, density, cell):
         potential = torch.randn(1, 1, 16, 16, 16, dtype=torch.float64) * 5.0

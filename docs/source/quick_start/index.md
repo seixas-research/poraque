@@ -42,8 +42,8 @@ The result is written in `CHGCAR` format and opens directly in VESTA.
 ## 3. Train
 
 ```bash
-python scripts/train_fno.py --write-config configs/train_config.yaml
-python scripts/train_fno.py --config configs/train_config.yaml
+python scripts/run_train.py --write-config configs/train_config.yaml
+python scripts/run_train.py --config configs/train_config.yaml
 ```
 
 This trains **one** `ext2chg` model and **one** `chg2tau` model on the combined
@@ -59,7 +59,7 @@ data of every structure, then writes:
 ## 4. Predict a new structure
 
 ```bash
-python scripts/infer_fno.py new_structure/ \
+python scripts/run_eval.py new_structure/ \
     --ext2chg models/ext2chg.pt \
     --chg2tau models/chg2tau.pt \
     --output predictions/new_structure
@@ -75,10 +75,27 @@ metrics are a training fit. For a generalisation estimate run the
 cross-validation protocol instead:
 
 ```bash
-python scripts/train_fno.py --config configs/train_config.yaml \
+python scripts/run_train.py --config configs/train_config.yaml \
     --mode leave_one_out
 ```
 
 Each structure is held out in turn and scored against a model that never saw
 it. Use `universal` for the model you deploy and `leave_one_out` for the number
 you quote.
+
+## 6. Drive it from ASE
+
+```python
+from ase.build import bulk
+from poraque.calculator import Poraque
+
+atoms = bulk("Au", "fcc", a=4.08, cubic=True)
+atoms.calc = Poraque("models/ext2chg.pt", "models/chg2tau.pt", potcar="POTCAR")
+
+energy = atoms.get_potential_energy()
+print(atoms.calc.components)          # the full energy decomposition
+```
+
+Forces and stress are not implemented, so this is for single points rather than
+relaxations. See {doc}`../energy/index` — including what the number does and
+does not mean.

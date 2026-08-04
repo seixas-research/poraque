@@ -34,8 +34,8 @@ needs. Command-line flags override individual entries, so one committed
 configuration can be swept from the shell without being edited or copied:
 
 \begin{lstlisting}
-python scripts/train_fno.py --write-config configs/train_config.yaml
-python scripts/train_fno.py --config configs/train_config.yaml --epochs 500
+python scripts/run_train.py --write-config configs/train_config.yaml
+python scripts/run_train.py --config configs/train_config.yaml --epochs 500
 \end{lstlisting}
 
 Unknown keys are \emph{rejected} rather than ignored: a typo such as
@@ -86,7 +86,7 @@ network with a fixed mode truncation may not use the highest spatial
 frequencies, an optional Gaussian blur is available:
 
 \begin{lstlisting}
-python scripts/train_fno.py --config configs/train_config.yaml \
+python scripts/run_train.py --config configs/train_config.yaml \
        --gaussian-blur 0.15 --blur-method spectral
 \end{lstlisting}
 
@@ -156,7 +156,7 @@ where the model could actually use those frequencies.
 structure.} This is the deployable artefact.
 
 \begin{lstlisting}
-python scripts/train_fno.py --config configs/train_config.yaml   # mode: universal
+python scripts/run_train.py --config configs/train_config.yaml   # mode: universal
 \end{lstlisting}
 
 Batches are drawn \emph{across} materials: the sampler groups structures by
@@ -184,7 +184,7 @@ overstatement.
 \label{sec:kfold}
 
 \begin{lstlisting}
-python scripts/train_fno.py --config configs/train_config.yaml \
+python scripts/run_train.py --config configs/train_config.yaml \
        --kfold --k-folds 5
 \end{lstlisting}
 

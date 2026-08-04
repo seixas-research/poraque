@@ -63,17 +63,9 @@ class DataConfig:
     resolution : int
         Longest grid axis after spectral downsampling. The reduction is a
         Fourier truncation, exact for band-limited plane-wave fields.
-    use_vasp_extcar : bool
-        Read a reference ``EXTCAR`` written by a modified VASP instead of
-        computing it. **Off by default**: standard VASP distributions do not
-        write that file, so relying on it would make the pipeline unusable for
-        anyone without the patched build. Poraquê's tabulated reconstruction
-        reproduces it to a relative :math:`2\\times10^{-5}`, so the default
-        costs essentially nothing in fidelity.
     gaussian_blur : float or None
         Width in Å of a Gaussian blur applied to the computed external
-        potential. ``null`` disables it. Ignored when ``use_vasp_extcar`` is
-        set, since the reference file is taken as given.
+        potential. ``null`` disables it.
     blur_method : str
         ``"spectral"`` (exact, isotropic on any cell) or ``"ndimage"``
         (:func:`scipy.ndimage.gaussian_filter` with ``mode="wrap"``, which
@@ -86,7 +78,6 @@ class DataConfig:
     pattern: str = "struct"
     code: str = "auto"
     resolution: int = 32
-    use_vasp_extcar: bool = False
     gaussian_blur: float = None
     blur_method: str = "spectral"
 
@@ -449,16 +440,16 @@ class TrainingConfig:
         return "\n".join(lines)
 
 
-#: Written by ``scripts/train_fno.py --write-config``.
+#: Written by ``scripts/run_train.py --write-config``.
 SAMPLE_CONFIG_HEADER = """\
 # =====================================================================
 # Poraque - Fourier Neural Operator training configuration
 #
-#   python scripts/train_fno.py --config configs/train_config.yaml
+#   python scripts/run_train.py --config configs/train_config.yaml
 #
 # Command-line flags override these values, so one committed config can
 # be swept from the shell without editing it:
 #
-#   python scripts/train_fno.py --config configs/train_config.yaml --epochs 500
+#   python scripts/run_train.py --config configs/train_config.yaml --epochs 500
 # =====================================================================
 """

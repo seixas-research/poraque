@@ -1,0 +1,212 @@
+\chapter{Energies and the ASE calculator}
+\label{ch:energies}
+
+Once $\rho$ and $\tau$ have been predicted, the \pyclass{poraque.physics}
+module turns them into energies, and the \pyclass{Poraque} calculator wraps the
+whole chain behind the ASE calculator protocol.
+
+\begin{pwarn}
+Read Section~\ref{sec:not-a-dft-energy} before comparing any of these numbers
+to a DFT result. They are \textbf{pseudo-valence} energies, and on the current
+models the error on energy \emph{differences} is larger than the differences
+themselves.
+\end{pwarn}
+
+\section{The energy expression}
+
+\[
+  E = \underbrace{\int\tau\,d^3r}_{\Ts}
+    + \underbrace{\int\rho \vext\,d^3r + E_{\alpha Z}}_{E_{\rm ext}}
+    + \underbrace{\tfrac12\int\rho \vH\,d^3r}_{E_{\rm H}}
+    + E_{\rm xc}[\rho]
+    + E_{\rm Ewald}
+\]
+
+\begin{center}
+\begin{tabular}{@{}lp{8.4cm}@{}}
+\toprule
+Term & How it is obtained \\
+\midrule
+$\Ts$ & integral of the predicted \file{TAUCAR} \\
+$E_{\rm ext}$ & $\int\rho\vext$, with $\GG = 0$ excluded \\
+$E_{\alpha Z}$ & the finite $\GG = 0$ remainder, from the \file{POTCAR}
+\opt{PSCORE} \\
+$E_{\rm H}$ & Poisson solve in reciprocal space, $\vH(\GG{=}0) = 0$ \\
+$E_{\rm xc}$ & Dirac exchange $+$ PW92 correlation (LDA) \\
+$E_{\rm Ewald}$ & Ewald sum over the pseudo-ions in a neutralizing
+background \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{The \texorpdfstring{$\GG = 0$}{G = 0} bookkeeping}
+
+Each of the three electrostatic terms diverges at $\GG = 0$, and the
+divergences cancel in a neutral cell. Poraqu\^e follows the standard plane-wave
+treatment: drop $\GG = 0$ from all three, then add back the finite remainder of
+the electron-ion term,
+\[
+  E_{\alpha Z} = \frac{N_{\rm elec}}{\Omega}\sum_s N_s\,\mathrm{PSCORE}_s ,
+\]
+which is VASP's \opt{alpha Z}. It is of order eV \emph{per atom}, so it is read
+from the \file{POTCAR} tables when they are available and reported as
+\opt{None} when they are not --- never silently assumed to be zero.
+
+\begin{pnote}
+\opt{components.missing} lists any term that was skipped, and printing the
+components emits \opt{incomplete:} when that list is non-empty. A total that is
+missing a term says so rather than looking complete.
+\end{pnote}
+
+\section{Computing energies from files}
+
+\begin{lstlisting}
+from poraque.fields import ChargeDensity, ExternalPotential, \
+                           FieldGrid, KineticEnergyDensity
+from poraque.fields.vasp.potcar import Potcar
+from poraque.physics import EnergyCalculator
+
+grid = FieldGrid.from_file("run/CHGCAR")
+rho  = ChargeDensity.read("run/CHGCAR", grid=grid)
+tau  = KineticEnergyDensity.read("run/TAUCAR", grid=grid)
+vext = ExternalPotential.from_calculation("run", grid=grid)
+
+potcar = Potcar.from_file("run/POTCAR", parse_tables=True)
+calc = EnergyCalculator.from_potential(
+    vext, pscore={e.element: e.pscore for e in potcar})
+
+print(calc.compute(rho, tau, vext))
+\end{lstlisting}
+
+\begin{lstlisting}
+  kinetic      T_s            6207.068300 eV
+  external     E_ext        -12634.744762 eV
+  alpha Z                     1752.512988 eV
+  Hartree      E_H            3230.363304 eV
+  xc (lda)                   -3820.927158 eV
+  Ewald                     -25949.345827 eV
+  ----------------------------------------
+  potential                 -37422.141455 eV
+  TOTAL                     -31215.073155 eV
+  electrons                    297.000001
+\end{lstlisting}
+
+\begin{ptip}
+\opt{electrons} is the cheapest available diagnostic. It should equal the total
+\opt{ZVAL} --- 297 for the 27 Au atoms above --- to a few parts in $10^{4}$. A
+predicted density that has drifted off it invalidates every electrostatic term,
+since all of them are linear or quadratic in $\rho$.
+\end{ptip}
+
+Plain arrays are accepted as readily as field objects, so a prediction can be
+scored without being written to disk first.
+
+\section{The ASE calculator}
+
+\pyclass{Poraque} behaves like MACE or NequIP at the interface:
+
+\begin{lstlisting}
+from ase.build import bulk
+from poraque.calculator import Poraque
+
+atoms = bulk("Au", "fcc", a=4.08, cubic=True)
+atoms.calc = Poraque(ext2chg="models/ext2chg.pt",
+                     chg2tau="models/chg2tau.pt",
+                     potcar="POTCAR")
+
+energy = atoms.get_potential_energy()
+print(atoms.calc.components)          # the full decomposition
+rho = atoms.calc.fields["density"]    # the predicted CHGCAR
+\end{lstlisting}
+
+Each call runs \opt{Atoms} $\to$ \opt{Structure} $\to$ \opt{FieldGrid} $\to$
+$\vext$ $\to$ $\rho$ $\to$ $\tau$ $\to$ $E$. The three fields stay on the
+calculator afterwards, so a prediction can be written out with
+\opt{rho.write("CHGCAR")} and opened in VESTA.
+
+\begin{center}
+\begin{tabular}{@{}lp{8.0cm}@{}}
+\toprule
+Argument & Meaning \\
+\midrule
+\opt{ext2chg}, \opt{chg2tau} & Checkpoint paths, or loaded
+\pyclass{FieldOperator}s. \\
+\opt{potcar} & \file{POTCAR} for the species present --- \textbf{strongly
+preferred}. \\
+\opt{charges} & \opt{\{element: Z\_val\}}, used only without \opt{potcar}. \\
+\opt{resolution} & Longest grid axis; defaults to the checkpoint's training
+resolution. \\
+\opt{functional} & Exchange-correlation approximation. \\
+\opt{device} & \opt{auto}, \opt{cuda}, \opt{mps} or \opt{cpu}. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{pwarn}
+Without \opt{potcar} the external potential falls back to the \emph{Gaussian}
+pseudo-ion model, which differs from the tabulated potential by a relative
+$L^{2}$ of about $0.13$ --- against $2\times10^{-5}$ for the tabulated one. The
+operators were trained on tabulated potentials, so the Gaussian model feeds
+them an input outside their training distribution. The calculator warns once
+and proceeds; treat the result as a smoke test, not a prediction.
+\end{pwarn}
+
+\subsection{Forces and stress}
+
+\opt{get\_forces()} and \opt{get\_stress()} raise \opt{NotImplementedError}, so
+\textbf{geometry optimisation and molecular dynamics are unavailable}. Single
+points, energy-volume scans and ranking of fixed geometries work.
+
+Two independent pieces are missing: the derivative of $\vext$ with respect to
+the ionic positions (analytic, a Hellmann--Feynman term), and
+back-propagation of $\partial E/\partial\rho$ through both operators. A
+finite-difference stand-in is no shortcut here --- on a fixed grid it would be
+dominated by the grid's own discontinuity as atoms cross voxel boundaries.
+
+\opt{implemented\_properties} is \opt{["energy", "free\_energy"]}. The two are
+the same number: no electronic smearing enters this pipeline, and ASE
+optimizers request \opt{free\_energy} by name.
+
+\section{What the number is not}
+\label{sec:not-a-dft-energy}
+
+\paragraph{It is not a DFT total energy.} \file{CHGCAR} holds the valence
+\emph{pseudo} density and \file{TAUCAR} the valence pseudo kinetic energy
+density, so the PAW one-centre terms are absent entirely. For the 27-atom Au
+cell above the result is $\approx -31215$ eV against a VASP \opt{TOTEN} of
+order $-100$ eV. Nothing in this module can close that gap.
+
+\paragraph{Energy differences are not usable yet either.} Measured on the seven
+reference Au supercells, with the models evaluated on their own training data:
+
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Quantity & Value \\
+\midrule
+True spread of $E$ across the seven structures & 7.9 eV \\
+MAE of the predicted differences & 22.3 eV (0.83 eV/atom) \\
+Correlation of predicted vs.\ true differences & $r = 0.61$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The error is roughly \textbf{three times the signal}. The cause is
+cancellation, not a bug: the total is a sum of terms of order $10^{4}$ eV whose
+physically relevant variation is a few eV, a relative $2.5\times10^{-4}$. A
+field-level relative $L^{2}$ of $3\times10^{-2}$ cannot survive that. Reaching
+$0.01$ eV/atom would need densities accurate to roughly $10^{-5}$ relative,
+three orders of magnitude beyond the current models.
+
+\begin{pnote}
+The grid is \emph{not} the limiting factor. On reference fields the total
+energy changes by $0.08$ eV out of $31215$ ($0.003$ eV/atom) between
+\opt{resolution: 32} and the native $128^{3}$ mesh, and $\Ts$ and the electron
+count are preserved exactly --- spectral resampling is an exact band-limited
+projection.
+\end{pnote}
+
+Rescaling the predicted density to the known electron count does \textbf{not}
+help: $E_{\rm ext}$ is linear in $\rho$, so correcting a $0.3\,\%$
+electron-count error shifts a $-12690$ eV term by about $38$ eV. It was
+measured and rejected, not assumed.

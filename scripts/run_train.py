@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# file: train_fno.py
+# file: run_train.py
 
 # This code is part of Poraquê.
 # MIT License
@@ -43,10 +43,10 @@ Usage
 -----
 ::
 
-    python scripts/train_fno.py --write-config configs/train_config.yaml
-    python scripts/train_fno.py --config configs/train_config.yaml
-    python scripts/train_fno.py --config configs/train_config.yaml --epochs 500
-    python scripts/train_fno.py --config configs/train_config.yaml --device mps
+    python scripts/run_train.py --write-config configs/train_config.yaml
+    python scripts/run_train.py --config configs/train_config.yaml
+    python scripts/run_train.py --config configs/train_config.yaml --epochs 500
+    python scripts/run_train.py --config configs/train_config.yaml --device mps
 """
 
 import argparse
@@ -130,11 +130,9 @@ def build_cache(config, log):
         raise SystemExit(f"No {data.pattern}* directories under {data.root!r}.")
 
     # The cache key encodes everything that changes the stored fields. Without
-    # this, switching --gaussian-blur or --use-vasp-extcar would silently reuse
-    # the previous cache and the "comparison" would compare a model against
-    # itself.
+    # this, switching --gaussian-blur would silently reuse the previous cache
+    # and the "comparison" would compare a model against itself.
     tag = f"res{data.resolution}"
-    tag += "_vaspext" if data.use_vasp_extcar else "_poraqueext"
     if data.gaussian_blur:
         tag += f"_blur{data.gaussian_blur:g}{data.blur_method[:4]}"
     target = os.path.join(data.cache, tag)
@@ -154,9 +152,8 @@ def build_cache(config, log):
         os.makedirs(destination, exist_ok=True)
         start = time.time()
 
-        # The shared grid comes from CHGCAR, not EXTCAR: the density is always
-        # present in a standard VASP run, whereas EXTCAR is written only by the
-        # modified build.
+        # The shared grid comes from CHGCAR: the density is always present in a
+        # standard VASP run, and every other field is placed on the same mesh.
         source_grid = FieldGrid.from_file(reader.field_path(directory, "density"))
         reduced_shape = downsample_shape(source_grid.shape,
                                          target_max=data.resolution)
@@ -166,28 +163,19 @@ def build_cache(config, log):
         summary, warnings = [], []
 
         # ---- external potential ---------------------------------------- #
-        # Default: computed by poraque from POSCAR/INCAR/POTCAR, so the
-        # pipeline works with any standard VASP distribution. A reference
-        # EXTCAR is used only when explicitly requested.
-        vasp_extcar = reader.field_path(directory, "external")
-        if data.use_vasp_extcar:
-            if not os.path.exists(vasp_extcar):
-                raise SystemExit(
-                    f"{name}: use_vasp_extcar is set but {vasp_extcar} does not "
-                    f"exist. Standard VASP does not write EXTCAR; unset the flag "
-                    f"to have poraque compute it."
-                )
-            potential = ExternalPotential.read(vasp_extcar, grid=source_grid)
-            origin = "VASP reference"
-        else:
-            potential = ExternalPotential.from_calculation(
-                directory, code=reader.code, grid=source_grid,
-                gaussian_blur=data.gaussian_blur,
-                blur_method=data.blur_method,
-            )
-            origin = f"poraque/{potential.metadata.get('model', '?')}"
-            if data.gaussian_blur:
-                origin += f", blur {data.gaussian_blur} A ({data.blur_method})"
+        # Always computed by poraque from POSCAR/INCAR/POTCAR, so the pipeline
+        # works with any standard VASP distribution. Any EXTCAR present in the
+        # source directory is ignored: the training input must be exactly what
+        # ExternalPotential produces at inference time, when no such file
+        # exists.
+        potential = ExternalPotential.from_calculation(
+            directory, code=reader.code, grid=source_grid,
+            gaussian_blur=data.gaussian_blur,
+            blur_method=data.blur_method,
+        )
+        origin = f"poraque/{potential.metadata.get('model', '?')}"
+        if data.gaussian_blur:
+            origin += f", blur {data.gaussian_blur} A ({data.blur_method})"
 
         reduced = resample_field(potential, reduced_shape, grid=reduced_grid)
         reduced.write(os.path.join(destination, "EXTCAR"))
@@ -305,7 +293,8 @@ def build_operator(task, train_set, config, log):
     torch.manual_seed(config.training.seed)
     operator = FieldOperator(
         task, input_transform=source_transform, target_transform=target_transform,
-        device=config.training.device, **config.model_kwargs(), **head,
+        device=config.training.device,
+        training_resolution=config.data.resolution, **config.model_kwargs(), **head,
     )
     log(f"      model: {type(operator.model).__name__} width={config.model.width} "
         f"modes={config.model.modes} layers={config.model.n_layers}  "
@@ -740,6 +729,7 @@ def run_task(task_name, cache, config, log):
         operator = FieldOperator(
             task, input_transform=source_transform,
             target_transform=target_transform, device=config.training.device,
+            training_resolution=config.data.resolution,
             **config.model_kwargs(), **head,
         )
         log(f"      model: {type(operator.model).__name__} "
@@ -868,10 +858,6 @@ def build_parser():
     group.add_argument("--pattern", dest="data.pattern", default=None)
     group.add_argument("--code", dest="data.code", default=None)
     group.add_argument("--resolution", dest="data.resolution", type=int, default=None)
-    group.add_argument("--use-vasp-extcar", dest="data.use_vasp_extcar",
-                       action="store_const", const=True, default=None,
-                       help="use a reference EXTCAR from a modified VASP "
-                            "instead of computing it (default: compute)")
     group.add_argument("--gaussian-blur", dest="data.gaussian_blur", type=float,
                        default=None,
                        help="Gaussian blur width in Angstrom for the computed "

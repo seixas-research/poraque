@@ -4,7 +4,7 @@ A run is defined by `configs/train_config.yaml`: one top-level key and four
 sections. Generate a copy with every default written out explicitly:
 
 ```bash
-python scripts/train_fno.py --write-config configs/train_config.yaml
+python scripts/run_train.py --write-config configs/train_config.yaml
 ```
 
 This page documents every key that file can contain.
@@ -21,7 +21,7 @@ That ordering is what lets one committed config be swept from the shell without
 being edited or copied:
 
 ```bash
-python scripts/train_fno.py --config configs/train_config.yaml --epochs 500
+python scripts/run_train.py --config configs/train_config.yaml --epochs 500
 ```
 
 ```{note}
@@ -50,7 +50,6 @@ keeping: it records what actually ran.
 | `pattern` | `struct` | prefix identifying those subdirectories — a prefix, not a glob |
 | `code` | `auto` | DFT code, or `auto` to detect it from the files present |
 | `resolution` | `32` | longest grid axis after spectral downsampling |
-| `use_vasp_extcar` | `false` | read a reference `EXTCAR` instead of computing one |
 | `gaussian_blur` | `null` | Gaussian blur width in Å applied to the computed potential |
 | `blur_method` | `spectral` | `spectral` or `ndimage` |
 
@@ -65,20 +64,19 @@ Cost scales as the cube: raising 32 → 64 is roughly eight times the memory and
 time. Grid *shapes* are reduced in proportion, so a 120×128×128 calculation
 becomes 30×32×32 rather than being forced square.
 
-### `use_vasp_extcar`
-
 ```{note}
-Off by default because standard VASP does not write `EXTCAR`. Poraquê
-reconstructs the external potential from the `POTCAR` tables to a relative
-error of order $10^{-5}$, so the default costs essentially nothing in fidelity
-and the pipeline runs on any standard VASP output. Setting this to `true`
-raises an error when the file is absent rather than falling back silently.
+There is no key for supplying an external potential. `EXTCAR` is **always**
+computed by {class}`poraque.fields.ExternalPotential` from the `POTCAR` tables,
+which reproduces a reference potential to a relative error of order $10^{-5}$.
+Any `EXTCAR` present in a source directory is ignored — the training input must
+be exactly what the pipeline produces at inference time, when no such file
+exists. Standard VASP does not write one anyway.
 ```
 
 ### `gaussian_blur` and `blur_method`
 
 The blur is applied *on top of* the tabulated pseudopotential, never in place
-of it. Both keys are ignored when `use_vasp_extcar` is set.
+of it.
 
 ```{warning}
 `ndimage` uses `scipy.ndimage.gaussian_filter`, which blurs along *grid* axes
@@ -93,8 +91,8 @@ everything else fixed, blurring changed the held-out error by 0.7% and the
 training time by 0.4% — neither meaningful, since the grid already band-limits
 the field. Leave it off unless working at higher resolution.
 
-The cache directory name encodes these choices (`res32_poraqueext_blur0.15spec`),
-so changing them cannot silently reuse a cache built with different settings.
+The cache directory name encodes these choices (`res32_blur0.15spec`), so
+changing them cannot silently reuse a cache built with different settings.
 
 ## `model` — the operator's shape
 

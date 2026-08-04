@@ -63,7 +63,7 @@ sample has a different spatial extent.
 drawn across materials, so a gradient step generally mixes several.
 
 ```bash
-python scripts/train_fno.py --config configs/train_config.yaml   # mode: universal
+python scripts/run_train.py --config configs/train_config.yaml   # mode: universal
 ```
 
 This writes a single `models/ext2chg.pt` and `models/chg2tau.pt`.

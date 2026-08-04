@@ -6,8 +6,10 @@
 \begin{description}
   \item[``No struct* directories''] Check \opt{data.root} and
     \opt{data.pattern}. The pattern is a prefix, not a glob.
-  \item[``use\_vasp\_extcar is set but \ldots does not exist''] Standard VASP
-    does not write \file{EXTCAR}. Unset the flag and let Poraqu\^e compute it.
+  \item[``Unknown key(s) in section \ldots''] A configuration key was
+    removed. \opt{use\_vasp\_extcar}, \opt{train\_fraction} and \opt{split}
+    no longer exist; regenerate the file with \opt{--write-config}.
+    \file{EXTCAR} is now always computed.
   \item[``No valence charge for \ldots''] No \file{POTCAR} was found. Supply one,
     or pass \opt{--zval Au=11}.
   \item[``Unknown key(s) in section \ldots''] A typo in the YAML. The message

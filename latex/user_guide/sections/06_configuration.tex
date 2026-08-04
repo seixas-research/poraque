@@ -5,7 +5,7 @@ A run is defined by \file{configs/train\_config.yaml}: one top-level key and
 four sections. Generate a copy with every default written out explicitly with
 
 \begin{lstlisting}
-python scripts/train_fno.py --write-config configs/train_config.yaml
+python scripts/run_train.py --write-config configs/train_config.yaml
 \end{lstlisting}
 
 This chapter documents every key that file can contain.
@@ -24,7 +24,7 @@ That ordering is what lets a single committed configuration be swept from the
 shell without being edited or copied:
 
 \begin{lstlisting}
-python scripts/train_fno.py --config configs/train_config.yaml --epochs 500
+python scripts/run_train.py --config configs/train_config.yaml --epochs 500
 \end{lstlisting}
 
 \begin{pnote}
@@ -67,8 +67,6 @@ prefix, not a glob. \\
 \opt{code} & \opt{auto} & DFT code, or \opt{auto} to detect it from the files
 present. \\
 \opt{resolution} & \opt{32} & Longest grid axis after spectral downsampling. \\
-\opt{use\_vasp\_extcar} & \opt{false} & Read a reference \file{EXTCAR} instead
-of computing one. \\
 \opt{gaussian\_blur} & \opt{null} & Gaussian blur width in \AA{} applied to the
 computed potential. \\
 \opt{blur\_method} & \opt{spectral} & \opt{spectral} or \opt{ndimage}. \\
@@ -89,21 +87,19 @@ and time. Grid \emph{shapes} are reduced in proportion, so a
 $120\times128\times128$ calculation becomes $30\times32\times32$ rather than
 being forced square.
 
-\subsection{\opt{use\_vasp\_extcar}}
-
 \begin{pnote}
-Off by default because standard VASP does not write \file{EXTCAR}. Poraqu\^e
-reconstructs the external potential from the \file{POTCAR} tables to a relative
-error of order $10^{-5}$, so the default costs essentially nothing in fidelity
-and the pipeline runs on any standard VASP output. Setting this to \opt{true}
-raises an error when the file is absent rather than falling back silently.
+There is no key for supplying an external potential. \file{EXTCAR} is
+\textbf{always} computed by \pyclass{ExternalPotential} from the \file{POTCAR}
+tables, which reproduces a reference potential to a relative error of order
+$10^{-5}$. Any \file{EXTCAR} present in a source directory is ignored --- the
+training input must be exactly what the pipeline produces at inference time,
+when no such file exists. Standard VASP does not write one anyway.
 \end{pnote}
 
 \subsection{\opt{gaussian\_blur} and \opt{blur\_method}}
 
 Smooths the computed external potential. The blur is applied \emph{on top of}
-the tabulated pseudopotential, never in place of it. Both keys are ignored when
-\opt{use\_vasp\_extcar} is set, since a reference file is taken as given.
+the tabulated pseudopotential, never in place of it.
 
 \begin{pwarn}
 \opt{ndimage} uses \opt{scipy.ndimage.gaussian\_filter}, which blurs along
@@ -122,8 +118,8 @@ resolution.
 
 \begin{ptip}
 The cache directory name encodes these choices, for example
-\file{res32\_poraqueext\_blur0.15spec}, so changing them cannot silently reuse
-a cache built with different settings.
+\file{res32\_blur0.15spec}, so changing them cannot silently reuse a cache
+built with different settings.
 \end{ptip}
 
 \section{\opt{model} --- the operator's shape}
