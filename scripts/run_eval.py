@@ -33,6 +33,11 @@ closed form — and only the two field-to-field maps are learned.
 Every output is written in ``CHGCAR`` format, so the predictions open directly
 in VESTA, VMD or any tool that reads VASP volumetric files.
 
+Both operators are read from a **single unified checkpoint**,
+``models/poraque_models.pth``, written by ``run_train.py``. One file for the
+whole chain means the two halves cannot be copied separately or mixed across
+training runs.
+
 Grid selection
 --------------
 All three fields must share one mesh. Its shape is resolved in this order:
@@ -43,7 +48,8 @@ All three fields must share one mesh. Its shape is resolved in this order:
    reference calculation;
 3. ``--resolution``, which sizes a grid of that many points along the longest
    axis while preserving the cell's aspect ratio;
-4. otherwise the ``ENCUT``/``PREC`` rule of
+4. otherwise ``--encut`` (default :data:`DEFAULT_ENCUT` eV) through the
+   ``ENCUT``/``PREC`` rule of
    :meth:`~poraque.fields.FieldGrid.from_parameters`.
 
 .. warning::
@@ -56,14 +62,14 @@ Usage
 -----
 ::
 
+    python scripts/run_eval.py new_structure/ --output predictions/new
+
+    # explicit bundle, and a coarser grid
     python scripts/run_eval.py new_structure/ \
-        --ext2chg models/ext2chg_holdout_struct_000.pt \
-        --chg2tau models/chg2tau_holdout_struct_000.pt \
-        --output predictions/new_structure
+        --models models/poraque_models.pth --encut 300
 
     # match an existing calculation's grid, for a direct comparison
-    python scripts/run_eval.py run/ --ext2chg m1.pt --chg2tau m2.pt \
-        --like run/CHGCAR --compare
+    python scripts/run_eval.py run/ --like run/CHGCAR --compare
 """
 
 import argparse
@@ -89,62 +95,32 @@ from poraque.fields import (  # noqa: E402
 )
 from poraque.fields.io import resolve_reader  # noqa: E402
 from poraque.fields.resample import downsample_shape  # noqa: E402
-from poraque.ml import FieldOperator  # noqa: E402
+from poraque.ml import (  # noqa: E402
+    BUNDLE_FILENAME,
+    infer_backbone_kwargs,
+    load_bundle,
+    read_bundle,
+)
 from poraque.ml.device import describe_device, resolve_device  # noqa: E402
+
+#: Plane-wave cutoff (eV) that sizes the inference grid by default.
+#:
+#: Fixed rather than inherited from the structure's own ``INCAR``, because a
+#: genuinely new structure has no prior calculation to inherit from, and the
+#: same geometry must give the same grid either way.
+#:
+#: 200 eV puts a ~12 Å cell on a grid close to the ``resolution: 32`` the
+#: shipped models were trained at, so the default evaluates them where they
+#: were actually fitted rather than extrapolating.
+DEFAULT_ENCUT = 200.0
 
 
 # ===================================================================== #
 # Checkpoint handling
 # ===================================================================== #
-def inspect_checkpoint(path):
+def load_operator(bundle, task, device):
     """
-    Read a checkpoint's metadata without building the model.
-
-    Returns
-    -------
-    dict
-        ``task``, ``pauli_residual``, ``pauli_scale`` and the inferred backbone
-        hyper-parameters.
-    """
-    state = torch.load(path, map_location="cpu", weights_only=False)
-    weights = state["model_state"]
-
-    # Recover the architecture from the tensor shapes, so the caller does not
-    # have to remember the flags a checkpoint was trained with.
-    prefix = "backbone." if any(k.startswith("backbone.") for k in weights) else ""
-    spectral = [v for k, v in weights.items()
-                if k.startswith(f"{prefix}blocks.") and k.endswith(".spectral.weight")]
-    lift = weights.get(f"{prefix}lift.weight")
-    projection = [v for k, v in weights.items()
-                  if k.startswith(f"{prefix}project.") and k.endswith(".weight")]
-
-    hyper = {}
-    if spectral:
-        # (4, in, out, m1, m2, m3)
-        hyper["width"] = int(spectral[0].shape[1])
-        hyper["modes"] = int(spectral[0].shape[3])
-        hyper["n_layers"] = len(spectral)
-    if projection:
-        hyper["projection_channels"] = int(projection[0].shape[0])
-    if lift is not None:
-        # in_channels + 3 coordinate channels when they are used
-        hyper["use_coordinates"] = bool(int(lift.shape[1]) > 1)
-        hyper["in_channels"] = 1
-
-    return {
-        "path": str(path),
-        "task": state.get("task"),
-        "pauli_residual": bool(state.get("pauli_residual", False)),
-        "pauli_scale": state.get("pauli_scale"),
-        "learn_pauli_scale": state.get("learn_pauli_scale", True),
-        "hyperparameters": hyper,
-        "training_resolution": state.get("training_resolution"),
-    }
-
-
-def load_operator(path, device, expected_task=None):
-    """
-    Restore a :class:`~poraque.ml.training.FieldOperator` from a checkpoint.
+    Load one stage of the pipeline from the unified checkpoint.
 
     The architecture is inferred from the stored tensors, so no hyper-parameter
     has to be repeated on the command line — a mismatch there is otherwise a
@@ -152,27 +128,33 @@ def load_operator(path, device, expected_task=None):
 
     Parameters
     ----------
-    path : str
-        Checkpoint file.
+    bundle : str
+        Path to ``poraque_models.pth``.
+    task : str
+        ``"ext2chg"`` or ``"chg2tau"``.
     device : torch.device or str
         Target device.
-    expected_task : str, optional
-        Task the checkpoint must declare; mismatches raise, because chaining
-        the wrong model would produce plausible-looking garbage.
 
     Returns
     -------
-    FieldOperator
+    tuple of (FieldOperator, dict)
+        The operator and a small description of what was loaded.
     """
-    info = inspect_checkpoint(path)
-    if expected_task and info["task"] != expected_task:
-        raise SystemExit(
-            f"{path}: checkpoint is for task {info['task']!r}, but "
-            f"{expected_task!r} is required at this stage of the pipeline."
-        )
-    hyper = dict(info["hyperparameters"])
-    hyper.pop("in_channels", None)
-    return FieldOperator.load(path, device=device, **hyper), info
+    try:
+        operator = load_bundle(bundle, task, device=device)
+    except (KeyError, ValueError) as error:
+        raise SystemExit(f"{bundle}: {error}") from error
+
+    state = read_bundle(bundle)[task]
+    info = {
+        "path": str(bundle),
+        "task": task,
+        "pauli_residual": bool(state.get("pauli_residual", False)),
+        "pauli_scale": state.get("pauli_scale"),
+        "hyperparameters": infer_backbone_kwargs(state["model_state"]),
+        "training_resolution": state.get("training_resolution"),
+    }
+    return operator, info
 
 
 # ===================================================================== #
@@ -222,15 +204,23 @@ def resolve_grid(structure, parameters, pseudopotentials, args, log):
             grid = FieldGrid(grid.shape, structure.cell)
         return grid
 
-    derived = FieldGrid.from_parameters(structure, parameters, pseudopotentials)
+    # The default cutoff is Poraque's own (DEFAULT_ENCUT), not the one the
+    # reference calculation happened to use: inference must produce the same
+    # grid for the same geometry whether or not an INCAR is present, since a
+    # new structure generally has no prior calculation to inherit from.
+    derived = FieldGrid.from_parameters(structure, parameters, pseudopotentials,
+                                        encut=args.encut)
     if args.resolution:
         shape = downsample_shape(derived.shape, target_max=args.resolution)
         log(f"  grid: {shape} (--resolution {args.resolution}; "
-            f"ENCUT rule would give {derived.shape})")
+            f"ENCUT={args.encut} eV would give {derived.shape})")
         return FieldGrid(shape, structure.cell, encut=derived.encut)
 
-    log(f"  grid: {derived.shape} (from ENCUT={derived.encut} eV, "
-        f"PREC={derived.prec})")
+    stated = parameters.cutoff if parameters else None
+    origin = f"from ENCUT={args.encut} eV, PREC={derived.prec}"
+    if stated and abs(float(stated) - float(args.encut)) > 1e-6:
+        origin += f"; the calculation's own ENCUT is {stated:g} eV"
+    log(f"  grid: {derived.shape} ({origin})")
     return derived
 
 
@@ -324,8 +314,8 @@ def run(args, log):
     log(f"        -> {extcar}")
 
     # ---------------- 3. Model 1: EXTCAR -> CHGCAR ---------------- #
-    operator, info = load_operator(args.ext2chg, device, expected_task="ext2chg")
-    log(f"\n  [2/3] CHGCAR  via {os.path.basename(args.ext2chg)}")
+    operator, info = load_operator(args.models, "ext2chg", device)
+    log(f"\n  [2/3] CHGCAR  via {os.path.basename(args.models)} [ext2chg]")
     log(f"        model: {type(operator.model).__name__}  "
         f"{info['hyperparameters']}")
     warn_on_resolution_shift(grid, info, log)
@@ -367,8 +357,8 @@ def run(args, log):
     results["electrons_expected"] = expected or None
 
     # ---------------- 4. Model 2: CHGCAR -> TAUCAR ---------------- #
-    operator2, info2 = load_operator(args.chg2tau, device, expected_task="chg2tau")
-    log(f"\n  [3/3] TAUCAR  via {os.path.basename(args.chg2tau)}")
+    operator2, info2 = load_operator(args.models, "chg2tau", device)
+    log(f"\n  [3/3] TAUCAR  via {os.path.basename(args.models)} [chg2tau]")
     log(f"        model: {type(operator2.model).__name__}  "
         f"{info2['hyperparameters']}"
         + ("   [tau = tau_vW + softplus head]" if info2["pauli_residual"] else ""))
@@ -425,7 +415,33 @@ def run(args, log):
             log(f"      {filename:<8s} relative L2 {entry['relative_l2']:8.4f}   "
                 f"MAE {entry['mae']:10.5g}   r {entry['pearson_r']:7.4f}")
 
-    # ---------------- 6. optional figures ---------------- #
+    # ---------------- 6. energy decomposition ---------------- #
+    if args.functional != "skip":
+        log(f"\n  --- energy components (xc: {args.functional}) ---")
+        from poraque.physics import EnergyCalculator
+
+        pscore = None
+        potcar_path = os.path.join(args.directory, "POTCAR")
+        if os.path.exists(potcar_path):
+            from poraque.fields.vasp.potcar import Potcar
+
+            entries = Potcar.from_file(potcar_path, parse_tables=True)
+            pscore = {e.element: e.pscore for e in entries
+                      if e.pscore is not None}
+
+        energy = EnergyCalculator.from_potential(
+            potential, pscore=pscore, functional=args.functional)
+        components = energy.compute(density, tau, potential)
+        for line in str(components).splitlines():
+            log(f"    {line}")
+        results["energy"] = components.as_dict()
+
+        log("\n    NOTE: a pseudo-valence energy. The PAW one-centre terms")
+        log("    are absent, so this is not a DFT total energy, and on the")
+        log("    current models the error on energy differences exceeds the")
+        log("    differences themselves. See docs/source/energy/index.md.")
+
+    # ---------------- 7. optional figures ---------------- #
     if args.plot_dir:
         from poraque.vis import TrainingReport
 
@@ -465,16 +481,21 @@ def main(argv=None):
     )
     parser.add_argument("directory",
                         help="directory with POSCAR/INCAR/POTCAR of the new structure")
-    parser.add_argument("--ext2chg", required=True,
-                        help="checkpoint for the EXTCAR -> CHGCAR model")
-    parser.add_argument("--chg2tau", required=True,
-                        help="checkpoint for the CHGCAR -> TAUCAR model")
+    parser.add_argument("--models", "-m",
+                        default=os.path.join("models", BUNDLE_FILENAME),
+                        help=f"unified checkpoint holding both operators "
+                             f"(default: models/{BUNDLE_FILENAME})")
     parser.add_argument("--output", "-o", default="predictions",
                         help="directory for the predicted volumetric files")
 
     parser.add_argument("--code", default="auto", help="DFT code, or 'auto'")
+    parser.add_argument("--encut", type=float, default=DEFAULT_ENCUT,
+                        metavar="EV",
+                        help=f"plane-wave cutoff in eV setting the grid "
+                             f"resolution (default: {DEFAULT_ENCUT:g}). Used "
+                             f"unless --grid, --like or --resolution is given")
     parser.add_argument("--grid", nargs=3, type=int, metavar=("NX", "NY", "NZ"),
-                        help="explicit grid shape")
+                        help="explicit grid shape (overrides --encut)")
     parser.add_argument("--like", metavar="FILE",
                         help="adopt the grid of an existing volumetric file")
     parser.add_argument("--resolution", type=int,
@@ -491,6 +512,12 @@ def main(argv=None):
                         help="also write a CHG-formatted copy of the density")
     parser.add_argument("--compare", action="store_true",
                         help="compare against reference files in the input directory")
+    parser.add_argument("--functional", default="pbe",
+                        choices=["pbe", "lda", "pbe-x", "lda-x", "none", "skip"],
+                        help="exchange-correlation approximation for the energy "
+                             "decomposition (default: pbe, matching the "
+                             "PAW_PBE reference data); 'skip' omits the energy "
+                             "report entirely")
     parser.add_argument("--plot-dir", default=None,
                         help="write comparison figures to this directory")
     parser.add_argument("--dpi", type=int, default=160)

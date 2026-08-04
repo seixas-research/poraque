@@ -418,3 +418,135 @@ class TestTraining:
         assert set(terms) == {"total", "data"}
         assert float(terms["total"]) == pytest.approx(
             float(RelativeL2Loss()(prediction, target)))
+
+
+# --------------------------------------------------------------------- #
+# Unified checkpoint
+# --------------------------------------------------------------------- #
+class TestBundle:
+    """
+    The deployable artefact is one file holding the whole chain, so the two
+    halves cannot be copied separately or mixed across training runs.
+    """
+
+    @pytest.fixture
+    def pair(self):
+        return {
+            task: FieldOperator(task, width=4, modes=2, n_layers=1,
+                                projection_channels=8, device="cpu",
+                                training_resolution=24)
+            for task in ("ext2chg", "chg2tau")
+        }
+
+    def test_round_trip_preserves_the_weights(self, pair, tmp_path):
+        from poraque.ml import load_bundle, save_bundle
+
+        path = save_bundle(str(tmp_path / "poraque_models.pth"), pair)
+        for task, original in pair.items():
+            restored = load_bundle(path, task, device="cpu")
+            for a, b in zip(original.model.state_dict().values(),
+                            restored.model.state_dict().values()):
+                assert torch.equal(a, b)
+
+    def test_round_trip_preserves_the_metadata(self, pair, tmp_path):
+        from poraque.ml import load_bundle, save_bundle
+
+        path = save_bundle(str(tmp_path / "poraque_models.pth"), pair)
+        restored = load_bundle(path, "chg2tau", device="cpu")
+        assert restored.task.name == "chg2tau"
+        assert restored.training_resolution == 24
+
+    def test_predictions_are_unchanged(self, pair, tmp_path, dataset_root):
+        """The point of a checkpoint is that it predicts the same thing."""
+        from poraque.ml import load_bundle, save_bundle
+
+        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        source, _ = dataset.load_fields(0)
+
+        path = save_bundle(str(tmp_path / "poraque_models.pth"), pair)
+        before = pair["ext2chg"].predict(source).data
+        after = load_bundle(path, "ext2chg", device="cpu").predict(source).data
+        assert np.allclose(before, after, atol=1e-6)
+
+    def test_lists_its_tasks(self, pair, tmp_path):
+        from poraque.ml import bundle_tasks, save_bundle
+
+        path = save_bundle(str(tmp_path / "poraque_models.pth"), pair)
+        assert bundle_tasks(path) == ["chg2tau", "ext2chg"]
+
+    def test_missing_task_names_what_is_present(self, pair, tmp_path):
+        from poraque.ml import load_bundle, save_bundle
+
+        path = save_bundle(str(tmp_path / "one.pth"),
+                           {"ext2chg": pair["ext2chg"]})
+        with pytest.raises(KeyError, match="chg2tau"):
+            load_bundle(path, "chg2tau", device="cpu")
+
+    def test_a_single_operator_file_is_rejected(self, pair, tmp_path):
+        """
+        Naming the likely mistake beats a KeyError three frames deep.
+        """
+        from poraque.ml import read_bundle
+
+        path = str(tmp_path / "ext2chg.pt")
+        pair["ext2chg"].save(path)
+        with pytest.raises(ValueError, match="single-operator checkpoint"):
+            read_bundle(path)
+
+    def test_creates_the_directory(self, pair, tmp_path):
+        from poraque.ml import save_bundle
+
+        path = save_bundle(str(tmp_path / "nested" / "dir" / "m.pth"), pair)
+        assert os.path.exists(path)
+
+    def test_carries_provenance(self, pair, tmp_path):
+        from poraque.ml import read_bundle, save_bundle
+
+        path = save_bundle(str(tmp_path / "poraque_models.pth"), pair,
+                           metadata={"structures": ["a", "b"]})
+        payload = read_bundle(path)
+        assert payload["metadata"]["structures"] == ["a", "b"]
+        assert payload["poraque_version"]
+
+
+class TestBackboneInference:
+    """
+    Hyper-parameters are recovered from the tensors rather than remembered, so
+    a stored value cannot disagree with the weights it describes.
+    """
+
+    @pytest.mark.parametrize("width, modes, layers, projection", [
+        (4, 2, 1, 8), (12, 6, 3, 24),
+    ])
+    def test_recovers_the_architecture(self, width, modes, layers, projection):
+        from poraque.ml import infer_backbone_kwargs
+
+        operator = FieldOperator("ext2chg", width=width, modes=modes,
+                                 n_layers=layers,
+                                 projection_channels=projection, device="cpu")
+        recovered = infer_backbone_kwargs(operator.model.state_dict())
+        assert recovered["width"] == width
+        assert recovered["modes"] == modes
+        assert recovered["n_layers"] == layers
+        assert recovered["projection_channels"] == projection
+
+    def test_sees_through_the_pauli_head(self):
+        """The head wraps the backbone under a 'backbone.' prefix."""
+        from poraque.ml import infer_backbone_kwargs
+
+        operator = FieldOperator("chg2tau", width=6, modes=3, n_layers=2,
+                                 projection_channels=12, pauli_residual=True,
+                                 device="cpu")
+        recovered = infer_backbone_kwargs(operator.model.state_dict())
+        assert recovered["width"] == 6 and recovered["modes"] == 3
+
+    def test_pauli_head_survives_a_bundle_round_trip(self, tmp_path):
+        from poraque.ml import load_bundle, save_bundle
+
+        operator = FieldOperator("chg2tau", width=6, modes=3, n_layers=2,
+                                 projection_channels=12, pauli_residual=True,
+                                 pauli_scale=2.5, device="cpu")
+        path = save_bundle(str(tmp_path / "m.pth"), {"chg2tau": operator})
+        restored = load_bundle(path, "chg2tau", device="cpu")
+        assert restored.pauli_residual is True
+        assert restored.pauli_scale == pytest.approx(2.5)

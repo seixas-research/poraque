@@ -40,8 +40,10 @@ training:
   grad_clip: 1.0
   mode: universal
   holdout: null
+  valid_fraction: 0.0
   enable_kfold: false
   k_folds: 5
+  eval_epoch: 10
   seed: 0
   device: auto
   loss: relative_l2

@@ -170,6 +170,23 @@ class TrainingConfig_:
         Structure names excluded from universal training and used for
         validation. ``null`` trains on everything, in which case the reported
         metrics are **training fit** and carry no generalisation claim.
+
+        Mutually exclusive with ``valid_fraction``: both name a validation
+        split, and silently letting one win would make the run's protocol
+        depend on which key the reader happened to look at.
+    valid_fraction : float
+        Fraction of structures reserved for validation, drawn by shuffling the
+        structure list with ``seed``. ``0`` (default) keeps every structure for
+        training — the "universal" fit, whose metrics are a training fit.
+
+        The split is at the **structure level**, like ``k_folds``: whole
+        materials move together. At least one structure is always kept on each
+        side, so a non-zero fraction on a two-structure dataset gives 1 + 1
+        rather than an empty validation set.
+    eval_epoch : int
+        Evaluate and log every this many epochs. Validation is *only* computed
+        on those epochs, so raising it on a large validation set is a genuine
+        speed-up rather than only a quieter log.
     enable_kfold : bool
         Run K-fold cross-validation instead of a single universal fit. Takes
         precedence over ``mode``.
@@ -204,8 +221,10 @@ class TrainingConfig_:
     grad_clip: float = 1.0
     mode: str = "universal"
     holdout: list = None
+    valid_fraction: float = 0.0
     enable_kfold: bool = False
     k_folds: int = 5
+    eval_epoch: int = 10
     seed: int = 0
     device: str = "auto"
     loss: str = "relative_l2"

@@ -1,4 +1,4 @@
-# Analysis of the modified VASP source: `EXTCAR` and `TAUCAR`
+# Analysis of the VASP source: `EXTCAR` and `TAUCAR`
 
 **Source analysed:** `/Users/leseixas/Codes/vasp/6.2.0/build/std_taucar/`
 **Files:** `main.F`, `pot.F`, `pseudo.F`, `metagga.F`, `pseudo_struct.F`, `base.F`

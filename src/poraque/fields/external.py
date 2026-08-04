@@ -80,7 +80,7 @@ The form factor :math:`f_s(G)` selects the pseudo-ion model:
 Measured accuracy against VASP
 ------------------------------
 ``scripts/validate_vasp_data.py`` compares this model point-by-point against
-reference ``EXTCAR`` files produced by a modified VASP. On a 27-atom Au
+reference ``EXTCAR`` files, when such a reference is available. On a 27-atom Au
 supercell (``ZVAL = 11``, ``RCORE = 1.323`` Å, ``ENCUT = 450`` eV) the
 conventions match exactly — VASP's reference also has zero cell average, i.e.
 the same :math:`\mathbf{G}=0` treatment, and the same eV units with no volume

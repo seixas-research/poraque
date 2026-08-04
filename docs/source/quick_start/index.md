@@ -51,7 +51,7 @@ data of every structure, then writes:
 
 | Output | Contents |
 | --- | --- |
-| `models/ext2chg.pt`, `models/chg2tau.pt` | the trained operators |
+| `models/poraque_models.pth` | both trained operators, in one file |
 | `logs/*.log`, `logs/*.json` | metrics, and the resolved configuration |
 | `results/plots/` | loss curves, field cross-sections, parity plots |
 | `reports/*.pdf` | a typeset report per model |
@@ -59,10 +59,18 @@ data of every structure, then writes:
 ## 4. Predict a new structure
 
 ```bash
-python scripts/run_eval.py new_structure/ \
-    --ext2chg models/ext2chg.pt \
-    --chg2tau models/chg2tau.pt \
-    --output predictions/new_structure
+python scripts/run_eval.py new_structure/ --output predictions/new_structure
+```
+
+Both operators come from the single `models/poraque_models.pth` written by
+step 2. The grid is sized from `--encut` (default **200 eV**) unless `--grid`,
+`--like` or `--resolution` is given.
+
+```{tip}
+200 eV is chosen to land near the grid the models were trained on — 42³ for the
+27-atom reference cells, against a training `resolution` of 32. Raising it to
+400 eV would give 60³, a substantially finer mesh than the models have seen.
+Pass `--resolution 32` to evaluate exactly where they were fitted.
 ```
 
 Geometry → external potential (analytic) → charge density (Model 1) → kinetic
@@ -90,7 +98,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-atoms.calc = Poraque("models/ext2chg.pt", "models/chg2tau.pt", potcar="POTCAR")
+atoms.calc = Poraque("models/poraque_models.pth", potcar="POTCAR")
 
 energy = atoms.get_potential_energy()
 print(atoms.calc.components)          # the full energy decomposition

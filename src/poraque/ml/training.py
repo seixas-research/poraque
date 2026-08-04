@@ -202,50 +202,62 @@ class FieldOperator:
     # ------------------------------------------------------------------ #
     # Persistence
     # ------------------------------------------------------------------ #
-    def save(self, path):
+    def state(self):
         """
-        Save weights, normalizations and the head configuration to ``path``.
+        Everything needed to rebuild this operator, as a plain ``dict``.
 
-        The head flags are stored because they change the *architecture*, not
+        The head flags are included because they change the *architecture*, not
         just the weights: restoring a Pauli-residual model into a bare backbone
         would silently load mismatched tensors.
+
+        Returns
+        -------
+        dict
+            Suitable for :meth:`from_state`, and the per-task value stored
+            inside a bundle by :func:`save_bundle`.
         """
-        torch.save(
-            {
-                "task": self.task.name,
-                "model_state": self.model.state_dict(),
-                "model_class": type(self.model).__name__,
-                "input_transform": self.input_transform.state_dict(),
-                "target_transform": self.target_transform.state_dict(),
-                "pauli_residual": self.pauli_residual,
-                "pauli_scale": self.pauli_scale,
-                "learn_pauli_scale": self.learn_pauli_scale,
-                "training_resolution": self.training_resolution,
-            },
-            path,
-        )
-        return str(path)
+        return {
+            "task": self.task.name,
+            "model_state": self.model.state_dict(),
+            "model_class": type(self.model).__name__,
+            "input_transform": self.input_transform.state_dict(),
+            "target_transform": self.target_transform.state_dict(),
+            "pauli_residual": self.pauli_residual,
+            "pauli_scale": self.pauli_scale,
+            "learn_pauli_scale": self.learn_pauli_scale,
+            "training_resolution": self.training_resolution,
+        }
 
     @classmethod
-    def load(cls, path, model=None, device=None, **model_kwargs):
+    def from_state(cls, state, model=None, device=None, **model_kwargs):
         """
-        Restore an operator saved by :meth:`save`.
+        Rebuild an operator from a :meth:`state` payload.
 
-        The head configuration is taken from the checkpoint, so a
-        Pauli-residual model reloads as one without the caller having to
-        remember. ``**model_kwargs`` must still reproduce the backbone's
-        hyper-parameters.
+        The backbone's shape is **inferred from the stored tensors** unless
+        ``model_kwargs`` overrides it — see :func:`infer_backbone_kwargs`. A
+        remembered hyper-parameter that disagreed with the weights would load
+        mismatched tensors or fail obscurely; the tensors cannot disagree with
+        themselves.
 
         Parameters
         ----------
-        path : str
-            Checkpoint file.
+        state : dict
+            As produced by :meth:`state`.
         model : torch.nn.Module, optional
-            Pre-built **backbone** with matching architecture. When omitted an
-            :class:`~poraque.ml.fno.FNO3d` is built from ``**model_kwargs``.
+            Pre-built **backbone** with matching architecture.
         device : str or torch.device, optional
+        **model_kwargs
+            Override individual inferred hyper-parameters.
+
+        Returns
+        -------
+        FieldOperator
         """
-        state = torch.load(path, map_location="cpu", weights_only=False)
+        inferred = infer_backbone_kwargs(state["model_state"])
+        inferred.update(model_kwargs)
+        if model is not None:
+            inferred = model_kwargs
+
         operator = cls(
             state["task"], model=model, device=device,
             input_transform=FieldTransform.from_state_dict(state["input_transform"]),
@@ -254,15 +266,211 @@ class FieldOperator:
             pauli_scale=state.get("pauli_scale", 1.0),
             learn_pauli_scale=state.get("learn_pauli_scale", True),
             training_resolution=state.get("training_resolution"),
-            **model_kwargs,
+            **inferred,
         )
         operator.model.load_state_dict(state["model_state"])
         return operator
 
+    def save(self, path):
+        """
+        Save this single operator to ``path``.
+
+        Used for per-fold diagnostic checkpoints. The deployable artefact is a
+        *bundle* holding every task at once — see :func:`save_bundle`.
+        """
+        torch.save(self.state(), path)
+        return str(path)
+
+    @classmethod
+    def load(cls, path, model=None, device=None, **model_kwargs):
+        """
+        Restore an operator saved by :meth:`save`.
+
+        Parameters
+        ----------
+        path : str
+            Checkpoint file.
+        model : torch.nn.Module, optional
+            Pre-built **backbone** with matching architecture.
+        device : str or torch.device, optional
+        **model_kwargs
+            Override individual inferred hyper-parameters.
+        """
+        state = torch.load(path, map_location="cpu", weights_only=False)
+        return cls.from_state(state, model=model, device=device, **model_kwargs)
+
+
+#: Identifies a bundle payload, so a stray tensor file fails with a clear
+#: message instead of a ``KeyError`` three frames deep.
+BUNDLE_FORMAT = "poraque-bundle-1"
+
+#: Conventional filename for the unified checkpoint.
+BUNDLE_FILENAME = "poraque_models.pth"
+
+
+def infer_backbone_kwargs(model_state):
+    """
+    Recover an :class:`~poraque.ml.fno.FNO3d`'s shape from its tensors.
+
+    Storing the hyper-parameters separately would allow the record and the
+    weights to disagree; the weights cannot disagree with themselves. The
+    Pauli-residual head wraps the backbone under a ``backbone.`` prefix, which
+    is detected here rather than having to be remembered.
+
+    Parameters
+    ----------
+    model_state : dict
+        A ``state_dict`` as stored by :meth:`FieldOperator.state`.
+
+    Returns
+    -------
+    dict
+        ``width``, ``modes``, ``n_layers``, ``projection_channels`` and
+        ``use_coordinates``, where each can be determined.
+    """
+    prefix = "backbone." if any(k.startswith("backbone.") for k in model_state) else ""
+    spectral = [v for k, v in model_state.items()
+                if k.startswith(f"{prefix}blocks.")
+                and k.endswith(".spectral.weight")]
+    projection = [v for k, v in model_state.items()
+                  if k.startswith(f"{prefix}project.") and k.endswith(".weight")]
+    lift = model_state.get(f"{prefix}lift.weight")
+
+    kwargs = {}
+    if spectral:
+        # (4, in, out, m1, m2, m3) -- four corner blocks of the rfftn.
+        kwargs["width"] = int(spectral[0].shape[1])
+        kwargs["modes"] = int(spectral[0].shape[3])
+        kwargs["n_layers"] = len(spectral)
+    if projection:
+        kwargs["projection_channels"] = int(projection[0].shape[0])
+    if lift is not None:
+        # One field channel, plus three fractional-coordinate channels when
+        # they are in use.
+        kwargs["use_coordinates"] = bool(int(lift.shape[1]) > 1)
+    return kwargs
+
+
+def save_bundle(path, operators, metadata=None):
+    """
+    Save several operators into one unified checkpoint.
+
+    The whole pipeline is a chain, so its artefact is a chain: one file holding
+    every stage means the two halves cannot drift apart, be copied
+    individually, or be mixed across training runs.
+
+    Parameters
+    ----------
+    path : str
+        Destination, conventionally ``models/poraque_models.pth``.
+    operators : dict
+        ``{task_name: FieldOperator}``.
+    metadata : dict, optional
+        Extra provenance stored alongside, e.g. the dataset size.
+
+    Returns
+    -------
+    str
+        ``path``.
+
+    Examples
+    --------
+    >>> save_bundle("models/poraque_models.pth",
+    ...             {"ext2chg": first, "chg2tau": second})   # doctest: +SKIP
+    """
+    from ..version import __version__
+
+    payload = {
+        "format": BUNDLE_FORMAT,
+        "poraque_version": __version__,
+        "tasks": sorted(operators),
+        "metadata": dict(metadata or {}),
+    }
+    for name, operator in operators.items():
+        payload[name] = operator.state()
+
+    directory = os.path.dirname(str(path))
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    torch.save(payload, path)
+    return str(path)
+
+
+def read_bundle(path):
+    """
+    Read a bundle's raw payload, validating that it *is* one.
+
+    Parameters
+    ----------
+    path : str
+
+    Returns
+    -------
+    dict
+
+    Raises
+    ------
+    ValueError
+        If the file is not a Poraquê bundle. A single-operator checkpoint is
+        named explicitly in the message, since that is the likely mistake.
+    """
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    if not isinstance(payload, dict) or payload.get("format") != BUNDLE_FORMAT:
+        detail = ""
+        if isinstance(payload, dict) and "model_state" in payload:
+            detail = (f" It looks like a single-operator checkpoint for task "
+                      f"{payload.get('task')!r}; load it with "
+                      f"FieldOperator.load instead.")
+        raise ValueError(
+            f"{path} is not a Poraque model bundle (expected "
+            f"format={BUNDLE_FORMAT!r}).{detail}"
+        )
+    return payload
+
+
+def bundle_tasks(path):
+    """Task names stored in the bundle at ``path``."""
+    return list(read_bundle(path).get("tasks", []))
+
+
+def load_bundle(path, task, model=None, device=None, **model_kwargs):
+    """
+    Load one task's operator out of a unified checkpoint.
+
+    Parameters
+    ----------
+    path : str
+        Bundle file.
+    task : str
+        ``"ext2chg"`` or ``"chg2tau"``.
+    model : torch.nn.Module, optional
+    device : str or torch.device, optional
+    **model_kwargs
+        Override individual inferred hyper-parameters.
+
+    Returns
+    -------
+    FieldOperator
+
+    Raises
+    ------
+    KeyError
+        If the bundle holds no such task, listing what it does hold.
+    """
+    payload = read_bundle(path)
+    if task not in payload:
+        raise KeyError(
+            f"{path} holds no {task!r} model; it contains "
+            f"{sorted(payload.get('tasks', []))}."
+        )
+    return FieldOperator.from_state(payload[task], model=model, device=device,
+                                    **model_kwargs)
+
 
 def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
           weight_decay=1e-4, validation=None, loss=None, scheduler="cosine",
-          grad_clip=1.0, log_every=1, checkpoint=None, seed=0, verbose=True):
+          grad_clip=1.0, eval_every=1, checkpoint=None, seed=0, verbose=True,
+          log=None):
     """
     Train a :class:`FieldOperator`.
 
@@ -279,7 +487,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     learning_rate, weight_decay : float, optional
         AdamW hyper-parameters.
     validation : FieldPairDataset, optional
-        Held-out materials; evaluated each epoch.
+        Held-out materials, evaluated every ``eval_every`` epochs.
     loss : nn.Module, optional
         Objective; defaults to a supervised
         :class:`~poraque.ml.losses.PhysicsInformedLoss` for the task.
@@ -288,19 +496,34 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     grad_clip : float, optional
         Gradient-norm clipping; ``0`` disables. Spectral layers can produce
         large gradients early in training, so this is on by default.
-    log_every : int, optional
-        Epoch interval for logging.
+    eval_every : int, optional
+        Epoch interval for evaluating and reporting. Validation is computed
+        *only* on these epochs, so this is a real saving on a large validation
+        set, not merely a quieter log. The final epoch is always reported, so
+        a run never ends without a current number.
     checkpoint : str, optional
-        Path to save the best-validation model to.
+        Path to save the best-validation model to. Only epochs on which
+        validation was computed can improve on the best, which is the intended
+        behaviour: a checkpoint is written against a measured score, never an
+        assumed one.
     seed : int, optional
         RNG seed.
     verbose : bool, optional
-        Print progress.
+        Report progress.
+    log : callable, optional
+        Receives each progress line. Defaults to :func:`print`; pass the
+        caller's logger to get training progress into the run log rather than
+        only onto the terminal.
 
     Returns
     -------
     dict
-        History with ``train_loss`` and, when validating, ``val_error``.
+        ``train_loss`` (one entry per epoch) and, when validating,
+        ``val_error`` together with ``val_epoch`` — the 1-based epochs those
+        errors were measured on. The two validation lists are the same length
+        and shorter than ``train_loss`` whenever ``eval_every > 1``, so
+        anything plotting them must use ``val_epoch`` for the x-axis rather
+        than assuming one point per epoch.
     """
     torch.manual_seed(seed)
     criterion = loss or PhysicsInformedLoss(task=operator.task.name)
@@ -317,8 +540,10 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         if validation is not None else None
     )
 
-    history = {"train_loss": [], "val_error": []}
+    history = {"train_loss": [], "val_error": [], "val_epoch": []}
     best_error = float("inf")
+    emit = log if log is not None else print
+    eval_every = max(1, int(eval_every))
 
     for epoch in range(int(epochs)):
         if hasattr(loader.batch_sampler, "set_epoch"):
@@ -356,18 +581,30 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         mean_loss = running / max(batches, 1)
         history["train_loss"].append(mean_loss)
 
-        message = f"epoch {epoch + 1:4d}/{epochs}  train {mean_loss:.5f}"
+        # The last epoch always reports, so a run never finishes without a
+        # current number just because `epochs` is not a multiple of the
+        # interval.
+        reporting = ((epoch + 1) % eval_every == 0) or (epoch == epochs - 1)
+        if not reporting:
+            continue
+
+        message = f"    epoch {epoch + 1:5d}/{epochs}  train {mean_loss:.5f}"
         if validation_loader is not None:
             error = evaluate(operator, validation_loader)
             history["val_error"].append(error)
+            history["val_epoch"].append(epoch + 1)
             message += f"  val_rel_L2 {error:.5f}"
             if checkpoint and error < best_error:
                 best_error = error
                 operator.save(checkpoint)
                 message += "  *"
+        else:
+            # Without a validation set the training-set error is the only
+            # measurable quantity, and it is not a generalisation estimate.
+            message += "  (no validation split)"
 
-        if verbose and (epoch % log_every == 0 or epoch == epochs - 1):
-            print(message)
+        if verbose:
+            emit(message)
 
     return history
 

@@ -54,9 +54,7 @@ python scripts/run_train.py --config configs/train_config.yaml
 python scripts/run_train.py --config configs/train_config.yaml --kfold --k-folds 5
 
 # 4. predict a structure that has never been computed
-python scripts/run_eval.py new_structure/ \
-    --ext2chg models/ext2chg.pt --chg2tau models/chg2tau.pt \
-    --output predictions/new_structure
+python scripts/run_eval.py new_structure/ --output predictions/new_structure
 ```
 
 Every predicted field is written in `CHGCAR` format and opens in VESTA.
@@ -68,7 +66,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-atoms.calc = Poraque("models/ext2chg.pt", "models/chg2tau.pt", potcar="POTCAR")
+atoms.calc = Poraque("models/poraque_models.pth", potcar="POTCAR")
 atoms.get_potential_energy()
 print(atoms.calc.components)     # T_s, E_ext, alpha Z, E_H, E_xc, Ewald
 ```
@@ -94,10 +92,10 @@ relaxations.
 
 ## Design points
 
-- **No modified VASP required.** The external potential is always reconstructed
-  from the `POTCAR` tables, matching a reference `EXTCAR` to a relative
-  5×10⁻⁵. There is no fallback to a supplied `EXTCAR`: the training input must
-  be exactly what inference produces.
+- **The external potential is computed natively.** Poraquê reconstructs it from
+  the `POTCAR` tables on any standard VASP output, matching a reference
+  potential to a relative 5×10⁻⁵. There is no option to import one: the
+  training input must be exactly what inference produces.
 - **Grids may differ between materials.** One model serves all of them: the
   operator's weights live in Fourier-mode space, and batches are bucketed by
   grid shape.
@@ -111,28 +109,57 @@ relaxations.
 
 ## Status
 
-Measured on five gold supercells, 5-fold cross-validation with whole structures
-held out:
+Twelve gold supercells — ten 27-atom cells and two 32-atom cells, spanning four
+grid shapes. 5-fold cross-validation, whole structures held out:
 
 | Model | relative L² | R² |
 | --- | --- | --- |
-| `ext2chg` | 0.0295 ± 0.0025 | 0.9986 |
-| `chg2tau` | 0.0525 ± 0.0031 | 0.9950 |
+| `ext2chg` | 0.0231 ± 0.0127 | 0.9989 |
+| `chg2tau` | 0.0469 ± 0.0273 | 0.9947 |
 
-The learned kinetic functional beats Thomas-Fermi and von Weizsäcker by roughly
-an order of magnitude on this system.
+The learned kinetic functional beats the analytic orbital-free functionals by a
+wide margin on this system — Thomas-Fermi scores 1.348 and von Weizsäcker
+0.738 on the same fields, so `chg2tau` is **29×** and **16×** better
+respectively.
 
-> These numbers measure interpolation between nearby geometries of a single
-> element. They say nothing about transfer to other chemistry. Growing the
-> dataset is the main open item — see `docs/notes/roadmap.md`.
+### Cell size dominates the error
+
+The aggregate above hides the only interesting thing in it. Split by cell size:
+
+| Subset | `ext2chg` | `chg2tau` |
+| --- | --- | --- |
+| 27-atom (10 structures) | 0.0189 ± 0.0047 | 0.0379 ± 0.0077 |
+| 32-atom (2 structures) | 0.0441 ± 0.0180 | 0.0920 ± 0.0415 |
+
+Held out, a 32-atom cell is **~2.4× harder** than a 27-atom one. That is the
+first transfer measurement this project has: with only two examples of that
+cell size, holding one out leaves a single sibling, and the operator has to
+extrapolate to a grid shape it has barely seen.
+
+Within a familiar cell size, more data helps monotonically — the 27-atom
+numbers are the best yet recorded:
+
+| Dataset | `ext2chg` | `chg2tau` |
+| --- | --- | --- |
+| 5 structures | 0.0295 ± 0.0025 | 0.0525 ± 0.0031 |
+| 9 structures | 0.0219 ± 0.0046 | 0.0400 ± 0.0069 |
+| 12 structures, 27-atom subset | 0.0189 ± 0.0047 | 0.0379 ± 0.0077 |
+
+> Still one element. These numbers measure interpolation between geometries of
+> gold and now, weakly, extrapolation across cell size. They say nothing about
+> transfer to other chemistry. Growing the dataset remains the main open item —
+> see `docs/notes/roadmap.md`.
 
 **Energies are not there yet.** The total energy is a sum of terms of order
-10⁴ eV whose physically relevant variation is a few eV — a relative 2.5×10⁻⁴.
-A field-level error of 3×10⁻² cannot survive that cancellation: across the
-seven reference structures the true energy spread is 7.9 eV and the error on
-predicted differences is 22.3 eV. The energy module is validated against exact
-Madelung constants and uniform-electron-gas limits; it is the *fields* that are
-not yet accurate enough. See `docs/source/energy/index.md`.
+10⁴ eV whose physically relevant variation is a fraction of an eV per atom — a
+relative ~10⁻⁴ — and a field-level error of 2×10⁻² cannot survive that
+cancellation. Across the twelve structures the true spread is 0.27 eV/atom and
+the error on predicted differences is 0.29 eV/atom, a ratio of 1.06 with
+correlation r ≈ −0.1. That is an improvement on the previous 3× ratio, but an
+error equal to the signal and no correlation still means the predicted energy
+ordering carries no information. The energy module itself is validated against
+exact Madelung constants and uniform-electron-gas limits; it is the *fields*
+that are not yet accurate enough. See `docs/source/energy/index.md`.
 
 ## License
 

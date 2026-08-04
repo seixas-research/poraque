@@ -17,9 +17,7 @@ the calculator protocol::
     from poraque.calculator import Poraque
 
     atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-    atoms.calc = Poraque(ext2chg="models/ext2chg.pt",
-                         chg2tau="models/chg2tau.pt",
-                         potcar="POTCAR")
+    atoms.calc = Poraque("models/poraque_models.pth", potcar="POTCAR")
     energy = atoms.get_potential_energy()
 
 Each call runs
@@ -54,6 +52,8 @@ quantities, so the PAW one-centre terms are missing. See
 :class:`~poraque.physics.energy.EnergyComponents`.
 """
 
+import gzip
+import os
 import warnings
 
 import numpy as np
@@ -67,6 +67,7 @@ except ImportError as error:                              # pragma: no cover
 
 from .fields import ChargeDensity, ExternalPotential, FieldGrid
 from .fields.structure import Structure
+from .ml import BUNDLE_FILENAME
 from .physics import EnergyCalculator
 
 #: Fallback grid resolution when neither the caller nor the checkpoints say.
@@ -79,23 +80,39 @@ class Poraque(Calculator):
 
     Parameters
     ----------
-    ext2chg : str or FieldOperator
-        Checkpoint path or a loaded operator for :math:`V_{\rm ext}\to\rho`.
-    chg2tau : str or FieldOperator
-        Checkpoint path or a loaded operator for :math:`\rho\to\tau`.
+    models : str, optional
+        The unified checkpoint written by ``run_train.py``, holding both
+        operators. Defaults to ``models/poraque_models.pth``.
+    ext2chg, chg2tau : FieldOperator, optional
+        Already-loaded operators, overriding the corresponding entry of
+        ``models``. Useful for evaluating a model that is still in memory.
     potcar : str, optional
-        ``POTCAR`` for the species present. **Strongly preferred**: it supplies
-        the tabulated local potential the operators were trained on, and the
+        A single concatenated ``POTCAR`` covering the species present.
+        **Strongly preferred** when the composition is fixed: it supplies the
+        tabulated local potential the operators were trained on, and the
         ``PSCORE`` values needed for the :math:`\mathbf G = 0` energy term.
+    potcar_dir : str, optional
+        A ``POTCAR`` *library* — one subdirectory per pseudopotential, as VASP
+        ships them (``<potcar_dir>/Au/POTCAR``, optionally ``.gz`` or ``.Z``).
+        The right choice for a calculator that must serve arbitrary
+        compositions: the entries for whatever elements an
+        :class:`ase.Atoms` happens to contain are assembled on demand and
+        cached per composition. A flat layout (``POTCAR.Au``, ``Au.POTCAR``)
+        is also recognised.
     charges : dict, optional
-        ``{element: Z_val}``, used only when ``potcar`` is absent. Selects the
-        Gaussian pseudo-ion model — see the warning below.
+        ``{element: Z_val}``, used only when no ``POTCAR`` is available.
+        Selects the Gaussian pseudo-ion model — see the warning below.
     resolution : int, optional
         Longest grid axis. Defaults to the resolution recorded in the
         ``ext2chg`` checkpoint, else :data:`DEFAULT_RESOLUTION`.
     functional : str, optional
-        Exchange-correlation approximation for
-        :func:`~poraque.physics.energy.xc_energy`.
+        Exchange-correlation approximation, one of
+        :data:`~poraque.physics.energy.XC_FUNCTIONALS`: ``"pbe"`` (default),
+        ``"lda"``, ``"pbe-x"``, ``"lda-x"`` or ``"none"``. PBE is the default
+        because the reference calculations are PBE (``PAW_PBE`` potentials,
+        ``LEXCH = PE``); an LDA :math:`E_{\rm xc}` on a PBE density answers a
+        different question. Change it only to match a differently generated
+        dataset.
     device : str, optional
         ``"auto"`` (default), ``"cuda"``, ``"mps"`` or ``"cpu"``.
     **kwargs
@@ -127,7 +144,7 @@ class Poraque(Calculator):
     --------
     >>> from ase.build import bulk                                # doctest: +SKIP
     >>> atoms = bulk("Au", "fcc", a=4.08, cubic=True)             # doctest: +SKIP
-    >>> atoms.calc = Poraque("models/ext2chg.pt", "models/chg2tau.pt",
+    >>> atoms.calc = Poraque("models/poraque_models.pth",
     ...                      potcar="POTCAR")                     # doctest: +SKIP
     >>> atoms.get_potential_energy()                              # doctest: +SKIP
     -123.456
@@ -136,8 +153,9 @@ class Poraque(Calculator):
 
     implemented_properties = ["energy", "free_energy"]
 
-    def __init__(self, ext2chg, chg2tau, potcar=None, charges=None,
-                 resolution=None, functional="lda", device="auto", **kwargs):
+    def __init__(self, models=None, ext2chg=None, chg2tau=None, potcar=None,
+                 potcar_dir=None, charges=None, resolution=None,
+                 functional="pbe", device="auto", **kwargs):
         if _ASE_ERROR is not None:                        # pragma: no cover
             raise ImportError(
                 "The Poraque ASE calculator requires ASE: pip install ase"
@@ -147,17 +165,31 @@ class Poraque(Calculator):
         self.device = device
         self.functional = functional
         self.charges = dict(charges) if charges else None
+        self.potcar_dir = str(potcar_dir) if potcar_dir else None
         self.fields = {}
         self.components = None
         self._warned_gaussian = False
+        self._potcar_cache = {}
 
-        self.ext2chg = self._resolve_operator(ext2chg, "ext2chg")
-        self.chg2tau = self._resolve_operator(chg2tau, "chg2tau")
+        if models is None and (ext2chg is None or chg2tau is None):
+            models = os.path.join("models", BUNDLE_FILENAME)
+        self.models = str(models) if models is not None else None
+
+        self.ext2chg = self._resolve_operator(
+            ext2chg if ext2chg is not None else self.models, "ext2chg")
+        self.chg2tau = self._resolve_operator(
+            chg2tau if chg2tau is not None else self.models, "chg2tau")
 
         self.potcar = self._read_potcar(potcar) if potcar else None
-        if self.potcar is None and not self.charges:
+
+        if self.potcar_dir is not None and not os.path.isdir(self.potcar_dir):
             raise ValueError(
-                "Poraque needs either a POTCAR (preferred) or an explicit "
+                f"potcar_dir {self.potcar_dir!r} is not a directory."
+            )
+        if self.potcar is None and self.potcar_dir is None and not self.charges:
+            raise ValueError(
+                "Poraque needs a POTCAR (potcar=... for a fixed composition, "
+                "potcar_dir=... for a library) or an explicit "
                 "charges={'Au': 11.0} mapping: the external potential cannot "
                 "be built without the pseudo-ion valence charges."
             )
@@ -171,8 +203,8 @@ class Poraque(Calculator):
     # Setup helpers
     # ------------------------------------------------------------------ #
     def _resolve_operator(self, source, task):
-        """Accept a live operator or load one from a checkpoint."""
-        from .ml import FieldOperator
+        """Accept a live operator, or load one from the unified checkpoint."""
+        from .ml import FieldOperator, load_bundle
 
         if isinstance(source, FieldOperator):
             if source.task.name != task:
@@ -183,24 +215,27 @@ class Poraque(Calculator):
                 )
             return source
 
-        import torch
-
-        state = torch.load(source, map_location="cpu", weights_only=False)
-        if state.get("task") != task:
-            raise ValueError(
-                f"{source}: checkpoint is for task {state.get('task')!r}, "
-                f"but {task!r} is required at this stage of the pipeline."
-            )
-        return FieldOperator.load(source, device=self.device,
-                                  **_backbone_kwargs(state["model_state"]))
+        return load_bundle(source, task, device=self.device)
 
     @staticmethod
     def _read_potcar(path):
         """Read a POTCAR with its local-potential tables."""
         from .fields.vasp.potcar import Potcar
 
-        potcar = Potcar.from_file(path, parse_tables=True)
-        missing = [entry.element for entry in potcar if not entry.has_local_table]
+        return Poraque._validate_potcar(Potcar.from_file(path,
+                                                         parse_tables=True))
+
+    @staticmethod
+    def _validate_potcar(potcar):
+        """
+        Return ``potcar`` if every entry carries a usable table, else ``None``.
+
+        A truncated table is not a fatal error — the Gaussian fallback still
+        produces a number — but it silently changes which model generated the
+        input, so it warns rather than degrading quietly.
+        """
+        missing = [entry.element for entry in potcar
+                   if not entry.has_local_table]
         if missing:
             warnings.warn(
                 f"POTCAR entries {missing} carry no usable local-potential "
@@ -210,6 +245,69 @@ class Poraque(Calculator):
             )
             return None
         return potcar
+
+    def _potcar_for(self, structure):
+        """
+        The ``POTCAR`` covering ``structure``, or ``None`` if unavailable.
+
+        An explicit ``potcar=`` wins when it covers every element present; a
+        ``potcar_dir=`` library is otherwise searched and the result cached by
+        composition, so a scan over many geometries of one material parses the
+        tables once.
+
+        Parameters
+        ----------
+        structure : Structure
+
+        Returns
+        -------
+        Potcar or None
+        """
+        elements = tuple(dict.fromkeys(structure.elements))
+
+        if self.potcar is not None:
+            covered = {entry.element for entry in self.potcar}
+            absent = [e for e in elements if e not in covered]
+            if not absent:
+                return self.potcar
+            if self.potcar_dir is None:
+                raise ValueError(
+                    f"The supplied POTCAR covers {sorted(covered)} but the "
+                    f"structure contains {absent}. Pass potcar_dir= to look "
+                    f"the missing species up in a POTCAR library."
+                )
+
+        if self.potcar_dir is None:
+            return None
+
+        if elements not in self._potcar_cache:
+            self._potcar_cache[elements] = self._assemble_potcar(elements)
+        return self._potcar_cache[elements]
+
+    def _assemble_potcar(self, elements):
+        """Build a :class:`Potcar` for ``elements`` from the library."""
+        from .fields.vasp.potcar import Potcar
+
+        entries = []
+        for element in elements:
+            path = _find_potcar(self.potcar_dir, element)
+            single = Potcar.from_string(_read_maybe_compressed(path),
+                                        parse_tables=True)
+            if not single:
+                raise ValueError(f"{path} contains no POTCAR dataset.")
+            if len(single) > 1:
+                raise ValueError(
+                    f"{path} holds {len(single)} datasets; a library entry "
+                    f"must contain exactly one."
+                )
+            found = single[0].element
+            if found != element:
+                raise ValueError(
+                    f"{path} is a POTCAR for {found!r}, not {element!r}."
+                )
+            entries.append(single[0])
+
+        return self._validate_potcar(Potcar(entries))
 
     # ------------------------------------------------------------------ #
     # The pipeline
@@ -242,9 +340,17 @@ class Poraque(Calculator):
         grid = FieldGrid(_grid_shape(structure.cell, self.resolution),
                          structure.cell)
 
-        if self.potcar is not None:
+        potcar = self._potcar_for(structure)
+        if potcar is not None:
             return ExternalPotential.from_potcar_tables(structure, grid,
-                                                        self.potcar)
+                                                        potcar)
+
+        if not self.charges:
+            raise ValueError(
+                f"No POTCAR found for {sorted(set(structure.elements))} and no "
+                f"charges= mapping was given, so the external potential cannot "
+                f"be built."
+            )
 
         if not self._warned_gaussian:
             warnings.warn(
@@ -287,9 +393,12 @@ class Poraque(Calculator):
         fields = self.predict_fields(atoms)
         potential = fields["external"]
 
+        # Same POTCAR the potential was built from, so PSCORE and the valence
+        # charges cannot come from different pseudopotentials.
+        potcar = self._potcar_for(potential.structure)
         pscore = None
-        if self.potcar is not None:
-            pscore = {entry.element: entry.pscore for entry in self.potcar
+        if potcar is not None:
+            pscore = {entry.element: entry.pscore for entry in potcar
                       if entry.pscore is not None}
 
         calculator = EnergyCalculator(
@@ -369,7 +478,12 @@ class Poraque(Calculator):
         )
 
     def __repr__(self):
-        source = "potcar" if self.potcar is not None else "gaussian"
+        if self.potcar is not None:
+            source = "potcar"
+        elif self.potcar_dir is not None:
+            source = f"potcar_dir={self.potcar_dir!r}"
+        else:
+            source = "gaussian"
         return (f"Poraque(resolution={self.resolution}, v_ext={source}, "
                 f"functional={self.functional!r}, "
                 f"device={self.ext2chg.device_description})")
@@ -378,6 +492,100 @@ class Poraque(Calculator):
 # ===================================================================== #
 # Helpers
 # ===================================================================== #
+#: Filenames a library entry may use, in preference order.
+_POTCAR_NAMES = ("POTCAR", "POTCAR.gz", "POTCAR.Z")
+
+
+def _find_potcar(directory, element):
+    r"""
+    Locate the ``POTCAR`` for ``element`` inside a library directory.
+
+    Recognised layouts, in preference order:
+
+    1. ``<dir>/<element>/POTCAR`` --- what VASP ships;
+    2. ``<dir>/<element>_<variant>/POTCAR`` --- ``Au_pv``, ``Fe_sv``, ...;
+    3. ``<dir>/POTCAR.<element>`` or ``<dir>/<element>.POTCAR`` --- flat.
+
+    Each accepts a ``.gz`` or ``.Z`` suffix.
+
+    Parameters
+    ----------
+    directory : str
+        Library root.
+    element : str
+        Bare chemical symbol.
+
+    Returns
+    -------
+    str
+        Path to the file.
+
+    Raises
+    ------
+    FileNotFoundError
+        When nothing matches, listing what the directory does contain.
+    ValueError
+        When only *variant* directories match and there is more than one. The
+        choice between ``Fe`` and ``Fe_pv`` changes ``ZVAL`` and therefore
+        every energy, so it is the user's to make, not a coin flip.
+    """
+    exact = os.path.join(directory, element)
+    if os.path.isdir(exact):
+        for name in _POTCAR_NAMES:
+            candidate = os.path.join(exact, name)
+            if os.path.isfile(candidate):
+                return candidate
+
+    for stem in (f"POTCAR.{element}", f"{element}.POTCAR"):
+        for suffix in ("", ".gz", ".Z"):
+            candidate = os.path.join(directory, stem + suffix)
+            if os.path.isfile(candidate):
+                return candidate
+
+    variants = sorted(
+        entry for entry in os.listdir(directory)
+        if entry.startswith(f"{element}_")
+        and os.path.isdir(os.path.join(directory, entry))
+        and any(os.path.isfile(os.path.join(directory, entry, name))
+                for name in _POTCAR_NAMES)
+    )
+    if len(variants) == 1:
+        chosen = os.path.join(directory, variants[0])
+        for name in _POTCAR_NAMES:
+            candidate = os.path.join(chosen, name)
+            if os.path.isfile(candidate):
+                warnings.warn(
+                    f"No plain {element!r} POTCAR in {directory}; using the "
+                    f"only variant present, {variants[0]!r}.",
+                    RuntimeWarning, stacklevel=4,
+                )
+                return candidate
+    if len(variants) > 1:
+        raise ValueError(
+            f"No plain {element!r} POTCAR in {directory}, and several "
+            f"variants exist: {variants}. They differ in ZVAL and therefore "
+            f"in every energy, so name the one you want by passing an "
+            f"explicit potcar= file."
+        )
+
+    available = sorted(entry for entry in os.listdir(directory)
+                       if not entry.startswith("."))[:20]
+    raise FileNotFoundError(
+        f"No POTCAR for {element!r} under {directory}. Expected "
+        f"{element}/POTCAR, POTCAR.{element} or {element}.POTCAR. "
+        f"The directory contains: {available}"
+    )
+
+
+def _read_maybe_compressed(path):
+    """Read a POTCAR, transparently handling ``.gz``/``.Z`` compression."""
+    if path.endswith((".gz", ".Z")):
+        with gzip.open(path, "rt", errors="replace") as handle:
+            return handle.read()
+    with open(path, "r", errors="replace") as handle:
+        return handle.read()
+
+
 def _grid_shape(cell, resolution):
     """
     FFT-friendly grid whose longest axis is ``resolution`` points.
@@ -391,28 +599,3 @@ def _grid_shape(cell, resolution):
     scale = resolution / lengths.max()
     return tuple(fft_friendly_size(max(4, int(round(length * scale))))
                  for length in lengths)
-
-
-def _backbone_kwargs(weights):
-    """
-    Recover the FNO hyper-parameters from a checkpoint's tensor shapes.
-
-    Storing them separately would let the two disagree; the shapes cannot.
-    """
-    prefix = "backbone." if any(k.startswith("backbone.") for k in weights) else ""
-    spectral = [v for k, v in weights.items()
-                if k.startswith(f"{prefix}blocks.") and k.endswith(".spectral.weight")]
-    projection = [v for k, v in weights.items()
-                  if k.startswith(f"{prefix}project.") and k.endswith(".weight")]
-    lift = weights.get(f"{prefix}lift.weight")
-
-    kwargs = {}
-    if spectral:
-        kwargs["width"] = int(spectral[0].shape[1])       # (4, in, out, m, m, m)
-        kwargs["modes"] = int(spectral[0].shape[3])
-        kwargs["n_layers"] = len(spectral)
-    if projection:
-        kwargs["projection_channels"] = int(projection[0].shape[0])
-    if lift is not None:
-        kwargs["use_coordinates"] = bool(int(lift.shape[1]) > 1)
-    return kwargs

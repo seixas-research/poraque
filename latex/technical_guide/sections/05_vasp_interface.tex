@@ -4,16 +4,19 @@
 \chapter{The VASP interface}
 \label{ch:vasp}
 
-Reference data for this work comes from a modified VASP~6.2.0 that writes two
-additional volumetric files. Reproducing them exactly required reading the
-Fortran source; this chapter records what it says, because the details decide
-whether a Python reconstruction agrees with the reference or misses it by
-$13\,\%$.
+Poraqu\^e computes the external ionic potential natively, and reproducing
+VASP's own convention exactly required reading the Fortran source. This chapter
+records what it says, because the details decide whether the Python
+reconstruction agrees with a reference potential or misses it by $13\,\%$.
 
-\section{The modified tags}
+Reference \file{EXTCAR} and \file{TAUCAR} files were used during development to
+\emph{validate} that reconstruction. They are not required to run Poraqu\^e ---
+nothing in the pipeline reads them --- and the reference calculations
+themselves are ordinary VASP~6.2.0 output in every other respect.
 
-Two \file{INCAR} flags were added, declared in \file{base.F} and parsed in
-\file{main.F}:
+\section{The tags that produce the reference files}
+
+Two \file{INCAR} flags, declared in \file{base.F} and parsed in \file{main.F}:
 
 \begin{center}
 \begin{tabular}{@{}lll@{}}

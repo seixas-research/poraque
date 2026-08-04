@@ -24,23 +24,29 @@ report a number.
 """
 
 from .energy import (
+    XC_FUNCTIONALS,
     EnergyComponents,
     EnergyCalculator,
     ewald_energy,
     hartree_energy,
     hartree_potential,
     lda_exchange_energy,
+    pbe_correlation_energy,
+    pbe_exchange_energy,
     pw92_correlation_energy,
     xc_energy,
 )
 
 __all__ = [
+    "XC_FUNCTIONALS",
     "EnergyComponents",
     "EnergyCalculator",
     "ewald_energy",
     "hartree_energy",
     "hartree_potential",
     "lda_exchange_energy",
+    "pbe_correlation_energy",
+    "pbe_exchange_energy",
     "pw92_correlation_energy",
     "xc_energy",
 ]

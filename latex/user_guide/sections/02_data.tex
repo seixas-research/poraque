@@ -16,9 +16,9 @@ The prefix is configurable (\opt{data.pattern}); anything matching it and
 containing the required files is picked up.
 
 \begin{ptip}
-\textbf{You do not need a modified VASP.} The external potential is computed
-from \file{POSCAR}, \file{INCAR} and \file{POTCAR} using the tabulated
-pseudopotential, reproducing a reference \file{EXTCAR} to a relative
+\textbf{Any standard VASP output works.} Poraqu\^e computes the external ionic
+potential natively from \file{POSCAR}, \file{INCAR} and \file{POTCAR} using the
+tabulated pseudopotential, matching a reference potential to a relative
 $5\times10^{-5}$. Only \file{CHGCAR} and \file{TAUCAR} are needed as targets.
 \end{ptip}
 

@@ -88,6 +88,20 @@ _DIRAC_X = -0.75 * (3.0 / np.pi) ** (1.0 / 3.0)
 _PW92 = dict(A=0.031091, alpha1=0.21370,
              beta1=7.5957, beta2=3.5876, beta3=1.6382, beta4=0.49294)
 
+# PBE (PRL 77, 3865). kappa is fixed by the Lieb-Oxford bound, mu and beta by
+# the linear response of the uniform gas; mu = beta * pi^2 / 3.
+_PBE_KAPPA = 0.804
+_PBE_BETA = 0.06672455060314922
+_PBE_MU = _PBE_BETA * np.pi ** 2 / 3.0
+#: :math:`\gamma = (1 - \ln 2)/\pi^2`.
+_PBE_GAMMA = (1.0 - np.log(2.0)) / np.pi ** 2
+
+#: Exchange-correlation approximations accepted by :func:`xc_energy`.
+#: ``"pbe"`` is the default: the reference calculations use ``PAW_PBE``
+#: pseudopotentials with ``LEXCH = PE``, so the fields being integrated are
+#: PBE quantities.
+XC_FUNCTIONALS = ("pbe", "lda", "pbe-x", "lda-x", "x-only", "none")
+
 
 # ===================================================================== #
 # Electrostatics of the electrons
@@ -161,7 +175,7 @@ def hartree_energy(density, grid):
 
 
 # ===================================================================== #
-# Exchange and correlation (LDA)
+# Exchange and correlation
 # ===================================================================== #
 def lda_exchange_energy(density, grid):
     r"""
@@ -229,20 +243,148 @@ def pw92_correlation_energy(density, grid):
     # `rho * epsilon_c` vanishes there anyway, so the choice of floor does not
     # affect the integral, only the arithmetic on the way to it.
     safe = np.clip(rho_bohr, 1e-30, None)
-    r_s = (3.0 / (4.0 * np.pi * safe)) ** (1.0 / 3.0)
+    epsilon_c = _pw92_epsilon(safe)
+    return grid.integrate(rho_bohr * epsilon_c * _HA_PER_BOHR3_TO_EV_PER_ANG3)
+
+
+def _pw92_epsilon(density_bohr):
+    r"""
+    PW92 correlation energy *per electron*, Hartree.
+
+    Shared by :func:`pw92_correlation_energy` and
+    :func:`pbe_correlation_energy` — PBE's :math:`H` is a correction added to
+    exactly this quantity, so the two must not drift apart.
+
+    Parameters
+    ----------
+    density_bohr : numpy.ndarray
+        Density in e/Bohr³, already floored away from zero.
+    """
+    r_s = (3.0 / (4.0 * np.pi * density_bohr)) ** (1.0 / 3.0)
     root = np.sqrt(r_s)
 
     p = _PW92
     denominator = 2.0 * p["A"] * (p["beta1"] * root + p["beta2"] * r_s
                                   + p["beta3"] * r_s * root
                                   + p["beta4"] * r_s * r_s)
-    epsilon_c = (-2.0 * p["A"] * (1.0 + p["alpha1"] * r_s)
-                 * np.log1p(1.0 / denominator))
-
-    return grid.integrate(rho_bohr * epsilon_c * _HA_PER_BOHR3_TO_EV_PER_ANG3)
+    return (-2.0 * p["A"] * (1.0 + p["alpha1"] * r_s)
+            * np.log1p(1.0 / denominator))
 
 
-def xc_energy(density, grid, functional="lda"):
+def pbe_exchange_energy(density, grid):
+    r"""
+    PBE (generalized gradient) exchange energy.
+
+    .. math::
+
+        E_{\rm x}^{\rm PBE} = \int \rho\,\varepsilon_{\rm x}^{\rm LDA}(\rho)\,
+        F_{\rm x}(s)\,d^3r ,
+        \qquad
+        F_{\rm x}(s) = 1 + \kappa - \frac{\kappa}{1 + \mu s^2/\kappa} ,
+
+    with the reduced gradient :math:`s = |\nabla\rho|/(2k_{\rm F}\rho)` and
+    :math:`k_{\rm F} = (3\pi^2\rho)^{1/3}`. :math:`\kappa = 0.804` is fixed by
+    the Lieb-Oxford bound and :math:`\mu = \beta\pi^2/3` by the linear response
+    of the uniform gas — PBE has no fitted parameters.
+
+    Parameters
+    ----------
+    density : ChargeDensity or array_like
+        Electron density in e/Å³.
+    grid : FieldGrid
+        Shared mesh, supplying the reciprocal vectors for the gradient.
+
+    Returns
+    -------
+    float
+        Energy in eV, negative.
+
+    Notes
+    -----
+    :math:`F_{\rm x}` is bounded by :math:`1 + \kappa`, so the integrand stays
+    finite where :math:`\rho \to 0` even though :math:`s` diverges there: the
+    prefactor :math:`\rho^{4/3}` vanishes faster.
+
+    References
+    ----------
+    J. P. Perdew, K. Burke and M. Ernzerhof, *Phys. Rev. Lett.* **77**, 3865
+    (1996).
+    """
+    rho, gradient = _density_and_gradient(density, grid)
+    s2 = _reduced_gradient_squared(rho, gradient)
+
+    enhancement = 1.0 + _PBE_KAPPA - _PBE_KAPPA / (1.0 + _PBE_MU * s2 / _PBE_KAPPA)
+    epsilon = _DIRAC_X * rho ** (4.0 / 3.0) * enhancement
+    return grid.integrate(epsilon * _HA_PER_BOHR3_TO_EV_PER_ANG3)
+
+
+def pbe_correlation_energy(density, grid):
+    r"""
+    PBE (generalized gradient) correlation energy.
+
+    .. math::
+
+        E_{\rm c}^{\rm PBE} = \int\rho\left[
+          \varepsilon_{\rm c}^{\rm PW92}(r_s) + H(r_s, t)\right] d^3r ,
+
+    .. math::
+
+        H = \gamma\ln\!\left[1 + \frac{\beta}{\gamma}t^2\,
+            \frac{1 + At^2}{1 + At^2 + A^2t^4}\right],
+        \qquad
+        A = \frac{\beta}{\gamma}
+            \left[e^{-\varepsilon_{\rm c}/\gamma} - 1\right]^{-1},
+
+    with :math:`t = |\nabla\rho|/(2k_s\rho)` and
+    :math:`k_s = \sqrt{4k_{\rm F}/\pi}`. The spin-scaling factor
+    :math:`\phi` is 1 throughout: Poraquê's fields are spin-unpolarized.
+
+    Parameters
+    ----------
+    density : ChargeDensity or array_like
+        Electron density in e/Å³.
+    grid : FieldGrid
+        Shared mesh.
+
+    Returns
+    -------
+    float
+        Energy in eV, negative.
+
+    Notes
+    -----
+    :math:`H \to 0` as :math:`\nabla\rho \to 0`, so PBE correlation reduces
+    exactly to PW92 on a uniform density — the same limit that makes PBE
+    exchange reduce to Dirac. Both are checked in the test-suite.
+
+    References
+    ----------
+    J. P. Perdew, K. Burke and M. Ernzerhof, *Phys. Rev. Lett.* **77**, 3865
+    (1996).
+    """
+    rho, gradient = _density_and_gradient(density, grid)
+    safe = np.clip(rho, 1e-30, None)
+
+    epsilon_c = _pw92_epsilon(safe)
+
+    k_f = (3.0 * np.pi ** 2 * safe) ** (1.0 / 3.0)
+    k_s = np.sqrt(4.0 * k_f / np.pi)
+    t2 = gradient / (2.0 * k_s * safe) ** 2
+
+    # A = (beta/gamma) / (exp(-eps_c/gamma) - 1). eps_c is negative, so the
+    # exponential exceeds 1 and the denominator is positive; expm1 keeps it
+    # accurate where eps_c is small and the difference would cancel.
+    denominator = np.expm1(-epsilon_c / _PBE_GAMMA)
+    a_coefficient = (_PBE_BETA / _PBE_GAMMA) / np.clip(denominator, 1e-30, None)
+
+    at2 = a_coefficient * t2
+    ratio = (1.0 + at2) / (1.0 + at2 + at2 * at2)
+    h = _PBE_GAMMA * np.log1p((_PBE_BETA / _PBE_GAMMA) * t2 * ratio)
+
+    return grid.integrate(rho * (epsilon_c + h) * _HA_PER_BOHR3_TO_EV_PER_ANG3)
+
+
+def xc_energy(density, grid, functional="pbe"):
     r"""
     Exchange-correlation energy.
 
@@ -252,35 +394,68 @@ def xc_energy(density, grid, functional="lda"):
         Electron density in e/Å³.
     grid : FieldGrid
         Shared mesh.
-    functional : {"lda", "x-only", "none"}, optional
-        ``"lda"`` is Dirac exchange plus PW92 correlation. ``"x-only"`` drops
-        correlation, ``"none"`` returns zero.
+    functional : str, optional
+        One of :data:`XC_FUNCTIONALS`:
+
+        ``"pbe"``
+            PBE exchange + PBE correlation (**default**).
+        ``"lda"``
+            Dirac exchange + PW92 correlation.
+        ``"pbe-x"``
+            PBE exchange alone.
+        ``"lda-x"`` / ``"x-only"``
+            Dirac exchange alone.
+        ``"none"``
+            Zero, for isolating the other terms.
 
     Returns
     -------
     float
         Energy in eV.
 
+    Raises
+    ------
+    ValueError
+        On an unrecognized name, listing the valid ones. Falling back to a
+        default would silently answer a different question than the one asked.
+
     Notes
     -----
-    LDA is used regardless of the functional the reference calculation ran
-    with, and the mismatch is real: a PBE density evaluated with an LDA
-    :math:`E_{\rm xc}` is not a PBE energy. Poraquê makes no attempt to hide
-    that — a gradient-corrected functional needs :math:`\nabla\rho` of a
-    *predicted* field, whose noise the semilocal enhancement factor amplifies,
-    and that deserves its own validation rather than a silent default.
+    PBE is the default because it matches the reference data: the calculations
+    Poraquê ingests use ``PAW_PBE`` pseudopotentials with ``LEXCH = PE``, so
+    :math:`\rho` and :math:`\tau` are PBE quantities. Evaluating an LDA
+    :math:`E_{\rm xc}` on a PBE density is not a PBE energy and not an LDA one
+    either. Change this only to match a differently generated dataset.
+
+    On the reference Au supercells the two differ by :math:`-0.92` eV/atom
+    (0.65 % of :math:`E_{\rm xc}`), so the choice is not cosmetic.
+
+    .. warning::
+
+       PBE is semilocal and needs :math:`\nabla\rho`. On a *predicted* field
+       that gradient carries the network's noise, and the enhancement factor
+       amplifies it; on a band-limited grid it also aliases wherever the
+       density has sharp core peaks. The extra physics is only worth having
+       once the density is accurate enough for its gradient to mean something
+       — check both against a reference before trusting the difference.
     """
-    if functional == "none":
+    name = str(functional).lower()
+    if name == "none":
         return 0.0
-    if functional == "x-only":
+    if name in ("lda-x", "x-only"):
         return lda_exchange_energy(density, grid)
-    if functional != "lda":
-        raise ValueError(
-            f"Unknown functional {functional!r}; expected 'lda', 'x-only' or "
-            f"'none'."
-        )
-    return (lda_exchange_energy(density, grid)
-            + pw92_correlation_energy(density, grid))
+    if name == "pbe-x":
+        return pbe_exchange_energy(density, grid)
+    if name == "lda":
+        return (lda_exchange_energy(density, grid)
+                + pw92_correlation_energy(density, grid))
+    if name == "pbe":
+        return (pbe_exchange_energy(density, grid)
+                + pbe_correlation_energy(density, grid))
+    raise ValueError(
+        f"Unknown functional {functional!r}; expected one of "
+        f"{', '.join(XC_FUNCTIONALS)}."
+    )
 
 
 # ===================================================================== #
@@ -466,7 +641,7 @@ class EnergyComponents:
     alpha_z: float = None
     ewald: float = None
     n_electrons: float = None
-    functional: str = "lda"
+    functional: str = "pbe"
 
     @property
     def electronic(self):
@@ -572,7 +747,8 @@ class EnergyCalculator:
         ``{element: PSCORE}`` in eV·Å³, for the :math:`\mathbf G = 0`
         remainder.
     functional : str, optional
-        Passed to :func:`xc_energy`.
+        Exchange-correlation approximation, passed to :func:`xc_energy`.
+        Defaults to ``"pbe"``, matching the reference data.
 
     Examples
     --------
@@ -582,7 +758,7 @@ class EnergyCalculator:
     """
 
     def __init__(self, grid, structure=None, charges=None, pscore=None,
-                 functional="lda"):
+                 functional="pbe"):
         self.grid = grid
         self.structure = structure
         self.charges = dict(charges) if charges else None
@@ -593,7 +769,7 @@ class EnergyCalculator:
     # Constructors
     # ------------------------------------------------------------------ #
     @classmethod
-    def from_potential(cls, potential, pscore=None, functional="lda"):
+    def from_potential(cls, potential, pscore=None, functional="pbe"):
         """
         Build from an :class:`~poraque.fields.ExternalPotential`.
 
@@ -739,6 +915,41 @@ def _clipped_bohr_density(density, grid):
     values = np.asarray(density, dtype=float)
     _check_shape(values, grid, "density")
     return np.clip(values, 0.0, None) * BOHR_TO_ANGSTROM ** 3
+
+
+def _density_and_gradient(density, grid):
+    r"""
+    ``(rho, |grad rho|^2)`` in atomic units, for the semilocal functionals.
+
+    The gradient is taken of the *unclipped* field. Clipping first would put a
+    kink at every point where a band-limited density rings below zero, and
+    spectral differentiation of a kink rings far worse than the undershoot it
+    was meant to remove. The clipped density is used only in the algebra,
+    where :math:`\rho^{4/3}` and the denominators need it non-negative.
+    """
+    from ..fields.density import spectral_gradient
+
+    values = np.asarray(density, dtype=float)
+    _check_shape(values, grid, "density")
+
+    raw_bohr = values * BOHR_TO_ANGSTROM ** 3
+    components = spectral_gradient(raw_bohr, grid, length_unit="bohr")
+    gradient_squared = sum(component ** 2 for component in components)
+    return np.clip(raw_bohr, 0.0, None), gradient_squared
+
+
+def _reduced_gradient_squared(density_bohr, gradient_squared):
+    r"""
+    :math:`s^2 = |\nabla\rho|^2/(2k_{\rm F}\rho)^2`, the PBE exchange variable.
+
+    Diverges as :math:`\rho \to 0`, which is physical: the enhancement factor
+    saturates at :math:`1 + \kappa` there while the :math:`\rho^{4/3}`
+    prefactor vanishes, so the product is well behaved. The floor only keeps
+    the intermediate arithmetic finite.
+    """
+    safe = np.clip(density_bohr, 1e-30, None)
+    k_f = (3.0 * np.pi ** 2 * safe) ** (1.0 / 3.0)
+    return gradient_squared / (2.0 * k_f * safe) ** 2
 
 
 def _per_atom_charges(structure, charges):

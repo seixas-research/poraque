@@ -66,7 +66,8 @@ drawn across materials, so a gradient step generally mixes several.
 python scripts/run_train.py --config configs/train_config.yaml   # mode: universal
 ```
 
-This writes a single `models/ext2chg.pt` and `models/chg2tau.pt`.
+This writes a single unified checkpoint, `models/poraque_models.pth`,
+holding both operators under the keys `ext2chg` and `chg2tau`.
 
 ```{warning}
 With no structure held out, the reported metrics are **training fit**. They

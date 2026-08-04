@@ -89,6 +89,14 @@ _LAZY = {
     "FieldOperator": "poraque.ml.training",
     "evaluate": "poraque.ml.training",
     "train": "poraque.ml.training",
+    # unified checkpoint
+    "BUNDLE_FILENAME": "poraque.ml.training",
+    "BUNDLE_FORMAT": "poraque.ml.training",
+    "bundle_tasks": "poraque.ml.training",
+    "infer_backbone_kwargs": "poraque.ml.training",
+    "load_bundle": "poraque.ml.training",
+    "read_bundle": "poraque.ml.training",
+    "save_bundle": "poraque.ml.training",
 }
 
 __all__ = sorted(_LAZY)

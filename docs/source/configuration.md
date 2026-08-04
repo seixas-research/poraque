@@ -170,8 +170,10 @@ the training log reports any reference points that violate it.
 | --- | --- | --- |
 | `mode` | `universal` | `universal` or `leave_one_out` |
 | `holdout` | `null` | structure names excluded from universal training |
+| `valid_fraction` | `0.0` | fraction of structures drawn at random for validation |
 | `enable_kfold` | `false` | run K-fold cross-validation; takes precedence over `mode` |
 | `k_folds` | `5` | number of folds, capped at the structure count |
+| `eval_epoch` | `10` | evaluate and log every N epochs |
 | `epochs` | `200` | passes over the training set |
 | `batch_size` | `4` | maximum samples per grid-shape bucket |
 | `learning_rate` | `0.002` | AdamW step size |
@@ -184,10 +186,10 @@ the training log reports any reference points that violate it.
 | `sobolev_weight` | `0.1` | gradient-term weight when `loss: sobolev` |
 | `physics` | all `0.0` | physics-informed loss weights |
 
-### `mode`, `holdout`, `enable_kfold`, `k_folds`
+### `mode`, `holdout`, `valid_fraction`, `enable_kfold`, `k_folds`
 
-These four decide *what question the run answers*, and are the settings most
-worth getting right.
+These decide *what question the run answers*, and are the settings most worth
+getting right.
 
 - **`universal`** trains **one** model per task on the combined data of every
   structure and saves a single checkpoint. This is the deployable artefact.
@@ -195,11 +197,40 @@ worth getting right.
 - **`holdout`** is a list of structure names excluded from that training and
   scored separately, which turns the reported number into a generalisation
   estimate.
+- **`valid_fraction`** does the same but draws the structures at random,
+  shuffling with `seed`. `0` keeps everything for training — the plain
+  universal fit.
 - **`enable_kfold`** trains a fresh model per fold on *K*−1 groups and scores it
   on the group held out. Produces a generalisation estimate with a spread — but
   no single model to ship.
 - **`leave_one_out`** is the same protocol with *K* equal to the number of
   structures.
+
+```{note}
+`holdout` and `valid_fraction` both define a validation split and are
+**mutually exclusive** — setting both is an error rather than a silent
+precedence rule, so the protocol cannot depend on which key the reader happened
+to look at. `valid_fraction` always keeps at least one structure on each side,
+so a fraction that would round to zero gives 1 rather than degrading into a
+universal fit while the config claims otherwise.
+```
+
+### `eval_epoch`
+
+Evaluate and log every this many epochs. Validation is computed *only* on those
+epochs, so raising it on a large validation set is a genuine speed-up rather
+than only a quieter log. The final epoch always reports, so a run never ends
+without a current number.
+
+```text
+  progress (every 10 epochs):
+    epoch    10/200  train 0.31745  val_rel_L2 0.34118
+    epoch    20/200  train 0.18902  val_rel_L2 0.21447  *
+```
+
+The `*` marks an epoch that improved on the best validation score. Only epochs
+on which validation was actually measured can do so — a checkpoint is written
+against a measured score, never an assumed one.
 
 Both are worth running: cross-validation says whether the architecture
 generalises, `universal` produces the model that uses all the data.

@@ -16,7 +16,7 @@ model on the combined data of every structure, and writes:
 \toprule
 Path & Contents \\
 \midrule
-\file{models/ext2chg.pt}, \file{models/chg2tau.pt} & the trained operators \\
+\file{models/poraque\_models.pth} & both trained operators, in one file \\
 \file{logs/*.log}, \file{logs/*.json} & metrics and full history \\
 \file{logs/*\_config.yaml} & the resolved configuration \\
 \file{results/plots/} & loss curves, cross-sections, parity plots \\
@@ -88,20 +88,44 @@ the bar --- a learned functional that does not is not adding anything.
 
 \section{Reference numbers}
 
-Five gold supercells, $32^3$ working resolution, 200 epochs:
+Twelve gold supercells --- ten 27-atom and two 32-atom, four grid shapes ---
+at $32^3$ working resolution, 200 epochs:
 
 \begin{center}
 \begin{tabular}{@{}lrr@{}}
 \toprule
 Model & 5-fold CV & universal (training fit) \\
 \midrule
-\opt{ext2chg} & $0.0295 \pm 0.0025$ & $0.0057$ \\
-\opt{chg2tau} & $0.0525 \pm 0.0031$ & $0.0133$ \\
+\opt{ext2chg} & $0.0231 \pm 0.0127$ & $0.0059$ \\
+\opt{chg2tau} & $0.0469 \pm 0.0273$ & $0.0128$ \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Quote the cross-validated column.
+Quote the cross-validated column. The gap to the training fit is the
+memorisation margin --- roughly four-fold here.
+
+\begin{pwarn}
+The cross-validated spread is dominated by \emph{cell size}, not by geometry.
+Split by supercell:
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Subset & \opt{ext2chg} & \opt{chg2tau} \\
+\midrule
+27-atom (10 structures) & $0.0189 \pm 0.0047$ & $0.0379 \pm 0.0077$ \\
+32-atom (2 structures)  & $0.0441 \pm 0.0180$ & $0.0920 \pm 0.0415$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A held-out 32-atom cell is about $2.4\times$ harder. With only two examples of
+that size, holding one out leaves a single sibling, so the operator is
+extrapolating to a grid shape it has barely seen. Expect the same whenever a
+new cell size enters the dataset --- and read an aggregate that mixes cell
+sizes with that in mind.
+\end{pwarn}
 
 \section{Options worth knowing}
 

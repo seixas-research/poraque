@@ -71,7 +71,13 @@ from poraque.fields import (  # noqa: E402
 )
 from poraque.fields.io import resolve_reader  # noqa: E402
 from poraque.fields.resample import downsample_shape, resample_field  # noqa: E402
-from poraque.ml import FieldOperator, FieldPairDataset, train  # noqa: E402
+from poraque.ml import (  # noqa: E402
+    BUNDLE_FILENAME,
+    FieldOperator,
+    FieldPairDataset,
+    save_bundle,
+    train,
+)
 from poraque.ml.config import SAMPLE_CONFIG_HEADER, TrainingConfig  # noqa: E402
 from poraque.ml.device import describe_device, resolve_device  # noqa: E402
 from poraque.ml.losses import PhysicsInformedLoss  # noqa: E402
@@ -302,6 +308,82 @@ def build_operator(task, train_set, config, log):
     return operator
 
 
+def resolve_validation_split(dataset, config):
+    """
+    Decide which structures are held out for validation.
+
+    Two keys can define the split and they are mutually exclusive:
+    ``training.holdout`` names structures explicitly, ``training.valid_fraction``
+    draws them at random. Letting one silently win would make the run's
+    protocol depend on which key the reader happened to look at, so setting
+    both is an error.
+
+    The draw is at the **structure level**: whole materials move together.
+    Splitting voxels instead would put the same crystal on both sides, and
+    because neighbouring voxels are strongly correlated the validation score
+    would look excellent while saying nothing about a new material.
+
+    Parameters
+    ----------
+    dataset : FieldPairDataset
+        The full dataset, for its material list.
+    config : TrainingConfig
+
+    Returns
+    -------
+    tuple of (set of str, str)
+        Held-out identifiers, and a human-readable description of where the
+        split came from — printed so the log records the protocol, not just
+        the result.
+    """
+    names = [m.identifier for m in dataset.materials]
+    holdout = set(config.training.holdout or [])
+    fraction = float(config.training.valid_fraction or 0.0)
+
+    if holdout and fraction > 0.0:
+        raise SystemExit(
+            "training.holdout and training.valid_fraction both define a "
+            "validation split; set exactly one. Use holdout to name specific "
+            "structures, valid_fraction to draw them at random."
+        )
+
+    if holdout:
+        unknown = holdout - set(names)
+        if unknown:
+            raise SystemExit(
+                f"holdout names not present in the dataset: {sorted(unknown)}"
+            )
+        return holdout, "explicit holdout"
+
+    # Range-check before the zero fallback: a negative value is a typo, and
+    # treating it as "no split" would silently change the protocol rather than
+    # reporting the mistake.
+    if not 0.0 <= fraction < 1.0:
+        raise SystemExit(
+            f"training.valid_fraction must lie in [0, 1), got {fraction}."
+        )
+
+    if fraction == 0.0:
+        return set(), "none - universal fit, metrics are TRAINING FIT"
+    if len(names) < 2:
+        raise SystemExit(
+            f"valid_fraction needs at least two structures to split; the "
+            f"dataset has {len(names)}."
+        )
+
+    # Round to nearest, then clamp so neither side is empty: a fraction that
+    # rounds to zero would silently degrade to a universal fit while the
+    # config claims a validation split.
+    count = int(round(fraction * len(names)))
+    count = max(1, min(count, len(names) - 1))
+
+    seed = config.training.seed
+    order = np.random.default_rng(seed).permutation(len(names))
+    selected = {names[i] for i in order[:count]}
+    return selected, (f"valid_fraction={fraction:g} -> {count}/{len(names)} "
+                      f"structures, seed={seed}")
+
+
 def evaluate_material(operator, dataset, index, task, log, label):
     """Predict one material and report metrics against its reference field."""
     source, target = dataset.load_fields(index)
@@ -333,10 +415,7 @@ def run_task_universal(task_name, cache, config, log):
     log("=" * 78)
 
     dataset = FieldPairDataset(cache, task=task)
-    holdout = set(config.training.holdout or [])
-    unknown = holdout - {m.identifier for m in dataset.materials}
-    if unknown:
-        raise SystemExit(f"holdout names not present in the dataset: {sorted(unknown)}")
+    holdout, split_origin = resolve_validation_split(dataset, config)
 
     train_records = [m for m in dataset.materials if m.identifier not in holdout]
     test_records = [m for m in dataset.materials if m.identifier in holdout]
@@ -355,7 +434,8 @@ def run_task_universal(task_name, cache, config, log):
 
     log(f"  training structures : {len(train_set)}  "
         f"{[m.identifier for m in train_records]}")
-    log(f"  held out            : {sorted(holdout) if holdout else 'none (trains on everything)'}")
+    log(f"  validation          : {sorted(holdout) if holdout else 'none'} "
+        f"({split_origin})")
     log(f"  grid shapes         : {shapes}")
     log(f"  shape buckets       : "
         + ", ".join(f"{s}x{n}" for s, n in sorted(buckets.items())))
@@ -365,6 +445,7 @@ def run_task_universal(task_name, cache, config, log):
 
     operator = build_operator(task, train_set, config, log)
 
+    log(f"\n  progress (every {config.training.eval_epoch} epochs):")
     start = time.time()
     history = train(
         operator, train_set, validation=validation,
@@ -373,7 +454,7 @@ def run_task_universal(task_name, cache, config, log):
         weight_decay=config.training.weight_decay,
         scheduler=config.training.scheduler, grad_clip=config.training.grad_clip,
         loss=build_loss(config, task.name), seed=config.training.seed,
-        verbose=False,
+        eval_every=config.training.eval_epoch, log=log, verbose=True,
     )
     elapsed = time.time() - start
     log(f"\n  trained {config.training.epochs} epochs in {elapsed:.1f} s   "
@@ -434,12 +515,11 @@ def run_task_universal(task_name, cache, config, log):
         log("      not a generalisation estimate. Run mode: leave_one_out for that.")
 
     # ---------------- persist ---------------- #
+    # The operator is handed back to main(), which writes every task into one
+    # unified bundle after the last has trained. Writing per task would either
+    # leave the file half-updated on a crash or retain a stale sibling from an
+    # earlier run.
     checkpoint = None
-    if config.output.checkpoint_dir:
-        os.makedirs(config.output.checkpoint_dir, exist_ok=True)
-        checkpoint = os.path.join(config.output.checkpoint_dir, f"{task.name}.pt")
-        operator.save(checkpoint)
-        log(f"\n  universal model -> {checkpoint}")
     if figures:
         log(f"  figures         -> {config.output.plot_dir} ({len(figures)})")
 
@@ -493,6 +573,9 @@ def run_task_universal(task_name, cache, config, log):
         "seconds": elapsed,
         "final_train_loss": history["train_loss"][-1],
         "history": {k: list(map(float, v)) for k, v in history.items()},
+        # Not serialised into the JSON summary; main() pops it to build the
+        # unified bundle once every task has trained.
+        "operator": operator,
     }
 
 
@@ -582,7 +665,7 @@ def run_task_kfold(task_name, cache, config, log):
             scheduler=config.training.scheduler,
             grad_clip=config.training.grad_clip,
             loss=build_loss(config, task.name), seed=config.training.seed,
-            verbose=False,
+            eval_every=config.training.eval_epoch, log=log, verbose=True,
         )
         elapsed = time.time() - start
         log(f"      trained {config.training.epochs} epochs in {elapsed:.1f} s   "
@@ -746,7 +829,8 @@ def run_task(task_name, cache, config, log):
             scheduler=config.training.scheduler,
             grad_clip=config.training.grad_clip,
             loss=build_loss(config, task.name),
-            seed=config.training.seed, verbose=False,
+            seed=config.training.seed,
+            eval_every=config.training.eval_epoch, log=log, verbose=True,
         )
         elapsed = time.time() - start
         log(f"      trained {config.training.epochs} epochs in {elapsed:.1f} s   "
@@ -897,6 +981,14 @@ def build_parser():
                        default=None, metavar="NAME",
                        help="structures excluded from universal training and "
                             "used for validation")
+    group.add_argument("--valid-fraction", dest="training.valid_fraction",
+                       type=float, default=None, metavar="F",
+                       help="fraction of structures drawn at random for "
+                            "validation; 0 trains on everything. Mutually "
+                            "exclusive with --holdout")
+    group.add_argument("--eval-epoch", dest="training.eval_epoch", type=int,
+                       default=None, metavar="N",
+                       help="evaluate and log every N epochs (default 10)")
     group.add_argument("--seed", dest="training.seed", type=int, default=None)
     group.add_argument("--device", dest="training.device", default=None,
                        help="auto | cuda | mps | cpu")
@@ -958,6 +1050,28 @@ def main(argv=None):
         results = [result for result in
                    (driver(name, cache, config, log) for name in names)
                    if result is not None]
+
+        # ---------------- unified checkpoint ---------------- #
+        # One file for the whole chain, written after every task has trained,
+        # so the two halves cannot drift apart or be mixed across runs.
+        operators = {r["task"]: r.pop("operator") for r in results
+                     if r.get("operator") is not None}
+        bundle = None
+        if operators and config.output.checkpoint_dir:
+            bundle = os.path.join(config.output.checkpoint_dir,
+                                  BUNDLE_FILENAME)
+            save_bundle(bundle, operators, metadata={
+                "structures": sorted({name for r in results
+                                      for name in r.get("train_structures", [])}),
+                "resolution": config.data.resolution,
+                "epochs": config.training.epochs,
+            })
+            for result in results:
+                result["checkpoint"] = bundle
+            log(f"\n  models -> {bundle}  ({', '.join(sorted(operators))})")
+            if len(operators) < 2:
+                log("  NOTE: the bundle holds one task. Run with task: all to")
+                log("  produce a complete pipeline in a single file.")
 
         log(f"\n{'=' * 78}\nOVERALL\n{'=' * 78}")
         log(f"  {'task':<12s} {'rel L2 (mean)':>14s} {'R2 (mean)':>12s} "

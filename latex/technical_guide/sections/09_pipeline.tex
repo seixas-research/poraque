@@ -47,15 +47,14 @@ recording what actually ran, overrides included.
 \section{The external potential is computed, not imported}
 \label{sec:computedextcar}
 
-Standard VASP does not write \file{EXTCAR}. Depending on it would make the
-pipeline unusable for anyone without the patched build, so the default is to
-\textbf{compute} the potential from \file{POSCAR}, \file{INCAR} and
-\file{POTCAR} using the tabulated pseudopotential of
-Chapter~\ref{ch:vasp}. Setting \opt{use\_vasp\_extcar: true} reads a reference
-file instead, and errors clearly if none is present.
+Poraqu\^e \textbf{computes} the external potential natively, from
+\file{POSCAR}, \file{INCAR} and \file{POTCAR}, using the tabulated
+pseudopotential of Chapter~\ref{ch:vasp}. There is no option to import one:
+the training input must be exactly what the pipeline produces at inference
+time, when no such file exists.
 
-The default costs essentially nothing in fidelity. Measured across five gold
-structures:
+This costs essentially nothing in fidelity. Against reference potentials on
+five gold structures:
 
 \begin{center}
 \begin{tabular}{@{}lrrr@{}}
@@ -165,7 +164,9 @@ generally mixes several. On the reference data the buckets are
 $(32,32,32)\times3$, $(30,32,32)\times1$ and $(32,30,32)\times1$ --- three
 distinct shapes flowing through one set of weights.
 
-The run writes a single \file{models/ext2chg.pt} and \file{models/chg2tau.pt}.
+The run writes a single unified checkpoint,
+\file{models/poraque\_models.pth}, holding both operators under the keys
+\opt{ext2chg} and \opt{chg2tau}.
 
 \begin{pwarn}
 With \opt{holdout: null} every structure is in training, so the reported
@@ -173,9 +174,9 @@ metrics are \textbf{training fit}. They show the model can represent the data;
 they are not a generalisation estimate. Name structures in \opt{holdout}, or
 use the cross-validation of Section~\ref{sec:kfold}, for that.
 
-Measured on five gold structures: universal training fit gives relative $L^2$
-of $0.0057$ (\opt{ext2chg}) and $0.0133$ (\opt{chg2tau}), against
-cross-validated values roughly five times larger. That gap is the memorisation
+Measured on twelve gold structures: universal training fit gives relative
+$L^2$ of $0.0059$ (\opt{ext2chg}) and $0.0128$ (\opt{chg2tau}), against
+cross-validated values roughly four times larger. That gap is the memorisation
 margin, and quoting the training-fit number as a result would be a serious
 overstatement.
 \end{pwarn}

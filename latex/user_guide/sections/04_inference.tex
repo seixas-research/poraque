@@ -3,8 +3,6 @@
 
 \begin{lstlisting}
 python scripts/run_eval.py new_structure/ \
-    --ext2chg models/ext2chg.pt \
-    --chg2tau models/chg2tau.pt \
     --output predictions/new_structure
 \end{lstlisting}
 
@@ -21,21 +19,36 @@ Resolved in this order, first hit wins:
   \item \opt{--like FILE} --- adopt an existing volumetric file's grid, which is
     what you want when comparing against a reference calculation;
   \item \opt{--resolution N} --- longest axis, preserving the aspect ratio;
-  \item otherwise derived from \opt{ENCUT} and \opt{PREC}.
+  \item otherwise \opt{--encut} (default \textbf{200\,eV}) through the usual
+    \opt{ENCUT}/\opt{PREC} rule.
 \end{enumerate}
+
+The default cutoff is Poraqu\^e's own, not the one the reference calculation
+happened to use: a genuinely new structure has no prior calculation to inherit
+from, and the same geometry must give the same grid either way. When the two
+differ the log says so.
+
+\begin{ptip}
+200\,eV is chosen to land near the grid the shipped models were trained on. On
+the reference cells it gives $42^3$ (27-atom) and $40^3$ (32-atom), against a
+training \opt{resolution} of $32$ --- close enough that the operator is
+interpolating rather than extrapolating. Raising it to 400\,eV would give
+$60^3$, a substantially finer mesh than anything the models have seen.
+\end{ptip}
 
 \begin{pwarn}
 A Fourier neural operator is resolution-\emph{flexible}, not
 resolution-\emph{indifferent}. Evaluating far from the grid density a model was
 trained on is extrapolation, and no metric printed here can detect it. The
 script warns when the requested grid departs markedly from the training
-resolution.
+resolution; pass \opt{--resolution 32} to evaluate exactly where the models
+were fitted.
 \end{pwarn}
 
 \section{Comparing against a reference}
 
 \begin{lstlisting}
-python scripts/run_eval.py run/ --ext2chg m1.pt --chg2tau m2.pt \
+python scripts/run_eval.py run/ \
     --like run/CHGCAR --compare --plot-dir results/plots/check
 \end{lstlisting}
 

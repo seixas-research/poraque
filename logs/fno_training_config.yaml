@@ -1,0 +1,51 @@
+task: all
+data:
+  root: data/vasp
+  cache: data/cache
+  pattern: struct
+  code: auto
+  resolution: 32
+  gaussian_blur: null
+  blur_method: spectral
+model:
+  width: 16
+  modes: 8
+  n_layers: 4
+  projection_channels: 48
+  activation: gelu
+  use_coordinates: true
+  cell_conditioning: true
+  embedding_dim: 32
+  mode_selection: fixed
+  g_max: null
+  pauli_residual: false
+  pauli_scale: null
+  learn_pauli_scale: true
+training:
+  epochs: 200
+  batch_size: 4
+  learning_rate: 0.002
+  weight_decay: 0.0001
+  scheduler: cosine
+  grad_clip: 1.0
+  mode: universal
+  holdout: null
+  enable_kfold: false
+  k_folds: 5
+  seed: 0
+  device: auto
+  loss: relative_l2
+  sobolev_weight: 0.1
+  physics:
+    electron_count_weight: 0.0
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0
+output:
+  log: logs/fno_training.log
+  json: logs/fno_training.json
+  checkpoint_dir: models
+  plot_dir: results/plots
+  report_dir: reports
+  plot_format: png
+  dpi: 160

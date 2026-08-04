@@ -27,14 +27,14 @@
 \usepackage{tikz}
 \usepackage{needspace}
 \usepackage{parskip}
-\usepackage[colorlinks=true,linkcolor=poraqueblue,urlcolor=poraqueblue,
-            citecolor=poraqueblue]{hyperref}
+\usepackage[colorlinks=true,linkcolor=poraquered,urlcolor=poraquered,
+            citecolor=poraquered]{hyperref}
 
 \tcbuselibrary{skins,breakable}
 \usetikzlibrary{positioning,fit,backgrounds,arrows.meta}
 
 % --- Brand palette ---------------------------------------------------------
-\definecolor{poraqueblue}{RGB}{42,120,214}
+\definecolor{poraquered}{RGB}{248,65,55}
 \definecolor{poraqueamber}{RGB}{235,104,52}
 \definecolor{poraquedark}{RGB}{30,34,40}
 \definecolor{codebg}{RGB}{245,246,248}
@@ -46,22 +46,22 @@
 % --- Chapter / section typography ------------------------------------------
 \titleformat{\chapter}[display]
   {\bfseries\color{poraquedark}}
-  {\raggedright\large\color{shadegray}\MakeUppercase{\chaptertitlename}\ \Huge\color{poraqueblue}\thechapter}
+  {\raggedright\large\color{shadegray}\MakeUppercase{\chaptertitlename}\ \Huge\color{poraquered}\thechapter}
   {6pt}
   {\Huge\raggedright}
-  [\vspace{4pt}{\color{poraqueblue}\rule{\textwidth}{1.6pt}}]
+  [\vspace{4pt}{\color{poraquered}\rule{\textwidth}{1.6pt}}]
 \titlespacing*{\chapter}{0pt}{-18pt}{22pt}
 
 \titleformat{\section}
   {\Large\bfseries\color{poraquedark}}
-  {\textcolor{poraqueblue}{\thesection}}{0.8em}{}
-  [\vspace{-6pt}{\color{poraqueblue!35}\rule{\textwidth}{0.8pt}}]
+  {\textcolor{poraquered}{\thesection}}{0.8em}{}
+  [\vspace{-6pt}{\color{poraquered!35}\rule{\textwidth}{0.8pt}}]
 \titleformat{\subsection}
   {\large\bfseries\color{poraquedark}}
-  {\textcolor{poraqueblue}{\thesubsection}}{0.8em}{}
+  {\textcolor{poraquered}{\thesubsection}}{0.8em}{}
 \titleformat{\subsubsection}
   {\normalsize\bfseries\color{poraquedark}}
-  {\textcolor{poraqueblue}{\thesubsubsection}}{0.7em}{}
+  {\textcolor{poraquered}{\thesubsubsection}}{0.7em}{}
 \titlespacing*{\section}{0pt}{18pt}{10pt}
 \titlespacing*{\subsection}{0pt}{12pt}{6pt}
 
@@ -76,7 +76,7 @@
 \fancyfoot[L]{\small\color{shadegray}Poraqu\^e Technical Guide}
 \fancyfoot[R]{\small\color{shadegray}\thepage}
 \renewcommand{\headrulewidth}{0.8pt}
-\renewcommand{\headrule}{{\color{poraqueblue}%
+\renewcommand{\headrule}{{\color{poraquered}%
   \hrule width\headwidth height\headrulewidth}}
 \renewcommand{\footrulewidth}{0pt}
 \renewcommand{\chaptermark}[1]{\markboth{\thechapter.\ #1}{}}
@@ -90,7 +90,7 @@
   backgroundcolor=\color{codebg},
   frame=leftline,
   framerule=2.4pt,
-  rulecolor=\color{poraqueblue},
+  rulecolor=\color{poraquered},
   framesep=8pt,
   xleftmargin=12pt,
   xrightmargin=6pt,
@@ -135,9 +135,9 @@
 
 % --- Callout boxes ---------------------------------------------------------
 \newtcolorbox{pnote}[1][]{%
-  breakable, enhanced, colback=poraqueblue!5, colframe=poraqueblue,
+  breakable, enhanced, colback=poraquered!5, colframe=poraquered,
   boxrule=0pt, leftrule=3pt, arc=1pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
-  fonttitle=\bfseries\small, title={Note}, coltitle=poraqueblue,
+  fonttitle=\bfseries\small, title={Note}, coltitle=poraquered,
   attach title to upper=\par\vspace{2pt}, #1}
 \newtcolorbox{ptip}[1][]{%
   breakable, enhanced, colback=tipgreen!5, colframe=tipgreen,
@@ -162,14 +162,14 @@
 \vspace*{2.0cm}
 \includegraphics[width=0.55\textwidth]{../../assets/logo/logo_light.png}\par
 \vspace{1.3cm}
-{\color{poraqueblue}\rule{0.74\textwidth}{1.6pt}}\par
+{\color{poraquered}\rule{0.74\textwidth}{1.6pt}}\par
 \vspace{0.9cm}
 {\Huge\bfseries Technical Guide\par}
 \vspace{0.5cm}
 {\Large Density-functional theory and Fourier neural operators\\[2pt]
  for three-dimensional scalar fields\par}
 \vspace{0.9cm}
-{\color{poraqueblue}\rule{0.74\textwidth}{1.6pt}}\par
+{\color{poraquered}\rule{0.74\textwidth}{1.6pt}}\par
 \vspace{1.5cm}
 {\large\bfseries Leandro Seixas\par}
 

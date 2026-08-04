@@ -44,8 +44,12 @@ correct answer in this convention rather than a numerical accident.
 \end{ptip}
 
 \subsection{Exchange and correlation}
+\label{sec:xc-tech}
 
-Dirac exchange plus Perdew--Wang 1992 correlation, both local:
+Two rungs of the ladder are implemented, selected by the \opt{functional}
+argument.
+
+\paragraph{LDA.} Dirac exchange plus Perdew--Wang 1992 correlation, both local:
 \begin{equation}
   \varepsilon_{\rm x} = -\frac34\left(\frac{3}{\pi}\right)^{1/3}\rho^{1/3},
   \qquad
@@ -55,18 +59,57 @@ Dirac exchange plus Perdew--Wang 1992 correlation, both local:
 with $\Phi(r_s) = \beta_1 r_s^{1/2} + \beta_2 r_s + \beta_3 r_s^{3/2}
 + \beta_4 r_s^{2}$ and $r_s = (3/4\pi\rho)^{1/3}$.
 
+\paragraph{PBE (the default).} A generalized-gradient correction built on the
+same local pieces:
+\begin{equation}
+  E_{\rm x}^{\rm PBE} = \int\rho\,\varepsilon_{\rm x}(\rho)F_{\rm x}(s)\,d^3r,
+  \qquad
+  F_{\rm x}(s) = 1 + \kappa - \frac{\kappa}{1 + \mu s^2/\kappa},
+\end{equation}
+\begin{equation}
+  E_{\rm c}^{\rm PBE} = \int\rho\left[\varepsilon_{\rm c}(r_s) + H\right]d^3r,
+  \qquad
+  H = \gamma\ln\!\left[1 + \frac{\beta}{\gamma}t^2
+      \frac{1 + At^2}{1 + At^2 + A^2t^4}\right],
+\end{equation}
+with $A = (\beta/\gamma)\left[e^{-\varepsilon_{\rm c}/\gamma} - 1\right]^{-1}$,
+the reduced gradients $s = |\nabla\rho|/(2k_{\rm F}\rho)$ and
+$t = |\nabla\rho|/(2k_s\rho)$, $k_{\rm F} = (3\pi^2\rho)^{1/3}$ and
+$k_s = \sqrt{4k_{\rm F}/\pi}$. The spin-scaling factor $\phi$ is 1 throughout:
+Poraqu\^e's fields are unpolarized. PBE has no fitted parameters --- $\kappa$
+is fixed by the Lieb--Oxford bound, $\mu = \beta\pi^2/3$ and $\gamma =
+(1-\ln2)/\pi^2$ by the uniform gas.
+
+\begin{ptip}
+PBE is the default because it matches the data: the reference calculations use
+\opt{PAW\_PBE} pseudopotentials with \opt{LEXCH = PE}, so $\rho$ and $\tau$ are
+PBE quantities. An LDA $E_{\rm xc}$ on a PBE density is neither a PBE energy
+nor an LDA one. On the reference supercells the two differ by $-0.92$ eV/atom,
+$0.65\,\%$ of $E_{\rm xc}$.
+\end{ptip}
+
+The defining limit is also the sharpest test: as $\nabla\rho \to 0$,
+$F_{\rm x} \to 1$ and $H \to 0$, so PBE collapses onto LDA \emph{bit-exactly}
+on a uniform density. The implementation reproduces that, along with
+$\varepsilon_{\rm x} = -0.458165293/r_s$ Ha per electron exactly, PW92's
+published table to $10^{-6}$, and the analytic $s$ for a cosine density to
+$10^{-15}$.
+
 \begin{pwarn}
-LDA is used regardless of the functional the reference calculation ran with,
-and the mismatch is real: a PBE density evaluated with an LDA $E_{\rm xc}$ is
-not a PBE energy. A gradient-corrected functional needs $\nabla\rho$ of a
-\emph{predicted} field, whose noise the semilocal enhancement factor amplifies.
-That deserves its own validation rather than a silent default.
+The semilocal terms need $\nabla\rho$ of a \emph{predicted} field. That
+gradient carries the network's noise, and $F_{\rm x}$ amplifies it; on a
+band-limited grid it also aliases wherever the density has sharp core peaks.
+On the current models --- Section~\ref{sec:energy-meaning} --- the density is
+not accurate enough for its gradient to be meaningful, so the PBE-LDA
+difference should not yet be read as physics.
 \end{pwarn}
 
-The density is clipped at zero first. Band-limiting a field with sharp core
-peaks rings, so a resampled or predicted $\rho$ can undershoot slightly;
-$\rho^{4/3}$ of a negative number is not real, and the physical content of
-those points is ``no electrons here''.
+The density is clipped at zero in the algebra, but the gradient is taken of the
+\emph{unclipped} field: clipping first would put a kink at every point where a
+band-limited density rings below zero, and spectral differentiation of a kink
+rings far worse than the undershoot it was meant to remove. $\rho^{4/3}$ of a
+negative number is not real, and the physical content of those points is ``no
+electrons here''.
 
 \section{The \texorpdfstring{$\GG = 0$}{G = 0} bookkeeping}
 
@@ -160,8 +203,8 @@ Total & $-31\,215$ \\
 \end{tabular}
 \end{center}
 
-Across the seven reference supercells the \emph{physically relevant} variation
-of that total is $7.9$ eV --- a relative $2.5\times10^{-4}$ of its own
+Across the twelve reference supercells the \emph{physically relevant} variation
+of that total is $0.27$ eV/atom --- a relative $\sim10^{-4}$ of its own
 magnitude. That sets a brutal accuracy requirement on the fields, because every
 electrostatic term is linear or quadratic in $\rho$.
 
@@ -173,20 +216,26 @@ data (so this is a lower bound on the true error):
 \toprule
 Quantity & Value \\
 \midrule
-True spread of $E$ across the seven structures & $7.9$ eV \\
-MAE of the predicted energy differences & $22.3$ eV ($0.83$ eV/atom) \\
-Correlation of predicted vs.\ true differences & $r = 0.61$ \\
+True spread of $E$ across the twelve structures & $0.27$ eV/atom \\
+MAE of the predicted energy differences & $0.29$ eV/atom \\
+Ratio error / signal & $1.06$ \\
+Correlation of predicted vs.\ true differences & $r \approx -0.1$ \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 \begin{pwarn}
-The error is roughly \textbf{three times the signal}. Energy differences from
-this pipeline are not yet usable. The cause is cancellation, not a defect in
-the energy module: a field-level relative $L^{2}$ of $3\times10^{-2}$ cannot
-survive a $2.5\times10^{-4}$ signal-to-total ratio. Reaching $0.01$ eV/atom
-requires densities accurate to roughly $10^{-5}$ relative --- three orders of
-magnitude beyond the current models.
+The error is \textbf{comparable to the signal}, and the correlation is
+consistent with zero. Energy differences from this pipeline are not yet usable:
+the predicted ordering of structures carries no information. This is an
+improvement on the earlier $3\times$ ratio measured on a smaller dataset, but
+the qualitative verdict is unchanged.
+
+The cause is cancellation, not a defect in the energy module: a field-level
+relative $L^{2}$ of $2\times10^{-2}$ cannot survive a $10^{-4}$
+signal-to-total ratio. Reaching $0.01$ eV/atom requires densities accurate to
+roughly $10^{-5}$ relative --- three orders of magnitude beyond the current
+models.
 \end{pwarn}
 
 Two candidate explanations were tested and rejected:
@@ -238,7 +287,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-atoms.calc = Poraque("models/ext2chg.pt", "models/chg2tau.pt",
+atoms.calc = Poraque("models/poraque_models.pth",
                      potcar="POTCAR")
 energy = atoms.get_potential_energy()
 \end{lstlisting}

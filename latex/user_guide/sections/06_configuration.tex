@@ -223,9 +223,12 @@ Key & Default & Meaning \\
 \opt{mode} & \opt{universal} & \opt{universal} or \opt{leave\_one\_out}. \\
 \opt{holdout} & \opt{null} & Structure names excluded from universal
 training. \\
+\opt{valid\_fraction} & \opt{0.0} & Fraction of structures drawn at random for
+validation. \\
 \opt{enable\_kfold} & \opt{false} & Run K-fold cross-validation; takes
 precedence over \opt{mode}. \\
 \opt{k\_folds} & \opt{5} & Number of folds, capped at the structure count. \\
+\opt{eval\_epoch} & \opt{10} & Evaluate and log every this many epochs. \\
 \opt{epochs} & \opt{200} & Passes over the training set. \\
 \opt{batch\_size} & \opt{4} & Maximum samples per grid-shape bucket. \\
 \opt{learning\_rate} & \opt{0.002} & AdamW step size. \\
@@ -244,9 +247,9 @@ below. \\
 \end{tabular}
 \end{center}
 
-\subsection{\opt{mode}, \opt{holdout}, \opt{enable\_kfold}, \opt{k\_folds}}
+\subsection{The validation split}
 
-These four decide \emph{what question the run answers}, and are the settings
+These keys decide \emph{what question the run answers}, and are the settings
 most worth getting right.
 
 \begin{description}
@@ -256,6 +259,8 @@ most worth getting right.
   \item[\opt{holdout}] A list of structure names excluded from that training
     and scored separately, which turns the reported number into a
     generalisation estimate.
+  \item[\opt{valid\_fraction}] The same, but drawing the structures at random,
+    shuffling with \opt{seed}. \opt{0} keeps everything for training.
   \item[\opt{enable\_kfold}] Each fold trains a fresh model on $K-1$ groups and
     scores it on the group held out. Produces a generalisation estimate with a
     spread --- but no single model to ship.
@@ -265,6 +270,32 @@ most worth getting right.
 
 Both are worth running: cross-validation says whether the architecture
 generalises, \opt{universal} produces the model that uses all the data.
+
+\begin{pnote}
+\opt{holdout} and \opt{valid\_fraction} both define a validation split and are
+\textbf{mutually exclusive} --- setting both is an error rather than a silent
+precedence rule, so the protocol cannot depend on which key the reader happened
+to look at. \opt{valid\_fraction} always keeps at least one structure on each
+side, so a fraction that would round to zero gives 1 rather than degrading into
+a universal fit while the config claims otherwise.
+\end{pnote}
+
+\subsection{\opt{eval\_epoch}}
+
+Evaluate and log every this many epochs. Validation is computed \emph{only} on
+those epochs, so raising it on a large validation set is a genuine speed-up
+rather than only a quieter log. The final epoch always reports, so a run never
+ends without a current number.
+
+\begin{lstlisting}
+  progress (every 10 epochs):
+    epoch    10/200  train 0.31745  val_rel_L2 0.34118
+    epoch    20/200  train 0.18902  val_rel_L2 0.21447  *
+\end{lstlisting}
+
+The \opt{*} marks an epoch that improved on the best validation score. Only
+epochs on which validation was actually measured can do so --- a checkpoint is
+written against a measured score, never an assumed one.
 
 \begin{pwarn}
 With \opt{mode: universal} and \opt{holdout: null}, nothing is held out and the

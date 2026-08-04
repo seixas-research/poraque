@@ -159,6 +159,13 @@ class TrainingReport:
             raise ValueError("history contains no 'train_loss' entries.")
         has_validation = validation.size > 0
 
+        # With eval_every > 1 the validation series is shorter than the
+        # training one and its points sit at specific epochs. Plotting it
+        # against 1..N would silently compress the curve onto the wrong x-axis.
+        val_epochs = np.asarray(history.get("val_epoch", []), dtype=float)
+        if val_epochs.size != validation.size:
+            val_epochs = np.arange(1, validation.size + 1, dtype=float)
+
         with self._context():
             rows = 2 if has_validation else 1
             figure, axes = plt.subplots(
@@ -167,15 +174,20 @@ class TrainingReport:
             )
             axes = np.atleast_1d(axes)
 
-            panels = [(axes[0], train, "Training objective", 0)]
+            panels = [(axes[0], train,
+                       np.arange(1, train.size + 1, dtype=float),
+                       "Training objective", 0)]
             if has_validation:
-                panels.append((axes[1], validation,
+                panels.append((axes[1], validation, val_epochs,
                                "Validation relative $L^2$ (physical units)", 1))
 
-            for axis, values, label, slot in panels:
-                epochs = np.arange(1, values.size + 1)
+            for axis, values, epochs, label, slot in panels:
                 colour = series_color(slot)
-                axis.plot(epochs, values, color=colour, label=label)
+                # Mark the individual points on a sparse series, so a
+                # ten-point validation curve does not read as a smooth one.
+                marker = "o" if values.size <= 40 else None
+                axis.plot(epochs, values, color=colour, label=label,
+                          marker=marker, markersize=3)
                 if log_scale and np.all(values > 0):
                     axis.set_yscale("log")
 
