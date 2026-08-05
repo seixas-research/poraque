@@ -22,6 +22,28 @@ Tasks
 ``chg2tau``
     ``CHGCAR`` -> ``TAUCAR``, the kinetic energy density functional.
 
+The two are **independent**. ``task: ext2chg`` builds one network, trains one
+objective and writes one model; nothing about :math:`\tau` is instantiated,
+loaded or differentiated. That is what makes the vast public archives of
+charge densities usable: they publish no kinetic energy density, and needing
+one would rule them out entirely. A task the data cannot supply is reported and
+skipped rather than failing the run, so ``task: all`` on a density-only archive
+trains what it can.
+
+Data sources
+------------
+``data.train_paths`` is a **list of directories**, and each is detected
+independently::
+
+    data:
+      train_paths:
+        - data/vasp             # DFT calculation directories
+        - data/MP/chgcar        # an archive of standalone CHGCARs
+
+so local runs and a Materials Project download train as one dataset. See
+:mod:`poraque.data.sources` for the layouts, and note the caveat there about
+mixing two definitions of :math:`V_{\rm ext}` — the run warns when it happens.
+
 Method notes
 ------------
 **Downsampling is spectral.** The native VASP grids are reduced by Fourier
@@ -110,14 +132,6 @@ _preimport_symbolic_engine(sys.argv[1:])
 
 import torch  # noqa: E402
 
-from poraque.fields import (  # noqa: E402
-    ChargeDensity,
-    ExternalPotential,
-    FieldGrid,
-    KineticEnergyDensity,
-)
-from poraque.fields.io import resolve_reader  # noqa: E402
-from poraque.fields.resample import downsample_shape, resample_field  # noqa: E402
 from poraque.ml import (  # noqa: E402
     BUNDLE_FILENAME,
     FINETUNED_BUNDLE_FILENAME,
@@ -135,13 +149,7 @@ from poraque.ml.symbolic import (  # noqa: E402
     TEMPLATES,
     result_to_dict,
 )
-from poraque.ml.tasks import resolve_task  # noqa: E402
-
-FIELD_CLASSES = {
-    "EXTCAR": ExternalPotential,
-    "CHGCAR": ChargeDensity,
-    "TAUCAR": KineticEnergyDensity,
-}
+from poraque.ml.tasks import TASKS, resolve_task  # noqa: E402
 
 #: Display label and unit per field, for figures.
 FIELD_LABELS = {
@@ -170,163 +178,179 @@ class Tee:
 # ===================================================================== #
 # Cache construction
 # ===================================================================== #
+def cache_tag(data):
+    """
+    Directory name encoding everything that changes the stored fields.
+
+    Without this, switching ``--gaussian-blur`` would silently reuse the
+    previous cache and the "comparison" would compare a model against itself.
+    The paths are folded in too, because a cache built from one archive and a
+    cache built from a mixture are different datasets under the same
+    resolution.
+    """
+    tag = f"res{data.resolution}"
+    if data.gaussian_blur:
+        tag += f"_blur{data.gaussian_blur:g}{data.blur_method[:4]}"
+    if data.sigma:
+        tag += f"_sig{data.sigma:g}"
+
+    paths = data.paths()
+    if len(paths) > 1:
+        # Short and stable: the basenames of the archives, in the order given.
+        names = "-".join(os.path.basename(os.path.normpath(p)) for p in paths)
+        tag += f"_{names}"
+    return tag
+
+
 def build_cache(config, log):
     """
-    Spectrally downsample every calculation and write a compact dataset.
+    Downsample every material under ``data.train_paths`` into one dataset.
+
+    Each path is detected independently — a directory of DFT runs, an archive
+    of standalone ``CHGCAR`` files, or a prepared cache — and all of them land
+    in the same per-material layout, so nothing downstream knows or cares which
+    a given material came from.
+
+    Every field a source can supply is written, not only the ones the current
+    task needs: a cache built for ``ext2chg`` from an archive that also holds
+    :math:`\\tau` serves ``chg2tau`` afterwards with no rebuild.
 
     Returns
     -------
     str
-        Cache directory, laid out like the source dataset so
+        Cache directory, laid out so
         :class:`~poraque.ml.data.FieldPairDataset` reads it unchanged.
     """
+    from poraque.data import build_field_cache, discover_records, resolve_source
+    from poraque.data.cache import build_paw_reference
+
     data = config.data
-    directories = sorted(
-        os.path.join(data.root, entry) for entry in os.listdir(data.root)
-        if entry.startswith(data.pattern)
-        and os.path.isdir(os.path.join(data.root, entry))
-    )
-    if not directories:
-        raise SystemExit(f"No {data.pattern}* directories under {data.root!r}.")
+    paths = data.paths()
+    target = os.path.join(data.cache, cache_tag(data))
 
-    # The cache key encodes everything that changes the stored fields. Without
-    # this, switching --gaussian-blur would silently reuse the previous cache
-    # and the "comparison" would compare a model against itself.
-    tag = f"res{data.resolution}"
-    if data.gaussian_blur:
-        tag += f"_blur{data.gaussian_blur:g}{data.blur_method[:4]}"
-    target = os.path.join(data.cache, tag)
     log(f"Cache: {target}")
+    log(f"  sources: {len(paths)} path(s)")
 
-    for directory in directories:
-        name = os.path.basename(os.path.normpath(directory))
-        destination = os.path.join(target, name)
-        reader = resolve_reader(directory, data.code)
+    build_field_cache(
+        paths, target, resolution=data.resolution, format=data.formats(),
+        sigma=data.sigma, gaussian_blur=data.gaussian_blur,
+        blur_method=data.blur_method, pattern=data.pattern, code=data.code,
+        log=log,
+    )
 
-        expected = [os.path.join(destination, f)
-                    for f in ("EXTCAR", "CHGCAR", "TAUCAR")]
-        if all(os.path.exists(path) for path in expected):
-            log(f"  {name}: cached, grid {FieldGrid.from_file(expected[0]).shape}")
-            continue
-
-        os.makedirs(destination, exist_ok=True)
-        start = time.time()
-
-        # The shared grid comes from CHGCAR: the density is always present in a
-        # standard VASP run, and every other field is placed on the same mesh.
-        source_grid = FieldGrid.from_file(reader.field_path(directory, "density"))
-        reduced_shape = downsample_shape(source_grid.shape,
-                                         target_max=data.resolution)
-        reduced_grid = FieldGrid(reduced_shape, source_grid.cell,
-                                 encut=source_grid.encut)
-
-        summary, warnings = [], []
-
-        # ---- external potential ---------------------------------------- #
-        # Always computed by poraque from POSCAR/INCAR/POTCAR, so the pipeline
-        # works with any standard VASP distribution. Any EXTCAR present in the
-        # source directory is ignored: the training input must be exactly what
-        # ExternalPotential produces at inference time, when no such file
-        # exists.
-        potential = ExternalPotential.from_calculation(
-            directory, code=reader.code, grid=source_grid,
-            gaussian_blur=data.gaussian_blur,
-            blur_method=data.blur_method,
-        )
-        origin = f"poraque/{potential.metadata.get('model', '?')}"
-        if data.gaussian_blur:
-            origin += f", blur {data.gaussian_blur} A ({data.blur_method})"
-
-        reduced = resample_field(potential, reduced_shape, grid=reduced_grid)
-        reduced.write(os.path.join(destination, "EXTCAR"))
-        summary.append(f"EXTCAR [{reduced.data.min():.3g}, "
-                       f"{reduced.data.max():.3g}] ({origin})")
-
-        # ---- density and kinetic energy density ------------------------ #
-        for kind, filename in (("density", "CHGCAR"), ("kinetic", "TAUCAR")):
-            path = reader.field_path(directory, kind)
-            if not os.path.exists(path):
-                raise SystemExit(f"{name}: missing {path}")
-            field = FIELD_CLASSES[filename].read(path, grid=source_grid)
-            reduced = resample_field(field, reduced_shape, grid=reduced_grid)
-            reduced.write(os.path.join(destination, filename))
-            summary.append(f"{filename} [{reduced.data.min():.3g}, "
-                           f"{reduced.data.max():.3g}]")
-
-            # rho and tau are non-negative, but band-limiting a field with
-            # sharp core peaks rings (Gibbs) and can undershoot slightly. That
-            # is an artefact of the truncation, not of the data, and it is why
-            # the dataset uses the sign-tolerant `asinh` normalization.
-            if filename in ("CHGCAR", "TAUCAR") and field.data.min() >= 0:
-                negative = int(np.count_nonzero(reduced.data < 0))
-                if negative:
-                    warnings.append(
-                        f"{filename}: {negative} of {reduced.data.size} points "
-                        f"({100 * negative / reduced.data.size:.2f}%) went "
-                        f"negative, min {reduced.data.min():.3g} "
-                        f"(Gibbs ringing from band-limiting)"
-                    )
-
-        log(f"  {name}: {source_grid.shape} -> {reduced_shape} "
-            f"in {time.time() - start:.1f} s   " + "  ".join(summary))
-        for message in warnings:
-            log(f"      note: {message}")
-
-    build_paw_reference(directories, target, log)
+    # The PAW augmentation records travel with the weights, so a prediction can
+    # be written as an ICHARG=1 restart without a reference calculation beside
+    # it. They come from the *native-resolution* sources, not the cache: the
+    # one-centre terms are on-site quantities and do not live on the FFT grid
+    # at all, so downsampling neither changes nor carries them.
+    formats = data.formats()
+    formats = formats if isinstance(formats, list) else [formats] * len(paths)
+    sources = [resolve_source(path, fmt, pattern=data.pattern, code=data.code)
+               for path, fmt in zip(paths, formats)]
+    build_paw_reference(discover_records(sources, required=("CHGCAR",)),
+                        target, log)
     return target
 
 
-#: Per-element PAW augmentation table, cached beside the downsampled fields.
-PAW_REFERENCE_FILENAME = "paw_reference.json"
+def load_paw_reference(cache):
+    """The cached per-element PAW table, or an empty dict."""
+    from poraque.data.cache import load_paw_reference as _load
+
+    return _load(cache)
 
 
-def build_paw_reference(directories, cache, log):
-    r"""
-    Average the PAW augmentation records of the training calculations.
+def trainable_tasks(names, cache, log):
+    """
+    Drop the requested tasks the cached data cannot supply both fields for.
 
-    The one-centre terms are contractions over the converged wavefunctions, so
-    no grid-based model predicts them — but ``ICHARG=1`` needs them. Averaging
-    the training set's per element gives a transferable table the bundle can
-    carry, so a prediction for a structure with no reference of its own can
-    still be written as a restartable ``CHGCAR``.
+    A dataset does not always carry every field. A Materials Project download
+    is the clear case — it publishes the charge density and nothing else, so
+    ``chg2tau`` has no :math:`\\tau` to regress onto and no amount of pipeline
+    work invents one — but a partial local dataset behaves the same way.
 
-    Written beside the cache and reused, because extracting it means reading
-    the tail of every native-resolution ``CHGCAR``.
+    Failing here, before a model is built, is the whole point: the alternative
+    is a ``ValueError`` from the dataset constructor that names a missing file
+    rather than the task that needed it, and (with ``task: all``) throws away
+    the task that *would* have trained.
+
+    Parameters
+    ----------
+    names : list of str
+        Requested task names.
+    cache : str
+        Cache directory to inspect.
+    log : callable
 
     Returns
     -------
-    dict
-        The reference, empty when no source carried any records.
+    list of str
+        The subset that can actually be trained, in the requested order.
+
+    Raises
+    ------
+    SystemExit
+        If none of them can, naming what was found instead.
     """
-    from poraque.fields.vasp.augmentation import build_reference
+    from poraque.ml.data import discover_materials
 
-    path = os.path.join(cache, PAW_REFERENCE_FILENAME)
-    if os.path.exists(path):
-        with open(path) as handle:
-            reference = json.load(handle)
-        log(f"  PAW reference: cached, {sorted(reference)}")
-        return reference
+    keep, dropped = [], []
+    for name in names:
+        task = resolve_task(name)
+        if discover_materials(cache, task.required_files):
+            keep.append(name)
+        else:
+            dropped.append(task)
 
-    log("  PAW reference: reading augmentation records from the sources")
-    reference = build_reference(directories, log=log)
-    if not reference:
-        log("      none found — these calculations carry no PAW records, so "
-            "predictions cannot be written as ICHARG=1 restarts")
-        return {}
+    for task in dropped:
+        log(f"\n  SKIPPING {task.name}: no material under {cache} has both "
+            f"{task.input_field} and {task.target_field}.")
+        log(f"      {task.description.rstrip('.')} cannot be learned from data "
+            f"that carries no {task.target_field}, and nothing reconstructs "
+            f"one. The remaining task(s) train normally.")
 
-    os.makedirs(cache, exist_ok=True)
-    with open(path, "w") as handle:
-        json.dump(reference, handle)
-    return reference
+    if not keep:
+        available = sorted({name for entry in os.listdir(cache)
+                            if os.path.isdir(os.path.join(cache, entry))
+                            for name in os.listdir(os.path.join(cache, entry))})
+        raise SystemExit(
+            f"None of the requested tasks {names} can be trained on {cache}: "
+            f"the cached materials hold {available or 'no fields at all'}."
+        )
+    return keep
 
 
-def load_paw_reference(cache):
-    """The cached per-element table, or an empty dict."""
-    path = os.path.join(cache, PAW_REFERENCE_FILENAME)
-    if not os.path.exists(path):
-        return {}
-    with open(path) as handle:
-        return json.load(handle)
+def dataset_elements(cache):
+    """
+    Every chemical element the cached materials contain.
+
+    Read from the cached ``CHGCAR`` headers, which are a few hundred bytes
+    each, so this costs nothing next to the fields themselves.
+    """
+    from poraque.fields.vasp.volumetric import read_structure_header
+
+    elements = set()
+    for entry in sorted(os.listdir(cache)):
+        path = os.path.join(cache, entry, "CHGCAR")
+        if os.path.exists(path):
+            elements.update(read_structure_header(path).elements)
+    return sorted(elements)
+
+
+def chemistry_caveat(n_structures, elements):
+    """
+    One sentence bounding what a dataset of this breadth can support.
+
+    Computed rather than asserted: a hard-coded "all of one element" was true
+    of the original single-element dataset and is a false claim about a
+    Materials Project chemical space, which is exactly the kind of caveat a
+    reader trusts without checking.
+    """
+    if len(elements) <= 1:
+        return (f"{n_structures} structure(s), all of "
+                f"{elements[0] if elements else 'one element'}: nothing here "
+                f"speaks to transfer across chemistry.")
+    return (f"{n_structures} structure(s) spanning {', '.join(elements)}: this "
+            f"measures transfer within that chemical space, not beyond it.")
 
 
 # ===================================================================== #
@@ -1038,8 +1062,7 @@ def run_task(task_name, cache, config, log):
         from poraque.vis import ModelReport
 
         caveats = [
-            f"{len(train_set)} structure(s), all of one element: nothing here "
-            f"speaks to transfer across chemistry.",
+            chemistry_caveat(len(train_set), dataset_elements(cache)),
         ]
         if not validation_names:
             caveats.append(
@@ -1271,8 +1294,7 @@ def run_task_kfold(task_name, cache, config, log):
             caveats=[
                 "Every score is from a model that never saw that structure, so "
                 "these are generalisation estimates rather than training fit.",
-                f"{len(names)} structures of a single element: this measures "
-                f"transfer between geometries, not between chemistries.",
+                chemistry_caveat(len(names), dataset_elements(cache)),
                 "With few folds the spread is wide; quote the standard "
                 "deviation alongside the mean.",
             ],
@@ -1310,11 +1332,29 @@ def build_parser():
 
     parser.add_argument("--task", default=None, choices=["all", "ext2chg", "chg2tau"])
     group = parser.add_argument_group("data overrides")
-    group.add_argument("--root", dest="data.root", default=None)
+    group.add_argument("--train-paths", dest="data.train_paths", nargs="+",
+                       default=None, metavar="DIR",
+                       help="one or more dataset directories, which may mix "
+                            "formats; overrides --root")
+    group.add_argument("--source", dest="data.source", default=None,
+                       choices=["auto", "vasp", "bulk", "prepared"],
+                       help="layout of every path: 'vasp' = one calculation "
+                            "directory per material; 'bulk' = an archive of "
+                            "standalone CHGCAR[.gz] files; 'prepared' = a "
+                            "cache of per-material field directories; 'auto' "
+                            "detects each one (default)")
+    group.add_argument("--root", dest="data.root", default=None,
+                       help="single dataset directory; ignored when "
+                            "--train-paths is given")
     group.add_argument("--cache", dest="data.cache", default=None)
     group.add_argument("--pattern", dest="data.pattern", default=None)
     group.add_argument("--code", dest="data.code", default=None)
     group.add_argument("--resolution", dest="data.resolution", type=int, default=None)
+    group.add_argument("--sigma", dest="data.sigma", type=float, default=None,
+                       metavar="A",
+                       help="Gaussian pseudo-ion width in Angstrom for the "
+                            "computed external potential; defaults to the "
+                            "POTCAR core radius where one is available")
     group.add_argument("--gaussian-blur", dest="data.gaussian_blur", type=float,
                        default=None,
                        help="Gaussian blur width in Angstrom for the computed "
@@ -1471,6 +1511,7 @@ def run(argv=None):
 
         cache = build_cache(config, log)
         names = (["ext2chg", "chg2tau"] if config.task == "all" else [config.task])
+        names = trainable_tasks(names, cache, log)
         # One protocol, one variation: K-fold cross-validation.
         driver = run_task_kfold if config.training.enable_kfold else run_task
         results = [result for result in
@@ -1533,8 +1574,22 @@ def run(argv=None):
                 if os.path.exists(stale):
                     os.remove(stale)
             if len(operators) < 2:
-                log("  NOTE: the bundle holds one task. Run with task: all to")
-                log("  produce a complete pipeline in a single file.")
+                # Two different situations, and telling a user to "run with
+                # task: all" when they just did -- and the data had no TAUCAR
+                # -- sends them round a loop that cannot terminate.
+                missing = sorted(set(TASKS) - set(operators))
+                log(f"  NOTE: the bundle holds one task, {sorted(operators)}. "
+                    f"It predicts that field and")
+                log("  nothing further; the ASE calculator needs both halves "
+                    "of the chain to")
+                log("  reach a total energy.")
+                if config.task == "all":
+                    log(f"  {missing} was skipped because this dataset does "
+                        f"not carry its target field.")
+                    log("  Point a run at data that does, and save both models "
+                        "into one bundle.")
+                else:
+                    log(f"  Run with task: all to train {missing} as well.")
 
         log(f"\n{'=' * 78}\nOVERALL\n{'=' * 78}")
         log(f"  {'task':<12s} {'rel L2 (mean)':>14s} {'R2 (mean)':>12s} "
@@ -1556,9 +1611,8 @@ def run(argv=None):
 
         n_materials = len(FieldPairDataset(cache, task=names[0]))
         log("")
-        log(f"  NOTE: {n_materials} material(s), all of one element. These numbers")
-        log("  characterise the pipeline, not the science: they say nothing about")
-        log("  transfer to new chemistry.")
+        log(f"  NOTE: {chemistry_caveat(n_materials, dataset_elements(cache))}")
+        log("  These numbers characterise the pipeline as much as the science.")
         if any(r.get("mode") == "split" and not r.get("validation")
                for r in results):
             log("  For the runs marked 'training fit' above, no structure was held")

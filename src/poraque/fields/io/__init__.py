@@ -36,6 +36,12 @@ from .base import (
     CalculationReader,
     PseudopotentialInfo,
 )
+from .compressed import (
+    COMPRESSION_SUFFIXES,
+    is_compressed,
+    open_text,
+    strip_compression_suffix,
+)
 from .espresso import EspressoReader
 from .gpaw import GpawReader
 from .vasp import VaspReader
@@ -148,6 +154,7 @@ register_reader(EspressoReader)
 register_reader(GpawReader)
 
 __all__ = [
+    "COMPRESSION_SUFFIXES",
     "FIELD_KINDS",
     "CalculationParameters",
     "CalculationReader",
@@ -158,6 +165,9 @@ __all__ = [
     "available_codes",
     "detect_reader",
     "get_reader",
+    "is_compressed",
+    "open_text",
     "register_reader",
     "resolve_reader",
+    "strip_compression_suffix",
 ]

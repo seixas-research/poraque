@@ -21,6 +21,12 @@ dependencies = [
     'pytest',
     'torch>=2.0',
     'pyyaml',
+    # Materials Project ingestion (poraque.data.materials_project). The client
+    # is a base dependency rather than an extra because the dataset builder it
+    # feeds is part of the ordinary pipeline; python-dotenv is what keeps the
+    # API key in a .env file instead of in a config or a shell history.
+    'mp-api',
+    'python-dotenv',
 ]
 
 classifiers = [
@@ -64,6 +70,9 @@ symbolic = [
 poraque-train = "poraque_train:main"
 poraque-inference = "poraque_inference:main"
 poraque-committee = "poraque_committee:main"
+# Unlike the three above, this one lives in the package rather than in
+# ``scripts/``: the downloader is a library class first and a command second.
+poraque-mp = "poraque.data.materials_project:main"
 
 [tool.hatch.build.targets.wheel]
 # Two source roots: the package itself, plus the two driver scripts, which ship

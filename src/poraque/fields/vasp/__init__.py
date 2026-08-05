@@ -14,13 +14,14 @@ Dependency-free readers/writers for the VASP file formats used by
 from .incar import Incar
 from .poscar import Poscar, symbol_to_z
 from .potcar import Potcar, PotcarSingle
-from .volumetric import read_volumetric, write_volumetric
+from .volumetric import read_structure_header, read_volumetric, write_volumetric
 
 __all__ = [
     "Incar",
     "Poscar",
     "Potcar",
     "PotcarSingle",
+    "read_structure_header",
     "read_volumetric",
     "write_volumetric",
     "symbol_to_z",

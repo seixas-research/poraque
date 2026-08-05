@@ -52,14 +52,63 @@ class DataConfig:
 
     Attributes
     ----------
+    train_paths : list of str or None
+        The dataset, as a **list of directories**, which may mix layouts::
+
+            data:
+              train_paths:
+                - data/vasp             # local DFT runs
+                - data/MP/chgcar        # a Materials Project download
+
+        Each entry is auto-detected (see ``source``) and everything found is
+        pooled into one training set. ``null`` falls back to ``root``, so a
+        config written before this key existed keeps working unchanged.
+
+        .. warning::
+
+           Mixing a calculation archive with a bulk density archive mixes two
+           *definitions* of the external potential — the tabulated local
+           pseudopotential and the Gaussian pseudo-ion model, which differ by
+           roughly 0.1 relative :math:`L_2`. The run warns when it happens. It
+           is a legitimate trade (far more data, a fuzzier input) but never a
+           good accident.
     root : str
-        Directory holding the per-material calculation folders.
+        Single dataset directory, used when ``train_paths`` is ``null``.
+    source : str
+        Layout of each path, or ``"auto"`` (the default) to detect it.
+
+        ``"vasp"`` is the classic layout: one calculation directory per
+        material, selected by ``pattern``, each holding the inputs and
+        volumetric outputs of a run. The external potential is computed from
+        those inputs; ``TAUCAR`` is used where a run wrote one and simply not
+        offered where it did not.
+
+        ``"bulk"`` is an archive of standalone ``CHGCAR`` files, compressed or
+        not — what the Materials Project ships. The potential is built from the
+        structure each density carries in its own header, using the Gaussian
+        pseudo-ion model, since no ``POTCAR`` comes with it. ``chg2tau`` is not
+        trainable on such an archive: no public archive publishes
+        :math:`\\tau`.
+
+        ``"prepared"`` is a directory of per-material ``EXTCAR``/``CHGCAR``/
+        ``TAUCAR`` folders — a cache from an earlier run, read as it stands.
+
+        A single name applies to every path; pass a list to set them
+        individually.
     cache : str
         Where spectrally downsampled copies are written.
     pattern : str
-        Prefix identifying calculation folders inside ``root``.
+        Prefix identifying calculation folders inside a ``vasp`` path. Ignored
+        by the other layouts.
     code : str
         DFT code name, or ``"auto"`` to detect it.
+    sigma : float or None
+        Gaussian pseudo-ion width in Å for the computed external potential.
+        ``null`` derives it per species from the pseudopotential core radius,
+        which is the right answer whenever a ``POTCAR`` is available; it is not
+        for a Materials Project download, where nothing supplies one and
+        :data:`poraque.fields.external.DEFAULT_SIGMA` is used instead. Set it
+        explicitly when a reference ``EXTCAR`` allows it to be fitted.
     resolution : int
         Longest grid axis after spectral downsampling. The reduction is a
         Fourier truncation, exact for band-limited plane-wave fields.
@@ -81,14 +130,47 @@ class DataConfig:
         mislabelled dataset into an error rather than a silent reinterpretation.
     """
 
+    train_paths: list = None
     root: str = "data/vasp"
+    source: str = "auto"
     cache: str = "data/cache"
     pattern: str = "struct"
     code: str = "auto"
     resolution: int = 32
+    sigma: float = None
     gaussian_blur: float = None
     blur_method: str = "spectral"
     spin: str = "auto"
+
+    def paths(self):
+        """
+        The directories to train on, however they were specified.
+
+        ``train_paths`` wins when it is set; ``root`` is the single-path
+        fallback that keeps every config written before it existed working.
+
+        Returns
+        -------
+        list of str
+        """
+        if not self.train_paths:
+            return [self.root]
+        if isinstance(self.train_paths, str):
+            return [self.train_paths]
+        return [str(path) for path in self.train_paths]
+
+    def formats(self):
+        """
+        The layout of each path: one name, one per path, or ``"auto"``.
+
+        Returns
+        -------
+        str or list of str
+            Handed straight to :func:`~poraque.data.sources.resolve_source`.
+        """
+        if isinstance(self.source, (list, tuple)):
+            return [str(name) for name in self.source]
+        return str(self.source)
 
 
 @dataclass

@@ -113,9 +113,20 @@ def species_of_each_atom(structure):
     return symbols
 
 
-def reference_from_calculation(directory, filename="CHGCAR"):
+def reference_from_calculation(source, filename="CHGCAR"):
     """
     Per-element occupancies from one reference calculation.
+
+    Parameters
+    ----------
+    source : str
+        A calculation directory, in which case ``filename`` names the file to
+        read; or the path to that file directly. The second form is what lets
+        a flat archive — a Materials Project download, where the densities sit
+        side by side as ``CHGCAR_<id>.gz`` rather than one per directory —
+        contribute a reference too. Compressed files are read in place.
+    filename : str, optional
+        File to read inside ``source`` when it is a directory.
 
     Returns
     -------
@@ -124,7 +135,7 @@ def reference_from_calculation(directory, filename="CHGCAR"):
         than a mean so several calculations can be combined without weighting
         a two-atom cell like a two-hundred-atom one.
     """
-    path = os.path.join(directory, filename)
+    path = source if os.path.isfile(source) else os.path.join(source, filename)
     if not os.path.exists(path):
         return {}
 
@@ -152,16 +163,18 @@ def reference_from_calculation(directory, filename="CHGCAR"):
     return totals
 
 
-def build_reference(directories, filename="CHGCAR", log=None):
+def build_reference(sources, filename="CHGCAR", log=None):
     r"""
     Average the augmentation records of several calculations, per element.
 
     Parameters
     ----------
-    directories : iterable of str
-        Reference calculations to read.
+    sources : iterable of str
+        Reference calculations: directories, or paths to the density files
+        themselves. See :func:`reference_from_calculation`.
     filename : str, optional
-        Which file in each directory carries the records.
+        Which file in each directory carries the records; ignored for entries
+        that already name a file.
     log : callable, optional
         Progress sink.
 
@@ -174,7 +187,7 @@ def build_reference(directories, filename="CHGCAR", log=None):
     emit = log if log is not None else (lambda *_: None)
     totals, structures = {}, {}
 
-    for directory in directories:
+    for directory in sources:
         contribution = reference_from_calculation(directory, filename)
         if not contribution:
             continue

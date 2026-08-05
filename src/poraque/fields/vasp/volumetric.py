@@ -23,6 +23,14 @@ compatible on the same grid.
 
 Anything after the first data block (spin channels, PAW augmentation
 occupancies) is skipped by default and can be requested explicitly.
+
+Compression is transparent. Files are opened through
+:func:`poraque.fields.io.compressed.open_text`, so a ``.gz``, ``.bz2``, ``.xz``
+or ``.zip`` path is decompressed as it is read and never needs expanding on
+disk — which is how the Materials Project's gzipped charge densities are read
+in place. Parsing is *streamed* for the same reason: a 200 MB ``CHGCAR`` is
+consumed a line at a time into the array being filled, so peak memory follows
+the grid rather than the text.
 """
 
 import numpy as np
@@ -30,14 +38,29 @@ import numpy as np
 from .poscar import Poscar
 
 
+def _open_text(path):
+    """
+    :func:`poraque.fields.io.compressed.open_text`, imported on use.
+
+    Deferred rather than imported at module scope because
+    :mod:`poraque.fields.io` pulls in the VASP reader, which imports this
+    module — a module-level import here would close that loop and break
+    ``import poraque.fields`` outright.
+    """
+    from ..io.compressed import open_text
+
+    return open_text(path)
+
+
 def read_volumetric(path, read_all=False):
     """
-    Read a VASP volumetric file.
+    Read a VASP volumetric file, compressed or not.
 
     Parameters
     ----------
     path : str or pathlib.Path
-        File to read.
+        File to read. A ``.gz``/``.bz2``/``.xz``/``.zip`` suffix is
+        decompressed on the fly.
     read_all : bool, optional
         When true, also return any additional data blocks of the same grid
         size (e.g. the spin channel of a spin-polarised ``CHGCAR``).
@@ -52,37 +75,50 @@ def read_volumetric(path, read_all=False):
     extra : list of numpy.ndarray
         Additional blocks; empty unless ``read_all`` is true.
     """
-    with open(path, "r") as handle:
-        lines = handle.read().splitlines()
+    with _open_text(path) as handle:
+        lines = (line.rstrip("\n") for line in handle)
 
-    # --- Structure header: everything up to the first blank line ---
-    blank = _first_blank_line(lines)
-    structure = Poscar.from_string("\n".join(lines[:blank]))
+        structure = _read_header(lines, path)
+        shape = _read_shape(lines, path)
+        n_points = int(np.prod(shape))
+        data = _read_block(lines, n_points, shape, path)
 
-    # --- Grid dimensions ---
-    cursor = blank + 1
-    while cursor < len(lines) and not lines[cursor].strip():
-        cursor += 1
-    shape = tuple(int(token) for token in lines[cursor].split()[:3])
-    cursor += 1
-
-    n_points = int(np.prod(shape))
-    data, cursor = _read_block(lines, cursor, n_points, shape)
-
-    extra = []
-    if read_all:
-        while cursor < len(lines):
-            # Skip augmentation blocks / separators until another grid header
-            # with the same dimensions shows up.
-            tokens = lines[cursor].split()
-            if len(tokens) == 3 and all(_is_int(t) for t in tokens) \
-                    and tuple(int(t) for t in tokens) == shape:
-                block, cursor = _read_block(lines, cursor + 1, n_points, shape)
-                extra.append(block)
-            else:
-                cursor += 1
+        extra = []
+        if read_all:
+            # Walk past the augmentation records to the next grid header of the
+            # same dimensions; that, and only that, starts another data block.
+            for line in lines:
+                tokens = line.split()
+                if (len(tokens) == 3 and all(_is_int(t) for t in tokens)
+                        and tuple(int(t) for t in tokens) == shape):
+                    extra.append(_read_block(lines, n_points, shape, path))
 
     return structure, data, extra
+
+
+def read_structure_header(path):
+    """
+    Read only the structure block of a volumetric file.
+
+    A ``CHGCAR`` carries its own ``POSCAR`` in the first lines, so the geometry
+    of a calculation can be recovered from the density alone — which is the
+    whole reason a Materials Project charge density is self-sufficient as
+    training data, with no ``POSCAR`` or ``OUTCAR`` beside it.
+
+    Reading stops at the blank line that ends the header, so this costs a few
+    hundred bytes whatever the grid, even through a decompressor.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        A ``CHGCAR``-format file, optionally compressed.
+
+    Returns
+    -------
+    Poscar
+    """
+    with _open_text(path) as handle:
+        return _read_header((line.rstrip("\n") for line in handle), path)
 
 
 def read_augmentation(path):
@@ -118,32 +154,28 @@ def read_augmentation(path):
     prediction, so extraction stops at the next grid header rather than
     dragging it along.
     """
-    with open(path, "r") as handle:
-        lines = handle.read().splitlines()
+    with _open_text(path) as handle:
+        lines = (line.rstrip("\n") for line in handle)
 
-    blank = _first_blank_line(lines)
-    cursor = blank + 1
-    while cursor < len(lines) and not lines[cursor].strip():
-        cursor += 1
-    shape = tuple(int(token) for token in lines[cursor].split()[:3])
-    cursor += 1
+        _read_header(lines, path)
+        shape = _read_shape(lines, path)
 
-    # Walk the grid block by value count, not by line count: the number of
-    # columns is a formatting choice (5 in CHGCAR, 10 in CHG) and counting
-    # lines would land in the wrong place on either.
-    remaining = int(np.prod(shape))
-    while remaining > 0 and cursor < len(lines):
-        remaining -= len(lines[cursor].split())
-        cursor += 1
+        # Walk the grid block by value count, not by line count: the number of
+        # columns is a formatting choice (5 in CHGCAR, 10 in CHG) and counting
+        # lines would land in the wrong place on either.
+        remaining = int(np.prod(shape))
+        for line in lines:
+            remaining -= len(line.split())
+            if remaining <= 0:
+                break
 
-    block = []
-    while cursor < len(lines):
-        tokens = lines[cursor].split()
-        if (len(tokens) == 3 and all(_is_int(token) for token in tokens)
-                and tuple(int(token) for token in tokens) == shape):
-            break                       # a spin channel starts here
-        block.append(lines[cursor])
-        cursor += 1
+        block = []
+        for line in lines:
+            tokens = line.split()
+            if (len(tokens) == 3 and all(_is_int(token) for token in tokens)
+                    and tuple(int(token) for token in tokens) == shape):
+                break                   # a spin channel starts here
+            block.append(line)
 
     while block and not block[-1].strip():
         block.pop()
@@ -307,37 +339,59 @@ def write_volumetric(path, structure, data, comment=None, columns=5,
 # ---------------------------------------------------------------------- #
 # Helpers
 # ---------------------------------------------------------------------- #
-def _first_blank_line(lines):
-    """Index of the first blank line, which terminates the POSCAR header."""
-    for index, line in enumerate(lines):
+def _read_header(lines, path=""):
+    """
+    Consume the POSCAR block, which the first blank line terminates.
+
+    ``lines`` is an *iterator*, and it is left positioned just after the blank
+    line so the caller can carry on reading the grid. That is what lets a
+    compressed 200 MB density be parsed without ever materialising its text.
+    """
+    header = []
+    for line in lines:
         if not line.strip():
-            return index
+            return Poscar.from_string("\n".join(header))
+        header.append(line)
     raise ValueError(
-        "Malformed volumetric file: no blank line separating the structure "
-        "header from the grid data."
+        f"{path}: malformed volumetric file - no blank line separating the "
+        f"structure header from the grid data."
     )
 
 
-def _read_block(lines, cursor, n_points, shape):
-    """Read ``n_points`` floats starting at ``cursor`` and reshape them."""
+def _read_shape(lines, path=""):
+    """Read the ``NGXF NGYF NGZF`` line, skipping any further blank lines."""
+    for line in lines:
+        if line.strip():
+            return tuple(int(token) for token in line.split()[:3])
+    raise ValueError(f"{path}: no grid-dimension line after the header.")
+
+
+def _read_block(lines, n_points, shape, path=""):
+    """
+    Read ``n_points`` floats from ``lines`` and reshape them.
+
+    Consumes exactly as many lines as it needs, leaving the iterator on the
+    first line after the block.
+    """
     values = np.empty(n_points, dtype=float)
     filled = 0
-    while filled < n_points and cursor < len(lines):
-        tokens = lines[cursor].split()
-        cursor += 1
+    for line in lines:
+        tokens = line.split()
         if not tokens:
             continue
-        chunk = np.fromiter((float(t) for t in tokens), dtype=float,
-                            count=len(tokens))
+        chunk = np.array(tokens, dtype=float)
         take = min(chunk.size, n_points - filled)
         values[filled:filled + take] = chunk[:take]
         filled += take
+        if filled >= n_points:
+            break
 
     if filled < n_points:
         raise ValueError(
-            f"Volumetric file truncated: expected {n_points} values, got {filled}."
+            f"{path}: volumetric file truncated - expected {n_points} values, "
+            f"got {filled}."
         )
-    return values.reshape(shape, order="F"), cursor
+    return values.reshape(shape, order="F")
 
 
 def _is_int(token):

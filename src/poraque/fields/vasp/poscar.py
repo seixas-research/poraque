@@ -115,8 +115,10 @@ class Poscar(Structure):
 
     @classmethod
     def from_file(cls, path, symbols=None):
-        """Read a POSCAR/CONTCAR from ``path``."""
-        with open(path, "r") as handle:
+        """Read a POSCAR/CONTCAR from ``path``, compressed or not."""
+        from ..io.compressed import open_text
+
+        with open_text(path) as handle:
             return cls.from_string(handle.read(), symbols=symbols)
 
     @classmethod

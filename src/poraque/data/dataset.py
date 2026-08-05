@@ -1,0 +1,417 @@
+# -*- coding: utf-8 -*-
+# file: dataset.py
+
+# This code is part of Poraquê.
+# MIT License
+#
+# Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
+
+r"""
+One PyTorch ``Dataset`` over a mixture of data layouts.
+
+:class:`MixedFieldDataset` takes a **list of directories**, works out what each
+one is with :mod:`poraque.data.sources`, and serves aligned ``(input, target)``
+field pairs across all of them::
+
+    from poraque.data import MixedFieldDataset
+
+    data = MixedFieldDataset(
+        ["data/vasp", "data/MP/chgcar"],   # a run archive and a bulk archive
+        task="ext2chg",
+        resolution=32,
+    )
+
+Each path is detected independently, so the mixture can be any combination of
+DFT calculation directories, bulk density archives and prepared caches. Nothing
+in the training stack below this class knows which material came from where.
+
+Three things this has to get right, and does
+--------------------------------------------
+**Identifiers must stay unique.** Two archives can easily both contain a
+``struct_000``, and a collision would silently drop one material from the
+dataset and corrupt every per-material report. Duplicates are prefixed with
+their directory (``MP:mp-124``), and the run is told.
+
+**Not every source has every field.** A bulk archive publishes no
+:math:`\tau`; a calculation directory may or may not have written one. The
+dataset reports what it can actually serve (:meth:`available_tasks`) and
+refuses a task nothing supports, rather than failing on the first batch.
+
+**Not every source defines** :math:`V_{\rm ext}` **the same way.** A calculation
+with a ``POTCAR`` gives the tabulated local pseudopotential; a bulk archive
+gives the Gaussian pseudo-ion model, which differs from it by around 0.1
+relative :math:`L_2`. Training across both means the input field is *two
+different quantities* wearing one name, and the operator will spend capacity
+reconciling them. That is sometimes what you want — it is a far larger and more
+diverse dataset — and it is never what you want by accident, so the dataset
+emits a warning naming both conventions when a mixture is built.
+"""
+
+import os
+import warnings
+
+import numpy as np
+
+from ..fields import FieldGrid
+from ..ml.data import FieldPairDataset
+from .sources import discover_records, resolve_source
+
+
+class MixedFieldDataset(FieldPairDataset):
+    r"""
+    Aligned field pairs drawn from any mixture of data layouts.
+
+    Parameters
+    ----------
+    paths : str or sequence of str
+        One directory or several. Each is auto-detected unless ``format``
+        says otherwise.
+    task : str or TaskSpec, optional
+        The mapping to serve; see :mod:`poraque.ml.tasks`.
+    resolution : int, optional
+        Longest grid axis after spectral downsampling — a Fourier truncation,
+        exact for a band-limited plane-wave field. ``None`` keeps each
+        material's native grid, which for a public archive is 48³ upwards.
+    format : str or sequence of str, optional
+        ``"auto"`` (default), one name applied to every path, or one name per
+        path. See :func:`~poraque.data.sources.available_formats`.
+    spin : bool, optional
+        ``False`` (default) serves the total density as one channel. ``True``
+        serves :math:`(\rho, m)` and requires every source to carry a
+        magnetisation block.
+    charges : dict, optional
+        ``{element: Z_val}`` for the bulk sources, which have no ``POTCAR`` to
+        read them from. Inferred from the densities when omitted.
+    sigma : float or dict, optional
+        Gaussian pseudo-ion width in Å, where a model potential is used.
+    gaussian_blur : float, optional
+        Blur width in Å applied to every computed potential.
+    blur_method : {"spectral", "ndimage"}, optional
+        How that blur is applied.
+    pattern : str, optional
+        Subdirectory prefix filter for calculation archives — the usual reason
+        is a sibling directory of isolated-atom references that must not be
+        trained on.
+    code : str, optional
+        DFT code name for calculation archives, or ``"auto"``.
+    cache : bool, optional
+        Keep decoded fields in memory. Worth enabling with ``resolution`` set:
+        the potential is otherwise recomputed every epoch.
+    materials : list of MaterialRecord, optional
+        Explicit record list, bypassing discovery — used for splits.
+    log : callable, optional
+        Receives one line per path describing what it contributed.
+    warn_mixed_potentials : bool, optional
+        Warn when the mixture spans more than one definition of
+        :math:`V_{\rm ext}`. Leave it on unless the mixture is deliberate and
+        already understood.
+    **kwargs
+        Passed to :class:`~poraque.ml.data.FieldPairDataset`.
+
+    Attributes
+    ----------
+    sources : list of MaterialSource
+        One per path, in the order given.
+
+    Examples
+    --------
+    >>> data = MixedFieldDataset(["data/vasp", "data/MP/chgcar"],  # doctest: +SKIP
+    ...                          task="ext2chg", resolution=32)
+    >>> data.available_tasks()                                     # doctest: +SKIP
+    ['ext2chg']
+    """
+
+    def __init__(self, paths, task="ext2chg", resolution=None, format="auto",
+                 spin=False, charges=None, sigma=None, gaussian_blur=None,
+                 blur_method="spectral", pattern=None, code="auto",
+                 cache=False, materials=None, log=None,
+                 warn_mixed_potentials=True, **kwargs):
+        from ..ml.tasks import resolve_task
+
+        self.paths = [str(paths)] if isinstance(paths, (str, os.PathLike)) \
+            else [str(path) for path in paths]
+        if not self.paths:
+            raise ValueError("At least one data path is required.")
+
+        self.resolution = int(resolution) if resolution else None
+        self._log = log or (lambda *_: None)
+        self._source_options = {
+            "charges": charges, "sigma": sigma,
+            "gaussian_blur": gaussian_blur, "blur_method": blur_method,
+            "pattern": pattern, "code": code, "log": self._log,
+        }
+        self.sources = self._build_sources(format)
+
+        task = resolve_task(task)
+        records = (materials if materials is not None
+                   else self._discover(task))
+
+        if warn_mixed_potentials and materials is None:
+            self._warn_if_potentials_disagree(records, task)
+
+        super().__init__(self.paths[0], task, materials=records, cache=cache,
+                         spin=spin, **kwargs)
+
+    # ------------------------------------------------------------------ #
+    # Construction
+    # ------------------------------------------------------------------ #
+    def _build_sources(self, format):
+        """One source per path, with the format applied or detected."""
+        formats = ([format] * len(self.paths)
+                   if isinstance(format, (str, type(None)))
+                   else list(format))
+        if len(formats) != len(self.paths):
+            raise ValueError(
+                f"Got {len(formats)} format(s) for {len(self.paths)} path(s). "
+                f"Pass one name for all of them, or one per path."
+            )
+        return [resolve_source(path, fmt, **self._source_options)
+                for path, fmt in zip(self.paths, formats)]
+
+    def _discover(self, task):
+        """
+        Enumerate every material this task can be trained on.
+
+        Only materials supplying *both* of the task's fields are kept: a
+        calculation directory with no ``TAUCAR`` belongs in an ``ext2chg``
+        dataset and not in a ``chg2tau`` one, and that is a per-material
+        question, not a per-directory one.
+        """
+        records = discover_records(self.sources, required=task.required_files,
+                                   log=self._log)
+        if not records:
+            raise ValueError(
+                f"No material under {self.paths} supplies both "
+                f"{task.input_field} and {task.target_field}. Available "
+                f"tasks here: {self.available_tasks() or 'none'}."
+            )
+        return records
+
+    def _warn_if_potentials_disagree(self, records, task):
+        """
+        Warn when the mixture spans two definitions of the external potential.
+
+        Only when the potential is actually *used*: a ``chg2tau`` dataset never
+        touches it, and warning there would be noise.
+        """
+        if task.input_field != "EXTCAR" and task.target_field != "EXTCAR":
+            return
+
+        conventions = {}
+        for record in records:
+            conventions.setdefault(type(record.source).name, set()).add(
+                record.source.root)
+        if len(conventions) < 2:
+            return
+
+        warnings.warn(
+            "This dataset mixes archives that define the external potential "
+            "differently: "
+            + "; ".join(f"{name} ({', '.join(sorted(roots))})"
+                        for name, roots in sorted(conventions.items()))
+            + ". A calculation directory gives the tabulated local "
+              "pseudopotential; a bulk density archive gives the Gaussian "
+              "pseudo-ion model, which differs from it by roughly 0.1 relative "
+              "L2. The operator will be learning from two different input "
+              "quantities under one name. Pass warn_mixed_potentials=False "
+              "once that is a deliberate choice.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Introspection
+    # ------------------------------------------------------------------ #
+    def available_tasks(self):
+        """
+        Task names at least one material under these paths can supply.
+
+        Returns
+        -------
+        list of str
+            In the registry's order. A dataset of bulk densities returns
+            ``["ext2chg"]``; a complete VASP archive returns both.
+        """
+        from ..ml.tasks import TASKS
+
+        fields = set()
+        for source in self.sources:
+            for record in source.discover():
+                fields.update(source.provides(record))
+        return [name for name, task in TASKS.items()
+                if set(task.required_files) <= fields]
+
+    def contributions(self):
+        """
+        How many materials each path contributed.
+
+        Returns
+        -------
+        dict
+            ``{path: count}``, for the run header — a mixed dataset whose
+            second archive silently matched nothing is otherwise invisible.
+        """
+        counts = {path: 0 for path in self.paths}
+        for record in self.materials:
+            counts[record.source.root] = counts.get(record.source.root, 0) + 1
+        return counts
+
+    # ------------------------------------------------------------------ #
+    # Loading
+    # ------------------------------------------------------------------ #
+    def _resolve_spin(self, requested):
+        r"""
+        Whether densities are served as one channel or two.
+
+        Relaxed relative to the base class, deliberately. There, ``spin=False``
+        against a two-block file is an error, because a single VASP directory
+        is expected to describe one calculation and a mismatch means the
+        dataset is mislabelled. Across a *mixture* that reasoning does not
+        hold: public archives are spin-polarised as a matter of policy while
+        local runs often are not, and reading only the total block is a
+        legitimate reduction of data that is present — unlike inventing a
+        magnetisation channel that is not.
+
+        So ``False`` serves :math:`\rho`, ``True`` requires and serves
+        :math:`(\rho, m)` from every material, and ``"auto"`` follows the data
+        and refuses a mixture it cannot serve consistently.
+        """
+        if requested is False:
+            return False
+
+        polarized = {record.source.is_spin_polarized(record)
+                     for record in self.materials}
+
+        if requested == "auto":
+            if len(polarized) > 1:
+                raise ValueError(
+                    "Some materials in this mixture are spin-polarised and "
+                    "some are not, so spin='auto' has no single answer. Pass "
+                    "spin=False to train on the total density throughout, "
+                    "which every one of them carries."
+                )
+            return polarized.pop()
+
+        if not all(polarized):
+            unpolarized = [record.identifier for record in self.materials
+                           if not record.source.is_spin_polarized(record)]
+            raise ValueError(
+                f"spin=True was requested, but {len(unpolarized)} material(s) "
+                f"carry no magnetisation block ({unpolarized[:5]}...). There "
+                f"are no values for a second channel."
+            )
+        return True
+
+    def load_fields(self, index):
+        """
+        Load one material's input and target fields in physical units.
+
+        The source attached to the record decides how — read from disk,
+        computed from a calculation's inputs, or computed from the density's
+        own header. Both fields are placed on one shared grid, and downsampled
+        together when :attr:`resolution` is set.
+
+        Returns
+        -------
+        tuple
+            ``(input_field, target_field)``.
+        """
+        if index in self._cache:
+            return self._cache[index]
+
+        record = self.materials[index]
+        source = record.source
+        native = source.grid(record)
+
+        fields = tuple(
+            source.read(record, name, native, spin=self.spin)
+            for name in (self.task.input_field, self.task.target_field)
+        )
+        if self.resolution:
+            fields = self._downsample(fields, native)
+
+        record.shape = tuple(fields[0].grid.shape)
+        if self.cache:
+            self._cache[index] = fields
+        return fields
+
+    def _downsample(self, fields, native):
+        """Fourier-truncate every field onto one reduced grid."""
+        from ..fields.resample import downsample_shape
+
+        shape = downsample_shape(native.shape, target_max=self.resolution)
+        reduced = FieldGrid(shape, native.cell, encut=native.encut)
+        return tuple(_resample(field, shape, reduced) for field in fields)
+
+    def shapes(self):
+        """
+        Grid shape of every material, from headers alone.
+
+        Overridden because the base class peeks at the *input* file, and here
+        the input file often does not exist — the potential is built on the
+        density's grid, so that is the grid to report.
+        """
+        from ..fields.resample import downsample_shape
+
+        shapes = []
+        for record in self.materials:
+            if record.shape is None:
+                native = record.source.shape(record)
+                record.shape = (downsample_shape(native,
+                                                 target_max=self.resolution)
+                                if self.resolution else tuple(native))
+            shapes.append(record.shape)
+        return shapes
+
+    # ------------------------------------------------------------------ #
+    def split(self, fraction=0.8, seed=0):
+        """
+        Split by material, carrying this dataset's settings to both halves.
+
+        The split is at the **material** level and ignores which archive each
+        came from, so a mixed dataset's validation set is a random sample of
+        the mixture rather than one whole archive — which would measure
+        transfer between archives and report it as generalisation.
+        """
+        rng = np.random.default_rng(seed)
+        order = rng.permutation(len(self.materials))
+        cut = int(round(fraction * len(order)))
+
+        def subset(indices):
+            other = type(self)(
+                self.paths, self.task, resolution=self.resolution,
+                spin=self.spin, cache=self.cache,
+                materials=[self.materials[i] for i in indices],
+                input_transform=self.input_transform,
+                target_transform=self.target_transform,
+                dtype=self.dtype, warn_mixed_potentials=False,
+                **{key: value for key, value in self._source_options.items()
+                   if key != "log"},
+            )
+            return other
+
+        return subset(order[:cut]), subset(order[cut:])
+
+
+def _resample(field, shape, grid):
+    """
+    Resample a field, spin pair included.
+
+    :func:`~poraque.fields.resample.resample_field` rebuilds a field by calling
+    its own class with ``(data, grid, structure)``, which a
+    :class:`~poraque.fields.SpinDensity` does not accept — it takes its two
+    channels separately. Each channel is band-limited in its own right, so
+    truncating them independently is the same operation, spelled for the
+    two-argument constructor.
+    """
+    from ..fields.resample import resample_field, spectral_resample
+    from ..fields.spin import SpinDensity
+
+    if not isinstance(field, SpinDensity):
+        return resample_field(field, shape, grid=grid)
+
+    metadata = dict(field.metadata)
+    metadata["resampled_from"] = tuple(field.grid.shape)
+    return SpinDensity(spectral_resample(field.total, shape),
+                       spectral_resample(field.magnetization, shape),
+                       grid, field.structure, metadata=metadata)

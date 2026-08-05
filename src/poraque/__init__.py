@@ -19,6 +19,11 @@ Two subpackages carry the work:
     Energy functionals evaluated on the predicted fields: the Kohn-Sham
     total-energy components, integrated on the shared grid.
 
+:mod:`poraque.data`
+    Where the training data comes from: fetching charge densities from the
+    Materials Project, and reconciling what a public archive publishes with
+    what the pipeline expects.
+
 :mod:`poraque.vis`
     Figures and typeset reports for trained models.
 

@@ -1,0 +1,83 @@
+# =====================================================================
+# Poraque - training on a mixture of data sources
+#
+#   poraque-train --config configs/train_mixed_config.yaml
+#
+# `train_paths` is a list, and each entry is detected independently:
+# local DFT calculation directories, an archive of standalone CHGCARs,
+# or a prepared cache from an earlier run. Everything found is pooled
+# into one training set.
+#
+# CAVEAT, and it is not a small one. A calculation directory carries a
+# POTCAR, so V_ext there is the *tabulated* local pseudopotential. A bulk
+# archive carries none, so V_ext there is the Gaussian pseudo-ion model,
+# which differs from the tabulated form by roughly 0.1 relative L2. Train
+# across both and the input field is two different quantities under one
+# name; the run warns about it. The trade can be worth making -- a far
+# larger and more chemically diverse dataset for a fuzzier input -- but
+# make it deliberately. Set `sigma` from a fit against a reference EXTCAR
+# to narrow the gap.
+#
+# `task: ext2chg` is what makes the mixture possible at all: no public
+# archive publishes a kinetic energy density, so chg2tau can only ever be
+# trained on the local runs. Leaving `task: all` is also fine -- chg2tau
+# then trains on whichever materials do carry a TAUCAR, and the run says
+# how many that was.
+# =====================================================================
+task: ext2chg
+data:
+  train_paths:
+    - data/vasp
+    - data/MP/chgcar
+  source: auto
+  cache: data/cache/mixed
+  pattern: struct
+  code: auto
+  resolution: 32
+  sigma: null
+  gaussian_blur: null
+  blur_method: spectral
+model:
+  width: 16
+  modes: 8
+  n_layers: 4
+  projection_channels: 48
+  activation: gelu
+  use_coordinates: true
+  cell_conditioning: true
+  embedding_dim: 32
+  mode_selection: fixed
+  g_max: null
+  pauli_residual: false
+training:
+  epochs: 200
+  batch_size: 4
+  learning_rate: 0.002
+  weight_decay: 0.0001
+  scheduler: cosine
+  grad_clip: 1.0
+  valid_fraction: 0.2
+  enable_kfold: false
+  k_folds: 5
+  eval_epoch: 10
+  early_stopping: 50
+  seed: 42
+  device: auto
+  loss: relative_l2
+  physics:
+    electron_count_weight: 0.0
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0
+output:
+  log: logs/mixed_training.log
+  json: logs/mixed_training.json
+  checkpoint_dir: models/mixed
+  plot_dir: results/plots/mixed
+  report_dir: reports/mixed
+  plot_format: png
+  dpi: 160
+symbolic:
+  enable_symbolic_distillation: false
+fine_tuning:
+  enable: false

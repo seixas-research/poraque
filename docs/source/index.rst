@@ -31,6 +31,10 @@ What Poraquê provides
 * :doc:`ml/index` --- Fourier neural operators that handle **different grid
   shapes across materials**, with physical constraints enforced by
   construction rather than by penalty.
+* :doc:`data/index` --- one dataset over a **mixture of data layouts**: local
+  DFT runs, prepared caches, and bulk archives of standalone ``CHGCAR`` files.
+  Each model trains independently, so the vast public density archives --- which
+  publish no kinetic energy density --- are usable for the Hohenberg--Kohn map.
 * :doc:`energy/index` --- Kohn--Sham total-energy components integrated from
   the predicted fields, and an **ASE calculator** that runs the whole chain
   from an :class:`ase.Atoms` object.
@@ -51,6 +55,7 @@ What Poraquê provides
    installation
    quick_start/index
    fields/index
+   data/index
    ml/index
    fine_tuning/index
    energy/index

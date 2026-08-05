@@ -64,12 +64,20 @@ class MaterialRecord:
         ``{field_name: path}``.
     shape : tuple of int or None
         Grid shape, filled in on first load.
+    source : MaterialSource or None
+        Which layout this record came out of, and therefore how its fields are
+        produced --- see :mod:`poraque.data.sources`. ``None`` for records
+        discovered by :func:`discover_materials`, which reads one layout and
+        needs no dispatch. It is what lets
+        :class:`~poraque.data.dataset.MixedFieldDataset` hold materials from
+        several directories of different shapes at once.
     """
 
     identifier: str
     directory: str
     files: dict = dataclass_field(default_factory=dict)
     shape: tuple = None
+    source: object = None
 
 
 def discover_materials(root, required=("EXTCAR", "CHGCAR", "TAUCAR")):
@@ -607,7 +615,9 @@ def _with_channel_axis(values):
 
 def _peek_shape(path):
     """Read only the grid-dimension line of a volumetric file."""
-    with open(path, "r") as handle:
+    from ..fields.io.compressed import open_text
+
+    with open_text(path) as handle:
         blank_seen = False
         for line in handle:
             if not line.strip():

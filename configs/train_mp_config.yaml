@@ -1,0 +1,89 @@
+# =====================================================================
+# Poraque - training on a Materials Project chemical space
+#
+#   poraque-mp --elements Ag Au Pt --outdir data/MP --max-size-mb 20
+#   poraque-train --config configs/train_mp_config.yaml
+#
+# The download is a flat directory of compressed charge densities and
+# nothing else, so two things differ from configs/train_config.yaml:
+#
+#   * a bulk-archive path    reads CHGCAR_<id>.gz in place, gzip and all,
+#                            and builds V_ext from the structure each
+#                            density carries in its own header. The layout
+#                            is detected, so `source: auto` suffices.
+#   * task: ext2chg          MP publishes no kinetic energy density, so
+#                            chg2tau has nothing to regress onto. Leaving
+#                            `task: all` is also fine -- the run reports
+#                            chg2tau as skipped and trains the other.
+#
+# CAVEAT worth knowing before quoting any number from this run: no POTCAR
+# ships with an MP charge density, so V_ext is the Gaussian pseudo-ion
+# model rather than VASP's tabulated local potential. The map learned is
+# model-potential -> DFT density, self-consistent because inference builds
+# the same potential, but not directly comparable with a model trained on
+# tabulated potentials. See poraque.data.mp_dataset.
+# =====================================================================
+task: ext2chg
+data:
+  # A single path. To train on this download *alongside* local runs, make it
+  # a list -- see configs/train_mixed_config.yaml.
+  train_paths:
+    - data/MP
+  # 'auto' detects the layout; 'bulk' (or its alias 'mp') states it outright.
+  source: auto
+  cache: data/cache/mp
+  # `pattern` and `code` apply to calculation directories and are ignored here.
+  pattern: struct
+  code: auto
+  resolution: 32
+  sigma: null
+  gaussian_blur: null
+  blur_method: spectral
+model:
+  width: 16
+  modes: 8
+  n_layers: 4
+  projection_channels: 48
+  activation: gelu
+  use_coordinates: true
+  cell_conditioning: true
+  embedding_dim: 32
+  # Cell sizes vary widely across a chemical space -- elementals through
+  # eight-site alloys -- so truncating at a constant wavevector gives every
+  # material the same band of physics, which a constant mode index does not.
+  mode_selection: fixed
+  g_max: null
+  pauli_residual: false
+training:
+  epochs: 200
+  batch_size: 4
+  learning_rate: 0.002
+  weight_decay: 0.0001
+  scheduler: cosine
+  grad_clip: 1.0
+  valid_fraction: 0.2
+  enable_kfold: false
+  k_folds: 5
+  eval_epoch: 10
+  early_stopping: 50
+  seed: 42
+  device: auto
+  loss: relative_l2
+  physics:
+    electron_count_weight: 0.0
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0
+output:
+  log: logs/mp_training.log
+  json: logs/mp_training.json
+  checkpoint_dir: models/mp
+  plot_dir: results/plots/mp
+  report_dir: reports/mp
+  plot_format: png
+  dpi: 160
+symbolic:
+  # Only meaningful for chg2tau, which this dataset cannot train.
+  enable_symbolic_distillation: false
+fine_tuning:
+  enable: false

@@ -1,41 +1,18 @@
-# =====================================================================
-# Poraque - Fourier Neural Operator training configuration
-#
-#   poraque-train --config configs/train_config.yaml
-#
-# Command-line flags override these values, so one committed config can
-# be swept from the shell without editing it:
-#
-#   poraque-train --config configs/train_config.yaml --epochs 500
-#
-# Equivalent, from a checkout with nothing installed:
-#
-#   python scripts/poraque_train.py --config configs/train_config.yaml
-# =====================================================================
 task: all
 data:
-  # One dataset directory. For several -- which may mix layouts, e.g. local
-  # runs beside an archive of standalone CHGCARs -- use `train_paths`:
-  #
-  #   train_paths:
-  #     - data/vasp
-  #     - data/MP/chgcar
-  #
-  # See configs/train_mixed_config.yaml, and mind the caveat there about
-  # mixing two definitions of V_ext.
-  train_paths: null
+  train_paths:
+  - data/vasp
+  - data/MP/chgcar
   root: data/vasp
-  # Layout of each path: auto | vasp | bulk | prepared.
   source: auto
-  cache: data/cache
+  cache: data/cache/mixed
   pattern: struct
   code: auto
   resolution: 32
-  # Gaussian pseudo-ion width in Angstrom; null derives it per species from
-  # the POTCAR core radius, which is right wherever a POTCAR exists.
   sigma: null
   gaussian_blur: null
   blur_method: spectral
+  spin: auto
 model:
   width: 16
   modes: 8
@@ -51,7 +28,7 @@ model:
   pauli_scale: null
   learn_pauli_scale: true
 training:
-  epochs: 300
+  epochs: 10
   batch_size: 4
   learning_rate: 0.002
   weight_decay: 0.0001
@@ -60,8 +37,8 @@ training:
   valid_fraction: 0.2
   enable_kfold: false
   k_folds: 5
-  eval_epoch: 10
-  early_stopping: 100
+  eval_epoch: 5
+  early_stopping: 50
   seed: 42
   init_seed: null
   device: auto
@@ -73,13 +50,13 @@ training:
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0
 output:
-  log: logs/fno_training.log
-  json: logs/fno_training.json
-  checkpoint_dir: models
-  plot_dir: results/plots
-  report_dir: reports
+  log: logs/mixed_training.log
+  json: logs/mixed_training.json
+  checkpoint_dir: models/mixed
+  plot_dir: results/plots/mixed
+  report_dir: reports/mixed
   plot_format: png
-  dpi: 200
+  dpi: 160
 symbolic:
   enable_symbolic_distillation: false
   target: model
@@ -109,6 +86,7 @@ symbolic:
   parsimony: 0.0032
   n_samples: 4000
   seed: 0
+  deterministic: false
 fine_tuning:
   enable: false
   pretrained_checkpoint: models/poraque_models.pfno

@@ -4,8 +4,12 @@ API Reference
 Scalar fields
 -------------
 
+.. Members are documented where they are defined, not where they are
+   re-exported: naming FieldGrid here as well as under "Grid and resampling"
+   creates two targets for every :class:`FieldGrid` reference in the codebase,
+   and Sphinx then cannot resolve any of them.
 .. automodule:: poraque.fields
-   :members: ScalarField, FieldGrid, Structure
+   :members: ScalarField, Structure
 
 .. autoclass:: poraque.fields.ExternalPotential
    :members:
@@ -33,6 +37,34 @@ Ingestion
    :members:
 
 .. automodule:: poraque.fields.io.vasp
+   :members:
+
+.. automodule:: poraque.fields.io.compressed
+   :members:
+
+Data sources
+------------
+
+.. The package docstring is the overview; the classes it re-exports are
+   documented under their own modules below, for the same reason as above.
+.. automodule:: poraque.data
+
+.. automodule:: poraque.data.sources
+   :members:
+
+.. automodule:: poraque.data.dataset
+   :members:
+
+.. automodule:: poraque.data.cache
+   :members:
+
+Materials Project
+-----------------
+
+.. automodule:: poraque.data.materials_project
+   :members:
+
+.. automodule:: poraque.data.mp_dataset
    :members:
 
 VASP file formats

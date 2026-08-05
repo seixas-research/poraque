@@ -251,7 +251,7 @@ class Poraque(Calculator):
     # ------------------------------------------------------------------ #
     def _resolve_operator(self, source, task):
         """Accept a live operator, or load one from the unified checkpoint."""
-        from .ml import FieldOperator, load_bundle
+        from .ml import FieldOperator, bundle_tasks, load_bundle
 
         if isinstance(source, FieldOperator):
             if source.task.name != task:
@@ -262,7 +262,25 @@ class Poraque(Calculator):
                 )
             return source
 
-        return load_bundle(source, task, device=self.device)
+        try:
+            return load_bundle(source, task, device=self.device)
+        except KeyError:
+            # A single-task bundle is a normal artefact now: the vast public
+            # archives of charge densities train `ext2chg` and nothing else,
+            # because no archive publishes a kinetic energy density. Say what
+            # such a model *can* do rather than only that a key is missing --
+            # the calculator needs both halves of the chain and this is where
+            # a reader finds out why.
+            held = bundle_tasks(source)
+            raise KeyError(
+                f"{source} holds no {task!r} model; it contains {held}. The "
+                f"ASE calculator runs the whole chain V_ext -> rho -> tau -> E, "
+                f"so it needs both. A bundle with only 'ext2chg' predicts "
+                f"charge densities -- use FieldOperator.predict, or "
+                f"poraque.ml.load_bundle(path, 'ext2chg') -- but cannot give a "
+                f"total energy, which is an integral over tau. Train chg2tau "
+                f"on data that carries a TAUCAR and save both into one bundle."
+            ) from None
 
     @staticmethod
     def _read_potcar(path):
