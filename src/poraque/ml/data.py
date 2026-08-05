@@ -120,6 +120,23 @@ class FieldPairDataset(Dataset):
         for datasets that fit.
     dtype : torch.dtype, optional
         Output tensor dtype.
+    references : ReferenceEnergies, str or dict, optional
+        Isolated-atom energies. When given, each sample carries
+        ``reference_energy`` --- :math:`\\sum_i E_{\\rm iso}(Z_i)` for that
+        structure --- and :meth:`reference_energy` is available for reporting.
+
+        .. note::
+
+           This is **not** a training target and does not enter the loss. The
+           operators map fields to fields (``EXTCAR -> CHGCAR``,
+           ``CHGCAR -> TAUCAR``); no energy is regressed anywhere in
+           :mod:`poraque.ml`, and the total energy is obtained afterwards by
+           integrating the predicted fields with
+           :class:`~poraque.physics.EnergyCalculator`. The value is carried
+           here so that evaluation and reporting can quote a cohesive energy
+           per structure without re-reading the reference directory, and so
+           that a future energy-regression head has it to hand.
+
     spin : {"auto", True, False}, optional
         Whether the ``CHGCAR`` fields carry two channels
         (:math:`\\rho`, :math:`m`) from an ``ISPIN = 2`` run. ``"auto"``, the
@@ -152,12 +169,13 @@ class FieldPairDataset(Dataset):
 
     def __init__(self, root, task, input_transform=None, target_transform=None,
                  materials=None, cache=False, dtype=torch.float32,
-                 spin="auto"):
+                 spin="auto", references=None):
         from .tasks import resolve_task
 
         self.root = str(root)
         self.task = resolve_task(task)
         self._requested_spin = spin
+        self.references = _resolve_references(references)
         self.materials = (materials if materials is not None
                           else discover_materials(root, self.task.required_files))
         if not self.materials:
@@ -204,6 +222,28 @@ class FieldPairDataset(Dataset):
             return (1, 1)
         return (2 if self.task.input_field == "CHGCAR" else 1,
                 2 if self.task.target_field == "CHGCAR" else 1)
+
+    def reference_energy(self, index):
+        r"""
+        :math:`E_{\rm ref} = \sum_i E_{\rm iso}(Z_i)` for material ``index``.
+
+        Parameters
+        ----------
+        index : int
+
+        Returns
+        -------
+        float or None
+            ``None`` when no references were supplied, or when they do not
+            cover every species in the structure.
+        """
+        if self.references is None:
+            return None
+
+        structure = self.load_fields(index)[0].structure
+        if not self.references.covers(structure):
+            return None
+        return self.references.total_for(structure)
 
     # ------------------------------------------------------------------ #
     def __len__(self):
@@ -275,6 +315,7 @@ class FieldPairDataset(Dataset):
             "volume": torch.tensor(source.grid.volume, dtype=self.dtype),
             "shape": tuple(source.grid.shape),
             "material": self.materials[index].identifier,
+            "reference_energy": self.reference_energy(index),
         }
 
     # ------------------------------------------------------------------ #
@@ -491,6 +532,11 @@ def collate_fields(samples):
         "volume": torch.stack([s["volume"] for s in samples]),
         "shape": samples[0]["shape"],
         "material": [s["material"] for s in samples],
+        # Kept as a plain list, not stacked: the entries are None whenever no
+        # reference energies were supplied, and torch.stack cannot batch that.
+        # It is carried for reporting rather than consumed by the loss, so a
+        # list is the honest container.
+        "reference_energy": [s.get("reference_energy") for s in samples],
     }
 
 
@@ -516,6 +562,20 @@ def make_dataloader(dataset, batch_size=1, shuffle=True, num_workers=0, seed=0):
                                  seed=seed)
     return DataLoader(dataset, batch_sampler=sampler, collate_fn=collate_fields,
                       num_workers=num_workers)
+
+
+def _resolve_references(references):
+    """Accept a :class:`ReferenceEnergies`, a directory, a dict, or ``None``."""
+    if references is None:
+        return None
+
+    from poraque.physics import ReferenceEnergies
+
+    if isinstance(references, ReferenceEnergies):
+        return references
+    if isinstance(references, dict):
+        return ReferenceEnergies(references)
+    return ReferenceEnergies.from_directory(str(references))
 
 
 def _fit_transform(field_name, per_channel):

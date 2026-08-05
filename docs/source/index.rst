@@ -34,6 +34,9 @@ What Poraquê provides
 * :doc:`energy/index` --- Kohn--Sham total-energy components integrated from
   the predicted fields, and an **ASE calculator** that runs the whole chain
   from an :class:`ase.Atoms` object.
+* :doc:`analysis/index` --- charge-conservation checks and per-atom partial
+  charges by Voronoi, Hirshfeld or Bader partitioning of the predicted
+  density.
 * A **code-agnostic ingestion layer**: VASP is implemented, Quantum ESPRESSO
   and GPAW are scaffolded behind the same four-method contract.
 * Hardware acceleration on CUDA and Apple Metal, with a graceful CPU fallback.
@@ -51,6 +54,7 @@ What Poraquê provides
    ml/index
    fine_tuning/index
    energy/index
+   analysis/index
    symbolic/index
    theory
    configuration

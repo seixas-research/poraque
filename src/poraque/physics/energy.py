@@ -123,16 +123,28 @@ def hartree_potential(density, grid):
     ----------
     density : ChargeDensity or array_like
         Electron density in e/Å³.
-    grid : FieldGrid
-        Shared mesh.
+    grid : FieldGrid or array_like
+        Shared mesh, or the ``(3, 3)`` lattice vectors in Å — in which case a
+        grid is built from them and the density's own shape. The second form
+        exists so the solver can be called without first constructing a
+        :class:`~poraque.fields.FieldGrid`.
 
     Returns
     -------
     numpy.ndarray
         Potential energy of an electron in eV, shape ``grid.shape``. Positive
         (repulsive), as it must be.
+
+    Notes
+    -----
+    The factor is :math:`4\pi e^2` with :math:`e^2` in eV·Å
+    (:data:`~poraque.fields.constants.COULOMB_CONSTANT_EV_ANGSTROM`), so a
+    density in e/Å³ and a cell in Å give a potential in **eV** with no further
+    conversion. Working in Hartree atomic units and converting afterwards
+    would be the usual source of a factor of two here.
     """
     values = np.asarray(density, dtype=float)
+    grid = _as_grid(grid, values.shape)
     _check_shape(values, grid, "density")
 
     g2 = grid.get_g2()
@@ -634,6 +646,11 @@ class EnergyComponents:
         :math:`\\sum_s N_s Z^{\\rm val}_s`, the count the pseudopotentials fix.
         ``None`` when no valence charges were supplied. Compare against
         :attr:`n_electrons` through :attr:`electron_drift`.
+    reference : float or None
+        :math:`E_{\\rm ref} = \\sum_i E_{\\rm iso}(Z_i)`, the sum of
+        isolated-atom energies for this composition. ``None`` when no
+        :class:`~poraque.physics.ReferenceEnergies` covering the structure was
+        supplied, in which case :attr:`cohesive` is ``None`` too.
     functional : str
         Which exchange-correlation approximation was used.
     """
@@ -646,6 +663,8 @@ class EnergyComponents:
     ewald: float = None
     n_electrons: float = None
     nominal_electrons: float = None
+    reference: float = None
+    natoms: int = None
     functional: str = "pbe"
 
     @property
@@ -694,6 +713,43 @@ class EnergyComponents:
         return self.kinetic + self.potential
 
     @property
+    def cohesive(self):
+        r"""
+        :math:`\Delta E = E_{\rm total} - E_{\rm ref}`, or ``None``.
+
+        The energy released on assembling this cell from isolated atoms. This
+        is the number to quote and to compare against a reference calculation:
+        :attr:`total` carries a per-atom offset of order :math:`10^3` eV that
+        belongs to the pseudopotential and the missing PAW one-centre terms,
+        and subtracting the isolated-atom energies removes exactly that part.
+
+        ``None`` when no reference energies were available — reporting zero
+        would claim the atoms are infinitely unbound.
+
+        Notes
+        -----
+        Referencing changes nothing at fixed composition: two structures with
+        the same formula share :math:`E_{\rm ref}`, so it cancels in
+        :math:`\Delta E_1 - \Delta E_2` exactly. Its value is in comparisons
+        *across* compositions, where it does not cancel and without which the
+        comparison is undefined. See :mod:`poraque.physics.reference`.
+        """
+        if self.reference is None:
+            return None
+        return self.total - self.reference
+
+    @property
+    def cohesive_per_atom(self):
+        """
+        :attr:`cohesive` divided by the atom count, or ``None``.
+
+        Set by :meth:`EnergyCalculator.compute`, which knows the structure.
+        """
+        if self.cohesive is None or not self.natoms:
+            return None
+        return self.cohesive / self.natoms
+
+    @property
     def missing(self):
         """
         Names of the terms that were not computed, as a tuple.
@@ -723,6 +779,10 @@ class EnergyComponents:
             "n_electrons": self.n_electrons,
             "nominal_electrons": self.nominal_electrons,
             "electron_drift": self.electron_drift,
+            "reference": self.reference,
+            "cohesive": self.cohesive,
+            "cohesive_per_atom": self.cohesive_per_atom,
+            "natoms": self.natoms,
             "functional": self.functional,
             "missing": list(self.missing),
         }
@@ -742,6 +802,14 @@ class EnergyComponents:
         lines.append("  " + "-" * 40)
         lines.append(f"  {'potential':<22s} {self.potential:16.6f} eV")
         lines.append(f"  {'TOTAL':<22s} {self.total:16.6f} eV")
+        if self.reference is not None:
+            lines.append(f"  {'- reference E_ref':<22s} "
+                         f"{self.reference:16.6f} eV")
+            lines.append(f"  {'= COHESIVE dE':<22s} "
+                         f"{self.cohesive:16.6f} eV")
+            per_atom = self.cohesive_per_atom
+            if per_atom is not None:
+                lines.append(f"  {'':<22s} {per_atom:16.6f} eV/atom")
         if self.n_electrons is not None:
             lines.append(f"  {'electrons':<22s} {self.n_electrons:16.6f}")
         drift = self.electron_drift
@@ -774,6 +842,12 @@ class EnergyCalculator:
     functional : str, optional
         Exchange-correlation approximation, passed to :func:`xc_energy`.
         Defaults to ``"pbe"``, matching the reference data.
+    references : ReferenceEnergies, optional
+        Isolated-atom energies, enabling
+        :attr:`EnergyComponents.cohesive`. Without them the decomposition
+        still reports :attr:`~EnergyComponents.total`; the cohesive energy is
+        reported as ``None`` rather than as the total, since an unreferenced
+        total is not a cohesive energy.
 
     Examples
     --------
@@ -783,12 +857,13 @@ class EnergyCalculator:
     """
 
     def __init__(self, grid, structure=None, charges=None, pscore=None,
-                 functional="pbe"):
+                 functional="pbe", references=None):
         self.grid = grid
         self.structure = structure
         self.charges = dict(charges) if charges else None
         self.pscore = dict(pscore) if pscore else None
         self.functional = functional
+        self.references = references
 
     # ------------------------------------------------------------------ #
     # Constructors
@@ -930,8 +1005,26 @@ class EnergyCalculator:
             ewald=self.ewald_energy(),
             n_electrons=n_electrons,
             nominal_electrons=nominal,
+            reference=self.reference_energy(),
+            natoms=(None if self.structure is None else self.structure.natoms),
             functional=self.functional,
         )
+
+    def reference_energy(self):
+        r"""
+        :math:`E_{\rm ref} = \sum_i E_{\rm iso}(Z_i)` in eV, or ``None``.
+
+        ``None`` when no references were supplied *or* when they do not cover
+        every species present. A partial sum is not returned: it would be an
+        energy quietly missing whole atoms, and the resulting "cohesive
+        energy" would look reasonable while being wrong by electron-volts per
+        uncovered atom.
+        """
+        if self.structure is None or self.references is None:
+            return None
+        if not self.references.covers(self.structure):
+            return None
+        return self.references.total_for(self.structure)
 
     def potential_energy(self, density, tau, potential):
         """
@@ -960,6 +1053,28 @@ class EnergyCalculator:
 # ===================================================================== #
 # Helpers
 # ===================================================================== #
+def _as_grid(grid, shape):
+    """
+    Accept a :class:`FieldGrid` or bare lattice vectors.
+
+    Anything carrying a ``get_g2`` is already a grid; a ``(3, 3)`` array is
+    lattice vectors, and the mesh shape then has to come from the field being
+    solved for.
+    """
+    if hasattr(grid, "get_g2"):
+        return grid
+
+    from ..fields.grid import FieldGrid
+
+    cell = np.asarray(grid, dtype=float)
+    if cell.shape != (3, 3):
+        raise ValueError(
+            f"Expected a FieldGrid or (3, 3) lattice vectors, got an array of "
+            f"shape {cell.shape}."
+        )
+    return FieldGrid(tuple(shape), cell)
+
+
 def _check_shape(values, grid, label):
     if values.shape != tuple(grid.shape):
         raise ValueError(

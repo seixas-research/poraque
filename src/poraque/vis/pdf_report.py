@@ -485,8 +485,75 @@ class ModelReport:
     # ------------------------------------------------------------------ #
     # Build
     # ------------------------------------------------------------------ #
+    def _charges_block(self, analysis):
+        r"""
+        Per-atom populations and net charges, as a table.
+
+        Accepts a :class:`~poraque.analysis.PartialCharges` or the dict it
+        serialises to, so a report can be rebuilt from a run's JSON summary
+        without importing the analysis stack.
+        """
+        get = (analysis.get if isinstance(analysis, dict)
+               else lambda key, default=None: getattr(analysis, key, default))
+
+        # `or []` is not usable here: these are numpy arrays, whose truth value
+        # is ambiguous, so the default has to be supplied explicitly.
+        def column(name):
+            values = get(name)
+            return [] if values is None else list(values)
+
+        symbols = column("symbols")
+        populations = column("populations")
+        valence = column("valence")
+        charges = (column("charges") if isinstance(analysis, dict)
+                   else list(analysis.charges))
+        if not symbols:
+            return ""
+
+        method = _escape(str(get("method", "")))
+        body = [
+            r"\clearpage" "\n" r"\section*{Partial charges}" "\n",
+            f"Population analysis of the predicted density by the "
+            f"\\textbf{{{method}}} partitioning. The net charge is "
+            f"$q_A = Z^{{\\rm val}}_A - N_A$, positive for electron-deficient."
+            "\n\n",
+            r"\begin{center}\begin{longtable}{@{}rlrrr@{}}\toprule" "\n",
+            r"\# & Atom & Population & $Z^{\rm val}$ & $q$ \\" "\n"
+            r"\midrule\endhead" "\n",
+        ]
+        for index, symbol in enumerate(symbols):
+            body.append(f"{index} & {_escape(str(symbol))} & "
+                        f"{_number(populations[index], 4)} & "
+                        f"{_number(valence[index], 2)} & "
+                        f"{_number(charges[index], 4)} \\\\\n")
+        body.append(r"\midrule" "\n")
+        body.append(f"& \\textbf{{sum}} & "
+                    f"\\textbf{{{_number(sum(populations), 4)}}} & "
+                    f"\\textbf{{{_number(sum(valence), 2)}}} & "
+                    f"\\textbf{{{_number(sum(charges), 4)}}} \\\\\n")
+        body.append(r"\bottomrule\end{longtable}\end{center}" "\n\n")
+
+        details = get("details") or {}
+        if details:
+            rendered = ", ".join(f"{_escape(str(k))}: {_escape(str(v))}"
+                                 for k, v in sorted(details.items()))
+            body.append(f"\\emph{{\\small {rendered}}}\n\n")
+
+        # The caveat is not decoration: a reader who takes these for
+        # all-electron charges will draw conclusions the data cannot support.
+        body.append(
+            r"\begin{pwarn}[title={What these charges are}]" "\n"
+            "A partition of the \\emph{pseudo} valence density. The PAW core "
+            "is absent, so these are not all-electron populations and are "
+            "systematically compressed toward zero; they also inherit whatever "
+            "error the predicted density carries. Read them as comparative "
+            "across a series, not as absolute numbers.\n"
+            r"\end{pwarn}" "\n\n")
+        return "".join(body)
+
     def build(self, task, per_material, figures=(), unit="", summary=None,
-              configuration=None, caveats=(), filename=None, symbolic=None):
+              configuration=None, caveats=(), filename=None, symbolic=None,
+              charges=None):
         """
         Generate the report and return the path to the finished PDF.
 
@@ -513,6 +580,9 @@ class ModelReport:
         symbolic : SymbolicResult, optional
             Distilled closed-form expression, typeset as display mathematics
             with its accuracy/complexity front beneath it.
+        charges : PartialCharges or dict, optional
+            Population analysis of a predicted density, rendered as a per-atom
+            table. See :mod:`poraque.analysis.charges`.
 
         Returns
         -------
@@ -566,6 +636,9 @@ class ModelReport:
                 caption = next((c for key, c in captions.items() if key in stem),
                                _escape(stem))
                 body.append(self._figure_block(path, caption))
+
+        if charges is not None:
+            body.append(self._charges_block(charges))
 
         if symbolic is not None:
             body.append(self._symbolic_block(symbolic))

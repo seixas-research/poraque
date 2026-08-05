@@ -1,0 +1,217 @@
+\chapter{Charges and population analysis}
+\label{ch:charges}
+
+Once a density has been predicted, two questions follow: how much charge is
+there, and where does it sit. This chapter covers the conservation check that
+must pass before either answer means anything, and the three partitionings that
+turn a grid into per-atom numbers.
+
+Nothing here is learned. Every quantity is a deterministic functional of a
+density that has already been predicted, so \textbf{the error in a partial
+charge is inherited from the density and is never smaller than it}.
+
+\section{Charge conservation}
+\label{sec:charge-conservation}
+
+A Kohn--Sham density integrates to the valence count the pseudopotentials fix.
+That number is an \emph{input} to a DFT calculation rather than an output of
+one, so it is exactly known --- and it is the only property of a predicted
+density that can be checked without a reference calculation.
+
+\begin{lstlisting}[language=Python]
+from poraque.analysis import verify_total_charge
+
+check = verify_total_charge(rho.data, rho.grid.cell, expected_electrons=297.0)
+print(check)
+# charge check OK: 297.000001 electrons against an expected 297.000000
+#                  (+1.918e-09 relative, tolerance 0.001)
+\end{lstlisting}
+
+The integral is the voxel sum times the voxel volume,
+
+\begin{equation*}
+\int\rho\,d^3r = \sum_{ijk}\rho_{ijk}\,\mathrm{d}V,
+\qquad
+\mathrm{d}V = \frac{\Omega}{N_x N_y N_z},
+\end{equation*}
+
+which is \emph{exact} for a band-limited field on a uniform periodic mesh: the
+rectangle and trapezoid rules coincide under periodic boundary conditions, so
+there is no quadrature error to argue about, only the field itself.
+
+The default tolerance of $10^{-3}$ is not arbitrary. The electrostatic terms
+are of order $10^{4}$ eV, so a relative drift of $10^{-3}$ already moves a
+total energy by roughly $10$ eV --- more than any energy difference worth
+computing.
+
+\begin{pwarn}
+The shipped \opt{ext2chg} operator predicts densities whose electron count
+drifts by up to $1.7\,\%$ --- nearly five electrons out of $297$. Left
+uncorrected this moves totals by tens of eV, differently for each structure, so
+it does not cancel in a difference.
+\end{pwarn}
+
+\subsection{Automatic normalisation}
+
+The calculator rescales the density to the exact count by default:
+
+\begin{lstlisting}[language=Python]
+atoms.calc = Poraque("models/poraque_models.pfno", potcar="POTCAR",
+                     normalize_density=True)   # the default
+
+atoms.calc.verify_charge()          # passes by construction
+atoms.calc.raw_electron_drift       # what the operator actually did
+\end{lstlisting}
+
+With normalisation on, the check passes by construction, so the informative
+number afterwards is \opt{raw\_electron\_drift} --- the drift of the raw
+prediction, recorded before the repair. Set \opt{normalize\_density=False} to
+measure the operator rather than the repair.
+
+Rescaling is a repair and not a cure: a density whose integral is wrong by
+$1.7\,\%$ has the wrong shape too, and a single global factor does not fix a
+shape.
+
+\section{Partial charges}
+
+All three schemes share one form,
+
+\begin{equation*}
+q_A = Z^{\rm val}_A - \int w_A(\rr)\,\rho(\rr)\,d^3r,
+\qquad
+\sum_A w_A(\rr) = 1,
+\end{equation*}
+
+and differ only in the weight $w_A$. Because the partitions are exhaustive,
+\textbf{all three conserve charge exactly}: the populations sum to
+$\int\rho$ whatever the weights are.
+
+\begin{center}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Method & $w_A(\rr)$ & Cost & Character \\
+\midrule
+\opt{voronoi} & 1 for the nearest atom & fast & purely geometric \\
+\opt{hirshfeld} & $\rho^{\rm at}_A / \sum_B \rho^{\rm at}_B$ & fast & needs a promolecule \\
+\opt{bader} & 1 inside $A$'s zero-flux basin & moderate & intrinsic to $\rho$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{From the ASE calculator}
+
+\begin{lstlisting}[language=Python]
+atoms.calc = Poraque("models/poraque_models.pfno", potcar="POTCAR",
+                     references="data/vasp/ref")
+
+atoms.get_charges()                       # standard ASE, Bader by default
+atoms.calc.get_charges(method="hirshfeld")
+atoms.calc.get_charges(method="voronoi")
+
+print(atoms.calc.charge_analysis)         # the full decomposition
+\end{lstlisting}
+
+\opt{get\_charges} returns net charges in units of $+e$, positive for
+electron-deficient, and is compatible with the standard
+\opt{atoms.get\_charges()} interface. The full analysis --- populations, the
+valence subtracted, which promolecule or Bader backend was used --- is left on
+\opt{charge\_analysis}.
+
+\subsection{Voronoi}
+
+Each voxel goes wholly to its nearest atom under the minimum-image convention.
+In a non-orthogonal cell the surrounding images are searched rather than
+trusting a wrap of the fractional coordinates --- in a skewed lattice the
+nearest image can be a diagonal neighbour.
+
+Voxels exactly equidistant from several atoms are \textbf{shared equally}
+rather than awarded to the lowest atom index. That is rare on a real density
+and common on a symmetric cell sampled by a commensurate grid, which is exactly
+where an index-order tie-break would bias a result that ought to come out
+symmetric.
+
+Purely geometric: the density enters only through the integral, never through
+where the boundary is drawn. For atoms of unequal size that is a poor chemical
+partition, which is why it is a baseline rather than a default.
+
+\subsection{Hirshfeld}
+
+Weights by the free atoms, so the partition is smooth and chemically sensible
+--- but it is \emph{defined by its reference}, and a poor promolecule gives
+poor charges with no other symptom.
+
+\begin{lstlisting}[language=Python]
+partial_charges(rho, method="hirshfeld", valence={"Au": 11.0},
+                references="data/vasp/ref")
+\end{lstlisting}
+
+Each \file{<references>/<Element>/CHGCAR} is spherically averaged into
+$\rho^{\rm at}(r)$. Where no reference exists the fallback is an exponential
+free atom, $\rho(r) = \frac{N}{8\pi a^3}e^{-r/a}$, normalised to the valence
+count with the decay length set from the covalent radius through
+$\langle r\rangle = 3a$. Which was used for each element is reported in
+\opt{details["promolecule"]} --- check it, because the fallback is crude.
+
+\begin{pnote}
+Hirshfeld charges are small in magnitude compared with other schemes. For an
+elemental solid they come out near zero by construction, since the promolecule
+is built from identical free atoms; that makes a useful sanity check on the
+reference handling.
+\end{pnote}
+
+\subsection{Bader (QTAIM)}
+
+The only scheme whose definition is intrinsic to the density: basins are
+bounded by surfaces of zero flux in $\nabla\rho$. Two backends are provided.
+
+\begin{lstlisting}[language=Python]
+partial_charges(rho, method="bader", backend="native")    # pure NumPy
+partial_charges(rho, method="bader", backend="external")  # Henkelman `bader`
+partial_charges(rho, method="bader", backend="auto")      # external if present
+\end{lstlisting}
+
+\textbf{Native} is a vectorised on-grid steepest ascent: every voxel points at
+whichever of its 26 neighbours gives the largest density increase \emph{per
+unit distance}, and those pointers are followed to a local maximum by repeated
+pointer doubling. The distance weighting matters --- without it the diagonal
+neighbours, $\sqrt3$ further away, win too often and the basins acquire a
+staircase bias along the cell diagonals.
+
+\textbf{External} writes a temporary \file{CHGCAR}, runs the Henkelman group's
+\opt{bader} program and parses \file{ACF.dat}. \opt{backend="external"} raises
+if the program is absent rather than falling back silently: the two backends
+are not identical, and a result reported as ``Bader (Henkelman)'' should not
+quietly have been something else.
+
+A density may have more maxima than atoms --- spurious ones from grid noise, or
+genuine non-nuclear attractors in a metal. Each maximum is assigned to its
+nearest atom, so the mapping is many-to-one, and \opt{details["maxima"]}
+reports how many were found.
+
+\section{What these charges are not}
+
+\begin{pwarn}
+All three partition the \emph{pseudo} valence density. The PAW core is absent,
+so these are not all-electron populations: a Bader volume here is not the
+all-electron Bader volume, and the charges are systematically compressed toward
+zero. This matters most for Bader, whose basin boundaries are set by the
+density's topology near the nuclei --- exactly where the pseudisation is
+largest.
+
+For a proper Bader analysis VASP's own guidance is to sum \file{AECCAR0} and
+\file{AECCAR2}; Poraqu\^e does not predict those.
+
+Treat the numbers as comparative across a series, not as absolute.
+\end{pwarn}
+
+\section{In the reports}
+
+Passing a \pyclass{PartialCharges} to the report builder typesets the per-atom
+table, the method and the caveat above into the PDF:
+
+\begin{lstlisting}[language=Python]
+from poraque.vis import ModelReport
+
+ModelReport("reports").build(task="ext2chg", per_material=metrics,
+                             charges=analysis)
+\end{lstlisting}

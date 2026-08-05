@@ -130,6 +130,17 @@ class Poraque(Calculator):
         — far more than the differences the energy exists to resolve, and by a
         different amount for every structure, so it does not cancel. See
         :meth:`~poraque.fields.ChargeDensity.normalized`.
+    references : ReferenceEnergies, str or dict, optional
+        Isolated-atom energies, enabling :meth:`get_cohesive_energy`. Accepts
+        a built mapping, a ``{element: energy}`` dict, or a directory holding
+        one subdirectory per element (``data/vasp/ref``). Without it the
+        calculator still returns total energies and forces; only the cohesive
+        energy is unavailable.
+
+        This does **not** change :meth:`get_potential_energy`, which keeps
+        returning the total, nor the forces, which cannot depend on it —
+        :math:`E_{\rm ref}` is a function of composition alone, so its gradient
+        with respect to any atomic position is exactly zero.
     **kwargs
         Passed to :class:`ase.calculators.calculator.Calculator`.
 
@@ -145,6 +156,9 @@ class Poraque(Calculator):
         each a :class:`~poraque.fields.base.ScalarField`.
     components : EnergyComponents
         Full energy decomposition of the most recent evaluation.
+    charge_analysis : PartialCharges or None
+        Full population analysis from the most recent :meth:`get_charges`,
+        which returns only the net charges.
 
     Warnings
     --------
@@ -177,7 +191,7 @@ class Poraque(Calculator):
     def __init__(self, models=None, ext2chg=None, chg2tau=None, potcar=None,
                  potcar_dir=None, charges=None, resolution=None,
                  functional="pbe", device="auto", normalize_density=True,
-                 **kwargs):
+                 references=None, **kwargs):
         if _ASE_ERROR is not None:                        # pragma: no cover
             raise ImportError(
                 "The Poraque ASE calculator requires ASE: pip install ase"
@@ -187,11 +201,19 @@ class Poraque(Calculator):
         self.device = device
         self.functional = functional
         self.normalize_density = bool(normalize_density)
+        self.references = _resolve_references(references)
+        # The directory is kept beside the parsed energies because Hirshfeld
+        # partitioning needs the isolated-atom *densities*, which live in the
+        # same tree but are not what ReferenceEnergies reads.
+        self.reference_dir = (str(references)
+                              if isinstance(references, (str, os.PathLike))
+                              else None)
         self.charges = dict(charges) if charges else None
         self.potcar_dir = str(potcar_dir) if potcar_dir else None
         self.fields = {}
         self.components = None
         self.raw_electron_drift = None
+        self.charge_analysis = None
         self._warned_gaussian = False
         self._potcar_cache = {}
 
@@ -503,6 +525,7 @@ class Poraque(Calculator):
             charges=potential.metadata.get("charges") or self.charges,
             pscore=pscore,
             functional=self.functional,
+            references=self.references,
         )
         components = calculator.compute(fields["density"], fields["tau"],
                                         potential)
@@ -553,6 +576,13 @@ class Poraque(Calculator):
         components = self.energy_components(self.atoms)
         self.components = components
 
+        # ASE's "energy" stays the TOTAL energy, deliberately. Everything in
+        # ASE that consumes it -- optimizers, equations of state, phonon codes
+        # -- differences it against another calculation of the same object, and
+        # E_ref cancels in every one of those. Returning a cohesive energy here
+        # would silently redefine a quantity the ecosystem already agrees on,
+        # for no gain: E_total = dE + E_ref reconstructs the same number, and
+        # the cohesive energy is available by name.
         energy = components.total
         self.results["energy"] = energy
         # No electronic smearing enters this pipeline, so the free energy and
@@ -563,11 +593,262 @@ class Poraque(Calculator):
         self.results["n_electrons"] = components.n_electrons
         self.results["raw_electron_drift"] = self.raw_electron_drift
         self.results["energy_components"] = components.as_dict()
+        self.results["reference_energy"] = components.reference
+        self.results["cohesive_energy"] = components.cohesive
 
         # Computed only on request: it costs one extra pass over the grid per
         # atom, which an energy-only scan should not pay for.
         if "forces" in properties:
             self.results["forces"] = self.compute_forces(self.atoms)
+
+    # ------------------------------------------------------------------ #
+    # Field accessors
+    # ------------------------------------------------------------------ #
+    def _field(self, atoms, key):
+        """
+        One field of the current evaluation, predicting first if needed.
+
+        Reuses :attr:`fields` when the pipeline has already run for these
+        atoms, so asking for three fields costs one forward pass rather than
+        three.
+        """
+        atoms = atoms if atoms is not None else self.atoms
+        if not self.fields:
+            self.fields = self.predict_fields(atoms)
+        return self.fields[key]
+
+    def get_external_potential(self, atoms=None):
+        r"""
+        :math:`V_{\rm ext}` in eV, computed analytically from the ``POTCAR``.
+
+        Returns
+        -------
+        ExternalPotential
+        """
+        return self._field(atoms, "external")
+
+    def get_charge_density(self, atoms=None):
+        r"""
+        Predicted valence density :math:`\rho` in e/Å³.
+
+        Normalized to the valence electron count unless
+        ``normalize_density=False``; the raw prediction is
+        :meth:`get_raw_charge_density`.
+
+        Returns
+        -------
+        ChargeDensity or SpinDensity
+        """
+        return self._field(atoms, "density")
+
+    def get_raw_charge_density(self, atoms=None):
+        """The ``ext2chg`` output before charge normalization."""
+        return self._field(atoms, "density_raw")
+
+    def get_kinetic_energy_density(self, atoms=None):
+        r"""
+        Predicted :math:`\tau` in eV/Å³.
+
+        Returns
+        -------
+        KineticEnergyDensity
+        """
+        return self._field(atoms, "tau")
+
+    def get_hartree_potential(self, atoms=None, with_external=False):
+        r"""
+        Hartree potential :math:`v_{\rm H}` in eV, on the shared grid.
+
+        **Solved, not predicted.** Poisson's equation relates
+        :math:`v_{\rm H}` to :math:`\rho` exactly, and on a periodic
+        plane-wave grid the reciprocal-space solution
+        :math:`v_{\rm H}(\mathbf G) = 4\pi e^2\rho(\mathbf G)/G^2` is exact for
+        any band-limited density at the cost of two FFTs. So this field
+        inherits the density's error and adds none of its own — there is no
+        third operator, and none would be an improvement.
+
+        Parameters
+        ----------
+        atoms : ase.Atoms, optional
+        with_external : bool, optional
+            Return :math:`v_{\rm H} + V_{\rm ext}`, the total local potential,
+            which is what a plain VASP ``LOCPOT`` holds. Off by default,
+            because the Hartree term alone is the one this method is named for
+            and the one that is derived here.
+
+        Returns
+        -------
+        HartreePotential
+            A field like any other: it carries the grid and the structure, and
+            :meth:`~poraque.fields.base.ScalarField.write` serializes it in
+            ``LOCPOT`` format.
+
+        Examples
+        --------
+        >>> potential = atoms.calc.get_hartree_potential()      # doctest: +SKIP
+        >>> potential.write("LOCPOT")                           # doctest: +SKIP
+        """
+        from .fields import HartreePotential
+
+        density = self.get_charge_density(atoms)
+        hartree = HartreePotential.from_density(density)
+        if with_external:
+            return hartree.total_with(self.get_external_potential(atoms))
+        return hartree
+
+    def valence_charges(self, structure):
+        """
+        ``{element: Z_val}`` for ``structure``, from the ``POTCAR`` or
+        ``charges=``.
+
+        Returns
+        -------
+        dict or None
+        """
+        potcar = self._potcar_for(structure)
+        if potcar is not None:
+            return {entry.element: entry.zval for entry in potcar}
+        return dict(self.charges) if self.charges else None
+
+    def get_charges(self, atoms=None, method="bader", **kwargs):
+        r"""
+        Partial charges from the predicted density.
+
+        Compatible with the standard ASE interface: ``atoms.get_charges()``
+        calls this with the atoms alone and gets the default partitioning.
+
+        Parameters
+        ----------
+        atoms : ase.Atoms, optional
+        method : {"bader", "hirshfeld", "voronoi"}, optional
+            Which partitioning. See :mod:`poraque.analysis.charges` for what
+            each one means and when it misleads.
+        **kwargs
+            Forwarded to the partitioner — ``backend=`` for Bader,
+            ``references=`` for Hirshfeld. The Hirshfeld reference defaults to
+            the directory passed as ``references=`` to the constructor, so
+            free-atom densities and free-atom energies are read from one place.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(natoms,)`` net charges in units of ``+e``, positive for
+            electron-deficient. The full decomposition — populations, the
+            valence subtracted, and which promolecule or Bader backend was
+            used — is left on :attr:`charge_analysis`.
+
+        Notes
+        -----
+        These are partitions of the **pseudo** valence density: the PAW core is
+        absent, so the charges are systematically compressed toward zero
+        relative to an all-electron analysis, and they inherit whatever error
+        the predicted density carries. Use them to compare across a series, not
+        as absolute numbers.
+
+        Examples
+        --------
+        >>> atoms.get_charges()                              # doctest: +SKIP
+        >>> atoms.calc.get_charges(method="hirshfeld")       # doctest: +SKIP
+        >>> print(atoms.calc.charge_analysis)                # doctest: +SKIP
+        """
+        from .analysis import partial_charges
+
+        atoms = atoms if atoms is not None else self.atoms
+        density = self.get_charge_density(atoms)
+        structure = self.fields["external"].structure
+
+        if method == "hirshfeld" and "references" not in kwargs:
+            kwargs["references"] = self.reference_dir
+
+        analysis = partial_charges(
+            density, structure=structure, grid=density.grid, method=method,
+            valence=self.valence_charges(structure), **kwargs)
+
+        self.charge_analysis = analysis
+        return analysis.charges
+
+    def verify_charge(self, atoms=None, tolerance=1e-3, warn=True):
+        r"""
+        Check that the predicted density holds the right number of electrons.
+
+        Parameters
+        ----------
+        atoms : ase.Atoms, optional
+        tolerance : float, optional
+            Relative tolerance.
+        warn : bool, optional
+
+        Returns
+        -------
+        ChargeCheck
+
+        Notes
+        -----
+        With ``normalize_density=True`` — the default — this passes by
+        construction, because the density has already been rescaled to the
+        nominal count. It is the *raw* prediction that is worth checking, and
+        :attr:`raw_electron_drift` reports that after any energy evaluation.
+        Run this with ``normalize_density=False`` to measure the operator
+        rather than the repair.
+        """
+        from .analysis import verify_total_charge
+
+        atoms = atoms if atoms is not None else self.atoms
+        density = self.get_charge_density(atoms)
+        structure = self.fields["external"].structure
+
+        expected = self.valence_electrons(structure)
+        if expected is None:
+            raise ValueError(
+                "No valence charges available, so there is no expected "
+                "electron count to check against. Supply a POTCAR or "
+                "charges={'Au': 11.0}."
+            )
+        return verify_total_charge(density, density.grid.cell, expected,
+                                   tolerance=tolerance, warn=warn)
+
+    def get_cohesive_energy(self, atoms=None, per_atom=False):
+        r"""
+        :math:`\Delta E = E_{\rm total} - \sum_i E_{\rm iso}(Z_i)`, in eV.
+
+        The energy released on assembling ``atoms`` from isolated atoms. Unlike
+        :meth:`get_potential_energy` this is referenced to a defined state, so
+        it can be compared against another code, against experiment, or across
+        compositions — none of which the raw total supports.
+
+        Parameters
+        ----------
+        atoms : ase.Atoms, optional
+        per_atom : bool, optional
+            Divide by the atom count.
+
+        Returns
+        -------
+        float
+
+        Raises
+        ------
+        ValueError
+            When no reference energies cover the composition. Falling back to
+            the total would return a number about :math:`10^3` eV per atom
+            away from a cohesive energy, in the same units, with nothing to
+            mark it as the wrong quantity.
+        """
+        atoms = atoms if atoms is not None else self.atoms
+        components = self.energy_components(atoms)
+
+        if components.cohesive is None:
+            structure = self.fields["external"].structure
+            absent = (sorted(set(structure.symbols)) if self.references is None
+                      else self.references.missing_for(structure))
+            raise ValueError(
+                f"No isolated-atom reference energy for {absent}. Pass "
+                f"references='data/vasp/ref' (a directory with one "
+                f"subdirectory per element) or a ReferenceEnergies instance to "
+                f"Poraque(...)."
+            )
+        return (components.cohesive_per_atom if per_atom
+                else components.cohesive)
 
     def compute_forces(self, atoms):
         r"""
@@ -741,6 +1022,27 @@ def _find_potcar(directory, element):
         f"{element}/POTCAR, POTCAR.{element} or {element}.POTCAR. "
         f"The directory contains: {available}"
     )
+
+
+def _resolve_references(references):
+    """
+    Accept a :class:`ReferenceEnergies`, a directory path, a dict, or ``None``.
+
+    A path is the common case and the one worth being forgiving about; the
+    other forms exist so a caller that has already built the mapping — a test,
+    or a sweep over many structures — does not re-read the directory per
+    calculator.
+    """
+    if references is None:
+        return None
+
+    from .physics import ReferenceEnergies
+
+    if isinstance(references, ReferenceEnergies):
+        return references
+    if isinstance(references, dict):
+        return ReferenceEnergies(references)
+    return ReferenceEnergies.from_directory(str(references))
 
 
 def _read_maybe_compressed(path):

@@ -40,6 +40,7 @@ background \\
 \end{center}
 
 \subsection{The \texorpdfstring{$\GG = 0$}{G = 0} bookkeeping}
+\label{sec:g0}
 
 Each of the three electrostatic terms diverges at $\GG = 0$, and the
 divergences cancel in a neutral cell. Poraqu\^e follows the standard plane-wave
@@ -232,19 +233,153 @@ prediction.
 
 \subsection{Forces and stress}
 
-\opt{get\_forces()} and \opt{get\_stress()} raise \opt{NotImplementedError}, so
-\textbf{geometry optimisation and molecular dynamics are unavailable}. Single
-points, energy-volume scans and ranking of fixed geometries work.
-
-Two independent pieces are missing: the derivative of $\vext$ with respect to
-the ionic positions (analytic, a Hellmann--Feynman term), and
-back-propagation of $\partial E/\partial\rho$ through both operators. A
-finite-difference stand-in is no shortcut here --- on a fixed grid it would be
+\opt{get\_forces()} returns the analytic \textbf{Hellmann--Feynman} force: the
+electron--ion term $-\int\rho\,\partial\vext/\partial\Rv$ evaluated in
+reciprocal space from the same \file{POTCAR} form factor the potential was
+built from, plus the analytic Ewald force. Both are differentiated in closed
+form rather than by finite differences --- on a fixed grid those would be
 dominated by the grid's own discontinuity as atoms cross voxel boundaries.
 
-\opt{implemented\_properties} is \opt{["energy", "free\_energy"]}. The two are
-the same number: no electronic smearing enters this pipeline, and ASE
-optimizers request \opt{free\_energy} by name.
+The implementation is exact: each term agrees with a central finite difference
+of the energy it differentiates to $10^{-7}$ eV/\AA.
+
+\begin{pwarn}
+The \emph{physics} is incomplete for PAW datasets. Hellmann--Feynman is the
+whole force only for a \emph{local} pseudopotential; a PAW calculation adds a
+projector force and a one-centre force, and neither is recoverable from $\rho$,
+$\tau$ and $V_{\rm loc}$ on a grid. Measured against VASP on gold, using
+VASP's own density: MAE $0.83$ eV/\AA\ against forces of $1.66$ eV/\AA. The
+magnitude is right, the direction is not, so \textbf{geometry optimisation and
+molecular dynamics remain unavailable}.
+
+The cancellation is why it is delicate: the electron--ion and ion--ion terms
+are each $\approx 100$ eV/\AA\ and cancel to $\approx 0.5$ eV/\AA, so a
+relative error in $\rho$ arrives in the force amplified roughly $200$-fold.
+\end{pwarn}
+
+\opt{get\_stress()} still raises: the stress needs the energy's response to a
+strain, which deforms the cell \emph{and} the grid the fields live on.
+
+\opt{implemented\_properties} is
+\opt{["energy", "free\_energy", "forces"]}. The first two are the same number:
+no electronic smearing enters this pipeline, and ASE optimizers request
+\opt{free\_energy} by name.
+
+\subsection{Cohesive energies}
+\label{sec:cohesive}
+
+A total energy means nothing on its own. It is referenced to whatever the
+pseudopotential generator chose, and Poraqu\^e's totals additionally carry an
+offset of order $10^{3}$ eV per atom from the absent PAW one-centre terms. The
+\textbf{cohesive energy} removes the arbitrary part,
+
+\begin{equation*}
+\Delta E = E_{\rm total} - E_{\rm ref},
+\qquad
+E_{\rm ref} = \sum_i E_{\rm iso}(Z_i),
+\end{equation*}
+
+with $E_{\rm iso}$ the energy of one isolated atom of that species. What
+survives is the energy released on assembling the solid from free atoms --- the
+bonding, and nothing else.
+
+Supply a directory holding one subdirectory per element, each an ordinary
+single-point calculation of one atom in a large box:
+
+\begin{lstlisting}
+data/vasp/ref/
+    Au/     POSCAR POTCAR OSZICAR OUTCAR CHGCAR TAUCAR
+    N/      ...
+\end{lstlisting}
+
+\begin{lstlisting}[language=Python]
+atoms.calc = Poraque("models/poraque_models.pfno",
+                     potcar="POTCAR",
+                     references="data/vasp/ref")
+
+atoms.get_potential_energy()                   # total, as always
+atoms.calc.get_cohesive_energy()               # dE, in eV
+atoms.calc.get_cohesive_energy(per_atom=True)  # eV/atom
+\end{lstlisting}
+
+\subsubsection{Which reference to subtract}
+
+\pyclass{ReferenceEnergies.from\_directory} takes a \opt{method}, and the
+choice matters more than anything else here.
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\opt{method} & $E_{\rm iso}$ from & Au cohesive energy \\
+\midrule
+\opt{"poraque"} (default) & Poraqu\^e's own expression & $\mathbf{-1.9}$ eV/atom \\
+\opt{"code"} & VASP \file{OUTCAR}/\file{OSZICAR} & $-1157$ eV/atom \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A cohesive energy is meaningful only when the two energies being subtracted
+carry the \emph{same} systematic error. Subtracting VASP's atomic energy from
+Poraqu\^e's total leaves the PAW offset entirely intact; subtracting
+Poraqu\^e's own atomic energy cancels it, because the same terms are missing
+from both sides. Hence the default. Use \opt{"code"} when the reference
+calculations are what you want to compare \emph{against}.
+
+\begin{pnote}
+Referencing changes neither the forces nor energy differences at fixed
+composition, and both statements are exact identities rather than
+approximations. $E_{\rm ref}$ depends on composition and not on coordinates, so
+$\nabla_{\Rv} E_{\rm ref} = 0$; and two structures with the same formula share
+$E_{\rm ref}$, which cancels bit-for-bit in $\Delta E_1 - \Delta E_2$. Its
+value is in comparisons \emph{across} compositions --- binding energies,
+cohesive energies per atom, formation energies --- where the offset does not
+cancel and without which the comparison is undefined.
+\end{pnote}
+
+\subsection{The Hartree potential}
+\label{sec:hartree-field}
+
+$\vH$ is \textbf{solved, not predicted}. Poisson's equation relates it to
+$\rho$ exactly, and on a periodic plane-wave grid the reciprocal-space form is
+the solution rather than an approximation to it:
+
+\begin{equation*}
+\nabla^2 \vH = -4\pi e^2\rho
+\quad\Longleftrightarrow\quad
+\vH(\GG) = \frac{4\pi e^2\rho(\GG)}{G^2},
+\qquad \vH(\GG = 0) = 0 .
+\end{equation*}
+
+Two FFTs, exact for any band-limited density. A third learned operator would be
+strictly worse: it would inject error into a quantity that has none, and would
+not be guaranteed to satisfy the equation that defines it.
+
+\begin{lstlisting}[language=Python]
+potential = atoms.calc.get_hartree_potential()
+potential.write("LOCPOT")
+
+# v_H + V_ext, the total local potential a plain VASP LOCPOT holds
+total = atoms.calc.get_hartree_potential(with_external=True)
+\end{lstlisting}
+
+The $\GG = 0$ term is set to zero --- the same neutralising-background
+convention $\vext$ uses (\S\ref{sec:g0}), which is what makes the two
+potentials addable and what makes $E_{\rm H}$ of a uniform density come out at
+exactly zero rather than infinite.
+
+Written to \file{LOCPOT} the field is stored \textbf{unscaled}: unlike
+\file{CHGCAR}, which holds $\rho\Omega$, a \file{LOCPOT} holds the potential
+itself in eV. From the command line:
+
+\begin{lstlisting}
+poraque-inference structure/ --output predictions/ --write-locpot
+poraque-inference structure/ --output predictions/ --write-locpot --locpot-total
+\end{lstlisting}
+
+The field accessors are symmetric --- \opt{get\_external\_potential()},
+\opt{get\_charge\_density()}, \opt{get\_kinetic\_energy\_density()} and
+\opt{get\_hartree\_potential()} --- and all four return fields on one shared
+grid.
 
 \section{What the number is not}
 \label{sec:not-a-dft-energy}
@@ -256,44 +391,51 @@ cell above the result is $\approx -31215$ eV against a VASP \opt{TOTEN} of
 order $-100$ eV. Nothing in this module can close that gap.
 
 \paragraph{Energy differences are not usable yet either.} Measured on the
-earlier twelve-structure Au dataset, with the models evaluated on their own
-training data. These figures have \emph{not} been re-measured on the current
-seventeen-structure dataset:
+current seventeen-structure Au dataset, within each composition group:
 
 \begin{center}
-\begin{tabular}{@{}lr@{}}
+\begin{tabular}{@{}lrr@{}}
 \toprule
-Quantity & Value \\
+Source of the fields & MAE on $\Delta E$ & vs.\ signal \\
 \midrule
-True spread of $E$ across the twelve structures & 0.27 eV/atom \\
-MAE of the predicted differences & 0.29 eV/atom \\
-Ratio error / signal & 1.06 \\
-Correlation of predicted vs.\ true differences & $r \approx -0.1$ \\
+VASP's own $\rho$ and $\tau$ (method ceiling) & 0.18--0.24 eV/atom & 1.5--2$\times$ \\
+The shipped operators & 0.87--1.93 eV/atom & 7--15$\times$ \\
+\emph{True spread being resolved} & \emph{0.125 eV/atom} & --- \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The error is \textbf{comparable to the signal} and the correlation is
-consistent with zero, so the predicted ordering of structures carries no
-information. That is an improvement on the $3\times$ ratio measured on the
-earlier, smaller dataset, but the verdict is unchanged.
+The error \textbf{exceeds the signal} in both rows and the correlation with the
+true ordering is consistent with zero, so the predicted ranking of structures
+carries no information.
 
-The cause is cancellation, not a bug: the total is a sum of terms of order
-$10^{4}$ eV whose physically relevant variation is a fraction of an eV per
-atom, a relative $\sim10^{-4}$. A field-level relative $L^{2}$ of
-$2\times10^{-2}$ cannot survive that. Reaching $0.01$ eV/atom would need
-densities accurate to roughly $10^{-5}$ relative, three orders of magnitude
-beyond the current models.
+The first row is the important one. It is measured with the model removed from
+the problem entirely, so it is not a training failure --- it is the neglected
+PAW one-centre and non-local energy, which is \emph{not} a per-atom constant.
+The electrostatics themselves are correct: $E_{\alpha Z}$, Ewald and
+$E_{\rm H}$ reproduce VASP's \opt{PSCENC}, \opt{TEWEN} and \opt{DENC} to better
+than $0.01$ eV in a difference, and the Ewald sum reproduces exact Madelung
+constants to $10^{-6}$.
+
+The underlying difficulty is scale. The total is a cancellation of terms of
+order $10^{4}$ eV down to a result of order $10^{0}$ eV, so resolving $\Delta E$
+to $10$ meV/atom needs a relative accuracy of about $10^{-6}$ in the fields.
+The operators deliver $10^{-2}$.
 
 \begin{pnote}
-The grid is \emph{not} the limiting factor. On reference fields the total
-energy changes by $0.08$ eV out of $31215$ ($0.003$ eV/atom) between
-\opt{resolution: 32} and the native $128^{3}$ mesh, and $\Ts$ and the electron
-count are preserved exactly --- spectral resampling is an exact band-limited
-projection.
+The grid is \emph{not} the limiting factor. On reference fields the energy
+difference changes by less than $0.2$ eV between \opt{resolution: 32} and the
+native $128^{3}$ mesh, and $\Ts$ and the electron count are preserved exactly
+--- spectral resampling is an exact band-limited projection.
 \end{pnote}
 
-Rescaling the predicted density to the known electron count does \textbf{not}
-help: $E_{\rm ext}$ is linear in $\rho$, so correcting a $0.3\,\%$
-electron-count error shifts a $-12690$ eV term by about $38$ eV. It was
-measured and rejected, not assumed.
+\paragraph{Charge normalisation helps, and is on by default.} The shipped
+\opt{ext2chg} operator predicts densities whose electron count drifts by up to
+$1.7\,\%$ --- nearly five electrons out of $297$. Every electrostatic term is
+at least linear in $\rho$ and $E_{\rm H}$ is quadratic, so that drift alone
+moved totals by tens of eV, differently for each structure, and therefore did
+not cancel in a difference. Rescaling to the count the pseudopotentials fix
+\emph{halved} the end-to-end error on $\Delta E$. It is a repair rather than a
+cure: a density whose integral is wrong by $1.7\,\%$ has the wrong shape too,
+and rescaling does not fix the shape. Disable it with
+\opt{normalize\_density=False} only to diagnose.

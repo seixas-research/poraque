@@ -42,6 +42,11 @@ from .forces import (
     hellmann_feynman_forces,
     local_potential_forces,
 )
+from .reference import (
+    ReferenceEnergies,
+    read_total_energy,
+    register_energy_reader,
+)
 
 __all__ = [
     "XC_FUNCTIONALS",
@@ -58,5 +63,8 @@ __all__ = [
     "pbe_correlation_energy",
     "pbe_exchange_energy",
     "pw92_correlation_energy",
+    "read_total_energy",
+    "ReferenceEnergies",
+    "register_energy_reader",
     "xc_energy",
 ]

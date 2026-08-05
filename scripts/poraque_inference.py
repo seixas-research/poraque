@@ -671,6 +671,34 @@ def run(args, log):
     results["outputs"]["TAUCAR"] = taucar
     log(f"        -> {taucar}")
 
+    # ---------------- 4b. Hartree potential, solved not predicted ------- #
+    # Poisson's equation is exact and costs two FFTs, so there is no third
+    # operator here and no error introduced beyond whatever the density
+    # already carries.
+    if args.write_locpot:
+        from poraque.fields import HartreePotential
+
+        log("\n  [extra] LOCPOT  via Poisson's equation (no model)")
+        hartree = HartreePotential.from_density(density)
+        combined = args.locpot_total
+        field = (hartree.total_with(potential) if combined else hartree)
+        log(f"        v_H range [{hartree.data.min():.4f}, "
+            f"{hartree.data.max():.4f}] eV")
+        if combined:
+            log("        writing v_H + V_ext, as a plain VASP LOCPOT holds")
+            log(f"        total range [{field.data.min():.4f}, "
+                f"{field.data.max():.4f}] eV")
+
+        locpot = os.path.join(args.output, "LOCPOT")
+        field.write(locpot)
+        results["outputs"]["LOCPOT"] = locpot
+        results["hartree"] = {
+            "min": float(hartree.data.min()),
+            "max": float(hartree.data.max()),
+            "includes_external": bool(combined),
+        }
+        log(f"        -> {locpot}")
+
     # ---------------- 5. optional comparison ---------------- #
     if args.compare:
         log(f"\n  --- comparison against reference files in {args.directory} ---")
@@ -757,8 +785,18 @@ def run(args, log):
     return results
 
 
-def predict(argv=None):
-    """Parse ``argv``, run the prediction, and return the result records."""
+def build_parser():
+    """
+    The command-line interface, as a parser.
+
+    Separated from :func:`predict` so the flags can be inspected without
+    running an inference — which needs a trained bundle, a POTCAR and a grid,
+    none of which a test of the interface should require.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+    """
     parser = argparse.ArgumentParser(
         description="Predict CHGCAR and TAUCAR for a new structure from its "
                     "geometry, using the trained Fourier Neural Operators.",
@@ -814,6 +852,14 @@ def predict(argv=None):
     parser.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
     parser.add_argument("--write-chg", action="store_true",
                         help="also write a CHG-formatted copy of the density")
+    parser.add_argument("--write-locpot", action="store_true",
+                        help="also solve Poisson's equation for the Hartree "
+                             "potential and write it as LOCPOT. Exact, not "
+                             "predicted: v_H(G) = 4 pi e^2 rho(G) / G^2")
+    parser.add_argument("--locpot-total", action="store_true",
+                        help="make --write-locpot emit v_H + V_ext, the total "
+                             "local potential a plain VASP LOCPOT holds, "
+                             "rather than the Hartree term alone")
     parser.add_argument("--no-normalize", dest="normalize",
                         action="store_false", default=True,
                         help="do not rescale the predicted density to the "
@@ -839,7 +885,12 @@ def predict(argv=None):
                         help="write comparison figures to this directory")
     parser.add_argument("--dpi", type=int, default=160)
     parser.add_argument("--json", default=None, help="write a JSON summary")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def predict(argv=None):
+    """Parse ``argv``, run the prediction, and return the result records."""
+    args = build_parser().parse_args(argv)
 
     lines = []
 

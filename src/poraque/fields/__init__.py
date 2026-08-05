@@ -48,6 +48,7 @@ from .density import (
 )
 from .external import ExternalPotential
 from .grid import FieldGrid, fft_friendly_size
+from .hartree import HartreePotential
 from .spin import SpinDensity, is_spin_polarized, spin_from_incar
 from .structure import Structure, element_of, symbol_to_z
 
@@ -55,6 +56,7 @@ __all__ = [
     "ChargeDensity",
     "ExternalPotential",
     "FieldGrid",
+    "HartreePotential",
     "KineticEnergyDensity",
     "ScalarField",
     "SpinDensity",
