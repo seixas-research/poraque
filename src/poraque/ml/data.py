@@ -158,9 +158,6 @@ class FieldPairDataset(Dataset):
     ----------
     spin : bool
         Resolved answer. :attr:`channels` follows from it.
-    channels : tuple of int
-        ``(input_channels, target_channels)`` — what an operator trained on
-        this dataset must be built with.
 
     Notes
     -----

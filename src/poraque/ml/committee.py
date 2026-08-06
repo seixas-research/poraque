@@ -146,6 +146,160 @@ def committee_integrals(predictions, grid):
     }
 
 
+def probability_density(field, grid, clip=True):
+    r"""
+    Rescale a scalar field into a **probability density** on the cell.
+
+    The Jensen-Shannon divergence is defined between probability
+    distributions, and a charge density is not one: it integrates to the
+    valence electron count :math:`N`, not to one. Both requirements are met
+    here, and neither is optional — :math:`\ln` of a negative number is not
+    defined, and an unnormalised pair would report a divergence that mostly
+    measures the difference in :math:`N`.
+
+    .. math::
+
+        p(\mathbf r) = \frac{\max(\rho(\mathbf r),\,0)}
+                            {\int \max(\rho,\,0)\,d^3r},
+        \qquad \int p\,d^3r = 1 .
+
+    Parameters
+    ----------
+    field : ScalarField or array_like
+        A field that is non-negative up to band-limiting artefacts.
+    grid : FieldGrid
+        Supplies the volume element: the normalisation is an **integral**, not
+        a sum, so a field on a 32³ mesh and the same field on a 64³ mesh
+        normalise to the same distribution.
+    clip : bool, optional
+        Clamp negatives to zero first. Band-limiting a density with sharp core
+        peaks rings (Gibbs), so a resampled or predicted field dips slightly
+        below zero; that is an artefact of the truncation and clamping it is
+        the right response. Pass ``False`` to have a genuinely signed field
+        raise rather than be quietly turned into a distribution it is not.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, int)
+        The distribution, integrating to exactly 1, and how many voxels the
+        clamp touched.
+
+    Raises
+    ------
+    ValueError
+        When the field integrates to zero — there is no distribution to form —
+        or when ``clip`` is off and it goes negative.
+    """
+    values = np.asarray(field, dtype=float)
+
+    clipped = int((values < 0.0).sum())
+    if clipped and not clip:
+        raise ValueError(
+            f"{clipped} of {values.size} voxels are negative, so this field is "
+            f"not a density and has no probability distribution. Pass "
+            f"clip=True only if the negatives are band-limiting artefacts.")
+    if clipped:
+        values = np.clip(values, 0.0, None)
+
+    total = float(values.sum()) * grid.volume_element
+    if total <= 0.0:
+        raise ValueError(
+            "the field integrates to zero after clamping, so it cannot be "
+            "normalised into a probability density.")
+
+    # Divide by the integral, not by the sum: the result must integrate to one
+    # against the same volume element the divergence is integrated with.
+    return values / total, clipped
+
+
+def _kl_integrand(p, q):
+    r"""
+    :math:`p\ln(p/q)`, with the :math:`p = 0` limit taken as zero.
+
+    Both distributions have empty regions once negatives are clamped, and
+    ``0 * log(0/q)`` is ``nan`` in floating point rather than the ``0`` the
+    limit gives. Evaluating the logarithm only where ``p`` is positive is
+    exact, not a regularisation: no floor is introduced and nothing is
+    perturbed.
+    """
+    support = p > 0.0
+    out = np.zeros_like(p)
+    out[support] = p[support] * np.log(p[support] / q[support])
+    return out
+
+
+def jensen_shannon_divergence(prediction, reference, grid, clip=True):
+    r"""
+    Jensen-Shannon divergence between a predicted and a reference density.
+
+    .. math::
+
+        \mathrm{JSD}(p\,\|\,q) = \tfrac12 D_{\rm KL}(p\,\|\,m)
+                               + \tfrac12 D_{\rm KL}(q\,\|\,m),
+        \qquad m = \tfrac12 (p + q),
+
+    with both fields first turned into probability densities by
+    :func:`probability_density`. Unlike a raw :math:`D_{\rm KL}` it is
+    symmetric, and it is finite even where one distribution vanishes and the
+    other does not — which a density on a grid does, in the interstitial
+    region, all the time.
+
+    It measures **shape**, not magnitude: a prediction carrying 5 % too much
+    charge but distributed identically scores zero. Read it beside the
+    electron-count error, never instead of it — that division of labour is
+    what makes it worth reporting at all, since the relative :math:`L^2`
+    confounds the two.
+
+    Parameters
+    ----------
+    prediction, reference : ScalarField or array_like
+        Non-negative fields on the same grid.
+    grid : FieldGrid
+        Supplies the volume element.
+    clip : bool, optional
+        Clamp band-limiting undershoot to zero; see
+        :func:`probability_density`.
+
+    Returns
+    -------
+    dict
+        ``jsd`` in nats, ``normalised`` = ``jsd / ln 2`` (in :math:`[0, 1]`,
+        saturating when the two share no support), ``pointwise`` — the
+        integrand, showing *where* the shapes differ — and ``clipped``, the
+        number of voxels the clamp touched in either field.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from poraque.fields import FieldGrid
+    >>> from poraque.ml.committee import jensen_shannon_divergence
+    >>> grid = FieldGrid((8, 8, 8), np.eye(3) * 4.0)
+    >>> rho = np.random.default_rng(0).random(grid.shape) + 0.1
+    >>> result = jensen_shannon_divergence(rho, 2.5 * rho, grid)
+    >>> bool(result["jsd"] < 1e-12)      # blind to a common rescaling
+    True
+    """
+    p, clipped_p = probability_density(prediction, grid, clip=clip)
+    q, clipped_q = probability_density(reference, grid, clip=clip)
+    if p.shape != q.shape:
+        raise ValueError(
+            f"prediction and reference must share a grid, got shapes "
+            f"{p.shape} and {q.shape}.")
+
+    mean = 0.5 * (p + q)
+    pointwise = 0.5 * (_kl_integrand(p, mean) + _kl_integrand(q, mean))
+    jsd = float(pointwise.sum() * grid.volume_element)
+
+    bound = float(np.log(2.0))
+    return {
+        "jsd": jsd,
+        "normalised": jsd / bound,
+        "bound": bound,
+        "pointwise": pointwise,
+        "clipped": clipped_p + clipped_q,
+    }
+
+
 def jensen_shannon_spread(predictions, grid, floor=1e-12):
     r"""
     Information-theoretic disagreement: the Jensen-Shannon divergence.
@@ -177,25 +331,32 @@ def jensen_shannon_spread(predictions, grid, floor=1e-12):
     grid : FieldGrid
         Supplies the volume element; the divergence is an integral, not a sum.
     floor : float, optional
-        Lower clip applied before normalising. Band-limiting a field with sharp
-        core peaks rings, so a resampled or predicted field can dip below zero,
-        and :math:`\ln` of that is not defined.
+        Retained for callers that pass it; ignored. Negatives are clamped to
+        **zero** by :func:`probability_density` and the :math:`p\ln p` limit is
+        taken exactly, so a positive floor is no longer needed to keep the
+        logarithm defined — and a floor perturbs every normalisation slightly,
+        which this does not.
 
     Returns
     -------
     dict
         ``jsd`` in nats, ``normalised`` = ``jsd / ln K``, ``pointwise`` (the
         integrand, a field showing where the members disagree in information
-        terms) and ``clipped`` — how many voxels the floor touched.
+        terms) and ``clipped`` — how many voxels the clamp touched.
 
     Notes
     -----
-    Each member is normalised to unit integral first, so this measures
-    **shape** disagreement and is deliberately blind to a common rescaling.
-    That is a division of labour, not an oversight: pair it with
-    :func:`committee_integrals`, which measures exactly the magnitude this
-    discards. Either alone is a partial picture of a committee whose electron
-    count is known to drift.
+    Each member is turned into a probability density first
+    (:func:`probability_density`), so this measures **shape** disagreement and
+    is deliberately blind to a common rescaling. That is a division of labour,
+    not an oversight: pair it with :func:`committee_integrals`, which measures
+    exactly the magnitude this discards. Either alone is a partial picture of a
+    committee whose electron count is known to drift.
+
+    See Also
+    --------
+    jensen_shannon_divergence : the same quantity between a *prediction and its
+        reference*, which is an accuracy measure rather than a spread.
 
     .. warning::
 
@@ -212,26 +373,23 @@ def jensen_shannon_spread(predictions, grid, floor=1e-12):
        can disagree about which structure is worst, and the tails contribute
        little to the energy. Report both.
     """
-    stack = np.stack([np.asarray(p, dtype=float) for p in predictions])
-    if stack.shape[0] < 2:
+    if len(predictions) < 2:
         raise ValueError(
-            f"a committee needs at least two members, got {stack.shape[0]}."
+            f"a committee needs at least two members, got {len(predictions)}."
         )
 
-    clipped = int((stack < floor).sum())
-    stack = np.clip(stack, floor, None)
-
-    # Normalise each member to unit integral: the divergence is defined between
-    # probability densities, and the electron count is handled separately.
-    volume_element = grid.volume_element
-    totals = stack.sum(axis=(1, 2, 3), keepdims=True) * volume_element
-    members = stack / totals
+    # Each member normalised to unit integral: the divergence is defined
+    # between probability densities, and the electron count is handled
+    # separately by committee_integrals.
+    normalised = [probability_density(p, grid) for p in predictions]
+    members = np.stack([p for p, _ in normalised])
+    clipped = sum(count for _, count in normalised)
 
     mean = members.mean(axis=0)
-    # p log(p / p_bar), summed over members and integrated over the cell.
-    pointwise = np.einsum(
-        "k...,k...->...", members, np.log(members / mean)) / members.shape[0]
-    jsd = float(pointwise.sum() * volume_element)
+    # p log(p / p_bar), averaged over members and integrated over the cell.
+    pointwise = np.mean([_kl_integrand(member, mean) for member in members],
+                        axis=0)
+    jsd = float(pointwise.sum() * grid.volume_element)
 
     bound = np.log(members.shape[0])
     return {

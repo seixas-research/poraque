@@ -859,12 +859,16 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             optimizer.zero_grad(set_to_none=True)
             prediction = operator.model(inputs, cell)
 
+            # The reference in physical units serves two terms: it is rho for
+            # the von Weizsacker bound on chg2tau -- where the *input* is the
+            # density -- and its integral is the electron count the
+            # charge-conservation term on ext2chg is measured against.
+            physical_target = batch["target_physical"].to(operator.device)
             terms = criterion(
                 prediction, targets, cell=cell,
                 physical_prediction=operator.target_transform.inverse(prediction),
-                physical_input=batch["target_physical"].to(operator.device)
-                if operator.task.name == "chg2tau" else
-                operator.input_transform.inverse(inputs),
+                physical_input=operator.input_transform.inverse(inputs),
+                physical_target=physical_target,
             )
             terms["total"].backward()
 

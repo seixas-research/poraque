@@ -110,6 +110,8 @@ _LAZY = {
     "committee_integrals": "poraque.ml.committee",
     "disagreement_error_correlation": "poraque.ml.committee",
     "jensen_shannon_spread": "poraque.ml.committee",
+    "jensen_shannon_divergence": "poraque.ml.committee",
+    "probability_density": "poraque.ml.committee",
     # unified checkpoint
     "BUNDLE_FILENAME": "poraque.ml.training",
     "BUNDLE_FORMAT": "poraque.ml.training",

@@ -12,7 +12,19 @@
 #
 #   python scripts/poraque_train.py --config configs/train_config.yaml
 # =====================================================================
-task: all
+task:
+  # all | ext2chg | chg2tau. `task: all` on its own -- without this block --
+  # is still accepted and means the same thing.
+  type: all
+  # Names every artefact the run writes:
+  #
+  #   models/<name>.pfno            the weights
+  #   reports/<name>_report.pdf     the PDF report
+  #   results/plots/<name>/         the figures
+  #
+  # Change it for a run worth keeping beside the last one; two runs sharing a
+  # name share their output files, and the second wins.
+  name: poraque_models
 data:
   # One dataset directory. For several -- which may mix layouts, e.g. local
   # runs beside an archive of standalone CHGCARs -- use `train_paths`:
@@ -31,8 +43,13 @@ data:
   pattern: struct
   code: auto
   resolution: 32
-  # Gaussian pseudo-ion width in Angstrom; null derives it per species from
-  # the POTCAR core radius, which is right wherever a POTCAR exists.
+  # POTCAR library, used only where the data itself ships none -- an archive
+  # of standalone CHGCARs, or a run whose POTCAR was stripped. With it V_ext
+  # is VASP's tabulated potential; without it, the Gaussian pseudo-ion model.
+  potcar_dir: null
+  # Gaussian pseudo-ion width in Angstrom, reached only where no tabulated
+  # potential is available; null derives it per species from the POTCAR core
+  # radius, which is right wherever a POTCAR exists.
   sigma: null
   gaussian_blur: null
   blur_method: spectral
@@ -67,8 +84,24 @@ training:
   device: auto
   loss: relative_l2
   sobolev_weight: 0.1
+  # Physics-informed terms, added to the data loss as
+  #
+  #   total = data + sum_i weight_i * term_i
+  #
+  # and reported as separate `data loss` / `physics loss` / `total loss`
+  # columns during training, because a falling total says nothing about which
+  # half fell. Introduce them one at a time against a measured baseline: a
+  # badly scaled constraint degrades accuracy while looking principled.
   physics:
-    electron_count_weight: 0.0
+    # CHARGE CONSERVATION (ext2chg). Squared relative error between the
+    # integral of the predicted density and the integral of the reference --
+    # the valence electron count. One reduction per batch, and it pins the one
+    # global degree of freedom a pointwise loss controls worst: a relative L2
+    # is indifferent to a percent of charge spread thinly over the cell, and a
+    # total energy is not. 0.1 keeps it an order of magnitude below the data
+    # term, which is the intended balance. Set 0.0 for the supervised
+    # baseline.
+    electron_count_weight: 0.1
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0

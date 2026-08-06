@@ -24,7 +24,12 @@
 # then trains on whichever materials do carry a TAUCAR, and the run says
 # how many that was.
 # =====================================================================
-task: ext2chg
+task:
+  type: ext2chg
+  # models/<name>.pfno, reports/<name>_report.pdf, results/plots/<name>/.
+  # Named for the mixture, so it can never be confused with a model trained
+  # on the local runs alone -- the two see different external potentials.
+  name: mixed_ext2chg
 data:
   train_paths:
     - data/vasp
@@ -34,6 +39,10 @@ data:
   pattern: struct
   code: auto
   resolution: 32
+  # Setting this to the library MP used makes both archives build the *same*
+  # tabulated V_ext, which removes the caveat above entirely -- the mixture
+  # stops being a mixture of two quantities. Strongly recommended here.
+  potcar_dir: null
   sigma: null
   gaussian_blur: null
   blur_method: spectral
@@ -65,6 +74,12 @@ training:
   device: auto
   loss: relative_l2
   physics:
+    # Charge conservation: squared relative error between the integral of the
+    # predicted density and the reference electron count. Left at zero *here*
+    # and only here -- this config's whole subject is a mixed input field, and
+    # a physics term switched on at the same time would confound what the
+    # mixture cost with what the constraint bought. Measure the baseline
+    # first, then raise it to 0.1 as the other configs do.
     electron_count_weight: 0.0
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0

@@ -48,6 +48,7 @@ nothing downstream changes.
 """
 
 import os
+import warnings
 from abc import ABC, abstractmethod
 
 from ..fields import (
@@ -256,6 +257,101 @@ class MaterialSource(ABC):
             return field
         return field.smooth(width, self.options.get("blur_method", "spectral"))
 
+    # -- POTCAR library -------------------------------------------------- #
+    def library_potcar(self, structure):
+        r"""
+        The ``POTCAR`` for ``structure``, assembled from ``potcar_dir``.
+
+        Data that carries a structure but no pseudopotentials — a Materials
+        Project charge density, a run whose ``POTCAR`` was stripped — can still
+        have the **exact** local potential reconstructed, provided the
+        pseudopotentials it was computed with are available separately. That is
+        what a library is for.
+
+        Returns ``None``, rather than raising, when no library is configured or
+        when it cannot serve this structure. The caller then falls back to the
+        Gaussian pseudo-ion model, which is worse but not wrong; a hard failure
+        here would turn a quality difference into an outage.
+
+        Parameters
+        ----------
+        structure : Structure
+
+        Returns
+        -------
+        Potcar or None
+            Entries in the structure's species order, every one carrying a
+            complete ``local part`` table.
+        """
+        directory = self.options.get("potcar_dir")
+        if not directory:
+            return None
+
+        from ..fields.vasp.potcar import Potcar
+
+        elements = tuple(dict.fromkeys(structure.elements))
+        entries = [self._library_entry(element) for element in elements]
+        if any(entry is None for entry in entries):
+            return None
+        return Potcar(entries)
+
+    def _library_entry(self, element):
+        """
+        One species' library entry, or ``None`` with a warning.
+
+        Cached and warned about **per element**, not per composition. A
+        five-element space has thirty-one compositions and only five facts to
+        report; warning per composition would bury the five in repetition.
+        """
+        cache = self.__dict__.setdefault("_potcar_cache", {})
+        if element in cache:
+            return cache[element]
+
+        from ..fields.vasp.potcar import Potcar
+
+        directory = self.options["potcar_dir"]
+        entry = None
+        try:
+            entry = Potcar.from_library(directory, [element])[0]
+        except (FileNotFoundError, ValueError, OSError) as error:
+            warnings.warn(
+                f"No usable {element!r} POTCAR in the library {directory}: "
+                f"{error} Using the Gaussian pseudo-ion model for every "
+                f"structure containing {element}.",
+                RuntimeWarning, stacklevel=4,
+            )
+
+        # A truncated table parses without error but cannot be splined onto the
+        # PSGMAX mesh, so gate on completeness rather than on presence.
+        if entry is not None and not entry.has_local_table:
+            warnings.warn(
+                f"The {element!r} POTCAR in {directory} carries no complete "
+                f"local-potential table; using the Gaussian pseudo-ion model "
+                f"for every structure containing {element}.",
+                RuntimeWarning, stacklevel=4,
+            )
+            entry = None
+
+        cache[element] = entry
+        return entry
+
+    def potential_model(self):
+        """
+        Which construction this source uses for :math:`V_{\\rm ext}`.
+
+        Two possible answers, ``"tabulated"`` and ``"gaussian"``, and the
+        difference is the single most consequential property of a training set:
+        they are different physical quantities, not different approximations to
+        one. It is reported in the log, and it is what
+        :class:`~poraque.data.dataset.MixedFieldDataset` compares across
+        sources before deciding whether a mixture needs a warning.
+
+        Returns
+        -------
+        str
+        """
+        return "tabulated" if self.options.get("potcar_dir") else "gaussian"
+
 
 # ---------------------------------------------------------------------- #
 # A: a DFT calculation directory
@@ -289,13 +385,16 @@ class CalculationSource(MaterialSource):
         Keep only subdirectories whose name starts with this. The usual reason
         is a sibling directory of isolated-atom references that must not be
         trained on.
+    potcar_dir : str
+        A ``POTCAR`` library, used only for runs that have no ``POTCAR`` of
+        their own — routinely stripped from archived calculations for licensing
+        reasons. It restores the *exact* tabulated construction rather than
+        dropping to a model form factor.
     charges : dict
         ``{element: Z_val}`` overriding the pseudopotential valence charges.
-        Normally unnecessary — the ``POTCAR`` states them — but ``POTCAR``
-        files are routinely stripped from archived runs for licensing reasons,
-        and without the charges the potential cannot be built at all. The same
-        option means the same thing for :class:`BulkDensitySource`, so one
-        mapping covers a mixture.
+        The last resort when neither the run nor a library supplies them: it
+        selects the Gaussian model. The same option means the same thing for
+        :class:`BulkDensitySource`, so one mapping covers a mixture.
     sigma, gaussian_blur, blur_method
         Passed to the potential construction.
     """
@@ -347,14 +446,59 @@ class CalculationSource(MaterialSource):
     def reference_file(self, record):
         return record.files["CHGCAR"]
 
+    def potential_model(self):
+        """
+        ``"tabulated"`` when the runs, or a library, supply pseudopotentials.
+
+        Checked against the discovered runs rather than assumed: a calculation
+        archive normally carries its own ``POTCAR``\\ s and needs no library,
+        but a stripped one falls back to the Gaussian model unless
+        ``potcar_dir`` covers it.
+        """
+        if self.options.get("potcar_dir"):
+            return "tabulated"
+        records = self.discover()
+        if records and all(os.path.exists(os.path.join(r.directory, "POTCAR"))
+                           for r in records):
+            return "tabulated"
+        return "gaussian"
+
+    def _external_potential(self, record, grid):
+        """
+        Build :math:`V_{\\rm ext}` from the calculation's own inputs.
+
+        A ``POTCAR`` in the directory is used as it stands, which is the exact
+        tabulated route and the normal case. When the run has none — routinely
+        stripped from archived calculations for licensing — the ``potcar_dir``
+        library stands in for it, which keeps the *same* construction rather
+        than silently dropping to a model form factor.
+        """
+        reader = self._reader(record.directory)
+        has_own = os.path.exists(os.path.join(record.directory, "POTCAR"))
+
+        if not has_own:
+            from ..fields.vasp.poscar import Poscar
+
+            structure = Poscar.from_file(reader.structure_path(record.directory))
+            potcar = self.library_potcar(structure)
+            if potcar is not None:
+                return ExternalPotential.from_potcar_tables(
+                    structure, grid, potcar,
+                    metadata={"code": reader.code,
+                              "source": str(record.directory),
+                              "derived_from": "POSCAR + POTCAR library",
+                              "potcar_dir": str(self.options["potcar_dir"])},
+                )
+
+        return ExternalPotential.from_calculation(
+            record.directory, code=reader.code, grid=grid,
+            sigma=self.options.get("sigma"),
+            zval=self.options.get("charges"),
+        )
+
     def read(self, record, name, grid, spin=False):
         if name == "EXTCAR":
-            reader = self._reader(record.directory)
-            return self._blur(ExternalPotential.from_calculation(
-                record.directory, code=reader.code, grid=grid,
-                sigma=self.options.get("sigma"),
-                zval=self.options.get("charges"),
-            ))
+            return self._blur(self._external_potential(record, grid))
 
         path = record.files.get(name)
         if path is None:
@@ -401,12 +545,20 @@ class BulkDensitySource(MaterialSource):
 
     Options
     -------
+    potcar_dir : str
+        A ``POTCAR`` library. **This is what closes the gap above.** The
+        archive supplies the structure and the library supplies the
+        pseudopotentials, which together are everything the exact tabulated
+        construction needs — so with it the caveat does not apply and the
+        potential is VASP's own to a relative :math:`2\times10^{-5}`.
     charges : dict
-        ``{element: Z_val}``. Inferred from the densities when omitted.
+        ``{element: Z_val}``. Taken from the library when one is configured,
+        and otherwise inferred from the densities.
     prefixes : sequence of str
         Filename prefixes identifying a density.
     sigma, gaussian_blur, blur_method
-        Passed to the potential construction.
+        Passed to the Gaussian construction, which is only reached without a
+        library.
     """
 
     name = "bulk"
@@ -462,19 +614,68 @@ class BulkDensitySource(MaterialSource):
 
     @property
     def charges(self):
-        """
-        ``{element: Z_val}`` in force, inferred from the densities on first use.
+        r"""
+        ``{element: Z_val}`` in force.
 
-        Deferred rather than resolved in ``__init__`` because inference reads
-        densities, and a caller that only wants to enumerate the archive — or
-        that supplies the charges itself — should never pay for that.
+        Three sources, in order:
+
+        1. an explicit ``charges`` option;
+        2. the ``ZVAL`` of each species in the ``potcar_dir`` library, which is
+           where the number actually comes from;
+        3. inference from the densities — a ``CHGCAR`` integrates to its cell's
+           valence electron count, giving one linear equation per material in
+           the per-element charges. This is what makes an archive usable with
+           no pseudopotentials at all.
+
+        Deferred rather than resolved in ``__init__``, because both (2) and (3)
+        read files and a caller that only wants to enumerate the archive should
+        never pay for that.
         """
         if self._charges is None:
-            from .mp_dataset import infer_valence_charges
-
-            self._charges = infer_valence_charges(
-                self.discover(), log=self.options.get("log"))
+            self._charges = self._resolve_charges()
         return self._charges
+
+    def _resolve_charges(self):
+        """Valence charges from the library where it has them, else inferred."""
+        from .mp_dataset import infer_valence_charges
+
+        records = self.discover()
+        log = self.options.get("log")
+
+        from_library = {}
+        if self.options.get("potcar_dir"):
+            from ..fields.vasp.volumetric import read_structure_header
+            from ..fields.vasp.potcar import Potcar, find_potcar
+
+            # Header reads only: a few hundred bytes per material.
+            elements = sorted({element for record in records
+                               for element in
+                               read_structure_header(
+                                   record.files["CHGCAR"]).elements})
+            for element in elements:
+                try:
+                    entry = Potcar.from_library(
+                        self.options["potcar_dir"], [element],
+                        parse_tables=False)[0]
+                except (FileNotFoundError, ValueError, OSError):
+                    continue        # inference covers it below
+                from_library[element] = float(entry.zval)
+
+            if from_library and log:
+                log("      valence charges from the POTCAR library: "
+                    + ", ".join(f"{e}={z:g}"
+                                for e, z in sorted(from_library.items())))
+
+        try:
+            return infer_valence_charges(records, overrides=from_library,
+                                         log=log)
+        except ValueError:
+            # The compositions cannot determine what the library did not
+            # supply. That is only fatal if something still needs a charge,
+            # and the tabulated path does not -- so hand back what is known.
+            if from_library:
+                return from_library
+            raise
 
     def provides(self, record):
         return ("EXTCAR", "CHGCAR")
@@ -495,19 +696,46 @@ class BulkDensitySource(MaterialSource):
         return self._blur(self._external_potential(record, grid))
 
     def _external_potential(self, record, grid):
-        """Build :math:`V_{\\rm ext}` from the structure the density carries."""
+        r"""
+        Build :math:`V_{\rm ext}` from the structure the density carries.
+
+        Two constructions, and which one runs is the single most consequential
+        thing about a model trained on this data:
+
+        **With a ``potcar_dir``** the tabulated local pseudopotential is used —
+        VASP's own ``POTION`` formula, reproducing a reference ``EXTCAR`` to a
+        relative :math:`2\times10^{-5}`. The archive supplies the structure and
+        the library supplies the pseudopotentials, which together are
+        everything the exact construction needs.
+
+        **Without one** the Gaussian pseudo-ion model is used, whose residual
+        against that reference is of order :math:`0.1` relative :math:`L_2`.
+        The map learned is then *model potential* :math:`\to` *DFT density* —
+        well-posed and self-consistent, since inference builds the same
+        potential, but not VASP's :math:`V_{\rm ext}`.
+        """
         from ..fields.external import _widths_from_pseudopotentials
         from ..fields.vasp.volumetric import read_structure_header
 
         structure = read_structure_header(record.files["CHGCAR"])
+
+        potcar = self.library_potcar(structure)
+        if potcar is not None:
+            return ExternalPotential.from_potcar_tables(
+                structure, grid, potcar,
+                metadata={"source": "bulk density archive", "code": "vasp",
+                          "derived_from": "CHGCAR header + POTCAR library",
+                          "potcar_dir": str(self.options["potcar_dir"])},
+            )
+
         charges = self.charges
         missing = sorted({element for element in structure.elements
                           if element not in charges})
         if missing:
             raise ValueError(
                 f"{record.identifier}: no valence charge for {missing}. Pass "
-                f"charges={{'X': Z}}, or include materials whose compositions "
-                f"determine them."
+                f"charges={{'X': Z}} or potcar_dir=, or include materials "
+                f"whose compositions determine them."
             )
 
         widths = _widths_from_pseudopotentials(
@@ -519,7 +747,15 @@ class BulkDensitySource(MaterialSource):
         )
 
     def describe(self):
-        return f"{self.name}: {self.root} (V_ext from the CHGCAR headers)"
+        # "where it reaches" rather than a flat claim: a library that misses a
+        # species falls back for that species alone, and the line must not
+        # promise a construction some of the materials did not get.
+        origin = (f"V_ext tabulated from {self.options['potcar_dir']} where it "
+                  f"reaches, Gaussian otherwise"
+                  if self.potential_model() == "tabulated"
+                  else "V_ext from the Gaussian pseudo-ion model")
+        return (f"{self.name}: {self.root} (structures from the CHGCAR "
+                f"headers, {origin})")
 
 
 # ---------------------------------------------------------------------- #
@@ -544,6 +780,13 @@ class PreparedFieldsSource(MaterialSource):
     """
 
     name = "prepared"
+
+    def potential_model(self):
+        """
+        ``"cached"`` --- whatever wrote the ``EXTCAR`` decided, and it is not
+        recoverable from the file.
+        """
+        return "cached"
 
     @classmethod
     def detect(cls, root):

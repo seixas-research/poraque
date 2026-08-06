@@ -20,7 +20,7 @@ data:
 | Layout | Recognised by | $V_\mathrm{ext}$ from | $\tau$ |
 | --- | --- | --- | --- |
 | `vasp` — a DFT calculation, or a directory of them | a `POSCAR` or `CONTCAR` | `POSCAR` + `POTCAR` tables, **exact** | read from `TAUCAR` when the run wrote one |
-| `bulk` — standalone `CHGCAR` files, compressed or not | density files with no `POSCAR` | the density's own header, Gaussian model | never — no archive publishes it |
+| `bulk` — standalone `CHGCAR` files, compressed or not | density files with no `POSCAR` | the density's own header, plus `potcar_dir` if set | never — no archive publishes it |
 | `prepared` — per-material field directories | `EXTCAR`/`CHGCAR`/`TAUCAR` inside subdirectories | read from `EXTCAR` | read from `TAUCAR` |
 
 Detection is by content, never by name, and `source: auto` is the default. Set
@@ -100,33 +100,55 @@ recoverable or unnecessary:
 So the recipe for a broad `ext2chg` model is:
 
 ```bash
-poraque-mp --elements Ag Au Pt --outdir data/MP --estimate   # size it first
-poraque-mp --elements Ag Au Pt --outdir data/MP --max-size-mb 20
+poraque-mp --elements Ag Au Pt --estimate                    # size it first
+poraque-mp --elements Ag Au Pt --output data/MP --max-size-mb 20
 poraque-train --config configs/train_mp_config.yaml
 ```
 
 and to specialise it on your own chemistry afterwards, point `train_paths` at
 both archives, or fine-tune (see {doc}`../fine_tuning/index`).
 
-```{warning}
-**Mixing archives mixes two definitions of $V_\mathrm{ext}$.** A calculation
-directory has a `POTCAR`, so its potential is the tabulated local
-pseudopotential — accurate to a relative $2\times10^{-5}$ against VASP's own
-field. A bulk archive has none, so its potential is the Gaussian pseudo-ion
-model, which differs from the tabulated form by roughly $0.1$ relative $L_2$.
-Train across both and the input field is two different quantities under one
-name; the operator spends capacity reconciling them, and any comparison against
-a model trained on tabulated potentials has to say so.
+## The third missing piece: pseudopotentials
 
-The run warns when it happens. The trade is often worth making — far more data
-and far more chemistry, for a fuzzier input — but it should never be an
-accident. Setting `data.sigma` from a fit against a reference `EXTCAR` narrows
-the gap.
+The structure and the valence charges are recoverable from the density. The
+**pseudopotentials are not**, and they are what the exact external potential is
+built from. This is the one gap the data cannot close by itself, and
+`data.potcar_dir` is how you close it:
+
+```yaml
+data:
+  train_paths: [data/MP]
+  potcar_dir: /opt/vasp/potpaw_PBE
 ```
 
-Note the same caveat applies to an MP-only model: it learns *model potential*
-$\to$ *DFT density*. That is a well-posed and self-consistent problem — inference
-builds the very same potential — but it is not VASP's $V_\mathrm{ext}$.
+With the library, the archive supplies the structure and the library supplies
+the pseudopotentials — together everything VASP's own `POTION` construction
+needs — and $V_\mathrm{ext}$ is accurate to a relative $2\times10^{-5}$.
+Without it, the Gaussian pseudo-ion model stands in. On the Ag–Au–Pt set the
+two differ by **0.38 relative $L_2$**: different fields, not different
+roundings of one. A species the library cannot serve warns once and falls back
+on its own; the rest still get the exact potential. See
+{ref}`the configuration reference <potcar-dir-and-the-gaussian-fallback>` for
+the layouts recognised.
+
+```{warning}
+**Mixing archives can mix two definitions of $V_\mathrm{ext}$.** A calculation
+directory has a `POTCAR`, so its potential is tabulated. A bulk archive with no
+`potcar_dir` uses the Gaussian model. Train across both and the input field is
+two different quantities under one name; the operator spends capacity
+reconciling them, and any comparison against a model trained on tabulated
+potentials has to say so.
+
+The run warns when it happens, and the warning is keyed on the *construction*
+rather than the layout — so setting `potcar_dir` makes both sources tabulated,
+makes the mixture one quantity again, and silences the warning correctly rather
+than merely suppressing it.
+```
+
+Without a library, an MP-only model learns *model potential* $\to$ *DFT
+density*. That is a well-posed and self-consistent problem — inference builds
+the very same potential — but it is not VASP's $V_\mathrm{ext}$, and it should
+be stated wherever the model's numbers are.
 
 ## Fetching from the Materials Project
 
@@ -142,9 +164,14 @@ from poraque.data import MPDataFetcher
 with MPDataFetcher(["Ag", "Au", "Pt"], outdir="data/MP",
                    band_gap=(0.0, 0.0),        # metals
                    num_sites=(1, 8)) as mp:
-    print(mp.estimate())                       # nothing transferred yet
+    mp.dry_run()                               # report only; writes nothing
     mp.run(max_size_mb=20)                     # resumable
 ```
+
+On the command line `--estimate` is that dry run: it prints the file count and
+the total transfer to the console and leaves **no file behind**, not even a
+summary. Everything else is written under `--output` (equivalently `--outdir`),
+which defaults to the current directory.
 
 The API key is read from `api_key=`, then `$MP_API_KEY`, then a local `.env`,
 then `~/.env`, so it never has to appear in a config or a shell history.

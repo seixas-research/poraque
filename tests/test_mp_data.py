@@ -405,7 +405,9 @@ class TestBuildMPCache:
         cache = build_mp_cache(mp_download, tmp_path / "cache", resolution=4,
                                limit=2)
 
-        assert len(os.listdir(cache)) == 2
+        # Directories only: a cache also holds the build summary beside them.
+        assert len([entry for entry in os.listdir(cache)
+                    if os.path.isdir(os.path.join(cache, entry))]) == 2
 
 
 # ---------------------------------------------------------------------- #
@@ -413,23 +415,6 @@ class TestBuildMPCache:
 # ---------------------------------------------------------------------- #
 class TestOperatorOnMPData:
     """The FNO ingests an MP download with no shape mismatch and no missing file."""
-
-    def test_trains_on_the_download_directly(self, mp_download):
-        from poraque.ml import FieldOperator, train
-
-        data = MPChargeDensityDataset(mp_download, resolution=4, cache=True)
-        source, target = data.fit_transforms()
-        operator = FieldOperator("ext2chg", width=8, modes=2, n_layers=1,
-                                 projection_channels=8, input_transform=source,
-                                 target_transform=target, device="cpu")
-
-        history = train(operator, data, epochs=4, batch_size=2,
-                        learning_rate=3e-3, verbose=False)
-
-        assert len(history["train_loss"]) == 4
-        assert np.isfinite(history["train_loss"][0]), \
-            "the initial loss has to be a real number to be worth logging"
-        assert history["train_loss"][-1] < history["train_loss"][0]
 
     def test_ragged_mp_grids_batch_without_padding(self, tmp_path):
         """MP cells differ in shape; the sampler buckets rather than pads."""

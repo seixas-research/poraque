@@ -71,6 +71,7 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+docs/_build_check/
 
 # PyBuilder
 .pybuilder/
@@ -225,8 +226,7 @@ models/
 # Materials Project downloads. Hundreds of megabytes of charge densities that
 # `poraque-mp` re-fetches on demand, so the repository carries the query rather
 # than its result. The metadata beside them is small and stays.
-data/MP/chgcar/
-data/MP/structures/
+data/MP/
 
 # VASP files
 POTCAR

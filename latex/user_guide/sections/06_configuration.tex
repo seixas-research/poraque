@@ -59,20 +59,33 @@ Key & Default & Meaning \\
 \toprule
 Key & Default & Meaning \\
 \midrule
-\opt{root} & \opt{data/vasp} & Directory holding one subdirectory per
-material. \\
+\opt{train\_paths} & \opt{null} & List of dataset directories, which may mix
+layouts. Falls back to \opt{root}. \\
+\opt{root} & \opt{data/vasp} & Single dataset directory, used when
+\opt{train\_paths} is \opt{null}. \\
+\opt{source} & \opt{auto} & Layout of each path: \opt{auto}, \opt{vasp},
+\opt{bulk} or \opt{prepared}. \\
 \opt{cache} & \opt{data/cache} & Where downsampled copies are written. \\
-\opt{pattern} & \opt{struct} & Prefix identifying those subdirectories --- a
-prefix, not a glob. \\
+\opt{pattern} & \opt{struct} & Prefix identifying subdirectories of a
+\opt{vasp} path --- a prefix, not a glob. \\
 \opt{code} & \opt{auto} & DFT code, or \opt{auto} to detect it from the files
 present. \\
 \opt{resolution} & \opt{32} & Longest grid axis after spectral downsampling. \\
+\opt{potcar\_dir} & \opt{null} & \file{POTCAR} library, used where the data
+ships no pseudopotentials. \\
+\opt{sigma} & \opt{null} & Gaussian pseudo-ion width in \AA{}, where the
+Gaussian model is reached. \\
 \opt{gaussian\_blur} & \opt{null} & Gaussian blur width in \AA{} applied to the
 computed potential. \\
 \opt{blur\_method} & \opt{spectral} & \opt{spectral} or \opt{ndimage}. \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\opt{source} and \opt{train\_paths} are covered in
+Chapter~\ref{ch:data}; \opt{potcar\_dir} and its Gaussian fallback in
+Section~\ref{sec:mp-potcar-dir}, which is the setting to read before quoting
+any number from a run on archive data.
 
 \subsection{\opt{resolution}}
 

@@ -243,3 +243,94 @@ set is pure gold. And \opt{ISPIN=2} writes a second block in both \file{CHGCAR}
 and \file{TAUCAR} which the reader currently ignores --- correct for these
 \opt{ISPIN=1} runs, a silent truncation otherwise.
 \end{pwarn}
+
+\section{When the pseudopotentials are absent}
+\label{sec:vext-without-potcar}
+
+Everything above assumes a \file{POTCAR} is at hand. A large and growing class
+of training data does not have one: the Materials Project publishes converged
+charge densities for a substantial fraction of its materials and ships a
+density and nothing else --- no \file{POSCAR}, no \file{INCAR}, no
+\file{POTCAR}, no \file{OUTCAR}, no \file{TAUCAR}. Since $\vext$ is the
+\emph{input} of the first learned map, its construction there deserves stating
+precisely.
+
+\subsection{What the density alone can supply}
+
+Two of the three ingredients are recoverable from the file itself.
+
+\paragraph{The geometry.} A \file{CHGCAR} opens with a complete \file{POSCAR}
+block, so the lattice, the species and the fractional coordinates come from the
+density. Nothing is inferred.
+
+\paragraph{The valence charges.} A pseudopotential density integrates to the
+valence electron count of its own cell,
+\begin{equation}
+  \label{eq:zvalsystem}
+  \sum_s n^{(m)}_s\, Z^{\mathrm{val}}_s \;=\; N^{(m)}_e
+  \;=\; \frac{1}{N_1N_2N_3}\sum_\rr \file{CHGCAR}^{(m)}(\rr),
+\end{equation}
+one linear equation per material $m$ in the per-element charges, with the
+stoichiometry $n^{(m)}_s$ read from the header. A chemical space with more
+distinct compositions than elements over-determines the system, and least
+squares recovers the charges the \file{POTCAR} would have stated. Only as many
+densities are read as the system needs --- candidates are taken
+smallest-file-first and accepted only while they add rank --- so a
+hundred-material space costs a handful of small reads rather than a full pass.
+
+On the Ag--Au--Pt space this returns $11$, $11$ and $10$ with a residual of
+zero to machine precision, from three elemental cells: exactly the \opt{ZVAL}
+of the three \opt{PAW\_PBE} potentials, read off the data.
+
+\subsection{What it cannot: the short-range table}
+
+The third ingredient is $v^s_{\mathrm{short}}(G)$, and no density determines it.
+Equation~\eqref{eq:vaspextcar} splits $\vext$ into a Coulomb tail fixed by
+$Z^{\mathrm{val}}$ --- now known --- and a short-range remainder that is a
+property of the \emph{pseudopotential}, not of the system it was used on. Two
+routes remain.
+
+\paragraph{Supply the library.} \opt{data.potcar\_dir} points at a
+\file{POTCAR} library, one entry per species as VASP distributes them. The
+archive then supplies the structure and the library the pseudopotentials, which
+together are everything Eq.~\eqref{eq:vaspextcar} requires: the construction is
+the same one, and so is the accuracy, a relative $2\times10^{-5}$.
+
+This is not merely the better option, it is the one that keeps the input field a
+\emph{single physical quantity} across a mixed dataset. Training on archive
+densities beside local runs otherwise means the operator sees two different
+definitions of $\vext$ wearing one name.
+
+\paragraph{Fall back to the model form factor.} Absent a library, the Gaussian
+pseudo-ion model is used --- $f_s(G)=e^{-G^2\sigma_s^2/2}$ in place of the
+tabulated $v^s_{\mathrm{short}}$ --- with $\sigma$ defaulting to $0.5$~\AA{},
+since no \opt{RCORE} is available to derive one from either. Measured on the
+Ag--Au--Pt densities, the two constructions differ from \emph{each other} by
+\begin{equation}
+  \frac{\lVert \vext^{\mathrm{tab}} - \vext^{\mathrm{gauss}} \rVert_2}
+       {\lVert \vext^{\mathrm{tab}} \rVert_2} \;=\; 0.38 ,
+\end{equation}
+comparable with the $0.13$ that the best-fit $\sigma$ reaches against a
+reference \file{EXTCAR}, and far above any accuracy the learned map is expected
+to reach. The inversion argument above settles why this cannot be fitted away:
+the empirical $f(G)$ oscillates about zero at large $G$ and no monotonic
+Gaussian reproduces that.
+
+\subsection{What the fallback licenses}
+
+A model trained without the library learns
+\begin{equation}
+  \vext^{\mathrm{gauss}} \;\longmapsto\; \rho^{\mathrm{DFT}} ,
+\end{equation}
+which is a well-posed and self-consistent learning problem --- the same model
+potential is constructed at inference time, so the map is single-valued and the
+operator is never asked to reconcile two inputs. It is simply \emph{not the
+Hohenberg--Kohn map of VASP's} $\vext$. Its accuracy is therefore not
+comparable with a model trained on tabulated potentials, and any table putting
+the two side by side has to say which construction each used.
+
+Degradation is per species, not per dataset: a library missing one element of
+five falls back for the structures containing that element and keeps the exact
+potential for all the others. The run states the construction it used for each
+source, and the cache directory name records it, so the two can never be mixed
+in one cache by accident.

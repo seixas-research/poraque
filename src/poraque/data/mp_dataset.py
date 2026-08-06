@@ -363,11 +363,6 @@ class MPChargeDensityDataset(MixedFieldDataset):
     **kwargs
         Passed to :class:`~poraque.data.dataset.MixedFieldDataset`.
 
-    Attributes
-    ----------
-    charges : dict
-        The valence charges in use, whether supplied or inferred.
-
     Examples
     --------
     >>> from poraque.data import MPChargeDensityDataset

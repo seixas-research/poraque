@@ -21,10 +21,17 @@ cd poraque
 pip install -e .
 \end{lstlisting}
 
-This pulls in NumPy, SciPy, ASE, Matplotlib, PyYAML and PyTorch. A working
-\opt{pdflatex} or \opt{latexmk} is needed only for the automatic PDF reports
-of Section~\ref{sec:pdfreports}; without one the pipeline still runs and simply
-writes the \LaTeX{} source instead.
+This pulls in NumPy, SciPy, ASE, Matplotlib, PyYAML and PyTorch, together with
+\opt{mp-api} and \opt{python-dotenv} for the Materials Project ingestion of
+Chapter~\ref{ch:vasp}. A working \opt{pdflatex} or \opt{latexmk} is needed only
+for the automatic PDF reports of Section~\ref{sec:pdfreports}; without one the
+pipeline still runs and simply writes the \LaTeX{} source instead.
+
+Four console commands are registered: \opt{poraque-train},
+\opt{poraque-inference}, \opt{poraque-committee} and \opt{poraque-mp}. The last
+fetches charge densities for a chemical space; its \opt{--estimate} flag is a
+pure dry run that reports the exact transfer size on the console and writes
+nothing, and its output directory defaults to the current one.
 
 \section{Configuration}
 
@@ -76,6 +83,27 @@ present in any standard run, the external potential is not. Sourcing the grid
 from a file that may not exist would have reintroduced the dependency through
 the back door.
 \end{ptip}
+
+\subsection{Data that ships no pseudopotentials}
+
+The construction above needs a \file{POTCAR}, and a public density archive does
+not have one. \opt{data.potcar\_dir} names a \file{POTCAR} \emph{library} to
+stand in --- one entry per species, as VASP distributes them --- so a Materials
+Project download gets the same tabulated potential a local run does, from the
+structure the density carries in its own header. The library is consulted only
+where the data itself has nothing; a run with its own \file{POTCAR} ignores it.
+
+Without a library the Gaussian pseudo-ion model is used instead, at a relative
+$L^2$ of order $10^{-1}$ rather than $10^{-5}$, and the two constructions differ
+from each other by $0.38$ on the Ag--Au--Pt set.
+Section~\ref{sec:vext-without-potcar} works through what that does and does not
+license; the short version is that it remains a well-posed learning problem but
+stops being the Hohenberg--Kohn map of VASP's $\vext$.
+
+Because these are different physical quantities rather than different roundings
+of one, they must never share a cache: the cache directory name records which
+was used (\file{res32\_potcar}), and a dataset mixing sources that disagree
+raises a warning naming both.
 
 \section{Gaussian smoothing of the potential}
 \label{sec:smoothing}

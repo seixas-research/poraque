@@ -52,7 +52,10 @@ that tail back analytically in ``POTION``. See
 :class:`poraque.fields.ExternalPotential` for the reconstruction.
 """
 
+import gzip
+import os
 import re
+import warnings
 
 import numpy as np
 
@@ -75,8 +78,6 @@ class PotcarSingle:
     ----------
     symbol : str
         POTCAR variant symbol, e.g. ``"Si"``, ``"Fe_pv"``, ``"Ga_d"``.
-    element : str
-        Bare chemical symbol (``"Fe_pv"`` -> ``"Fe"``).
     zval : float
         Valence (pseudo-ion) charge in units of ``+e``.
     enmax : float or None
@@ -263,9 +264,66 @@ class Potcar(list):
 
     @classmethod
     def from_file(cls, path, parse_tables=False):
-        """Read a POTCAR from ``path``."""
-        with open(path, "r", errors="replace") as handle:
-            return cls.from_string(handle.read(), parse_tables=parse_tables)
+        """Read a POTCAR from ``path``, transparently handling ``.gz``/``.Z``."""
+        return cls.from_string(read_potcar_text(path),
+                               parse_tables=parse_tables)
+
+    @classmethod
+    def from_library(cls, directory, elements, parse_tables=True):
+        """
+        Assemble a ``POTCAR`` for ``elements`` from a library directory.
+
+        A ``POTCAR`` library is what VASP ships: one directory per species,
+        each holding that species' file. This builds the concatenation a
+        calculation would have used, **in the order given**, which is the order
+        the structure lists its species in — a ``POTCAR`` whose species order
+        disagrees with the ``POSCAR`` describes a different system.
+
+        Its reason for existing is data that has a structure but no
+        pseudopotentials: a Materials Project charge density, or a local run
+        whose ``POTCAR`` was stripped for licensing. With the library the exact
+        tabulated local potential can be reconstructed; without it only a model
+        form factor can.
+
+        Parameters
+        ----------
+        directory : str or pathlib.Path
+            Library root; see :func:`find_potcar` for the layouts recognised.
+        elements : sequence of str
+            Bare chemical symbols, in species order.
+        parse_tables : bool, optional
+            Read the ``local part`` tables too. On by default, because the
+            exact potential is the only reason to consult a library at all.
+
+        Returns
+        -------
+        Potcar
+
+        Raises
+        ------
+        FileNotFoundError
+            If any element is missing from the library.
+        ValueError
+            If an entry holds more than one dataset, or is for the wrong
+            element.
+        """
+        entries = []
+        for element in elements:
+            path = find_potcar(directory, element)
+            single = cls.from_string(read_potcar_text(path),
+                                     parse_tables=parse_tables)
+            if len(single) != 1:
+                raise ValueError(
+                    f"{path} holds {len(single)} datasets; a library entry "
+                    f"must contain exactly one."
+                )
+            if single[0].element != element:
+                raise ValueError(
+                    f"{path} is a POTCAR for {single[0].element!r}, not "
+                    f"{element!r}."
+                )
+            entries.append(single[0])
+        return cls(entries)
 
     @property
     def symbols(self):
@@ -310,6 +368,106 @@ class Potcar(list):
 
     def __repr__(self):
         return f"Potcar({', '.join(self.symbols)})"
+
+
+# ---------------------------------------------------------------------- #
+# POTCAR libraries
+# ---------------------------------------------------------------------- #
+#: Filenames a library entry may use, in preference order.
+POTCAR_NAMES = ("POTCAR", "POTCAR.gz", "POTCAR.Z")
+
+
+def read_potcar_text(path):
+    """Read a ``POTCAR``, transparently handling ``.gz``/``.Z`` compression."""
+    path = str(path)
+    if path.endswith((".gz", ".Z")):
+        with gzip.open(path, "rt", errors="replace") as handle:
+            return handle.read()
+    with open(path, "r", errors="replace") as handle:
+        return handle.read()
+
+
+def find_potcar(directory, element):
+    r"""
+    Locate the ``POTCAR`` for ``element`` inside a library directory.
+
+    Recognised layouts, in preference order:
+
+    1. ``<dir>/<element>/POTCAR`` --- what VASP ships;
+    2. ``<dir>/<element>_<variant>/POTCAR`` --- ``Au_pv``, ``Fe_sv``, ...;
+    3. ``<dir>/POTCAR.<element>`` or ``<dir>/<element>.POTCAR`` --- flat.
+
+    Each accepts a ``.gz`` or ``.Z`` suffix.
+
+    Parameters
+    ----------
+    directory : str or pathlib.Path
+        Library root.
+    element : str
+        Bare chemical symbol.
+
+    Returns
+    -------
+    str
+        Path to the file.
+
+    Raises
+    ------
+    FileNotFoundError
+        When nothing matches, listing what the directory does contain.
+    ValueError
+        When only *variant* directories match and there is more than one. The
+        choice between ``Fe`` and ``Fe_pv`` changes ``ZVAL`` and therefore
+        every energy, so it is the user's to make, not a coin flip.
+    """
+    directory = str(directory)
+
+    exact = os.path.join(directory, element)
+    if os.path.isdir(exact):
+        for name in POTCAR_NAMES:
+            candidate = os.path.join(exact, name)
+            if os.path.isfile(candidate):
+                return candidate
+
+    for stem in (f"POTCAR.{element}", f"{element}.POTCAR"):
+        for suffix in ("", ".gz", ".Z"):
+            candidate = os.path.join(directory, stem + suffix)
+            if os.path.isfile(candidate):
+                return candidate
+
+    variants = sorted(
+        entry for entry in os.listdir(directory)
+        if entry.startswith(f"{element}_")
+        and os.path.isdir(os.path.join(directory, entry))
+        and any(os.path.isfile(os.path.join(directory, entry, name))
+                for name in POTCAR_NAMES)
+    )
+    if len(variants) == 1:
+        chosen = os.path.join(directory, variants[0])
+        for name in POTCAR_NAMES:
+            candidate = os.path.join(chosen, name)
+            if os.path.isfile(candidate):
+                warnings.warn(
+                    f"No plain {element!r} POTCAR in {directory}; using the "
+                    f"only variant present, {variants[0]!r}.",
+                    RuntimeWarning, stacklevel=4,
+                )
+                return candidate
+    if len(variants) > 1:
+        raise ValueError(
+            f"No plain {element!r} POTCAR in {directory}, and several "
+            f"variants exist: {variants}. They differ in ZVAL and therefore "
+            f"in every energy, so name the one you want by passing an "
+            f"explicit potcar= file."
+        )
+
+    available = sorted(entry for entry in os.listdir(directory)
+                       if not entry.startswith("."))[:20]
+    raise FileNotFoundError(
+        f"No POTCAR for {element!r} under {directory}. Expected "
+        f"{element}/POTCAR, POTCAR.{element} or {element}.POTCAR. "
+        f"The directory contains: {available}"
+    )
 
 
 def _to_float(token):

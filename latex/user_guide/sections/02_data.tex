@@ -50,7 +50,178 @@ A result that misses the integer points at a truncated or misread file long
 before any model is trained.
 
 \opt{poraque-train} does not repeat this check, but it does stop with an error
-on a missing \file{CHGCAR} or \file{TAUCAR}, and it reports how many points a
-field drives negative when it is band-limited to \opt{data.resolution} --- Gibbs
-ringing around the core peaks, which is an artefact of the truncation rather
-than a fault in the data.
+on a missing \file{CHGCAR}, and it reports how many points a field drives
+negative when it is band-limited to \opt{data.resolution} --- Gibbs ringing
+around the core peaks, which is an artefact of the truncation rather than a
+fault in the data.
+
+A missing \file{TAUCAR} is \emph{not} an error. It simply means the material
+cannot serve \opt{chg2tau}; it remains a perfectly good \opt{ext2chg} training
+example, the cache logs \opt{[no TAUCAR]} beside it, and a run asking for
+\opt{task: all} trains the task the data can support and reports the other as
+skipped.
+
+\section{Downloading from the Materials Project}
+\label{sec:mp-download}
+
+Installing Poraqu\^e registers \opt{poraque-mp}, which turns a \emph{chemical
+space} --- a set of elements --- into a local dataset of charge densities.
+Every material whose composition uses only those elements is fetched, across
+all stoichiometries and structures.
+
+Size it before committing to the transfer. The estimate is exact rather than
+modelled: charge densities are objects in a public S3 bucket, so their sizes
+are read with \opt{HEAD} requests that move no payload.
+
+\begin{lstlisting}
+poraque-mp --elements Ag Au Pt --estimate
+\end{lstlisting}
+
+\begin{lstlisting}
+==================================================================
+  CHGCAR ESTIMATE - Ag-Au-Pt space
+==================================================================
+  Materials in space           : 27
+  FILES TO DOWNLOAD            : 27
+  TOTAL DOWNLOAD               : 193.3 MB
+  Storage if kept gzipped      : 169.9 MB
+  ...
+  27 file(s) to download, 193.3 MB total (169.9 MB on disk gzipped).
+  Dry run: nothing downloaded, nothing written.
+\end{lstlisting}
+
+\opt{--estimate} is a \textbf{pure dry run}: it reports to the console and
+leaves no file behind --- no \file{summary.csv}, no \file{summary.json}, no
+\file{chgcar\_estimate.csv}, not even a directory. Asking how big something
+would be should not create anything.
+
+Then download. \opt{--output} (equivalently \opt{--outdir}) defaults to the
+\textbf{current directory}, so a command that writes hundreds of megabytes puts
+them where you ran it rather than somewhere it chose:
+
+\begin{lstlisting}
+poraque-mp --elements Ag Au Pt --output data/MP --max-size-mb 20
+\end{lstlisting}
+
+Useful filters: \opt{--band-gap MIN MAX} (\opt{0 0} selects metals),
+\opt{--crystal-system}, \opt{--stable-only}, \opt{--num-sites MIN MAX}, and
+\opt{--max-sites} / \opt{--max-size-mb} / \opt{--limit} to cap the download.
+The run is resumable and one failure never aborts the batch; \file{manifest.csv}
+records what landed, what was cached and what failed.
+
+The API key is read from \opt{\$MP\_API\_KEY}, then a local \file{.env}, then
+\file{\textasciitilde/.env}, so it never has to appear in a config file or a
+shell history.
+
+\begin{ptip}
+\textbf{Leave the files gzipped.} Poraqu\^e reads \file{.gz}, \file{.bz2},
+\file{.xz} and \file{.zip} volumetric files in place, streaming them a line at
+a time. Expanding them buys nothing and costs roughly three times the storage.
+\end{ptip}
+
+\section{What an MP download does and does not contain}
+
+It contains one compressed \file{CHGCAR} per material and nothing else --- no
+\file{POSCAR}, \file{INCAR}, \file{POTCAR}, \file{OUTCAR} or \file{TAUCAR}.
+Three consequences, and Poraqu\^e handles the first two for you:
+
+\begin{description}
+  \item[The structure is recoverable.] A \file{CHGCAR} carries its own
+    \file{POSCAR} in its first lines, so the geometry comes from the density
+    itself.
+  \item[The valence charges are recoverable.] A pseudopotential \file{CHGCAR}
+    integrates to its cell's valence electron count, which is one linear
+    equation per material in the per-element $Z^{\mathrm{val}}$. A chemical
+    space of any breadth over-determines them. On the Ag--Au--Pt set this
+    returns $11$, $11$ and $10$ --- the \file{POTCAR} values, read off the
+    data, from three small files.
+  \item[$\tau$ is not.] No public archive publishes a kinetic energy density,
+    so \opt{chg2tau} cannot be trained on MP data at all. Use
+    \opt{task: ext2chg}.
+\end{description}
+
+\section{The external potential without a POTCAR}
+\label{sec:mp-potcar-dir}
+
+The one thing the density cannot supply is the \emph{pseudopotentials}, and
+those are what the exact external potential is built from. Since $\vext$ is the
+model's \emph{input}, this is the single most consequential setting for a run
+on archive data.
+
+Point \opt{data.potcar\_dir} at a \file{POTCAR} library --- one subdirectory
+per species, as VASP distributes them:
+
+\begin{lstlisting}
+data:
+  train_paths:
+    - data/MP
+  potcar_dir: /opt/vasp/potpaw_PBE     # <dir>/Ag/POTCAR, <dir>/Au/POTCAR, ...
+  resolution: 32
+\end{lstlisting}
+
+\file{.gz} and \file{.Z} entries are read directly, and a flat
+\file{POTCAR.Ag} / \file{Ag.POTCAR} layout is recognised too. A run that has
+its own \file{POTCAR} ignores the library entirely --- it is a fallback, not an
+override, and it also rescues local runs whose \file{POTCAR} was stripped for
+licensing.
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Pseudopotentials & $\vext$ & residual vs.\ a reference \file{EXTCAR} \\
+\midrule
+available & tabulated local pseudopotential & $2\times10^{-5}$ relative $L^2$ \\
+none & Gaussian pseudo-ion model & order $10^{-1}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Measured on the Ag--Au--Pt set, the two constructions differ \emph{from each
+other} by $0.38$ relative $L^2$. They are different fields, not different
+roundings of one; the Technical Guide shows why no analytic form factor can
+close that gap.
+
+\begin{pwarn}
+\textbf{Use the library that generated the data.} The Materials Project uses
+the VASP PBE set (\opt{PAW\_PBE}). A \opt{PAW\_LDA} library would build a
+potential the densities were never computed from --- worse than the Gaussian
+fallback, because it looks exact.
+\end{pwarn}
+
+Missing or unreadable entries are not fatal. Each such species warns once and
+falls back to the Gaussian model for the structures containing it, so a library
+covering four elements of five still buys the exact potential for everything
+that does not involve the fifth. The run log names the construction per source,
+and the cache directory records it (\file{res32\_potcar}), so a tabulated cache
+and a Gaussian one can never be mistaken for each other.
+
+Without a library the map learned is \emph{model potential} $\to$ \emph{DFT
+density}: well-posed and self-consistent, since inference builds the very same
+potential, but not VASP's $\vext$. Say so wherever such a model's numbers are
+quoted.
+
+\section{Training on several sources at once}
+
+\opt{data.train\_paths} is a list, and each entry is detected from its contents
+--- a directory of DFT runs, an archive of standalone \file{CHGCAR}s, or a
+prepared cache from an earlier run:
+
+\begin{lstlisting}
+data:
+  train_paths:
+    - data/vasp             # your own calculations
+    - data/MP               # a Materials Project download
+  potcar_dir: /opt/vasp/potpaw_PBE
+\end{lstlisting}
+
+Everything found is pooled into one training set, and identifiers that collide
+between archives are prefixed with their directory so no material is silently
+dropped.
+
+\begin{pwarn}
+Without \opt{potcar\_dir}, mixing a calculation archive with a bulk archive
+mixes \emph{two definitions of} $\vext$ under one name, and the operator spends
+capacity reconciling them. Poraqu\^e warns when it detects this. Setting
+\opt{potcar\_dir} makes both sources use the tabulated construction, which
+resolves the warning correctly rather than merely silencing it.
+\end{pwarn}

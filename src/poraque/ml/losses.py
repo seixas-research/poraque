@@ -29,6 +29,7 @@ import torch.nn as nn
 from .physics import (
     electron_count_loss,
     euler_lagrange_loss,
+    integrate,
     positivity_loss,
     spectral_gradient,
     von_weizsacker_bound_loss,
@@ -94,6 +95,17 @@ class SobolevLoss(nn.Module):
         return loss
 
 
+def _total_density(field):
+    r"""
+    The channel carrying :math:`\rho`, dropping the magnetisation if present.
+
+    A spin-polarised density is stored as :math:`(\rho, m)` and only the first
+    channel integrates to the electron count — :math:`\int m` is the net
+    moment. Charge conservation is a statement about the first alone.
+    """
+    return field[:, :1] if field.dim() == 5 and field.shape[1] > 1 else field
+
+
 class PhysicsInformedLoss(nn.Module):
     r"""
     Composite objective: data fidelity plus physical constraints.
@@ -122,7 +134,12 @@ class PhysicsInformedLoss(nn.Module):
     sobolev_weight : float, optional
         If positive, use :class:`SobolevLoss` with this gradient weight.
     electron_count_weight : float, optional
-        Weight of :math:`\int\rho = N` (``ext2chg`` only).
+        Weight of the **charge-conservation** term :math:`\int\rho = N`
+        (``ext2chg`` only). :math:`N` is taken from ``n_electrons`` when the
+        caller knows it and otherwise from the integral of the reference
+        density, which every batch carries — so the constraint needs no extra
+        labels and works on an archive that publishes densities and nothing
+        else.
     positivity_weight : float, optional
         Weight of the non-negativity penalty.
     von_weizsacker_weight : float, optional
@@ -150,7 +167,7 @@ class PhysicsInformedLoss(nn.Module):
         self.euler_lagrange_lambda = float(euler_lagrange_lambda)
 
     def forward(self, prediction, target, cell=None, physical_prediction=None,
-                physical_input=None, n_electrons=None):
+                physical_input=None, physical_target=None, n_electrons=None):
         r"""
         Evaluate the composite loss.
 
@@ -167,8 +184,15 @@ class PhysicsInformedLoss(nn.Module):
         physical_input : torch.Tensor, optional
             The network input in physical units: :math:`v_{\rm ext}` for
             ``ext2chg``, :math:`\rho` for ``chg2tau``.
+        physical_target : torch.Tensor, optional
+            The reference field in physical units. Supplies the electron count
+            :math:`N = \int\rho\,d^3r` for the charge-conservation term when
+            ``n_electrons`` is not given separately.
         n_electrons : torch.Tensor, optional
-            Valence electron count per structure.
+            Valence electron count per structure. Takes precedence over
+            ``physical_target``: a count read from the pseudopotentials is
+            exact, whereas one integrated from a downsampled reference carries
+            that grid's error.
 
         Returns
         -------
@@ -192,10 +216,21 @@ class PhysicsInformedLoss(nn.Module):
             terms["positivity"] = value.detach()
 
         if self.task == "ext2chg":
-            if self.electron_count_weight > 0.0 and n_electrons is not None:
-                value = electron_count_loss(physical_prediction, cell, n_electrons)
-                total = total + self.electron_count_weight * value
-                terms["electron_count"] = value.detach()
+            if self.electron_count_weight > 0.0:
+                # The reference density is in every batch, so its integral is
+                # always available as the target electron count. Requiring the
+                # count to be supplied separately is what previously left this
+                # term configured-but-inert on any dataset that ships densities
+                # and no valence table -- which is every public archive.
+                count = n_electrons
+                predicted = _total_density(physical_prediction)
+                if count is None and physical_target is not None:
+                    count = integrate(_total_density(physical_target),
+                                      cell).detach()
+                if count is not None:
+                    value = electron_count_loss(predicted, cell, count)
+                    total = total + self.electron_count_weight * value
+                    terms["electron_count"] = value.detach()
 
             if self.euler_lagrange_weight > 0.0 and physical_input is not None:
                 value = euler_lagrange_loss(physical_prediction, physical_input,

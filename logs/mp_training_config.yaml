@@ -1,20 +1,21 @@
-task: all
+task: ext2chg
 data:
   train_paths:
-  - data/MP
+  - data/MP/Ag-Au-Pt
   root: data/vasp
   source: auto
-  cache: data/cache/mp
+  cache: data/cache
   pattern: struct
   code: auto
-  resolution: 32
+  resolution: 40
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
   sigma: null
   gaussian_blur: null
   blur_method: spectral
   spin: auto
 model:
   width: 16
-  modes: 8
+  modes: 12
   n_layers: 4
   projection_channels: 48
   activation: gelu
@@ -27,7 +28,7 @@ model:
   pauli_scale: null
   learn_pauli_scale: true
 training:
-  epochs: 10
+  epochs: 500
   batch_size: 4
   learning_rate: 0.002
   weight_decay: 0.0001
@@ -36,8 +37,8 @@ training:
   valid_fraction: 0.2
   enable_kfold: false
   k_folds: 5
-  eval_epoch: 5
-  early_stopping: 50
+  eval_epoch: 10
+  early_stopping: 500
   seed: 42
   init_seed: null
   device: auto
@@ -55,7 +56,7 @@ output:
   plot_dir: results/plots/mp
   report_dir: reports/mp
   plot_format: png
-  dpi: 160
+  dpi: 200
 symbolic:
   enable_symbolic_distillation: false
   target: model

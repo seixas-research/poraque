@@ -676,11 +676,15 @@ class TestFineTuningValidation:
             poraque_train.validate_fine_tuning_settings(config)
 
     def test_writing_over_the_base_is_refused(self, tmp_path):
-        from poraque.ml import FINETUNED_BUNDLE_FILENAME
-
-        base = tmp_path / FINETUNED_BUNDLE_FILENAME
-        base.write_text("x")
-        config = self._config(tmp_path, pretrained_checkpoint=str(base))
+        """
+        The destination is derived from `task.name`, so the collision is
+        constructed the same way rather than from a remembered filename.
+        """
+        config = self._config(tmp_path, pretrained_checkpoint="unset")
+        base = poraque_train.bundle_path(config)
+        with open(base, "w") as handle:
+            handle.write("x")
+        config.fine_tuning.pretrained_checkpoint = base
         with pytest.raises(SystemExit, match="over its own base"):
             poraque_train.validate_fine_tuning_settings(config)
 
@@ -692,6 +696,27 @@ class TestFineTuningValidation:
         base.write_text("x")
         config = self._config(tmp_path, pretrained_checkpoint=str(base))
         poraque_train.validate_fine_tuning_settings(config)     # no raise
+
+    def test_the_name_reaches_every_output(self, tmp_path):
+        """One string decides the weights, the report and the figure folder."""
+        config = TrainingConfig()
+        config.task.name = "ag_au_pt_v2"
+        config.output.checkpoint_dir = str(tmp_path)
+        config.output.plot_dir = str(tmp_path / "plots")
+
+        assert poraque_train.bundle_path(config) == \
+            os.path.join(str(tmp_path), "ag_au_pt_v2.pfno")
+        assert poraque_train.plot_directory(config) == \
+            os.path.join(str(tmp_path / "plots"), "ag_au_pt_v2")
+        assert poraque_train.report_filename(config, "ext2chg") == \
+            "ag_au_pt_v2_report.pdf"
+        # Two tasks cannot share one report name.
+        assert poraque_train.report_filename(config, "ext2chg", 2) == \
+            "ag_au_pt_v2_ext2chg_report.pdf"
+        # A fine-tune never lands on the general model it specialises.
+        config.fine_tuning.enable = True
+        assert poraque_train.bundle_path(config) != \
+            os.path.join(str(tmp_path), "ag_au_pt_v2.pfno")
 
     def test_a_non_positive_learning_rate_fails(self, tmp_path):
         base = tmp_path / "base.pfno"

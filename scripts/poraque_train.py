@@ -133,8 +133,6 @@ _preimport_symbolic_engine(sys.argv[1:])
 import torch  # noqa: E402
 
 from poraque.ml import (  # noqa: E402
-    BUNDLE_FILENAME,
-    FINETUNED_BUNDLE_FILENAME,
     resolve_bundle_path,
     FieldOperator,
     FieldPairDataset,
@@ -157,6 +155,86 @@ FIELD_LABELS = {
     "CHGCAR": (r"$\rho$", r"e/$\AA^3$"),
     "TAUCAR": (r"$\tau$", r"eV/$\AA^3$"),
 }
+
+
+# ===================================================================== #
+# Output naming
+#
+# Every artefact of a run is built from one string, `task.name`. Two runs that
+# differ in anything worth keeping -- a chemical space, a resolution, a set of
+# physics weights -- differ in that name, and so cannot overwrite each other:
+#
+#     models/<name>.pfno          reports/<name>_report.pdf
+#     results/plots/<name>/
+#
+# The helpers below are the only places those paths are formed. They read the
+# config rather than mutating it, so re-running with the config a run archived
+# beside its results reproduces the same paths instead of nesting a second copy
+# of the name inside the first.
+# ===================================================================== #
+def model_name(config):
+    """The run's name, falling back to the historical default."""
+    return str(config.task.name or "poraque_models")
+
+
+def bundle_path(config):
+    """
+    Where the trained weights go: ``<checkpoint_dir>/<name>.pfno``.
+
+    A fine-tune gets its own stem. It is a specialisation, usually onto a
+    narrower set of materials, and writing it over the general model would
+    replace something broad with something narrow, silently and by default.
+
+    Returns
+    -------
+    str or None
+        ``None`` when checkpointing is switched off.
+    """
+    if not config.output.checkpoint_dir:
+        return None
+    stem = model_name(config)
+    if config.fine_tuning.enable:
+        stem += "_finetuned"
+    return os.path.join(config.output.checkpoint_dir, f"{stem}.pfno")
+
+
+def plot_directory(config):
+    """
+    Figures go in a subdirectory of their own, ``<plot_dir>/<name>/``.
+
+    The figure filenames carry the task and the structure but not the run, so
+    two runs sharing ``plot_dir`` would otherwise interleave their plots in one
+    directory with no way to tell which came from which.
+
+    Returns
+    -------
+    str or None
+    """
+    if not config.output.plot_dir:
+        return None
+    return os.path.join(config.output.plot_dir, model_name(config))
+
+
+def report_filename(config, task_name, n_tasks=1, kind="report"):
+    """
+    ``<name>_report.pdf``, or ``<name>_<task>_report.pdf`` when both train.
+
+    The report is per task, so a ``task: all`` run produces two of them and one
+    name cannot serve both. Qualifying only in that case keeps the common
+    single-task run -- every ``ext2chg`` run on a density archive -- at the
+    plain name.
+
+    Parameters
+    ----------
+    kind : str, optional
+        Trailing component, so cross-validation writes a
+        ``<name>_kfold_report.pdf`` that cannot be mistaken for the single-fit
+        report beside it.
+    """
+    stem = model_name(config)
+    if n_tasks >= 2:
+        stem += f"_{task_name}"
+    return f"{stem}_{kind}.pdf"
 
 
 class Tee:
@@ -193,6 +271,10 @@ def cache_tag(data):
         tag += f"_blur{data.gaussian_blur:g}{data.blur_method[:4]}"
     if data.sigma:
         tag += f"_sig{data.sigma:g}"
+    if data.potcar_dir:
+        # A tabulated potential and a Gaussian one are different fields, not
+        # different roundings of one, so they must never share a cache.
+        tag += "_potcar"
 
     paths = data.paths()
     if len(paths) > 1:
@@ -233,9 +315,9 @@ def build_cache(config, log):
 
     build_field_cache(
         paths, target, resolution=data.resolution, format=data.formats(),
-        sigma=data.sigma, gaussian_blur=data.gaussian_blur,
-        blur_method=data.blur_method, pattern=data.pattern, code=data.code,
-        log=log,
+        potcar_dir=data.potcar_dir, sigma=data.sigma,
+        gaussian_blur=data.gaussian_blur, blur_method=data.blur_method,
+        pattern=data.pattern, code=data.code, log=log,
     )
 
     # The PAW augmentation records travel with the weights, so a prediction can
@@ -245,7 +327,8 @@ def build_cache(config, log):
     # at all, so downsampling neither changes nor carries them.
     formats = data.formats()
     formats = formats if isinstance(formats, list) else [formats] * len(paths)
-    sources = [resolve_source(path, fmt, pattern=data.pattern, code=data.code)
+    sources = [resolve_source(path, fmt, pattern=data.pattern, code=data.code,
+                              potcar_dir=data.potcar_dir)
                for path, fmt in zip(paths, formats)]
     build_paw_reference(discover_records(sources, required=("CHGCAR",)),
                         target, log)
@@ -356,14 +439,30 @@ def chemistry_caveat(n_structures, elements):
 # ===================================================================== #
 # Metrics
 # ===================================================================== #
-def metrics(prediction, target):
-    """Error metrics in the physical units of the fields."""
+def metrics(prediction, target, grid=None):
+    r"""
+    Error metrics in the physical units of the fields.
+
+    Parameters
+    ----------
+    prediction, target : array_like
+        The predicted and reference fields.
+    grid : FieldGrid, optional
+        When given *and* both fields are non-negative densities, the
+        Jensen-Shannon divergence is added under ``jsd``. It needs the grid
+        because it is an integral over the cell, not a sum over voxels.
+
+    Returns
+    -------
+    dict
+    """
+    predicted_field, reference_field = prediction, target
     prediction = np.asarray(prediction, dtype=float).ravel()
     target = np.asarray(target, dtype=float).ravel()
     difference = prediction - target
     total = np.sum((target - target.mean()) ** 2)
     spread = np.ptp(target) or 1.0
-    return {
+    values = {
         "mse": float(np.mean(difference ** 2)),
         "mae": float(np.mean(np.abs(difference))),
         "rmse": float(np.sqrt(np.mean(difference ** 2))),
@@ -373,6 +472,46 @@ def metrics(prediction, target):
         "r2": float(1.0 - np.sum(difference ** 2) / total) if total > 0
         else float("nan"),
     }
+    if grid is not None:
+        values["jsd"] = shape_divergence(predicted_field, reference_field, grid)
+    return values
+
+
+def shape_divergence(prediction, target, grid):
+    r"""
+    Jensen-Shannon divergence between the predicted and reference densities.
+
+    Both fields are first turned into **probability densities** — clamped at
+    zero and divided by their own spatial integral, so each integrates to
+    exactly one — and the divergence is taken between those. That is what
+    makes the number a divergence rather than an arbitrary functional: without
+    the normalisation it would mostly report the difference in electron count,
+    which :math:`\int\rho` already reports directly and far more legibly.
+
+    The consequence is that ``jsd`` measures **shape** alone. A prediction
+    carrying 5 % too much charge, distributed identically, scores zero here and
+    badly on the integral; a prediction with the right total in the wrong place
+    does the reverse. Neither number implies the other, which is why both are
+    reported.
+
+    Returns
+    -------
+    float or None
+        The divergence in nats, or ``None`` for a signed field — a potential is
+        not a density and has no distribution to compare.
+    """
+    from poraque.ml.committee import jensen_shannon_divergence
+
+    reference = np.asarray(target, dtype=float)
+    # A field that is negative over a substantial fraction of the cell is not a
+    # density that rang from band-limiting; it is a different kind of object,
+    # and flooring it would produce a number that looks meaningful.
+    if np.count_nonzero(reference < 0) > 0.01 * reference.size:
+        return None
+    try:
+        return float(jensen_shannon_divergence(prediction, reference, grid)["jsd"])
+    except ValueError:
+        return None
 
 
 #: Fallback width of the label column, used when the caller does not size it.
@@ -398,10 +537,13 @@ def metrics_label_width(names):
 
 def format_metrics(name, values, unit, width=MIN_LABEL_WIDTH):
     """One aligned line per metric set."""
-    return (f"    {name:<{width}s} MSE {values['mse']:11.5g}  "
+    line = (f"    {name:<{width}s} MSE {values['mse']:11.5g}  "
             f"MAE {values['mae']:10.5g}  "
             f"RMSE {values['rmse']:10.5g}  relL2 {values['relative_l2']:8.4f}  "
             f"R2 {values['r2']:8.4f}   [{unit}]")
+    if values.get("jsd") is not None:
+        line += f"  JSD {values['jsd']:9.3e}"
+    return line
 
 
 def build_loss(config, task_name):
@@ -659,7 +801,9 @@ def evaluate_material(operator, dataset, index, task, log, label,
     """
     source, target = dataset.load_fields(index)
     prediction = operator.predict(source)
-    values = metrics(prediction.data, target.data)
+    # The grid enables the Jensen-Shannon divergence, which is an integral over
+    # the cell; it is skipped for a signed target, which has no distribution.
+    values = metrics(prediction.data, target.data, grid=target.grid)
     log(format_metrics(label, values, task.target_unit, width))
     return prediction, target, values
 
@@ -694,9 +838,8 @@ def validate_fine_tuning_settings(config):
             f"fine_tuning.learning_rate={settings.learning_rate!r} must be "
             f"positive.")
 
-    if config.output.checkpoint_dir:
-        destination = os.path.join(config.output.checkpoint_dir,
-                                   FINETUNED_BUNDLE_FILENAME)
+    destination = bundle_path(config)
+    if destination:
         if os.path.abspath(destination) == os.path.abspath(
                 settings.pretrained_checkpoint):
             raise SystemExit(
@@ -756,7 +899,7 @@ def save_task_checkpoint(task, operator, config, log):
         return None
 
     path = os.path.join(config.output.checkpoint_dir,
-                        f"{task.name}_trained.pfno")
+                        f"{model_name(config)}_{task.name}_trained.pfno")
     save_bundle(path, {task.name: operator},
                 metadata={"note": "single-task safety copy, written before "
                                   "the optional post-training analyses; "
@@ -778,7 +921,8 @@ def _figure_sink(config):
 
     from poraque.vis import TrainingReport
 
-    return TrainingReport(os.path.join(config.output.report_dir, "figures"),
+    return TrainingReport(os.path.join(config.output.report_dir,
+                                       f"{model_name(config)}_figures"),
                           dpi=config.output.dpi, fmt=config.output.plot_format)
 
 
@@ -864,7 +1008,7 @@ def run_symbolic_distillation(task, dataset, operator, config, log,
     return result
 
 
-def run_task(task_name, cache, config, log):
+def run_task(task_name, cache, config, log, n_tasks=1):
     r"""
     Train one model for ``task_name`` on a train/validation split.
 
@@ -879,6 +1023,13 @@ def run_task(task_name, cache, config, log):
     has something to watch. Set it to ``0`` when the goal is the final artefact
     trained on *all* the data — in which case the metrics become a **training
     fit** and carry no generalisation claim.
+
+    Parameters
+    ----------
+    n_tasks : int, optional
+        How many tasks this run trains in total. It only names the report:
+        with one task the PDF is ``<name>_report.pdf``, with two it has to
+        carry the task as well or the second would overwrite the first.
     """
     task = resolve_task(task_name)
     log(f"\n{'=' * 78}")
@@ -966,10 +1117,11 @@ def run_task(task_name, cache, config, log):
     per_material, figures = {}, []
     report = None
     showcase = None
-    if config.output.plot_dir:
+    figure_dir = plot_directory(config)
+    if figure_dir:
         from poraque.vis import TrainingReport
 
-        report = TrainingReport(config.output.plot_dir, dpi=config.output.dpi,
+        report = TrainingReport(figure_dir, dpi=config.output.dpi,
                                 fmt=config.output.plot_format,
                                 prefix=f"{task.name}")
         figures.append(report.loss_curves(
@@ -1023,8 +1175,10 @@ def run_task(task_name, cache, config, log):
     train_metrics = [v["metrics"] for v in per_material.values()
                      if v["split"] == "train"]
     log(f"\n  --- {task.name}: aggregate over {len(train_metrics)} training structures ---")
-    for key in ("mse", "mae", "rmse", "relative_l2", "r2"):
-        values = [m[key] for m in train_metrics]
+    for key in ("mse", "mae", "rmse", "relative_l2", "r2", "jsd"):
+        values = [m[key] for m in train_metrics if m.get(key) is not None]
+        if not values:
+            continue
         log(f"      {key:<12s} mean {np.mean(values):12.5g}   "
             f"min {np.min(values):11.5g}   max {np.max(values):11.5g}")
 
@@ -1041,7 +1195,7 @@ def run_task(task_name, cache, config, log):
     # earlier run.
     checkpoint = None
     if figures:
-        log(f"  figures         -> {config.output.plot_dir} ({len(figures)})")
+        log(f"  figures         -> {figure_dir} ({len(figures)})")
 
     # ---------------- the weights, before anything optional ---------------- #
     # The unified bundle is written once every task has trained, which is
@@ -1071,6 +1225,8 @@ def run_task(task_name, cache, config, log):
             )
         reporter = ModelReport(config.output.report_dir)
         summary = {
+            "name": model_name(config),
+            "weights": bundle_path(config) or "not saved",
             "model": type(operator.model).__name__,
             "parameters": f"{operator.model.n_parameters():,}",
             "training structures": str(len(train_set)),
@@ -1093,6 +1249,7 @@ def run_task(task_name, cache, config, log):
         pdf = reporter.build(
             task=task.name, per_material=per_material, figures=figures,
             unit=task.target_unit, caveats=caveats,
+            filename=report_filename(config, task.name, n_tasks),
             summary=summary,
             configuration={f"{section}.{key}": value
                            for section, values in config.to_dict().items()
@@ -1159,7 +1316,7 @@ def structure_level_folds(names, k, seed=0):
             for group in np.array_split(order, k) if len(group)]
 
 
-def run_task_kfold(task_name, cache, config, log):
+def run_task_kfold(task_name, cache, config, log, n_tasks=1):
     r"""
     K-fold cross-validation over structures.
 
@@ -1235,11 +1392,11 @@ def run_task_kfold(task_name, cache, config, log):
                             "split": f"fold {index}", "metrics": values,
                             "predicted_integral": prediction.integrate(),
                             "reference_integral": target.integrate()})
-            if config.output.plot_dir and position == 0:
+            if plot_directory(config) and position == 0:
                 from poraque.vis import TrainingReport
 
                 report = TrainingReport(
-                    config.output.plot_dir, dpi=config.output.dpi,
+                    plot_directory(config), dpi=config.output.dpi,
                     fmt=config.output.plot_format,
                     prefix=f"{task.name}_fold{index}_{name}")
                 figures.append(report.loss_curves(
@@ -1253,8 +1410,12 @@ def run_task_kfold(task_name, cache, config, log):
     log(f"\n  --- {task.name}: {len(folds)}-fold summary "
         f"({len(records)} validation structures) ---")
     aggregate = {}
-    for key in ("mse", "mae", "rmse", "relative_l2", "r2"):
-        values = np.array([r["metrics"][key] for r in records], dtype=float)
+    for key in ("mse", "mae", "rmse", "relative_l2", "r2", "jsd"):
+        scored = [r["metrics"][key] for r in records
+                  if r["metrics"].get(key) is not None]
+        if not scored:
+            continue
+        values = np.array(scored, dtype=float)
         aggregate[key] = {"mean": float(values.mean()), "std": float(values.std()),
                           "min": float(values.min()), "max": float(values.max())}
         log(f"      {key:<12s} {values.mean():12.5g} +/- {values.std():<11.4g}"
@@ -1276,8 +1437,10 @@ def run_task_kfold(task_name, cache, config, log):
         pdf = reporter.build(
             task=task.name, per_material=per_material, figures=figures,
             unit=task.target_unit,
-            filename=f"{task.name}_kfold_report.pdf",
+            filename=report_filename(config, task.name, n_tasks,
+                                     kind="kfold_report"),
             summary={
+                "name": model_name(config),
                 "protocol": f"{len(folds)}-fold cross-validation",
                 "split level": "structure (whole materials held out)",
                 "structures": str(len(names)),
@@ -1330,7 +1493,13 @@ def build_parser():
     parser.add_argument("--write-config", metavar="PATH", default=None,
                         help="write a sample configuration to PATH and exit")
 
-    parser.add_argument("--task", default=None, choices=["all", "ext2chg", "chg2tau"])
+    parser.add_argument("--task", dest="task.type", default=None,
+                        choices=["all", "ext2chg", "chg2tau"])
+    parser.add_argument("--name", dest="task.name", default=None,
+                        metavar="NAME",
+                        help="name this run's outputs: models/NAME.pfno, "
+                             "reports/NAME_report.pdf and a NAME/ subdirectory "
+                             "of the plot directory (default: poraque_models)")
     group = parser.add_argument_group("data overrides")
     group.add_argument("--train-paths", dest="data.train_paths", nargs="+",
                        default=None, metavar="DIR",
@@ -1350,6 +1519,13 @@ def build_parser():
     group.add_argument("--pattern", dest="data.pattern", default=None)
     group.add_argument("--code", dest="data.code", default=None)
     group.add_argument("--resolution", dest="data.resolution", type=int, default=None)
+    group.add_argument("--potcar-dir", dest="data.potcar_dir", default=None,
+                       metavar="DIR",
+                       help="POTCAR library (<dir>/Ag/POTCAR, ...). Used where "
+                            "the data ships no pseudopotentials -- an MP "
+                            "download, or a run whose POTCAR was stripped -- "
+                            "to build the exact tabulated external potential "
+                            "instead of the Gaussian model")
     group.add_argument("--sigma", dest="data.sigma", type=float, default=None,
                        metavar="A",
                        help="Gaussian pseudo-ion width in Angstrom for the "
@@ -1505,17 +1681,26 @@ def run(argv=None):
             f"{config.training.device!r})")
         log(f"  config: {args.config or '<built-in defaults>'}")
         log("")
+        # Where everything this run produces will land, named once and up
+        # front: if the name is wrong -- or is the previous run's -- that is
+        # worth knowing before the hours rather than after them.
+        log(f"  name   : {model_name(config)}")
+        log(f"  weights: {bundle_path(config) or 'not saved'}")
+        log(f"  reports: {config.output.report_dir or 'not written'}")
+        log(f"  figures: {plot_directory(config) or 'not written'}")
+        log("")
+        log("  configuration")
         for line in config.describe().splitlines():
-            log(f"  {line}")
+            log(f"    {line}")
         log("")
 
         cache = build_cache(config, log)
-        names = (["ext2chg", "chg2tau"] if config.task == "all" else [config.task])
-        names = trainable_tasks(names, cache, log)
+        names = trainable_tasks(config.task.names(), cache, log)
         # One protocol, one variation: K-fold cross-validation.
         driver = run_task_kfold if config.training.enable_kfold else run_task
         results = [result for result in
-                   (driver(name, cache, config, log) for name in names)
+                   (driver(name, cache, config, log, n_tasks=len(names))
+                    for name in names)
                    if result is not None]
 
         # ---------------- unified checkpoint ---------------- #
@@ -1525,12 +1710,11 @@ def run(argv=None):
                      if r.get("operator") is not None}
         bundle = None
         if operators and config.output.checkpoint_dir:
-            # A fine-tune is a specialisation, usually to a narrower set of
-            # materials. Writing it over the general model would replace
+            # <checkpoint_dir>/<task.name>.pfno, with a distinct stem for a
+            # fine-tune: it is a specialisation, usually to a narrower set of
+            # materials, and writing it over the general model would replace
             # something broad with something narrow, silently and by default.
-            filename = (FINETUNED_BUNDLE_FILENAME if config.fine_tuning.enable
-                        else BUNDLE_FILENAME)
-            bundle = os.path.join(config.output.checkpoint_dir, filename)
+            bundle = bundle_path(config)
 
             if (config.fine_tuning.enable
                     and os.path.abspath(bundle) == os.path.abspath(
@@ -1569,8 +1753,9 @@ def run(argv=None):
             # Removed only after it is on disk, so there is no window in which
             # neither exists.
             for task_name in operators:
-                stale = os.path.join(config.output.checkpoint_dir,
-                                     f"{task_name}_trained.pfno")
+                stale = os.path.join(
+                    config.output.checkpoint_dir,
+                    f"{model_name(config)}_{task_name}_trained.pfno")
                 if os.path.exists(stale):
                     os.remove(stale)
             if len(operators) < 2:
@@ -1583,7 +1768,7 @@ def run(argv=None):
                 log("  nothing further; the ASE calculator needs both halves "
                     "of the chain to")
                 log("  reach a total energy.")
-                if config.task == "all":
+                if config.task.type == "all":
                     log(f"  {missing} was skipped because this dataset does "
                         f"not carry its target field.")
                     log("  Point a run at data that does, and save both models "
@@ -1630,8 +1815,8 @@ def run(argv=None):
         log(f"\n  log             -> {config.output.log}")
         log(f"  metrics         -> {config.output.json}")
         log(f"  resolved config -> {resolved}")
-        if config.output.plot_dir:
-            log(f"  figures         -> {config.output.plot_dir}")
+        if plot_directory(config):
+            log(f"  figures         -> {plot_directory(config)}")
         return results
     finally:
         log.close()

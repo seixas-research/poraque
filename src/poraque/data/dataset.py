@@ -39,12 +39,17 @@ refuses a task nothing supports, rather than failing on the first batch.
 
 **Not every source defines** :math:`V_{\rm ext}` **the same way.** A calculation
 with a ``POTCAR`` gives the tabulated local pseudopotential; a bulk archive
-gives the Gaussian pseudo-ion model, which differs from it by around 0.1
-relative :math:`L_2`. Training across both means the input field is *two
-different quantities* wearing one name, and the operator will spend capacity
-reconciling them. That is sometimes what you want — it is a far larger and more
-diverse dataset — and it is never what you want by accident, so the dataset
-emits a warning naming both conventions when a mixture is built.
+without one gives the Gaussian pseudo-ion model, which differs from it by
+around 0.1 relative :math:`L_2`. Training across both means the input field is
+*two different quantities* wearing one name, and the operator will spend
+capacity reconciling them. That is sometimes what you want — it is a far larger
+and more diverse dataset — and it is never what you want by accident, so the
+dataset emits a warning naming both conventions when a mixture is built.
+
+The clean fix is ``potcar_dir``: give the bulk archive the pseudopotentials its
+densities were computed with and both sources use the *same* tabulated
+construction, at which point the mixture is one quantity again and the warning
+does not fire.
 """
 
 import os
@@ -81,7 +86,14 @@ class MixedFieldDataset(FieldPairDataset):
         magnetisation block.
     charges : dict, optional
         ``{element: Z_val}`` for the bulk sources, which have no ``POTCAR`` to
-        read them from. Inferred from the densities when omitted.
+        read them from. Taken from ``potcar_dir`` when one is given, and
+        inferred from the densities otherwise.
+    potcar_dir : str, optional
+        A ``POTCAR`` library, used wherever the data itself ships none. With it
+        the external potential is VASP's exact tabulated one; without it, the
+        Gaussian pseudo-ion model. This is what decides whether a bulk archive
+        and a calculation archive define :math:`V_{\rm ext}` the same way — see
+        the warning below.
     sigma : float or dict, optional
         Gaussian pseudo-ion width in Å, where a model potential is used.
     gaussian_blur : float, optional
@@ -122,9 +134,9 @@ class MixedFieldDataset(FieldPairDataset):
     """
 
     def __init__(self, paths, task="ext2chg", resolution=None, format="auto",
-                 spin=False, charges=None, sigma=None, gaussian_blur=None,
-                 blur_method="spectral", pattern=None, code="auto",
-                 cache=False, materials=None, log=None,
+                 spin=False, charges=None, potcar_dir=None, sigma=None,
+                 gaussian_blur=None, blur_method="spectral", pattern=None,
+                 code="auto", cache=False, materials=None, log=None,
                  warn_mixed_potentials=True, **kwargs):
         from ..ml.tasks import resolve_task
 
@@ -136,7 +148,7 @@ class MixedFieldDataset(FieldPairDataset):
         self.resolution = int(resolution) if resolution else None
         self._log = log or (lambda *_: None)
         self._source_options = {
-            "charges": charges, "sigma": sigma,
+            "charges": charges, "potcar_dir": potcar_dir, "sigma": sigma,
             "gaussian_blur": gaussian_blur, "blur_method": blur_method,
             "pattern": pattern, "code": code, "log": self._log,
         }
@@ -191,15 +203,21 @@ class MixedFieldDataset(FieldPairDataset):
         """
         Warn when the mixture spans two definitions of the external potential.
 
-        Only when the potential is actually *used*: a ``chg2tau`` dataset never
-        touches it, and warning there would be noise.
+        The test is on the *construction* each source uses, not on its layout.
+        A calculation archive and a bulk archive that both build the tabulated
+        potential — because ``potcar_dir`` supplies the pseudopotentials the
+        latter lacks — are one quantity and warrant no warning; two archives of
+        the same layout that disagree do.
+
+        Only when the potential is actually used, too: a ``chg2tau`` dataset
+        never touches it, and warning there would be noise.
         """
         if task.input_field != "EXTCAR" and task.target_field != "EXTCAR":
             return
 
         conventions = {}
         for record in records:
-            conventions.setdefault(type(record.source).name, set()).add(
+            conventions.setdefault(record.source.potential_model(), set()).add(
                 record.source.root)
         if len(conventions) < 2:
             return
@@ -209,12 +227,12 @@ class MixedFieldDataset(FieldPairDataset):
             "differently: "
             + "; ".join(f"{name} ({', '.join(sorted(roots))})"
                         for name, roots in sorted(conventions.items()))
-            + ". A calculation directory gives the tabulated local "
-              "pseudopotential; a bulk density archive gives the Gaussian "
-              "pseudo-ion model, which differs from it by roughly 0.1 relative "
-              "L2. The operator will be learning from two different input "
-              "quantities under one name. Pass warn_mixed_potentials=False "
-              "once that is a deliberate choice.",
+            + ". The tabulated local pseudopotential and the Gaussian "
+              "pseudo-ion model differ by roughly 0.1 relative L2, so the "
+              "operator will be learning from two different input quantities "
+              "under one name. Set data.potcar_dir so every source uses the "
+              "tabulated construction, or pass warn_mixed_potentials=False "
+              "once the mixture is a deliberate choice.",
             UserWarning,
             stacklevel=3,
         )

@@ -51,14 +51,22 @@ from .sources import discover_records, resolve_source
 #: Fields written to the cache, in file order.
 CACHED_FIELDS = ("EXTCAR", "CHGCAR", "TAUCAR")
 
+#: Physical unit of each cached field, for the column headers.
+FIELD_UNITS = {"EXTCAR": "eV", "CHGCAR": "e/Ang^3", "TAUCAR": "eV/Ang^3"}
+
 #: Per-element PAW augmentation table, written beside the downsampled fields.
 PAW_REFERENCE_FILENAME = "paw_reference.json"
 
+#: What was written, per material: the two grid shapes and each field's value
+#: range. Read back on a resumed build so the table below can be printed in
+#: full without re-reading a single field.
+CACHE_SUMMARY_FILENAME = "cache_summary.json"
+
 
 def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
-                      charges=None, sigma=None, gaussian_blur=None,
-                      blur_method="spectral", pattern=None, code="auto",
-                      spin=False, limit=None, log=None):
+                      charges=None, potcar_dir=None, sigma=None,
+                      gaussian_blur=None, blur_method="spectral", pattern=None,
+                      code="auto", spin=False, limit=None, log=None):
     r"""
     Downsample every material under ``paths`` into one prepared cache.
 
@@ -83,6 +91,10 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
         complaint, for those that cannot.
     charges : dict, optional
         ``{element: Z_val}`` for bulk archives, which carry no ``POTCAR``.
+    potcar_dir : str, optional
+        A ``POTCAR`` library, used wherever the data itself ships none. With it
+        the external potential is the exact tabulated one; without it, the
+        Gaussian pseudo-ion model.
     sigma : float or dict, optional
         Gaussian pseudo-ion width in Å, where a model potential is used.
     gaussian_blur : float, optional
@@ -118,7 +130,7 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
             f"Got {len(formats)} format(s) for {len(paths)} path(s). Pass one "
             f"name for all of them, or one per path.")
 
-    options = {"charges": charges, "sigma": sigma,
+    options = {"charges": charges, "potcar_dir": potcar_dir, "sigma": sigma,
                "gaussian_blur": gaussian_blur, "blur_method": blur_method,
                "pattern": pattern, "code": code, "log": emit}
     sources = [resolve_source(path, fmt, **options)
@@ -139,23 +151,129 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
     cache = str(cache)
     os.makedirs(cache, exist_ok=True)
 
+    summary = _load_summary(cache)
+    table = _CacheTable([record.identifier for record in records], fields, emit)
+    table.header()
     for record in records:
-        _build_one(record, cache, resolution, fields, spin, emit)
+        entry = _build_one(record, cache, resolution, fields, spin, emit,
+                           summary.get(record.identifier))
+        summary[record.identifier] = entry
+        table.row(record.identifier, entry)
+    table.footer()
+    _write_summary(cache, summary)
 
     return cache
 
 
-def _build_one(record, cache, resolution, fields, spin, emit):
-    """Downsample and write one material, unless it is already there."""
+# ---------------------------------------------------------------------- #
+# Progress table
+# ---------------------------------------------------------------------- #
+class _CacheTable:
+    """
+    The build log, as one aligned row per material.
+
+    Rows are emitted **as each material finishes** rather than collected and
+    printed at the end: a full archive takes minutes to hours, and a table that
+    appears only afterwards is not progress. Column widths are therefore fixed
+    up front — the identifiers are all known before the first row, and the rest
+    are numeric fields of known width.
+
+    Columns are the two grid shapes, which say what the downsampling did, and
+    the value range of every cached field, which is the cheapest check that it
+    did it correctly: a density that reaches zero, a potential that does not
+    straddle zero, or a range differing by orders of magnitude from its
+    neighbours are all visible at a glance and all mean something.
+    """
+
+    #: "-1.23e+02 .. 4.56e+01" and a little slack.
+    RANGE_WIDTH = 22
+
+    def __init__(self, identifiers, fields, emit):
+        self.fields = tuple(fields)
+        self.emit = emit
+        self.label_width = max([len("material")]
+                               + [len(name) for name in identifiers])
+
+    def header(self):
+        columns = [f"{'material':<{self.label_width}s}",
+                   f"{'native grid':>14s}", f"{'cached grid':>13s}"]
+        columns += [f"{f'{name} [{FIELD_UNITS[name]}]':<{self.RANGE_WIDTH}s}"
+                    for name in self.fields]
+        columns.append("time")
+        line = "  " + "  ".join(columns)
+        self.emit("")
+        self.emit(line)
+        self.emit("  " + "-" * (len(line) - 2))
+
+    def row(self, identifier, entry):
+        columns = [f"{identifier:<{self.label_width}s}",
+                   f"{_shape_text(entry.get('native')):>14s}",
+                   f"{_shape_text(entry.get('shape')):>13s}"]
+        for name in self.fields:
+            text = _range_text(entry["ranges"].get(name))
+            columns.append(f"{text:<{self.RANGE_WIDTH}s}")
+        columns.append("cached" if entry.get("reused")
+                       else f"{entry.get('seconds', 0.0):.1f} s")
+        self.emit("  " + "  ".join(columns).rstrip())
+        for message in entry.get("warnings", ()):
+            self.emit(f"      note: {message}")
+
+    def footer(self):
+        self.emit("")
+
+
+def _shape_text(shape):
+    """``(40, 40, 40)`` as ``40x40x40``; ``--`` when it is not recorded."""
+    if not shape:
+        return "--"
+    return "x".join(str(int(n)) for n in shape)
+
+
+def _range_text(bounds):
+    """``[min, max]`` as an aligned pair; ``--`` for a field this material lacks."""
+    if not bounds:
+        return "--"
+    low, high = bounds
+    return f"{low:.3g} .. {high:.3g}"
+
+
+def _load_summary(cache):
+    """The per-material record of an earlier build, or an empty dict."""
+    path = os.path.join(cache, CACHE_SUMMARY_FILENAME)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        # A truncated summary is a cosmetic loss -- the ranges get recomputed
+        # from the cached fields -- and never a reason to fail a build.
+        return {}
+
+
+def _write_summary(cache, summary):
+    with open(os.path.join(cache, CACHE_SUMMARY_FILENAME), "w") as handle:
+        json.dump(summary, handle, indent=1, sort_keys=True)
+
+
+def _build_one(record, cache, resolution, fields, spin, emit, remembered=None):
+    """
+    Downsample and write one material, unless it is already there.
+
+    Returns
+    -------
+    dict
+        ``native`` and ``shape`` grid shapes, the ``ranges`` of every field
+        written, any Gibbs ``warnings``, and either ``seconds`` or
+        ``reused``.
+    """
     source = record.source
     wanted = [name for name in fields if name in source.provides(record)]
     destination = os.path.join(cache, record.identifier)
     expected = [os.path.join(destination, name) for name in wanted]
 
     if expected and all(os.path.exists(path) for path in expected):
-        emit(f"  {record.identifier}: cached, grid "
-             f"{FieldGrid.from_file(expected[0]).shape}")
-        return
+        return _describe_cached(destination, wanted, record, remembered)
 
     started = time.time()
     native = source.grid(record)
@@ -167,7 +285,7 @@ def _build_one(record, cache, resolution, fields, spin, emit):
         reduced = FieldGrid(shape, native.cell, encut=native.encut)
 
     os.makedirs(destination, exist_ok=True)
-    summary, warnings = [], []
+    ranges, warnings = {}, []
 
     for name in wanted:
         field = source.read(record, name, native, spin=spin)
@@ -180,7 +298,7 @@ def _build_one(record, cache, resolution, fields, spin, emit):
         reduced_field.write(os.path.join(destination, name))
 
         data = reduced_field.data
-        summary.append(f"{name} [{data.min():.3g}, {data.max():.3g}]")
+        ranges[name] = [float(data.min()), float(data.max())]
 
         # rho and tau are non-negative, but band-limiting a field with sharp
         # core peaks rings (Gibbs) and can undershoot slightly. That is an
@@ -194,13 +312,46 @@ def _build_one(record, cache, resolution, fields, spin, emit):
                     f"({100 * negative / data.size:.2f}%) went negative, min "
                     f"{data.min():.3g} (Gibbs ringing from band-limiting)")
 
-    missing = [name for name in fields if name not in wanted]
-    note = f"   [no {', '.join(missing)}]" if missing else ""
-    emit(f"  {record.identifier}: {tuple(native.shape)} -> "
-         f"{tuple(reduced.shape)} in {time.time() - started:.1f} s   "
-         + "  ".join(summary) + note)
-    for message in warnings:
-        emit(f"      note: {message}")
+    return {"native": list(native.shape), "shape": list(reduced.shape),
+            "ranges": ranges, "warnings": warnings,
+            "seconds": time.time() - started}
+
+
+def _describe_cached(destination, wanted, record, remembered):
+    """
+    Fill a table row for a material that is already cached.
+
+    Prefers the recorded summary, which costs no I/O at all. Falling back to
+    reading the cached fields keeps the table complete for a cache built before
+    the summary existed — the files are at the training resolution, so it is a
+    fraction of the work the build itself avoided, and it happens once because
+    the recomputed entry is written back.
+    """
+    if remembered and set(remembered.get("ranges", {})) >= set(wanted):
+        return {**remembered, "warnings": [], "reused": True}
+
+    from .sources import FIELD_CLASSES
+
+    ranges, shape = {}, None
+    for name in wanted:
+        path = os.path.join(destination, name)
+        grid = FieldGrid.from_file(path)
+        shape = shape or list(grid.shape)
+        data = FIELD_CLASSES[name].read(path, grid=grid).data
+        ranges[name] = [float(data.min()), float(data.max())]
+
+    native = (remembered or {}).get("native")
+    if native is None:
+        try:
+            native = list(record.source.grid(record).shape)
+        except (OSError, ValueError):
+            # The cache outlived its source directory. That is fine -- nothing
+            # downstream needs the native shape -- so leave the column blank
+            # rather than failing a build that has everything it requires.
+            native = None
+
+    return {"native": native, "shape": shape, "ranges": ranges,
+            "warnings": [], "reused": True}
 
 
 # ---------------------------------------------------------------------- #

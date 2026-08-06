@@ -57,7 +57,6 @@ quantities, so the PAW one-centre terms are missing. See
 :class:`~poraque.physics.energy.EnergyComponents`.
 """
 
-import gzip
 import os
 import warnings
 
@@ -146,11 +145,6 @@ class Poraque(Calculator):
 
     Attributes
     ----------
-    implemented_properties : list of str
-        ``["energy", "free_energy", "forces"]``. ``free_energy`` is the same
-        number as ``energy``: there is no electronic entropy in this pipeline,
-        and ASE optimisers ask for it by name. See :meth:`compute_forces` for
-        what ``forces`` is and is not.
     fields : dict
         ``{"external", "density", "tau"}`` from the most recent evaluation,
         each a :class:`~poraque.fields.base.ScalarField`.
@@ -353,26 +347,8 @@ class Poraque(Calculator):
         """Build a :class:`Potcar` for ``elements`` from the library."""
         from .fields.vasp.potcar import Potcar
 
-        entries = []
-        for element in elements:
-            path = _find_potcar(self.potcar_dir, element)
-            single = Potcar.from_string(_read_maybe_compressed(path),
-                                        parse_tables=True)
-            if not single:
-                raise ValueError(f"{path} contains no POTCAR dataset.")
-            if len(single) > 1:
-                raise ValueError(
-                    f"{path} holds {len(single)} datasets; a library entry "
-                    f"must contain exactly one."
-                )
-            found = single[0].element
-            if found != element:
-                raise ValueError(
-                    f"{path} is a POTCAR for {found!r}, not {element!r}."
-                )
-            entries.append(single[0])
-
-        return self._validate_potcar(Potcar(entries))
+        return self._validate_potcar(
+            Potcar.from_library(self.potcar_dir, elements))
 
     # ------------------------------------------------------------------ #
     # The pipeline
@@ -957,91 +933,6 @@ class Poraque(Calculator):
 # ===================================================================== #
 # Helpers
 # ===================================================================== #
-#: Filenames a library entry may use, in preference order.
-_POTCAR_NAMES = ("POTCAR", "POTCAR.gz", "POTCAR.Z")
-
-
-def _find_potcar(directory, element):
-    r"""
-    Locate the ``POTCAR`` for ``element`` inside a library directory.
-
-    Recognised layouts, in preference order:
-
-    1. ``<dir>/<element>/POTCAR`` --- what VASP ships;
-    2. ``<dir>/<element>_<variant>/POTCAR`` --- ``Au_pv``, ``Fe_sv``, ...;
-    3. ``<dir>/POTCAR.<element>`` or ``<dir>/<element>.POTCAR`` --- flat.
-
-    Each accepts a ``.gz`` or ``.Z`` suffix.
-
-    Parameters
-    ----------
-    directory : str
-        Library root.
-    element : str
-        Bare chemical symbol.
-
-    Returns
-    -------
-    str
-        Path to the file.
-
-    Raises
-    ------
-    FileNotFoundError
-        When nothing matches, listing what the directory does contain.
-    ValueError
-        When only *variant* directories match and there is more than one. The
-        choice between ``Fe`` and ``Fe_pv`` changes ``ZVAL`` and therefore
-        every energy, so it is the user's to make, not a coin flip.
-    """
-    exact = os.path.join(directory, element)
-    if os.path.isdir(exact):
-        for name in _POTCAR_NAMES:
-            candidate = os.path.join(exact, name)
-            if os.path.isfile(candidate):
-                return candidate
-
-    for stem in (f"POTCAR.{element}", f"{element}.POTCAR"):
-        for suffix in ("", ".gz", ".Z"):
-            candidate = os.path.join(directory, stem + suffix)
-            if os.path.isfile(candidate):
-                return candidate
-
-    variants = sorted(
-        entry for entry in os.listdir(directory)
-        if entry.startswith(f"{element}_")
-        and os.path.isdir(os.path.join(directory, entry))
-        and any(os.path.isfile(os.path.join(directory, entry, name))
-                for name in _POTCAR_NAMES)
-    )
-    if len(variants) == 1:
-        chosen = os.path.join(directory, variants[0])
-        for name in _POTCAR_NAMES:
-            candidate = os.path.join(chosen, name)
-            if os.path.isfile(candidate):
-                warnings.warn(
-                    f"No plain {element!r} POTCAR in {directory}; using the "
-                    f"only variant present, {variants[0]!r}.",
-                    RuntimeWarning, stacklevel=4,
-                )
-                return candidate
-    if len(variants) > 1:
-        raise ValueError(
-            f"No plain {element!r} POTCAR in {directory}, and several "
-            f"variants exist: {variants}. They differ in ZVAL and therefore "
-            f"in every energy, so name the one you want by passing an "
-            f"explicit potcar= file."
-        )
-
-    available = sorted(entry for entry in os.listdir(directory)
-                       if not entry.startswith("."))[:20]
-    raise FileNotFoundError(
-        f"No POTCAR for {element!r} under {directory}. Expected "
-        f"{element}/POTCAR, POTCAR.{element} or {element}.POTCAR. "
-        f"The directory contains: {available}"
-    )
-
-
 def _resolve_references(references):
     """
     Accept a :class:`ReferenceEnergies`, a directory path, a dict, or ``None``.
@@ -1063,13 +954,7 @@ def _resolve_references(references):
     return ReferenceEnergies.from_directory(str(references))
 
 
-def _read_maybe_compressed(path):
-    """Read a POTCAR, transparently handling ``.gz``/``.Z`` compression."""
-    if path.endswith((".gz", ".Z")):
-        with gzip.open(path, "rt", errors="replace") as handle:
-            return handle.read()
-    with open(path, "r", errors="replace") as handle:
-        return handle.read()
+
 
 
 def _grid_shape(cell, resolution):

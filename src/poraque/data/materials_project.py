@@ -57,9 +57,13 @@ Command line
 ------------
 ::
 
-    poraque-mp --elements Ag Au Pt --estimate
+    poraque-mp --elements Ag Au Pt --estimate          # dry run, writes nothing
     poraque-mp --elements Ag Au Pt --outdir data/MP --max-size-mb 20
     poraque-mp --elements Si O --band-gap 0.5 6.0 --crystal-system Cubic
+
+``--estimate`` is a **pure dry run**: it reports to the console and leaves no
+file behind. Everything else writes into ``--outdir`` (``--output`` is accepted
+too), which defaults to the current directory.
 """
 
 from __future__ import annotations
@@ -868,6 +872,28 @@ class MPDataFetcher:
     # ------------------------------------------------------------------ #
     # Pipeline
     # ------------------------------------------------------------------ #
+    def dry_run(self):
+        """
+        Report what a fetch would transfer. **Writes nothing.**
+
+        A true dry run: no ``summary.csv``, no ``summary.json``, no
+        ``chgcar_estimate.csv``, no directories created. Sizing a space is a
+        question, and asking it should not leave anything behind — least of
+        all in whatever directory the command happened to be run from.
+
+        Returns
+        -------
+        Estimate
+        """
+        self.search()
+        estimate = self.estimate()
+        print("\n" + str(estimate) + "\n")
+        print(f"  {estimate.n_available} file(s) to download, "
+              f"{_format_bytes(estimate.download_bytes)} total "
+              f"({_format_bytes(estimate.gz_disk_bytes)} on disk gzipped).")
+        print("  Dry run: nothing downloaded, nothing written.")
+        return estimate
+
     def run(self, estimate_only=False, skip_chgcar=False, decompress=False,
             **download_kwargs):
         """
@@ -876,7 +902,8 @@ class MPDataFetcher:
         Parameters
         ----------
         estimate_only : bool, optional
-            Stop after reporting the size; download nothing.
+            Report the size and stop, writing nothing at all --- see
+            :meth:`dry_run`.
         skip_chgcar : bool, optional
             Write the metadata and structures only.
         decompress : bool, optional
@@ -889,14 +916,14 @@ class MPDataFetcher:
         -------
         Estimate
         """
+        if estimate_only:
+            return self.dry_run()
+
         self.search()
         self.write_summary()
         estimate = self.estimate()
         self.write_estimate()
         print("\n" + str(estimate) + "\n")
-        if estimate_only:
-            print("Estimate only; nothing downloaded.")
-            return estimate
 
         self.write_structures()
         if not skip_chgcar:
@@ -955,10 +982,16 @@ def build_parser():
         description="Fetch Materials Project charge densities for training.")
     parser.add_argument("--elements", nargs="+", required=True,
                         metavar="EL", help="elements spanning the chemical space")
-    parser.add_argument("--outdir", default="data/MP",
-                        help="destination for summary/, structures/ and chgcar/")
+    # Two spellings of one argument. The current directory is the default
+    # because a command that writes hundreds of megabytes should put them
+    # where it was run, not somewhere it picked.
+    parser.add_argument("--outdir", "--output", dest="outdir", default=".",
+                        metavar="DIR",
+                        help="destination for summary.*, structures/ and "
+                             "chgcar/ (default: the current directory)")
     parser.add_argument("--estimate", action="store_true",
-                        help="report the exact size and download nothing")
+                        help="dry run: report the exact size on the console and "
+                             "write nothing at all")
     parser.add_argument("--skip-chgcar", action="store_true",
                         help="write metadata and structures only")
 

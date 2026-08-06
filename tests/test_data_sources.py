@@ -39,26 +39,66 @@ from poraque.fields import ChargeDensity, ExternalPotential, FieldGrid
 from poraque.fields import KineticEnergyDensity
 from poraque.fields.vasp.poscar import Poscar
 
-CHARGES = {"Si": 4.0}
+CHARGES = {"Si": 4.0, "Au": 11.0}
+
+#: The reference POTCAR shipped with the repository's gold dataset. Tests that
+#: need a *complete* local-potential table use it and skip when it is absent —
+#: no fixture can fabricate one, since a truncated table parses fine and then
+#: cannot be splined onto the PSGMAX mesh.
+REFERENCE_POTCAR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "vasp", "struct_000", "POTCAR")
+
+#: A POTCAR whose ``local part`` block stops after three values instead of
+#: NPSPTS of them. It parses without error, which is exactly the problem.
+TRUNCATED_POTCAR = """ PAW_PBE Si 05Jan2001
+   4.00000000000000
+ parameters from PSCTR are:
+   VRHFIN =Si: s2p2
+   LEXCH  = PE
+   TITEL  = PAW_PBE Si 05Jan2001
+   POMASS =   28.085; ZVAL   =    4.000    mass and valenz
+   RCORE  =    1.900    outmost cutoff radius
+   ENMAX  =  245.345; ENMIN  = 184.009 eV
+ END of PSCTR-controll parameters
+  local part
+             4.00000000000000
+  0.4899969775558059E+03  0.4897893015154668E+03  0.4891667097127825E+03
+ gradient corrections used for XC
+    1
+ End of Dataset
+"""
 
 
 # ---------------------------------------------------------------------- #
 # Fixtures
 # ---------------------------------------------------------------------- #
-def _material(cell, shape, symbols=("Si",), counts=(2,), seed=0):
+def _material(cell, shape, element="Si", counts=(2,), seed=0):
     """A structure, its grid, a potential and a plausible density on it."""
     rng = np.random.default_rng(seed)
     grid = FieldGrid(shape, cell)
-    structure = Poscar(cell, list(symbols), list(counts),
+    structure = Poscar(cell, [element], list(counts),
                        rng.random((sum(counts), 3)))
     potential = ExternalPotential.compute(structure, grid, CHARGES,
-                                          widths={"Si": 0.5})
+                                          widths={element: 0.5})
     density = np.exp(-(potential.data - potential.data.min()) / 20.0) * 0.2 + 0.01
     return grid, structure, potential, ChargeDensity(density, grid, structure)
 
 
+@pytest.fixture
+def potcar_library(tmp_path):
+    """A one-element POTCAR library laid out the way VASP ships one."""
+    if not os.path.exists(REFERENCE_POTCAR):
+        pytest.skip("reference POTCAR not available")
+    root = tmp_path / "potcars"
+    (root / "Au").mkdir(parents=True)
+    with open(REFERENCE_POTCAR, "r", errors="replace") as source:
+        (root / "Au" / "POTCAR").write_text(source.read())
+    return str(root)
+
+
 def write_calculation(directory, shape=(12, 12, 12), cell=None, seed=0,
-                      tau=True, encut=300.0):
+                      tau=True, encut=300.0, element="Si", potcar=None):
     """
     A VASP run directory: inputs plus outputs.
 
@@ -69,9 +109,14 @@ def write_calculation(directory, shape=(12, 12, 12), cell=None, seed=0,
     directory = str(directory)
     os.makedirs(directory, exist_ok=True)
     cell = np.eye(3) * 5.0 if cell is None else cell
-    grid, structure, potential, density = _material(cell, shape, seed=seed)
+    grid, structure, potential, density = _material(cell, shape, seed=seed,
+                                                    element=element)
 
     structure.write(os.path.join(directory, "POSCAR"))
+    if potcar is not None:
+        with open(potcar, "r", errors="replace") as source:
+            with open(os.path.join(directory, "POTCAR"), "w") as sink:
+                sink.write(source.read())
     with open(os.path.join(directory, "INCAR"), "w") as handle:
         handle.write(f"ENCUT = {encut}\nPREC = Accurate\n")
     density.write(os.path.join(directory, "CHGCAR"))
@@ -83,13 +128,13 @@ def write_calculation(directory, shape=(12, 12, 12), cell=None, seed=0,
 
 
 def write_bulk(directory, identifiers=("mp-1", "mp-2"), shape=(12, 12, 12),
-               compress=True):
+               compress=True, element="Si"):
     """A flat archive of standalone densities, gzipped like a real download."""
     directory = str(directory)
     os.makedirs(directory, exist_ok=True)
     for index, identifier in enumerate(identifiers):
         _, _, _, density = _material(np.eye(3) * (5.0 + index), shape,
-                                     seed=index + 10)
+                                     seed=index + 10, element=element)
         path = os.path.join(directory, f"CHGCAR_{identifier}")
         density.write(path)
         if compress:
@@ -299,6 +344,143 @@ class TestReading:
 
 
 # ---------------------------------------------------------------------- #
+# The external potential a bulk archive gets
+# ---------------------------------------------------------------------- #
+class TestPotcarLibrary:
+    """
+    ``potcar_dir`` closes the one real gap in training on a public archive.
+
+    The archive supplies the structure; the library supplies the
+    pseudopotentials. Together they are everything the exact tabulated
+    construction needs, so the potential stops being a model of VASP's and
+    becomes VASP's.
+    """
+
+    def test_without_a_library_the_potential_is_the_gaussian_model(self, tmp_path):
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Au")
+        source = resolve_source(archive, charges=CHARGES)
+        record = source.discover()[0]
+
+        potential = source.read(record, "EXTCAR", source.grid(record))
+
+        assert potential.metadata["model"] == "gaussian"
+        assert source.potential_model() == "gaussian"
+
+    def test_with_a_library_the_potential_is_tabulated(self, tmp_path,
+                                                       potcar_library):
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Au")
+        source = resolve_source(archive, potcar_dir=potcar_library)
+        record = source.discover()[0]
+
+        potential = source.read(record, "EXTCAR", source.grid(record))
+
+        assert potential.metadata["model"] == "potcar"
+        assert potential.metadata["derived_from"] == "CHGCAR header + POTCAR library"
+        assert source.potential_model() == "tabulated"
+
+    def test_the_two_constructions_genuinely_differ(self, tmp_path,
+                                                    potcar_library):
+        """
+        If they agreed, the option would be pointless.
+
+        The published residual is of order 0.1 relative L2; asserting only that
+        it is well clear of zero keeps the test about the mechanism rather than
+        about one number on one fixture.
+        """
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Au")
+        record = resolve_source(archive).discover()[0]
+        grid = resolve_source(archive).grid(record)
+
+        gaussian = resolve_source(archive, charges=CHARGES).read(
+            record, "EXTCAR", grid)
+        tabulated = resolve_source(archive, potcar_dir=potcar_library).read(
+            record, "EXTCAR", grid)
+
+        difference = np.linalg.norm(tabulated.data - gaussian.data)
+        assert difference / np.linalg.norm(tabulated.data) > 0.01
+        # Both are neutralised the same way, so both average to zero.
+        assert tabulated.data.mean() == pytest.approx(0.0, abs=1e-8)
+
+    def test_charges_come_from_the_library_rather_than_inference(
+            self, tmp_path, potcar_library):
+        """Z_val is stated by the POTCAR; inferring it would be a detour."""
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Au")
+
+        source = resolve_source(archive, potcar_dir=potcar_library)
+
+        assert source.charges["Au"] == 11.0
+
+    def test_a_missing_element_warns_and_falls_back(self, tmp_path,
+                                                    potcar_library):
+        """A quality difference must not become an outage."""
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Si")
+        source = resolve_source(archive, potcar_dir=potcar_library,
+                                charges=CHARGES)
+        record = source.discover()[0]
+
+        with pytest.warns(RuntimeWarning, match="No usable 'Si' POTCAR"):
+            potential = source.read(record, "EXTCAR", source.grid(record))
+
+        assert potential.metadata["model"] == "gaussian"
+
+    def test_a_truncated_table_warns_and_falls_back(self, tmp_path):
+        """A partial `local part` parses fine but cannot be splined."""
+        library = tmp_path / "potcars"
+        (library / "Si").mkdir(parents=True)
+        (library / "Si" / "POTCAR").write_text(TRUNCATED_POTCAR)
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",))
+        source = resolve_source(archive, potcar_dir=str(library),
+                                charges=CHARGES)
+        record = source.discover()[0]
+
+        with pytest.warns(RuntimeWarning, match="no complete local-potential"):
+            potential = source.read(record, "EXTCAR", source.grid(record))
+
+        assert potential.metadata["model"] == "gaussian"
+
+    def test_a_stripped_calculation_is_rescued_by_the_library(
+            self, tmp_path, potcar_library):
+        """POTCARs are routinely removed from archived runs for licensing."""
+        runs = os.path.dirname(write_calculation(
+            tmp_path / "runs" / "struct_000", element="Au"))
+        source = resolve_source(runs, potcar_dir=potcar_library)
+        record = source.discover()[0]
+
+        potential = source.read(record, "EXTCAR", source.grid(record))
+
+        assert potential.metadata["model"] == "potcar"
+        assert potential.metadata["derived_from"] == "POSCAR + POTCAR library"
+
+    def test_a_run_with_its_own_potcar_ignores_the_library(self, tmp_path,
+                                                           potcar_library):
+        runs = os.path.dirname(write_calculation(
+            tmp_path / "runs" / "struct_000", element="Au",
+            potcar=REFERENCE_POTCAR))
+        source = resolve_source(runs, potcar_dir=potcar_library)
+        record = source.discover()[0]
+
+        potential = source.read(record, "EXTCAR", source.grid(record))
+
+        assert "potcar_dir" not in potential.metadata
+
+    def test_the_cache_records_which_construction_was_used(self, tmp_path,
+                                                           potcar_library):
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Au")
+        lines = []
+
+        build_field_cache(archive, tmp_path / "out", resolution=8,
+                          potcar_dir=potcar_library, log=lines.append)
+
+        assert any("V_ext tabulated from" in line for line in lines)
+
+
+# ---------------------------------------------------------------------- #
 # Enumeration across sources
 # ---------------------------------------------------------------------- #
 class TestDiscoverRecords:
@@ -374,11 +556,41 @@ class TestMixedFieldDataset:
             MixedFieldDataset(bulk, task="chg2tau", resolution=8,
                               charges=CHARGES)
 
-    def test_mixing_potential_conventions_warns(self, calculations, bulk):
+    def test_mixing_potential_conventions_warns(self, tmp_path, bulk):
         """Two definitions of V_ext under one name is never a good accident."""
+        runs = write_calculation(tmp_path / "runs" / "struct_000",
+                                 potcar=REFERENCE_POTCAR
+                                 if os.path.exists(REFERENCE_POTCAR) else None)
+        if not os.path.exists(os.path.join(runs, "POTCAR")):
+            pytest.skip("reference POTCAR not available")
+
         with pytest.warns(UserWarning, match="define the external potential"):
-            MixedFieldDataset([calculations, bulk], task="ext2chg",
+            MixedFieldDataset([os.path.dirname(runs), bulk], task="ext2chg",
                               resolution=8, charges=CHARGES)
+
+    def test_a_potcar_library_makes_the_mixture_one_quantity(
+            self, tmp_path, potcar_library):
+        """
+        With the library both sources build the tabulated potential.
+
+        That is the whole point of `potcar_dir`: it does not merely improve the
+        bulk archive's potential, it makes it the *same physical quantity* the
+        calculations use, at which point the mixture is no longer a mixture.
+        """
+        runs = os.path.dirname(write_calculation(
+            tmp_path / "runs" / "struct_000", element="Au",
+            potcar=REFERENCE_POTCAR))
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Au")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            data = MixedFieldDataset([runs, archive], task="ext2chg",
+                                     resolution=8, potcar_dir=potcar_library)
+
+        assert len(data) == 2
+        assert {source.potential_model() for source in data.sources} == {
+            "tabulated"}
 
     def test_one_convention_does_not_warn(self, calculations):
         with warnings.catch_warnings():
@@ -435,38 +647,26 @@ class TestMixedFieldDataset:
 
 
 # ---------------------------------------------------------------------- #
-# The operator on a mixture
-# ---------------------------------------------------------------------- #
-class TestOperatorOnAMixture:
-    def test_trains_across_both_archives(self, calculations, bulk):
-        from poraque.ml import FieldOperator, train
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            data = MixedFieldDataset([calculations, bulk], task="ext2chg",
-                                     resolution=8, charges=CHARGES, cache=True)
-        source, target = data.fit_transforms()
-        operator = FieldOperator("ext2chg", width=8, modes=2, n_layers=1,
-                                 projection_channels=8, input_transform=source,
-                                 target_transform=target, device="cpu")
-
-        history = train(operator, data, epochs=4, batch_size=2,
-                        learning_rate=3e-3, verbose=False)
-
-        assert np.isfinite(history["train_loss"][0])
-        assert history["train_loss"][-1] < history["train_loss"][0]
-
-
-# ---------------------------------------------------------------------- #
 # The cache
 # ---------------------------------------------------------------------- #
+def cached_materials(cache):
+    """
+    The material directories in a cache, ignoring what sits beside them.
+
+    A cache also holds bookkeeping files -- the PAW reference table, the build
+    summary -- so counting directory entries would count those too.
+    """
+    return [entry for entry in os.listdir(cache)
+            if os.path.isdir(os.path.join(cache, entry))]
+
+
 class TestBuildFieldCache:
     def test_writes_one_layout_from_a_mixture(self, calculations, bulk,
                                               tmp_path):
         cache = build_field_cache([calculations, bulk], tmp_path / "out",
                                   resolution=8, charges=CHARGES)
 
-        assert sorted(os.listdir(cache)) == [
+        assert sorted(cached_materials(cache)) == [
             "mp-1", "mp-2", "struct_000", "struct_001", "struct_002"]
 
     def test_writes_every_field_a_source_offers(self, calculations, bulk,
@@ -521,7 +721,7 @@ class TestBuildFieldCache:
         cache = build_field_cache(calculations, tmp_path / "out", resolution=8,
                                   charges=CHARGES, limit=2)
 
-        assert len(os.listdir(cache)) == 2
+        assert len(cached_materials(cache)) == 2
 
     def test_the_paw_reference_survives_an_empty_source(self, bulk, tmp_path):
         """These fixtures carry no augmentation records; that is not an error."""

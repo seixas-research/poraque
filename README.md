@@ -38,11 +38,12 @@ cd poraque
 pip install -e .
 ```
 
-Python 3.11 or newer. Installing registers three console commands —
-`poraque-train`, `poraque-inference` and `poraque-committee` — which run from
-any directory once the environment is active. Each is the `main()` of the
-script of the same name under `scripts/`, so `python scripts/poraque_train.py`
-is equivalent to `poraque-train` and needs nothing installed.
+Python 3.11 or newer. Installing registers four console commands —
+`poraque-train`, `poraque-inference`, `poraque-committee` and `poraque-mp` —
+which run from any directory once the environment is active. The first three
+are the `main()` of the script of the same name under `scripts/`, so
+`python scripts/poraque_train.py` is equivalent to `poraque-train` and needs
+nothing installed.
 
 ## Use
 
@@ -75,11 +76,60 @@ print(atoms.calc.components)     # T_s, E_ext, alpha Z, E_H, E_xc, Ewald
 Forces and stress are not implemented, so this is single points, not
 relaxations.
 
+## Training on the Materials Project
+
+`poraque-mp` turns a **chemical space** — a set of elements — into a local
+dataset of charge densities. Size it first; the estimate is exact, because
+charge densities are objects in a public S3 bucket and their sizes are read
+with `HEAD` requests that transfer no payload:
+
+```bash
+# a pure dry run: prints to the console and writes nothing at all
+poraque-mp --elements Ag Au Pt --estimate
+
+# download into ./data/MP, skipping anything over 20 MB
+poraque-mp --elements Ag Au Pt --output data/MP --max-size-mb 20
+```
+
+`--output` (or `--outdir`) defaults to the **current directory**, so a command
+that writes hundreds of megabytes puts them where you ran it. Files stay
+gzipped; Poraquê reads compressed volumetric files in place.
+
+Then train. `train_paths` is a list, so a download can be trained on alone or
+beside your own runs:
+
+```yaml
+task: ext2chg              # MP publishes no tau, so chg2tau is not trainable
+data:
+  train_paths:
+    - data/MP              # a bulk archive of standalone CHGCARs
+    - data/vasp            # optional: your own calculation directories
+  potcar_dir: /opt/vasp/potpaw_PBE     # see below
+  resolution: 32
+```
+
+```bash
+poraque-train --config configs/train_mp_config.yaml
+```
+
+**Set `potcar_dir`.** An MP download has a structure and a density and no
+pseudopotentials, and the external potential — the model's *input* — cannot be
+built exactly without them. Point at the POTCAR library that generated the data
+(MP uses the VASP PBE set) and V_ext is VASP's tabulated local potential,
+accurate to a relative 2×10⁻⁵. Leave it out and the Gaussian pseudo-ion model
+stands in: on the Ag–Au–Pt set the two differ by **0.38 relative L2** — they
+are different fields, not different roundings of one. Missing entries warn and
+fall back per element rather than failing the run.
+
+The structure itself needs nothing extra: a `CHGCAR` carries its own `POSCAR`
+in its first lines.
+
 ## What is in here
 
 | Path | Contents |
 | --- | --- |
 | `src/poraque/fields/` | Shared-grid scalar fields, VASP I/O, pluggable ingestion |
+| `src/poraque/data/` | Materials Project downloader, format detection, mixed datasets |
 | `src/poraque/ml/` | Fourier neural operators, differentiable DFT operators, training |
 | `src/poraque/physics/` | Total-energy components integrated from the predicted fields |
 | `src/poraque/calculator.py` | ASE calculator wrapping the whole chain |
@@ -96,7 +146,11 @@ relaxations.
 - **The external potential is computed natively.** Poraquê reconstructs it from
   the `POTCAR` tables on any standard VASP output, matching a reference
   potential to a relative 5×10⁻⁵. There is no option to import one: the
-  training input must be exactly what inference produces.
+  training input must be exactly what inference produces. Where the data ships
+  no pseudopotentials — a public density archive, or a run whose `POTCAR` was
+  stripped — `potcar_dir` supplies them and the same exact construction is
+  used; failing that, a Gaussian pseudo-ion model stands in, and the run says
+  which of the two it used.
 - **Grids may differ between materials.** One model serves all of them: the
   operator's weights live in Fourier-mode space, and batches are bucketed by
   grid shape.

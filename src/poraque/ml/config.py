@@ -46,6 +46,55 @@ def _require_yaml():
 
 
 @dataclass
+class TaskConfig:
+    """
+    What is trained, and what the run's artefacts are called.
+
+    Attributes
+    ----------
+    type : str
+        ``"ext2chg"``, ``"chg2tau"`` or ``"all"``.
+    name : str
+        Identifier for **this run's outputs**, and the stem of every file it
+        writes::
+
+            models/<name>.pfno              the weights
+            reports/<name>_report.pdf       the PDF report
+            results/plots/<name>/           the figures
+
+        Two runs that differ in anything worth keeping — a chemical space, a
+        resolution, a set of physics weights — should differ in ``name``, or
+        the second silently overwrites the first. The default reproduces the
+        historical filename, so a config written before this key existed
+        writes exactly where it always did.
+
+    Notes
+    -----
+    ``task`` also accepts the bare string it used to be::
+
+        task: ext2chg                       # same as {type: ext2chg}
+
+    which is read as ``type`` with the default ``name``.
+    """
+
+    type: str = "all"
+    # Matches poraque.ml.training.BUNDLE_FILENAME without its suffix, so an
+    # unnamed run writes the file every earlier version wrote.
+    name: str = "poraque_models"
+
+    def names(self):
+        """
+        The task names to train, expanding ``"all"``.
+
+        Returns
+        -------
+        list of str
+        """
+        return (["ext2chg", "chg2tau"] if self.type == "all"
+                else [str(self.type)])
+
+
+@dataclass
 class DataConfig:
     """
     Where the fields live and how they are prepared.
@@ -85,10 +134,10 @@ class DataConfig:
 
         ``"bulk"`` is an archive of standalone ``CHGCAR`` files, compressed or
         not — what the Materials Project ships. The potential is built from the
-        structure each density carries in its own header, using the Gaussian
-        pseudo-ion model, since no ``POTCAR`` comes with it. ``chg2tau`` is not
-        trainable on such an archive: no public archive publishes
-        :math:`\\tau`.
+        structure each density carries in its own header, exactly when
+        ``potcar_dir`` supplies the pseudopotentials and by the Gaussian
+        pseudo-ion model otherwise. ``chg2tau`` is not trainable on such an
+        archive: no public archive publishes :math:`\\tau`.
 
         ``"prepared"`` is a directory of per-material ``EXTCAR``/``CHGCAR``/
         ``TAUCAR`` folders — a cache from an earlier run, read as it stands.
@@ -102,12 +151,36 @@ class DataConfig:
         by the other layouts.
     code : str
         DFT code name, or ``"auto"`` to detect it.
+    potcar_dir : str or None
+        A ``POTCAR`` **library** — one subdirectory per pseudopotential, as
+        VASP ships them (``<potcar_dir>/Ag/POTCAR``, optionally ``.gz``/``.Z``;
+        a flat ``POTCAR.Ag`` layout is also recognised).
+
+        It matters most for a Materials Project download, which publishes a
+        structure and a density and no pseudopotentials. Supply the library and
+        the external potential is built from VASP's **tabulated local
+        potential**, reproducing a reference ``EXTCAR`` to a relative
+        :math:`2\\times10^{-5}`; omit it and the **Gaussian pseudo-ion model**
+        stands in, whose residual against that reference is of order
+        :math:`0.1` relative :math:`L_2`.
+
+        The same setting also rescues a local run whose ``POTCAR`` was stripped
+        for licensing. A run that has its own ``POTCAR`` ignores this entirely.
+
+        Choose the library that generated the data. The Materials Project uses
+        the VASP PBE set (``PAW_PBE``); pointing at ``PAW_LDA`` would build a
+        potential the densities were never computed from, which is worse than
+        the Gaussian fallback because it looks exact.
+
+        Missing or unreadable entries fall back to the Gaussian model **with a
+        warning** rather than failing the run: it is a quality difference, not
+        an outage.
     sigma : float or None
-        Gaussian pseudo-ion width in Å for the computed external potential.
-        ``null`` derives it per species from the pseudopotential core radius,
-        which is the right answer whenever a ``POTCAR`` is available; it is not
-        for a Materials Project download, where nothing supplies one and
-        :data:`poraque.fields.external.DEFAULT_SIGMA` is used instead. Set it
+        Gaussian pseudo-ion width in Å, used only where the Gaussian model is
+        reached — i.e. where no ``POTCAR`` and no ``potcar_dir`` supply a
+        tabulated potential. ``null`` derives it per species from the
+        pseudopotential core radius where one is known, and falls back to
+        :data:`poraque.fields.external.DEFAULT_SIGMA` otherwise. Set it
         explicitly when a reference ``EXTCAR`` allows it to be fitted.
     resolution : int
         Longest grid axis after spectral downsampling. The reduction is a
@@ -137,6 +210,7 @@ class DataConfig:
     pattern: str = "struct"
     code: str = "auto"
     resolution: int = 32
+    potcar_dir: str = None
     sigma: float = None
     gaussian_blur: float = None
     blur_method: str = "spectral"
@@ -320,6 +394,25 @@ class TrainingConfig_:
     physics : dict
         Weights of the physics-informed terms; all default to zero, so the
         objective is the supervised baseline until one is enabled deliberately.
+
+        ``electron_count_weight`` is the **charge-conservation** weight, and
+        the one to reach for first on ``ext2chg``:
+
+        .. math::
+
+            \\mathcal{L}_{N} = \\left\\langle
+            \\left(\\frac{\\int\\hat\\rho\\,d^3r - \\int\\rho\\,d^3r}
+                        {\\int\\rho\\,d^3r}\\right)^{2}\\right\\rangle ,
+
+        the squared relative error between the integral of the predicted
+        density and the integral of the reference — the valence electron
+        count. It costs one reduction per batch and pins the single global
+        degree of freedom a pointwise regression loss controls worst, since a
+        relative :math:`L^2` is indifferent to a percent of charge spread
+        thinly across the cell while a total energy is not.
+
+        ``0.1`` puts the constraint an order of magnitude below the data term,
+        which is the intended balance: the physics guides, the data decides.
     """
 
     epochs: int = 300
@@ -580,8 +673,8 @@ class TrainingConfig:
 
     Parameters
     ----------
-    task : str
-        ``"ext2chg"``, ``"chg2tau"`` or ``"all"``.
+    task : TaskConfig
+        What to train, and the name every output file is built from.
     data, model, training, output, symbolic : dataclass
         The five setting groups.
 
@@ -592,7 +685,7 @@ class TrainingConfig:
     16
     """
 
-    task: str = "all"
+    task: TaskConfig = field(default_factory=TaskConfig)
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig_ = field(default_factory=TrainingConfig_)
@@ -600,13 +693,32 @@ class TrainingConfig:
     symbolic: SymbolicConfig = field(default_factory=SymbolicConfig)
     fine_tuning: FineTuningConfig = field(default_factory=FineTuningConfig)
 
-    _SECTIONS = {"data": DataConfig, "model": ModelConfig,
+    # Order matters twice: it is the order the run header prints, and the order
+    # a bare (undotted) override is resolved against.
+    _SECTIONS = {"task": TaskConfig, "data": DataConfig, "model": ModelConfig,
                  "training": TrainingConfig_, "output": OutputConfig,
                  "symbolic": SymbolicConfig, "fine_tuning": FineTuningConfig}
 
     # ------------------------------------------------------------------ #
     # Construction
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _task_section(value):
+        """
+        Read ``task`` in either spelling.
+
+        It began as a bare string and became a section when the run gained a
+        ``name``. Both are accepted permanently rather than transitionally:
+        ``task: ext2chg`` is the shorter and clearer form when the defaults for
+        everything else will do, and every config written before the section
+        existed keeps working unchanged.
+        """
+        if value is None:
+            return {}
+        if isinstance(value, str):
+            return {"type": value}
+        return dict(value)
+
     @classmethod
     def from_dict(cls, mapping):
         """
@@ -629,13 +741,14 @@ class TrainingConfig:
             to change something.
         """
         mapping = dict(mapping or {})
-        known = set(cls._SECTIONS) | {"task"}
+        known = set(cls._SECTIONS)
         unknown = sorted(set(mapping) - known)
         if unknown:
             raise ValueError(
                 f"Unknown configuration section(s): {unknown}. "
                 f"Expected any of {sorted(known)}."
             )
+        mapping["task"] = cls._task_section(mapping.get("task"))
 
         sections = {}
         for name, section_class in cls._SECTIONS.items():
@@ -649,7 +762,7 @@ class TrainingConfig:
                 )
             sections[name] = section_class(**values)
 
-        return cls(task=mapping.get("task", "all"), **sections)
+        return cls(**sections)
 
     @classmethod
     def from_yaml(cls, path):
@@ -728,7 +841,9 @@ class TrainingConfig:
                     raise ValueError(f"Unknown override {key!r}.")
                 setattr(section, attribute, value)
             elif key == "task":
-                self.task = value
+                # `--task ext2chg`, and any caller still passing the bare
+                # string the key used to hold.
+                self.task.type = value
             else:
                 for section_name in self._SECTIONS:
                     section = getattr(self, section_name)
@@ -753,33 +868,81 @@ class TrainingConfig:
         return {f.name: getattr(self.model, f.name)
                 for f in fields(self.model) if f.name not in excluded}
 
+    #: How a value is written back out in :meth:`describe`. The header echoes a
+    #: YAML file, so it uses YAML's spellings: a reader comparing the two
+    #: should not have to translate ``None`` into ``null`` in their head.
+    _LITERALS = {None: "null", True: "true", False: "false"}
+
+    @classmethod
+    def _describe_value(cls, value):
+        """One setting, spelled as the YAML file spells it."""
+        if isinstance(value, bool) or value is None:
+            return cls._LITERALS[value]
+        if isinstance(value, (list, tuple)):
+            return "[]" if not value else ", ".join(str(item) for item in value)
+        return str(value)
+
+    @classmethod
+    def _describe_section(cls, mapping, indent):
+        """
+        One ``key = value`` per line, with the ``=`` signs aligned.
+
+        Recursive, because ``training.physics`` is itself a mapping and a
+        nested dict rendered as a repr is exactly the unreadable run this
+        avoids.
+        """
+        pad = " " * indent
+        scalars = [key for key, value in mapping.items()
+                   if not (isinstance(value, dict) and value)]
+        width = max([len(str(key)) for key in scalars] or [0])
+
+        lines = []
+        for key, value in mapping.items():
+            if isinstance(value, dict) and value:
+                lines.append(f"{pad}{key}:")
+                lines.extend(cls._describe_section(value, indent + 2))
+            else:
+                lines.append(f"{pad}{str(key):<{width}s} = "
+                             f"{cls._describe_value(value)}")
+        return lines
+
     def describe(self):
         """
         Multi-line human-readable summary, for the log header.
 
-        Nested mappings are broken out one entry per line instead of being
-        inlined as a repr. ``training.physics`` is 116 characters of
-        ``{'electron_count_weight': 0.0, ...}``, which wrapped across the
-        terminal and buried the four weights that actually select the
-        objective -- the run header is where a reader checks what is switched
-        on, so those have to be readable at a glance.
+        **One setting per line**, indented under its section, with the ``=``
+        signs aligned within each. The run header is where a reader checks
+        what is switched on before committing hours of GPU to it, and a
+        comma-separated section wrapped across the terminal at whatever column
+        it happened to reach: the settings that mattered were wherever the
+        wrapping put them, and ``training.physics`` was 116 characters of
+        ``{'electron_count_weight': 0.0, ...}`` riding on the end of one.
+
+        Values are written in YAML's spelling — ``null``, ``true``, ``false``
+        — so the header and the file it came from read the same.
+
+        Returns
+        -------
+        str
+
+        Examples
+        --------
+        >>> print(TrainingConfig().describe())            # doctest: +SKIP
+        task:
+          type = all
+          name = poraque_models
+        data:
+          train_paths = null
+          root        = data/vasp
+          ...
         """
-        lines = [f"task: {self.task}"]
+        lines = []
         for name in self._SECTIONS:
             section = getattr(self, name)
-            inline, nested = [], []
-            for entry in fields(section):
-                value = getattr(section, entry.name)
-                if isinstance(value, dict) and value:
-                    nested.append((entry.name, value))
-                else:
-                    inline.append(f"{entry.name}={value}")
-            lines.append(f"{name}: {', '.join(inline)}")
-            for key, mapping in nested:
-                lines.append(f"  {key}:")
-                width = max(len(str(inner)) for inner in mapping)
-                for inner, setting in mapping.items():
-                    lines.append(f"    {str(inner):<{width}s} = {setting}")
+            lines.append(f"{name}:")
+            lines.extend(self._describe_section(
+                {entry.name: getattr(section, entry.name)
+                 for entry in fields(section)}, indent=2))
         return "\n".join(lines)
 
 
