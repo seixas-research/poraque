@@ -45,6 +45,21 @@ def _escape(text):
 #: Characters a long unbroken configuration value may be split after.
 _BREAK_AFTER = ("/", ",", ":", ";", "-", r"\_")
 
+#: Share of the text block given to the *key* column of the configuration
+#: appendix.
+#:
+#: Sized to the content rather than guessed. The longest key any config
+#: produces is ``symbolic.enable_symbolic_distillation``, which sets 184.5 pt
+#: wide at 11 pt Latin Modern -- 0.405 of the 455 pt text block on A4 with the
+#: 2.5 cm margins this report uses. The value here leaves a little over 15 pt
+#: of headroom on top of that, so every key of every section fits on **one
+#: line** and is read as the identifier it is.
+#:
+#: A key broken across two lines is not merely untidy: ``symbolic.enable\_``
+#: over ``symbolic\_distillation`` reads as two settings, and the reader has to
+#: reassemble the name of the thing whose value sits beside it.
+CONFIG_KEY_FRACTION = 0.44
+
 
 def _wrappable(text, threshold=28):
     """
@@ -647,12 +662,22 @@ class ModelReport:
             # Fixed-width columns, not `ll`. An `l` column is a single
             # unbreakable box, so a long value -- `training.physics` is 116
             # characters of nested dict -- ran straight past the right margin.
-            # 4.6 + 11.4 cm plus the inter-column gap fits the 16.6 cm text
-            # block set by `geometry`'s 2.2 cm margins on A4.
+            #
+            # The widths are fractions of `\textwidth` rather than centimetres,
+            # so they survive a change of paper size or margin, and they are
+            # sized to the *content*: see CONFIG_KEY_FRACTION. The two add to
+            # one, less the single inter-column gap `@{}...@{}` leaves in the
+            # middle, so the table fills the text block exactly instead of
+            # overhanging it by a `\tabcolsep`.
             body.append(r"\clearpage" "\n" r"\section*{Configuration}" "\n")
-            body.append(r"\begin{center}\begin{longtable}"
-                        r"{@{}p{4.6cm}>{\raggedright\arraybackslash}p{11.4cm}@{}}"
-                        r"\toprule" "\n")
+            body.append(
+                r"\begin{center}\begin{longtable}{@{}"
+                r">{\raggedright\arraybackslash}p{" f"{CONFIG_KEY_FRACTION}"
+                r"\textwidth}"
+                r">{\raggedright\arraybackslash}p{\dimexpr"
+                f"{1.0 - CONFIG_KEY_FRACTION:.2f}"
+                r"\textwidth-2\tabcolsep\relax}"
+                r"@{}}\toprule" "\n")
             for key, value in sorted(configuration.items()):
                 # The key needs the same break opportunities as the value.
                 # `symbolic.enable_symbolic_distillation` is 37 characters with

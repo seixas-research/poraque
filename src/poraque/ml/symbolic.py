@@ -107,8 +107,14 @@ FEATURE_SCHEMES = ("gga", "reduced", "raw", "enhancement")
 TEMPLATES = ("none", "thomas_fermi", "pauli")
 
 #: ``features: enhancement`` predates the split between inputs and target
-#: factorisation. It is kept as an alias so an existing config keeps working
-#: and keeps meaning exactly what it did.
+#: factorisation, when one name selected both. It is kept as an alias so an
+#: existing config keeps working and keeps meaning exactly what it did: the
+#: Pauli factor on ``(p, q)``.
+#:
+#: It therefore **overrides** any ``template`` set beside it, which is why the
+#: explicit pair is the better spelling in a new config -- ``features:
+#: reduced`` with ``template: pauli`` says the same thing and cannot silently
+#: ignore half of itself.
 _FEATURE_ALIASES = {"enhancement": ("reduced", "pauli")}
 
 #: Density below which a voxel is vacuum: dropped, and used to clamp every
@@ -368,19 +374,26 @@ def build_features(density, target, grid, scheme="gga",
         the DFT reference.
     grid : FieldGrid
         Supplies the reciprocal vectors for the spectral derivatives.
-    scheme : {"gga", "enhancement", "raw"}, optional
-        ``"gga"`` gives :math:`(\rho, p, q)` against :math:`\tau`.
+    scheme : {"gga", "reduced", "raw", "enhancement"}, optional
+        The **input variables**; ``template`` separately selects how the target
+        is factorised.
 
-        ``"enhancement"`` drops :math:`\rho` and fits the dimensionless
-        enhancement factor :math:`F = \tau/\tau_{\rm TF}` on :math:`(p, q)`.
-        This is the form the literature writes kinetic functionals in, so the
-        answer is directly comparable: Thomas-Fermi is :math:`F = 1` and von
-        Weizsäcker is :math:`F = 5p^2/3`. Everything the search must find is
-        then order unity.
+        ``"gga"`` gives :math:`(\rho, p, q)`.
 
-        ``"raw"`` gives :math:`(\rho, |\nabla\rho|, \nabla^2\rho)` against
-        :math:`\tau`, all in atomic units — dimensional, and kept only for
-        checking the reduced forms against something unprocessed.
+        ``"reduced"`` gives :math:`(p, q)` alone. Paired with
+        ``template="pauli"`` this is the form the literature writes kinetic
+        functionals in — everything the search must find is then order unity,
+        and :math:`\rho` is dropped because a dimensionless :math:`F` cannot
+        depend on it: offering it would only give the search a way to fit the
+        particular densities in the dataset.
+
+        ``"raw"`` gives :math:`(\rho, |\nabla\rho|, \nabla^2\rho)`, all in
+        atomic units — dimensional, and kept only for checking the reduced
+        forms against something unprocessed.
+
+        ``"enhancement"`` is an alias for ``"reduced"`` with
+        ``template="pauli"``, and **overrides** any ``template`` passed
+        alongside it.
     epsilon : float, optional
         Vacuum threshold in atomic units (:math:`e/a_0^3`). Used twice, and
         both uses are needed:
@@ -688,17 +701,20 @@ class AsymptoticCompliance:
 
 def pauli_form(expression, feature_names, scheme, template="none"):
     r"""
-    Rewrite a candidate as the enhancement factor :math:`F = \tau/\tau_{\rm TF}`.
+    Rewrite a candidate as the Pauli factor
+    :math:`F = (\tau - \tau_{\rm vW})/\tau_{\rm TF}`.
 
-    The limits are statements about :math:`F`, so every scheme is converted to
-    it and one checker serves all three:
+    The asymptotic limits are statements about that one quantity, so every
+    combination is converted to it and a single checker serves all of them:
 
-    - ``enhancement`` already fits :math:`F`; returned as is.
-    - ``gga`` fits :math:`\tau`, so it is divided by
-      :math:`C_{\rm TF}\rho^{5/3}`.
-    - ``raw`` fits :math:`\tau` on dimensional derivatives, so those are first
-      substituted — :math:`|\nabla\rho| = 2k_F\rho\,p` and
-      :math:`\nabla^2\rho = 4k_F^2\rho\,q` — and then divided.
+    - ``template="pauli"`` already fits it; returned as is.
+    - ``template="thomas_fermi"`` fits :math:`\tau/\tau_{\rm TF}`, so
+      :math:`\tau_{\rm vW}/\tau_{\rm TF} = 5p^2/3` is subtracted.
+    - ``template="none"`` fits :math:`\tau`, so it is divided by
+      :math:`C_{\rm TF}\rho^{5/3}` and then reduced the same way. Under
+      ``scheme="raw"`` the dimensional derivatives are substituted first —
+      :math:`|\nabla\rho| = 2k_F\rho\,p` and
+      :math:`\nabla^2\rho = 4k_F^2\rho\,q`.
 
     Returns
     -------

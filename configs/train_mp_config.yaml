@@ -65,9 +65,9 @@ data:
   blur_method: spectral
 model:
   width: 16
-  modes: 12
-  n_layers: 4
-  projection_channels: 48
+  modes: 8
+  n_layers: 3
+  projection_channels: 64
   activation: gelu
   use_coordinates: true
   cell_conditioning: true
@@ -96,7 +96,7 @@ training:
   early_stopping: 500
   seed: 42
   device: auto
-  loss: l2
+  loss: relative_l2
   # Physics-informed terms, added to the data loss and reported as separate
   # `data loss` / `physics loss` / `total loss` columns while training.
   physics:

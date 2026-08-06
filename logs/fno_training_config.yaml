@@ -1,17 +1,24 @@
-task: all
+task:
+  type: all
+  name: au_w16_m8_l3
 data:
+  train_paths: null
   root: data/vasp
+  source: auto
   cache: data/cache
   pattern: struct
   code: auto
   resolution: 32
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+  sigma: null
   gaussian_blur: null
   blur_method: spectral
+  spin: auto
 model:
   width: 16
   modes: 8
-  n_layers: 4
-  projection_channels: 48
+  n_layers: 3
+  projection_channels: 64
   activation: gelu
   use_coordinates: true
   cell_conditioning: true
@@ -32,14 +39,14 @@ training:
   enable_kfold: false
   k_folds: 5
   eval_epoch: 10
-  early_stopping: 100
+  early_stopping: 300
   seed: 42
   init_seed: null
   device: auto
   loss: relative_l2
   sobolev_weight: 0.1
   physics:
-    electron_count_weight: 0.0
+    electron_count_weight: 0.1
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0
@@ -52,7 +59,7 @@ output:
   plot_format: png
   dpi: 200
 symbolic:
-  enable_symbolic_distillation: false
+  enable_symbolic_distillation: true
   target: model
   features: gga
   template: none

@@ -502,22 +502,32 @@ class SymbolicConfig:
         fits the DFT data directly, which is plain symbolic regression against
         ground truth and answers a different question.
     features : str
-        ``"gga"`` regresses :math:`\tau` on the density together with its
-        dimensionless reduced derivatives — the reduced gradient
+        The **input variables**. ``template`` is the independent second knob
+        and selects what is fitted *against* them.
+
+        ``"gga"`` gives the density together with its dimensionless reduced
+        derivatives — the reduced gradient
         :math:`p = |\nabla\rho|/(2k_F\rho)` and reduced Laplacian
         :math:`q = \nabla^2\rho/(4k_F^2\rho)`, with
         :math:`k_F = (3\pi^2\rho)^{1/3}`. These are the GGA and meta-GGA
         variables a semi-local kinetic functional is written in.
 
-        ``"enhancement"`` drops :math:`\rho` and fits
-        :math:`F = \tau/\tau_{\rm TF}` on :math:`(p, q)` alone — the form the
-        literature uses, in which Thomas-Fermi is :math:`F = 1` and von
-        Weizsäcker is :math:`F = 5p^2/3`, and every constant to be found is
-        order unity.
+        ``"reduced"`` gives :math:`(p, q)` alone. With ``template: pauli``
+        this is the form the literature uses, in which Thomas-Fermi is
+        :math:`F = 1` and von Weizsäcker is :math:`F = 0`, and every constant
+        to be found is order unity. :math:`\rho` is dropped on purpose:
+        :math:`p` and :math:`q` are invariant under the coordinate scaling
+        that fixes :math:`T_s`, so a dimensionless :math:`F` cannot depend on
+        the density, and offering it only gives the search a way to fit the
+        particular densities in the dataset.
 
-        ``"raw"`` regresses :math:`\tau` on
-        :math:`(\rho, |\nabla\rho|, \nabla^2\rho)`: dimensional, kept for
-        checking the reduced forms against something unprocessed.
+        ``"raw"`` gives :math:`(\rho, |\nabla\rho|, \nabla^2\rho)`:
+        dimensional, kept for checking the reduced forms against something
+        unprocessed.
+
+        ``"enhancement"`` is a kept alias for ``"reduced"`` with
+        ``template: pauli``, and **overrides** whatever ``template`` is set
+        beside it. Prefer the explicit pair in a new config.
     template : str
         Factorisation of the target before the search sees it.
 

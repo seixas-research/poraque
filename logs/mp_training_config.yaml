@@ -1,4 +1,6 @@
-task: ext2chg
+task:
+  type: ext2chg
+  name: mp_ag_au_pt
 data:
   train_paths:
   - data/MP/Ag-Au-Pt
@@ -15,15 +17,15 @@ data:
   spin: auto
 model:
   width: 16
-  modes: 12
-  n_layers: 4
-  projection_channels: 48
+  modes: 8
+  n_layers: 3
+  projection_channels: 64
   activation: gelu
   use_coordinates: true
   cell_conditioning: true
   embedding_dim: 32
-  mode_selection: fixed
-  g_max: null
+  mode_selection: physical
+  g_max: 6
   pauli_residual: false
   pauli_scale: null
   learn_pauli_scale: true
@@ -45,7 +47,7 @@ training:
   loss: relative_l2
   sobolev_weight: 0.1
   physics:
-    electron_count_weight: 0.0
+    electron_count_weight: 0.1
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0

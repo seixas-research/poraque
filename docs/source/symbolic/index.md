@@ -107,9 +107,34 @@ The discovered expression is multiplied back into the template before it is
 reported, so the console, the JSON and the PDF all show the complete physical
 formula rather than the factor that was fitted.
 
+The pairing the shipped config uses is `features: reduced` with
+`template: pauli` — the Pauli enhancement factor $F_\theta(p, q)$ on the two
+reduced variables and nothing else:
+
+```yaml
+symbolic:
+  features: reduced        # inputs: p, q
+  template: pauli          # target: F = (tau - tau_vW) / tau_TF
+```
+
+$\rho$ is dropped deliberately rather than merely omitted. $p$ and $q$ are
+invariant under the coordinate scaling that fixes $T_s$, so a dimensionless
+$F$ *cannot* depend on the density; offering $\rho$ as a third variable gives
+the search a way to fit the particular densities in the dataset and nothing
+else. What comes back is the kinetic energy density in full,
+
+$$
+\tau = \tau_\mathrm{vW}[\rho] + C_\mathrm{TF}\,\rho^{5/3}\,F_\theta(p, q),
+$$
+
+built from two terms already known in closed form and one that was searched
+for.
+
 ```{note}
 `features: enhancement` is kept as an alias for `features: reduced` plus
-`template: thomas_fermi`, which is exactly what it used to mean.
+`template: pauli`, which is exactly what it used to mean when one name
+selected both. It therefore **overrides** any `template` set beside it — the
+explicit pair says the same thing and cannot silently ignore half of itself.
 ```
 
 ### Operator constraints
