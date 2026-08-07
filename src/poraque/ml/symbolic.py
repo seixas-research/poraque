@@ -226,6 +226,11 @@ class SymbolicResult:
     engine: str = ""
     limits: dict = field(default_factory=dict)
     compliant_expressions: list = field(default_factory=list)
+    #: Which physical constraints were part of the *objective*, as opposed to
+    #: checked afterwards. Empty when the search was unconstrained. Reported
+    #: because a limit that cannot be expressed in the chosen variables is
+    #: simply absent, and "enforced" would otherwise be assumed.
+    constraints_enforced: list = field(default_factory=list)
     template: str = "none"
     full_expression: str = ""
     full_latex: str = ""
@@ -256,6 +261,11 @@ class SymbolicResult:
                 f"{self.validation.get('relative_l2', float('nan')):.4f}   "
                 f"R2 {self.validation.get('r2', float('nan')):.4f}   "
                 f"on {self.validation.get('n_points', 0)} voxels vs DFT")
+        lines.append(
+            "  constraints  : " +
+            (", ".join(self.constraints_enforced) + " (penalised in-loop)"
+             if self.constraints_enforced
+             else "none in-loop; the limits below are checked after the search"))
         if self.limits:
             lines.append(f"  limits       : {self.limits.get('badge', '--/--')}"
                          f"   (score {self.limits.get('score', 0.0):.1f} of 1)")
@@ -531,6 +541,284 @@ def stack_tables(tables):
 
 
 # ===================================================================== #
+# Physical constraints, enforced inside the search
+# ===================================================================== #
+#: Reduced gradient standing in for :math:`p\to\infty` in the von Weizsäcker
+#: probe. Large enough that no smooth interpolating form is still in its
+#: crossover region, small enough that :math:`p^2` and :math:`p^{8/3}` stay far
+#: inside the range of a 32-bit float, which is the precision PySR searches in.
+DEFAULT_P_INFINITY = 1e6
+
+#: Densities the probes are swept over when :math:`\rho` is itself a feature
+#: (the ``gga`` scheme). The limits are statements about *every* density, so a
+#: candidate that satisfies them at one value and not another has not satisfied
+#: them; sweeping turns that into a penalty rather than a lucky pass. The same
+#: three values are used by the post-hoc checker in :func:`_evaluate`.
+PROBE_DENSITIES = (0.05, 0.2, 0.8)
+
+#: Ceiling on any single penalty term, and the value charged when a probe
+#: cannot be evaluated at all.
+#:
+#: A candidate that diverges at :math:`p = 10^6` scores :math:`\sim10^{12}`
+#: there, and one built from ``exp`` overflows to infinity. Either would swamp
+#: the accumulator and make every unphysical candidate *equally* unphysical —
+#: including in 32-bit arithmetic, where the sum stops resolving the data term
+#: entirely. Clamping keeps the objective finite and ordered while leaving any
+#: violator decisively worse than a data term of order one.
+PENALTY_CEILING = 1e6
+
+#: Default penalty weights, four orders of magnitude above a converged data
+#: term. These are constraints, not regularisers: the intent is that no
+#: accuracy gain can buy a violation.
+DEFAULT_PHYSICS_WEIGHTS = {
+    "positivity": 1.0e2,
+    "thomas_fermi": 1.0e2,
+    "von_weizsacker": 1.0e2,
+}
+
+#: Data terms the physics penalties are added to.
+DATA_LOSSES = {"mse": "abs2", "mae": "abs"}
+
+
+def physics_probes(feature_names, template, p_infinity=DEFAULT_P_INFINITY,
+                   densities=PROBE_DENSITIES):
+    r"""
+    The synthetic points the asymptotic limits are enforced at.
+
+    The two limits that pin a kinetic functional are statements about the
+    enhancement factor at *specific* points of feature space — not about the
+    training data — so they cannot be expressed as an elementwise loss over the
+    batch. Each probe here is one such point, together with the value the
+    candidate must take there.
+
+    Thomas-Fermi
+        :math:`F(p=0, q=0) = 1`. A uniform electron gas has no density
+        variation, so the functional must collapse onto Thomas-Fermi exactly.
+    von Weizsäcker
+        :math:`F(p\to\infty, q=0) \to 0` for the Pauli factor, since
+        :math:`\tau \to \tau_{\rm vW}` where the density varies rapidly. Under
+        the ``thomas_fermi`` template the same statement reads
+        :math:`F \to 5p^2/3`, which at :math:`p = 10^6` is a number of order
+        :math:`10^{12}`; that probe is therefore compared **relatively**, since
+        an absolute tolerance there is finer than the float it is measured in.
+
+    Both are undefined unless the fitted quantity is an enhancement factor and
+    :math:`p` and :math:`q` are among the variables, so the ``none`` template
+    and the ``raw`` scheme return no probes — positivity still applies to them,
+    and is enforced on the batch instead.
+
+    Parameters
+    ----------
+    feature_names : sequence of str
+        The search's variables, in column order.
+    template : str
+        One of :data:`TEMPLATES`.
+    p_infinity : float, optional
+        Reduced gradient standing in for the von Weizsäcker limit.
+    densities : sequence of float, optional
+        Values of :math:`\rho` to sweep when it is a feature.
+
+    Returns
+    -------
+    list of dict
+        ``{"limit", "point", "target", "scale"}``. ``point`` maps every feature
+        name to its value; the penalty is ``|F(point) - target| / scale``.
+    """
+    names = list(feature_names)
+    # Every probe has to give a value to *every* variable, so the variable set
+    # must be one this function knows how to fix. That is the two reduced
+    # derivatives, optionally with the density; anything else -- the `raw`
+    # scheme, a hand-built table -- has no probe and keeps positivity alone.
+    if template == "none" or not {"p", "q"}.issubset(names) \
+            or not set(names).issubset({"rho", "p", "q"}):
+        return []
+
+    sweep = tuple(densities) if "rho" in names else (None,)
+    probes = []
+    for density in sweep:
+        base = {} if density is None else {"rho": float(density)}
+        probes.append({
+            "limit": "thomas_fermi",
+            "point": {**base, "p": 0.0, "q": 0.0},
+            "target": 1.0,
+            "scale": 1.0,
+        })
+        if template == "pauli":
+            reference = 0.0
+        else:
+            # tau_vW / tau_TF = 5 p^2 / 3 exactly; under the thomas_fermi
+            # template that is what F must approach rather than zero.
+            reference = 5.0 / 3.0 * float(p_infinity) ** 2
+        probes.append({
+            "limit": "von_weizsacker",
+            "point": {**base, "p": float(p_infinity), "q": 0.0},
+            "target": reference,
+            # Absolute for the Pauli factor, whose target is zero and for which
+            # a relative deviation is undefined; relative for the other, whose
+            # target is too large to compare absolutely in 32-bit arithmetic.
+            "scale": 1.0 if reference == 0.0 else abs(reference),
+        })
+    return probes
+
+
+def _julia_float(value):
+    """One float, in a spelling Julia's parser accepts."""
+    number = float(value)
+    if not np.isfinite(number):
+        raise ValueError(f"cannot emit a non-finite constant ({number}) into "
+                         f"a Julia loss function.")
+    return repr(number)
+
+
+def _julia_vector(values, element="T"):
+    """``T[a, b, c]`` — a typed vector literal, correct even for one element."""
+    return f"{element}[{', '.join(_julia_float(v) for v in values)}]"
+
+
+def julia_physics_loss(feature_names, template, weights=None,
+                       p_infinity=DEFAULT_P_INFINITY, data_loss="mse",
+                       densities=PROBE_DENSITIES, ceiling=PENALTY_CEILING):
+    r"""
+    Build the Julia objective that enforces the physics during the search.
+
+    Filtering candidates *after* a run only reports how few of them were
+    physical. This makes the constraints part of the fitness instead, so the
+    populations never spend their budget on forms that were going to be
+    discarded:
+
+    .. math::
+
+        \mathcal{L} = \underbrace{\frac1n\sum_i (F_i - y_i)^2}_{\text{data}}
+        \;+\; w_{+}\,\frac1n\sum_i \min(F_i, 0)^2
+        \;+\; \sum_{\rm probes} w_\ell\,
+              \frac{|F(\mathbf x_\ell) - t_\ell|}{s_\ell} .
+
+    The first penalty is evaluated on the batch, where negative predictions are
+    the whole violation: :math:`\tau \ge 0` always, and
+    :math:`\tau - \tau_{\rm vW}\ge0` by Hoffmann-Ostenhof, so a negative value
+    is unphysical under every template. The rest are evaluated on the synthetic
+    points of :func:`physics_probes`, which is why this has to be PySR's
+    **full objective** rather than an elementwise loss: an elementwise loss
+    receives only ``(prediction, target)`` pairs and can never evaluate the
+    candidate anywhere the data does not already sit.
+
+    Parameters
+    ----------
+    feature_names : sequence of str
+        The search's variables, in the column order the engine will receive.
+    template : str
+        One of :data:`TEMPLATES`; selects which limits are meaningful.
+    weights : dict, optional
+        Overrides for :data:`DEFAULT_PHYSICS_WEIGHTS`, keyed by
+        ``"positivity"``, ``"thomas_fermi"`` and ``"von_weizsacker"``.
+    p_infinity : float, optional
+        Reduced gradient standing in for the von Weizsäcker limit.
+    data_loss : {"mse", "mae"}, optional
+        The unpenalised term. MAE is the more robust choice on a density whose
+        tails span orders of magnitude.
+    densities : sequence of float, optional
+        Passed to :func:`physics_probes`.
+    ceiling : float, optional
+        Clamp on each penalty term; see :data:`PENALTY_CEILING`.
+
+    Returns
+    -------
+    tuple of (str, list of str)
+        The Julia source, and the names of the constraints it actually
+        enforces — which is what the run should report, since a limit that
+        cannot be expressed in the chosen variables is silently absent
+        otherwise.
+
+    Notes
+    -----
+    The reported ``loss`` of every candidate is this **constrained** objective,
+    so it is not comparable with an unconstrained run's. The :math:`R^2` and
+    relative :math:`L^2` on :class:`SymbolicResult` are computed in Python from
+    the expression alone and are unaffected.
+
+    Examples
+    --------
+    >>> source, enforced = julia_physics_loss(["p", "q"], "pauli")
+    >>> enforced
+    ['positivity', 'thomas_fermi', 'von_weizsacker']
+    >>> "eval_tree_array" in source
+    True
+    """
+    if data_loss not in DATA_LOSSES:
+        raise ValueError(f"Unknown data loss {data_loss!r}; expected one of "
+                         f"{sorted(DATA_LOSSES)}.")
+
+    names = list(feature_names)
+    scored = dict(DEFAULT_PHYSICS_WEIGHTS)
+    scored.update(weights or {})
+
+    probes = physics_probes(names, template, p_infinity=p_infinity,
+                            densities=densities)
+    enforced = ["positivity"]
+    enforced += sorted({probe["limit"] for probe in probes},
+                       key=["thomas_fermi", "von_weizsacker"].index)
+
+    lines = [
+        f"function poraque_constrained_loss(tree, dataset::Dataset{{T,L}}, "
+        f"options)::L where {{T,L}}",
+        "    prediction, complete = eval_tree_array(tree, dataset.X, options)",
+        "    if !complete",
+        "        return L(Inf)",
+        "    end",
+        f"    data = sum({DATA_LOSSES[data_loss]}, prediction .- dataset.y) "
+        f"/ dataset.n",
+        f"    ceiling = L({_julia_float(ceiling)})",
+        "",
+        "    # Positivity: tau >= 0 always, and tau - tau_vW >= 0 by",
+        "    # Hoffmann-Ostenhof, so a negative value is unphysical under every",
+        "    # template. Squared so the penalty is smooth in the constants the",
+        "    # optimiser tunes, and averaged so it does not scale with n.",
+        "    shortfall = sum(x -> abs2(min(x, zero(T))), prediction) / dataset.n",
+        f"    penalty = L({_julia_float(scored['positivity'])}) "
+        f"* min(L(shortfall), ceiling)",
+    ]
+
+    if probes:
+        # Column-major: reshape reads the flat vector down each column, so the
+        # values are emitted feature-by-feature within one probe, probe by
+        # probe. A `T[a; b]` literal would build a *vector* for a single probe
+        # and silently change rank.
+        flat = [probe["point"][name] for probe in probes for name in names]
+        # One limit carries one weight however many probes express it, so the
+        # density sweep of the gga scheme raises the resolution of the check
+        # rather than its price.
+        share = {limit: sum(p["limit"] == limit for p in probes)
+                 for limit in {p["limit"] for p in probes}}
+        per_probe = [scored[p["limit"]] / share[p["limit"]] for p in probes]
+        lines += [
+            "",
+            "    # The asymptotic limits are statements about specific points of",
+            "    # feature space, not about the batch, so the tree is evaluated",
+            "    # on synthetic probes. A candidate that cannot be evaluated at",
+            "    # the uniform-gas point does not have a Thomas-Fermi limit.",
+            f"    probes = reshape({_julia_vector(flat)}, "
+            f"{len(names)}, {len(probes)})",
+            f"    targets = {_julia_vector(p['target'] for p in probes)}",
+            f"    scales = {_julia_vector(p['scale'] for p in probes)}",
+            f"    penalties = {_julia_vector(per_probe, element='L')}",
+            "    probed, probed_ok = eval_tree_array(tree, probes, options)",
+            "    if !probed_ok",
+            "        penalty += ceiling",
+            "    else",
+            "        for i in eachindex(targets)",
+            "            value = probed[i]",
+            "            deviation = isfinite(value) ?",
+            "                L(abs(value - targets[i]) / scales[i]) : ceiling",
+            "            penalty += penalties[i] * min(deviation, ceiling)",
+            "        end",
+            "    end",
+        ]
+
+    lines += ["", "    return L(data) + penalty", "end"]
+    return "\n".join(lines), enforced
+
+
+# ===================================================================== #
 # Engine
 # ===================================================================== #
 def pysr_engine(features, target, feature_names, parameters):
@@ -540,6 +828,13 @@ def pysr_engine(features, target, feature_names, parameters):
     The configured operator alphabet is passed through untouched: an operator
     the user asked for is one the search gets, and PySR is the authority on
     which names it accepts.
+
+    A ``loss_function`` in ``parameters`` replaces PySR's own objective with
+    the physics-constrained one built by :func:`julia_physics_loss`. It is
+    passed as ``loss_function`` rather than ``loss``: PySR renamed the latter
+    to ``elementwise_loss``, which receives one ``(prediction, target)`` pair
+    at a time and therefore cannot evaluate a candidate at the probe points the
+    asymptotic limits are defined at.
 
     Returns
     -------
@@ -585,6 +880,11 @@ def pysr_engine(features, target, feature_names, parameters):
             # power of a negative quantity leaves the reals, and an exponent
             # that is itself a subtree is unreadable and almost never physical.
             constraints=parameters.get("constraints") or None,
+            # The physics, as fitness rather than as a filter. Absent, PySR
+            # uses its own mean-square objective and nothing stops a population
+            # converging on a form that has to be discarded afterwards.
+            **({"loss_function": parameters["loss_function"]}
+               if parameters.get("loss_function") else {}),
             output_directory=workdir,
             progress=False,
             verbosity=0,
@@ -919,12 +1219,45 @@ class SymbolicDistiller:
         self.engine = engine if engine is not None else pysr_engine
         self.limit_tolerance = float(limit_tolerance)
 
-    def parameters(self):
-        """Search settings as a plain dict, as handed to the engine."""
+    def parameters(self, table=None):
+        """
+        Search settings as a plain dict, as handed to the engine.
+
+        Parameters
+        ----------
+        table : FeatureTable, optional
+            The design matrix the search will run on. It is what selects the
+            physical constraints: which limits are even expressible depends on
+            the variables and the template, neither of which the config knows
+            on its own. Without it no ``loss_function`` is built, and the
+            engine keeps its own objective.
+
+        Returns
+        -------
+        dict
+            Engine settings, plus ``loss_function`` (Julia source, or ``None``)
+            and ``constraints_enforced`` (the constraint names that source
+            actually imposes).
+        """
         config = self.config
         unary = list(config.unary_operations or DEFAULT_UNARY)
         binary = list(config.binary_operations or DEFAULT_BINARY)
+
+        objective, enforced = None, []
+        if table is not None and getattr(config, "physics_constraints", False):
+            objective, enforced = julia_physics_loss(
+                table.feature_names, table.template,
+                weights={
+                    "positivity": float(config.positivity_weight),
+                    "thomas_fermi": float(config.thomas_fermi_weight),
+                    "von_weizsacker": float(config.von_weizsacker_weight),
+                },
+                p_infinity=float(config.p_infinity),
+                data_loss=str(config.data_loss),
+            )
         return {
+            "loss_function": objective,
+            "constraints_enforced": enforced,
             "unary_operations": unary,
             "binary_operations": binary,
             "iterations": int(config.iterations),
@@ -960,8 +1293,9 @@ class SymbolicDistiller:
             If the engine returns no candidate at all — a silent empty result
             would otherwise be reported as a successful distillation.
         """
+        parameters = self.parameters(table)
         front = self.engine(table.features, table.target,
-                            list(table.feature_names), self.parameters())
+                            list(table.feature_names), parameters)
         if not front:
             raise ValueError("The symbolic engine returned no expression.")
 
@@ -1004,6 +1338,7 @@ class SymbolicDistiller:
             full_latex=full_latex(
                 expression_to_latex(best["expression"], table.feature_names),
                 table.template),
+            constraints_enforced=list(parameters["constraints_enforced"]),
         )
 
     @staticmethod
@@ -1228,7 +1563,25 @@ def distill_dataset(dataset, config, operator=None, log=None, engine=None,
     emit(f"  searching on {len(table)} sampled voxels "
          f"({config.iterations} iterations)")
 
-    result = SymbolicDistiller(config, engine=engine).fit(table)
+    distiller = SymbolicDistiller(config, engine=engine)
+    enforced = distiller.parameters(table)["constraints_enforced"]
+    if enforced:
+        emit(f"  physical constraints penalised inside the search: "
+             f"{', '.join(enforced)}  "
+             f"[{config.data_loss} data term, p_inf = {config.p_infinity:g}]")
+        missing = {"thomas_fermi", "von_weizsacker"} - set(enforced)
+        if missing:
+            # Said out loud rather than left to be inferred: under `template:
+            # none` the fitted quantity is tau, and under `features: raw` there
+            # is no p to take a limit in, so these are not merely switched off
+            # -- they cannot be written down in the variables being searched.
+            emit(f"  not expressible in these variables, checked afterwards "
+                 f"only: {', '.join(sorted(missing))}")
+    else:
+        emit("  physical constraints are not penalised in the search "
+             "(symbolic.physics_constraints is off); limits checked afterwards")
+
+    result = distiller.fit(table)
 
     # Always scored on the data it was fitted to, so a parity plot can be drawn
     # even for a run with no validation split. It is a weaker statement than the

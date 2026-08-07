@@ -61,7 +61,7 @@ _BREAK_AFTER = ("/", ",", ":", ";", "-", r"\_")
 CONFIG_KEY_FRACTION = 0.44
 
 
-def _wrappable(text, threshold=28):
+def _wrappable(text, threshold=26):
     """
     Escape a configuration value and let it break inside a fixed-width column.
 
@@ -74,7 +74,11 @@ def _wrappable(text, threshold=28):
     without hyphenating a path in a misleading place.
 
     Short values are returned untouched: the markup is pure noise below the
-    width where wrapping could ever be needed.
+    width where wrapping could ever be needed. The threshold is the column's
+    own capacity, not a round number — set above it, a value one or two
+    characters too wide gets no break opportunity and overruns the cell, which
+    is exactly the case a long key such as ``symbolic.physics_constraints``
+    lands in.
     """
     escaped = _escape(text)
     if len(str(text)) <= threshold:
@@ -400,6 +404,23 @@ class ModelReport:
                 f"The distilled formula against the DFT reference "
                 f"{provenance}. Read it beside the operator's own parity plot: "
                 f"the gap between them is what the closed form gives up."))
+
+        # Which constraints were *fitness* rather than a post-hoc filter. It
+        # has to be on the page beside the front, because it changes what the
+        # loss column means: a constrained objective is not comparable with an
+        # unconstrained one, and a reader has no way to tell them apart.
+        enforced = get("constraints_enforced") or []
+        if enforced:
+            names = ", ".join(_escape(name.replace("_", " "))
+                              for name in enforced)
+            body.append(
+                f"The search was constrained: {names} were penalised inside "
+                f"the evolutionary loop rather than filtered afterwards, so "
+                f"the populations could not spend their budget on forms that "
+                f"had to be discarded. The loss column below is therefore that "
+                f"constrained objective, and is not comparable with an "
+                f"unconstrained run's; the $R^2$ and relative $L^2$ above are "
+                f"computed from the expression alone and are unaffected.\n\n")
 
         body.append(self._asymptotic_block(get("limits") or {}))
 

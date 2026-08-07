@@ -96,6 +96,8 @@ _LAZY = {
     "LEGACY_BUNDLE_SUFFIXES": "poraque.ml.training",
     "resolve_bundle_path": "poraque.ml.training",
     # symbolic distillation
+    "julia_physics_loss": "poraque.ml.symbolic",
+    "physics_probes": "poraque.ml.symbolic",
     "FeatureTable": "poraque.ml.symbolic",
     "SymbolicDistiller": "poraque.ml.symbolic",
     "SymbolicResult": "poraque.ml.symbolic",
@@ -112,6 +114,14 @@ _LAZY = {
     "jensen_shannon_spread": "poraque.ml.committee",
     "jensen_shannon_divergence": "poraque.ml.committee",
     "probability_density": "poraque.ml.committee",
+    # active learning
+    "discover_pool": "poraque.ml.active_learning",
+    "jsd_statistics": "poraque.ml.active_learning",
+    "promote": "poraque.ml.active_learning",
+    "run_round": "poraque.ml.active_learning",
+    "score_candidate": "poraque.ml.active_learning",
+    "score_pool": "poraque.ml.active_learning",
+    "select_top_k": "poraque.ml.active_learning",
     # unified checkpoint
     "BUNDLE_FILENAME": "poraque.ml.training",
     "BUNDLE_FORMAT": "poraque.ml.training",

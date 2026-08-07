@@ -567,6 +567,57 @@ class SymbolicConfig:
         and an exponent that is itself a subtree is unreadable and almost never
         physical. Real functionals have simple exponents: ``5/3``, ``4/3``,
         ``2``.
+    physics_constraints : bool
+        Penalise violations of the physics **inside** the evolutionary loop,
+        rather than filtering the front afterwards. On by default.
+
+        Filtering after a run only measures how few candidates were physical;
+        by then the populations have already spent their budget converging on
+        forms that must be discarded. With this on, the engine's objective
+        becomes
+
+        .. math::
+
+            \mathcal{L} = \mathcal{L}_{\rm data}
+            + w_{+}\,\frac1n\sum_i \min(F_i, 0)^2
+            + \sum_{\ell} w_\ell\,\frac{|F(\mathbf x_\ell) - t_\ell|}{s_\ell},
+
+        with the second term evaluated on the batch and the third on synthetic
+        probe points — :math:`(p, q) = (0, 0)` for Thomas-Fermi and
+        :math:`(p_\infty, 0)` for von Weizsäcker.
+
+        Which terms are active depends on what the run can express, and the
+        log says which:
+
+        - **positivity** always. :math:`\tau \ge 0`, and
+          :math:`\tau - \tau_{\rm vW} \ge 0` by Hoffmann-Ostenhof, so a
+          negative prediction is unphysical under every template.
+        - **both limits** under ``template: pauli`` or
+          ``template: thomas_fermi``, provided :math:`p` and :math:`q` are
+          among the variables.
+        - **neither limit** under ``template: none``, where the fitted
+          quantity is :math:`\tau` rather than an enhancement factor, or under
+          ``features: raw``, where there is no :math:`p` to take a limit in.
+          They are still checked after the search, as they always were.
+
+        .. note::
+           The ``loss`` column of the reported front is then this
+           **constrained** objective and is not comparable with an
+           unconstrained run's. The :math:`R^2` and relative :math:`L^2` are
+           computed separately from the expression itself and are unaffected.
+    data_loss : {"mse", "mae"}
+        The unpenalised part of that objective. ``mae`` is the more robust
+        choice on a density whose tails span orders of magnitude.
+    positivity_weight, thomas_fermi_weight, von_weizsacker_weight : float
+        Penalty weights, four orders of magnitude above a converged data term
+        by default. These are constraints, not regularisers: the intent is that
+        no accuracy gain can buy a violation. Each limit carries its weight
+        once however many probe points express it.
+    p_infinity : float
+        The reduced gradient standing in for :math:`p \to \infty` in the von
+        Weizsäcker probe. Large enough that no smooth interpolating form is
+        still in its crossover region, and small enough that :math:`p^{8/3}`
+        stays far inside the range of the 32-bit float the engine searches in.
     unary_operations, binary_operations : list of str
         The operator alphabet handed to the engine. Keep it small: the search
         space grows combinatorially, and an operator that cannot appear in the
@@ -610,6 +661,12 @@ class SymbolicConfig:
     template: str = "none"
     epsilon: float = 1e-8
     constraints: dict = field(default_factory=lambda: {"^": [-1, 1]})
+    physics_constraints: bool = True
+    data_loss: str = "mse"
+    positivity_weight: float = 1.0e2
+    thomas_fermi_weight: float = 1.0e2
+    von_weizsacker_weight: float = 1.0e2
+    p_infinity: float = 1.0e6
     unary_operations: list = field(
         default_factory=lambda: ["exp", "log", "sqrt", "abs"])
     binary_operations: list = field(

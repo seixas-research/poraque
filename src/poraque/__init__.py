@@ -68,7 +68,7 @@ from pytest import __file__ as __pytest_file__
 
 # from ase.parallel import parprint as print
 
-from ._version import __version__
+from .version import __version__
 __all__ = ["__version__"]
 
 

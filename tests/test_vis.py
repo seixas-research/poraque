@@ -551,3 +551,22 @@ class TestSymbolicParityPlot:
         captured = report_source(self._symbolic("/nonexistent/parity.png",
                                                 validated=True))
         assert "nonexistent" not in captured["source"]
+
+    def test_a_constrained_search_says_so_beside_its_front(self, report_source,
+                                                           parity_file):
+        """
+        A constrained objective is not comparable with an unconstrained one, and
+        the loss column looks identical either way. The page has to say which.
+        """
+        payload = self._symbolic(parity_file, validated=True)
+        payload["constraints_enforced"] = ["positivity", "thomas_fermi"]
+        captured = report_source(payload)
+        assert "penalised inside" in captured["source"]
+        assert "thomas\\_fermi" not in captured["source"], (
+            "constraint names are prose here, not identifiers")
+        assert "thomas fermi" in captured["source"]
+
+    def test_an_unconstrained_search_claims_nothing(self, report_source,
+                                                    parity_file):
+        captured = report_source(self._symbolic(parity_file, validated=True))
+        assert "penalised inside" not in captured["source"]

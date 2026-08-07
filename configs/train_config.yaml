@@ -137,6 +137,38 @@ symbolic:
     ^:
     - -1
     - 1
+  # THE PHYSICS AS FITNESS, not as a filter applied afterwards.
+  #
+  # Checking the front once the run is over only measures how few candidates
+  # were physical; by then the populations have already spent their budget
+  # converging on forms that have to be discarded. With this on, the engine's
+  # objective becomes
+  #
+  #   L = MSE  +  w+ * mean(min(F, 0)^2)                      [positivity]
+  #            +  w_TF * |F(0, 0) - 1|                        [uniform gas]
+  #            +  w_vW * |F(p_infinity, 0) - 0|               [one orbital]
+  #
+  # The first term is evaluated on the batch; the other two on synthetic probe
+  # points, which is why this has to be PySR's *full objective* rather than an
+  # elementwise loss --- an elementwise loss sees only (prediction, target)
+  # pairs and can never evaluate a candidate where the data does not sit.
+  #
+  # Under `features: reduced` with `template: pauli` all three apply. Under
+  # `template: none` the fitted quantity is tau rather than an enhancement
+  # factor, so only positivity does; the run says which it enforced.
+  #
+  # NOTE: the `loss` column of the reported front is then this *constrained*
+  # objective and is not comparable with an unconstrained run's. R2 and the
+  # relative L2 are computed from the expression itself and are unaffected.
+  physics_constraints: true
+  data_loss: mse
+  positivity_weight: 100.0
+  thomas_fermi_weight: 100.0
+  von_weizsacker_weight: 100.0
+  # Large enough that no smooth interpolating form is still in its crossover
+  # region, small enough that p^(8/3) stays far inside the 32-bit float the
+  # engine searches in.
+  p_infinity: 1.0e+06
   unary_operations:
   - exp
   - log

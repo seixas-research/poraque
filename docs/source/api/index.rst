@@ -124,6 +124,21 @@ Physics operators and losses
 .. automodule:: poraque.ml.losses
    :members:
 
+Symbolic distillation
+---------------------
+
+.. automodule:: poraque.ml.symbolic
+   :members:
+
+Query by committee and active learning
+--------------------------------------
+
+.. automodule:: poraque.ml.committee
+   :members:
+
+.. automodule:: poraque.ml.active_learning
+   :members:
+
 Energy functionals
 ------------------
 

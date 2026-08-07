@@ -38,12 +38,12 @@ cd poraque
 pip install -e .
 ```
 
-Python 3.11 or newer. Installing registers four console commands —
-`poraque-train`, `poraque-inference`, `poraque-committee` and `poraque-mp` —
-which run from any directory once the environment is active. The first three
-are the `main()` of the script of the same name under `scripts/`, so
-`python scripts/poraque_train.py` is equivalent to `poraque-train` and needs
-nothing installed.
+Python 3.11 or newer. Installing registers five console commands —
+`poraque-train`, `poraque-inference`, `poraque-committee`,
+`poraque-active-learning` and `poraque-mp` — which run from any directory once
+the environment is active. The first four are the `main()` of the script of the
+same name under `scripts/`, so `python scripts/poraque_train.py` is equivalent
+to `poraque-train` and needs nothing installed.
 
 ## Use
 
@@ -57,6 +57,11 @@ poraque-train --config configs/train_config.yaml --kfold --k-folds 5
 
 # 3. predict a structure that has never been computed
 poraque-inference new_structure/ --output predictions/new_structure
+
+# 4. choose the next DFT runs: rank an unlabelled pool by how much a
+#    committee of models disagrees about it (Jensen-Shannon divergence)
+poraque-active-learning --models "models/committee_*" --task ext2chg \
+    --pool data/pool --select 5
 ```
 
 Every predicted field is written in `CHGCAR` format.

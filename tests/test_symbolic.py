@@ -16,6 +16,7 @@ forms are known exactly.
 """
 
 import json
+import os
 
 import numpy as np
 import pytest
@@ -30,6 +31,8 @@ from poraque.ml.symbolic import (
     SymbolicDistiller,
     build_features,
     expression_to_latex,
+    julia_physics_loss,
+    physics_probes,
     sample_rows,
     spectral_laplacian,
     stack_tables,
@@ -564,6 +567,291 @@ class TestComplianceInThePipeline:
                                    engine=lambda *a: front).fit(table)
         payload = json.loads(json.dumps(asdict(result), default=float))
         assert payload["limits"]["thomas_fermi"]["passes"] is True
+
+
+class TestPhysicsConstraints:
+    r"""
+    The limits as *fitness*, not as a filter applied afterwards.
+
+    The property that matters is what the objective **charges** for: an
+    expression violating a limit must cost more than any accuracy gain can
+    recover, and one that satisfies it must cost nothing beyond its data term.
+    The Julia source is checked structurally here and executed for real in
+    :class:`TestPhysicsConstraintsInJulia`.
+    """
+
+    def test_probes_pin_both_limits_on_the_pauli_factor(self):
+        probes = physics_probes(["p", "q"], "pauli", p_infinity=1e6)
+        assert [probe["limit"] for probe in probes] == \
+            ["thomas_fermi", "von_weizsacker"]
+
+        thomas_fermi, von_weizsacker = probes
+        assert thomas_fermi["point"] == {"p": 0.0, "q": 0.0}
+        assert thomas_fermi["target"] == 1.0
+        assert von_weizsacker["point"] == {"p": 1e6, "q": 0.0}
+        assert von_weizsacker["target"] == 0.0
+
+    def test_the_thomas_fermi_template_approaches_five_p_squared_over_three(self):
+        r"""
+        Under that template :math:`F = \tau/\tau_{\rm TF}`, whose large-$p$
+        limit is :math:`5p^2/3` rather than zero. Comparing it against zero
+        would reject every correct functional.
+        """
+        _, von_weizsacker = physics_probes(["p", "q"], "thomas_fermi",
+                                           p_infinity=1e3)
+        assert von_weizsacker["target"] == pytest.approx(5.0 / 3.0 * 1e6)
+        # ... and relatively, since an absolute tolerance on 1e6 is finer than
+        # the 32-bit float the engine searches in.
+        assert von_weizsacker["scale"] == pytest.approx(von_weizsacker["target"])
+
+    def test_no_limits_where_the_target_is_tau_itself(self):
+        """Under `template: none` the fitted quantity is not an enhancement
+        factor, so neither limit is a statement about it."""
+        assert physics_probes(["rho", "p", "q"], "none") == []
+
+    def test_no_limits_without_p_and_q_to_take_them_in(self):
+        assert physics_probes(["rho", "grad_rho", "lap_rho"], "pauli") == []
+
+    def test_the_density_is_swept_when_it_is_a_variable(self):
+        """
+        The limits hold at *every* density. A candidate satisfying them at one
+        value and not another has not satisfied them, and sweeping turns that
+        into a penalty rather than a lucky pass.
+        """
+        probes = physics_probes(["rho", "p", "q"], "pauli",
+                               densities=(0.1, 0.5))
+        assert len(probes) == 4
+        assert {probe["point"]["rho"] for probe in probes} == {0.1, 0.5}
+
+    def test_positivity_is_enforced_under_every_template(self):
+        """tau >= 0 always, and tau - tau_vW >= 0 by Hoffmann-Ostenhof."""
+        for template in ("none", "thomas_fermi", "pauli"):
+            _, enforced = julia_physics_loss(["rho", "p", "q"], template)
+            assert "positivity" in enforced
+
+    def test_reports_only_the_constraints_it_can_express(self):
+        """
+        A limit absent because the variables cannot express it must not be
+        reported as enforced — the run would otherwise claim a guarantee it
+        does not deliver.
+        """
+        _, reduced = julia_physics_loss(["p", "q"], "pauli")
+        _, raw = julia_physics_loss(["rho", "grad_rho", "lap_rho"], "none")
+        assert reduced == ["positivity", "thomas_fermi", "von_weizsacker"]
+        assert raw == ["positivity"]
+
+    def test_the_probe_matrix_is_features_by_probes(self):
+        """
+        SymbolicRegression.jl evaluates on ``(n_features, n_points)``, and
+        `reshape` fills column-major. Transposing this silently evaluates the
+        candidate at the wrong points and every limit check becomes noise.
+        """
+        source, _ = julia_physics_loss(["rho", "p", "q"], "pauli",
+                                       densities=(0.1,), p_infinity=1e6)
+        assert "reshape(T[0.1, 0.0, 0.0, 0.1, 1000000.0, 0.0], 3, 2)" in source
+
+    def test_a_single_probe_is_still_a_matrix(self):
+        """`T[a; b]` builds a *vector*; the rank has to be forced."""
+        source, _ = julia_physics_loss(["p", "q"], "pauli")
+        assert "reshape(" in source and ", 2, 2)" in source
+
+    def test_one_limit_carries_one_weight_however_many_probes_express_it(self):
+        source, _ = julia_physics_loss(
+            ["rho", "p", "q"], "pauli", densities=(0.1, 0.5, 0.9),
+            weights={"thomas_fermi": 300.0, "von_weizsacker": 300.0})
+        weights = source.split("penalties = L[")[1].split("]")[0]
+        assert [float(value) for value in weights.split(", ")] == [100.0] * 6
+
+    def test_the_data_term_is_selectable(self):
+        squared, _ = julia_physics_loss(["p", "q"], "pauli", data_loss="mse")
+        absolute, _ = julia_physics_loss(["p", "q"], "pauli", data_loss="mae")
+        assert "sum(abs2, prediction .- dataset.y)" in squared
+        assert "sum(abs, prediction .- dataset.y)" in absolute
+
+    def test_rejects_an_unknown_data_term(self):
+        with pytest.raises(ValueError, match="Unknown data loss"):
+            julia_physics_loss(["p", "q"], "pauli", data_loss="huber")
+
+    def test_penalties_are_clamped_rather_than_allowed_to_overflow(self):
+        """
+        A candidate built from `exp` evaluates to `Inf` at p = 1e6. Left
+        unclamped it would swamp the accumulator and make every unphysical
+        candidate equally unphysical.
+        """
+        source, _ = julia_physics_loss(["p", "q"], "pauli")
+        assert "isfinite(value)" in source
+        assert "min(deviation, ceiling)" in source
+
+    def test_reaches_the_engine_through_the_distiller(self, cell):
+        """The objective is worth nothing if it does not arrive."""
+        seen = {}
+
+        def recording_engine(features, target, names, parameters):
+            seen.update(parameters)
+            return [{"complexity": 1, "loss": 0.0, "expression": "1.0"}]
+
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="enhancement")
+        SymbolicDistiller(SymbolicConfig(),
+                          engine=recording_engine).fit(table)
+
+        assert "poraque_constrained_loss" in seen["loss_function"]
+        assert seen["constraints_enforced"] == \
+            ["positivity", "thomas_fermi", "von_weizsacker"]
+
+    def test_can_be_switched_off(self, cell):
+        seen = {}
+
+        def recording_engine(features, target, names, parameters):
+            seen.update(parameters)
+            return [{"complexity": 1, "loss": 0.0, "expression": "1.0"}]
+
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="enhancement")
+        SymbolicDistiller(SymbolicConfig(physics_constraints=False),
+                          engine=recording_engine).fit(table)
+
+        assert seen["loss_function"] is None
+        assert seen["constraints_enforced"] == []
+
+    def test_the_configured_weights_reach_the_objective(self, cell):
+        seen = {}
+
+        def recording_engine(features, target, names, parameters):
+            seen.update(parameters)
+            return [{"complexity": 1, "loss": 0.0, "expression": "1.0"}]
+
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="enhancement")
+        SymbolicDistiller(
+            SymbolicConfig(positivity_weight=7.0, thomas_fermi_weight=11.0,
+                           von_weizsacker_weight=13.0, p_infinity=1234.0),
+            engine=recording_engine).fit(table)
+
+        assert "L(7.0) * min(L(shortfall), ceiling)" in seen["loss_function"]
+        assert "L[11.0, 13.0]" in seen["loss_function"]
+        assert "1234.0" in seen["loss_function"]
+
+    def test_the_result_records_what_was_enforced(self, cell):
+        """
+        Reported because a limit the variables cannot express is simply absent,
+        and "constrained" would otherwise be assumed of the whole set.
+        """
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="enhancement")
+        front = [{"complexity": 3, "loss": 0.1, "expression": "exp(-p**2)"}]
+        result = SymbolicDistiller(SymbolicConfig(),
+                                   engine=lambda *a: front).fit(table)
+
+        assert result.constraints_enforced == \
+            ["positivity", "thomas_fermi", "von_weizsacker"]
+        assert "penalised in-loop" in result.summary()
+
+    def test_an_unconstrained_run_says_so_in_the_summary(self, cell):
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="enhancement")
+        front = [{"complexity": 3, "loss": 0.1, "expression": "exp(-p**2)"}]
+        result = SymbolicDistiller(SymbolicConfig(physics_constraints=False),
+                                   engine=lambda *a: front).fit(table)
+        assert "none in-loop" in result.summary()
+
+    def test_defaults_to_on(self):
+        assert SymbolicConfig().physics_constraints is True
+
+
+@pytest.mark.skipif(
+    os.environ.get("PORAQUE_TEST_PYSR") != "1",
+    reason="needs the Julia toolchain; set PORAQUE_TEST_PYSR=1 to run")
+class TestPhysicsConstraintsInJulia:
+    """
+    The objective, executed by the backend that will actually run it.
+
+    Everything above checks the *text* of the Julia function. Only this checks
+    that Julia accepts it, that ``eval_tree_array`` reads the probe matrix the
+    way the layout assumes, and that the penalty lands on the expression it was
+    meant for. It is skipped by default because the toolchain takes minutes to
+    precompile.
+    """
+
+    @pytest.fixture(scope="class")
+    def objective(self):
+        pytest.importorskip("pysr")
+        from pysr.julia_import import jl
+
+        source, _ = julia_physics_loss(["p", "q"], "pauli")
+        jl.seval("using SymbolicRegression")
+        return jl.seval(source)
+
+    @staticmethod
+    def _loss(objective, expression):
+        """The objective's value for one expression, on limit-satisfying data."""
+        from pysr.julia_import import jl
+
+        jl.seval("using SymbolicRegression")
+        options = jl.Options(
+            binary_operators=jl.seval("[+, -, *, /]"),
+            unary_operators=jl.seval("[exp]"))
+        # F = 1 / (1 + p^2): F(0,0) = 1 and F(p -> inf) -> 0, so the data and
+        # both limits agree and any penalty seen is the objective's own doing.
+        p = np.abs(np.random.default_rng(0).normal(0, 0.4, 200))
+        X = np.stack([p, np.zeros_like(p)])
+        y = 1.0 / (1.0 + p ** 2)
+        dataset = jl.Dataset(X, y)
+        tree = jl.seval(f"opts -> parse_expression(:({expression}); "
+                        f"operators=opts.operators, "
+                        f"variable_names=[\"p\", \"q\"])")(options)
+        return float(objective(tree, dataset, options))
+
+    def test_a_form_satisfying_both_limits_pays_no_penalty(self, objective):
+        assert self._loss(objective, "1 / (1 + p * p)") < 1e-6
+
+    def test_a_constant_pays_for_both_limits(self, objective):
+        """F = 1 has the Thomas-Fermi limit and not the von Weizsacker one."""
+        assert self._loss(objective, "1.0") == pytest.approx(100.0, rel=1e-3)
+
+    def test_a_wrong_uniform_gas_limit_is_charged(self, objective):
+        """F(0,0) = 0.5 is off by 0.5, at weight 100."""
+        loss = self._loss(objective, "0.5 / (1 + p * p)")
+        assert loss == pytest.approx(50.0, rel=1e-2)
+
+    def test_a_divergent_form_is_charged_the_ceiling(self, objective):
+        """F = p^2 diverges at p = 1e6 and must be decisively rejected."""
+        assert self._loss(objective, "p * p") > 1e6
+
+    def test_a_negative_prediction_is_charged(self, objective):
+        assert self._loss(objective, "-1.0") > self._loss(objective, "1.0")
+
+    def test_the_search_is_driven_towards_a_physical_form(self, tmp_path):
+        """
+        End to end: the constrained objective run by PySR itself. The point of
+        moving the physics into the loop is that the *front* comes back
+        satisfying the limits, not that a filter removes what does not.
+        """
+        from pysr import PySRRegressor
+
+        source, _ = julia_physics_loss(["p", "q"], "pauli")
+        rng = np.random.default_rng(0)
+        p = np.abs(rng.normal(0, 0.4, 400))
+        X = np.column_stack([p, rng.normal(0, 0.4, 400)])
+
+        model = PySRRegressor(
+            niterations=3, binary_operators=["+", "-", "*", "/"],
+            unary_operators=["exp"], population_size=20, populations=4,
+            maxsize=15, loss_function=source, progress=False, verbosity=0,
+            output_directory=str(tmp_path), deterministic=True,
+            parallelism="serial", random_state=0)
+        model.fit(X, 1.0 / (1.0 + p ** 2), variable_names=["p", "q"])
+
+        best = model.equations_.iloc[-1]
+        compliance = check_asymptotic_limits(str(best["equation"]),
+                                             ["p", "q"], "reduced",
+                                             template="pauli")
+        assert compliance.passes
 
 
 class TestLatex:

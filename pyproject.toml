@@ -50,6 +50,7 @@ symbolic = [
 poraque-train = "poraque_train:main"
 poraque-inference = "poraque_inference:main"
 poraque-committee = "poraque_committee:main"
+poraque-active-learning = "poraque_active_learning:main"
 poraque-mp = "poraque.data.materials_project:main"
 
 [tool.hatch.build.targets.wheel]
@@ -59,6 +60,7 @@ only-include = [
     "scripts/poraque_train.py",
     "scripts/poraque_inference.py",
     "scripts/poraque_committee.py",
+    "scripts/poraque_active_learning.py",
 ]
 
 [tool.hatch.version]

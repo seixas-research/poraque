@@ -143,6 +143,7 @@ from poraque.ml.config import SAMPLE_CONFIG_HEADER, TrainingConfig  # noqa: E402
 from poraque.ml.device import describe_device, resolve_device  # noqa: E402
 from poraque.ml.losses import PhysicsInformedLoss  # noqa: E402
 from poraque.ml.symbolic import (  # noqa: E402
+    DATA_LOSSES,
     FEATURE_SCHEMES,
     TEMPLATES,
     result_to_dict,
@@ -876,6 +877,15 @@ def validate_symbolic_settings(settings):
         raise SystemExit(
             f"symbolic.epsilon={settings.epsilon!r} must be positive: it is a "
             f"density floor and clamps every denominator.")
+    if settings.data_loss not in DATA_LOSSES:
+        raise SystemExit(
+            f"symbolic.data_loss={settings.data_loss!r} is not known; expected "
+            f"one of {sorted(DATA_LOSSES)}.")
+    if settings.physics_constraints and settings.p_infinity <= 0:
+        raise SystemExit(
+            f"symbolic.p_infinity={settings.p_infinity!r} must be positive: it "
+            f"is the reduced gradient standing in for the von Weizsacker "
+            f"limit, and p is a magnitude.")
     # PySR's tournament selection draws 10 individuals by default and refuses
     # to run when the population cannot supply them. Caught here it is one
     # line; caught by the engine it is a Julia stack trace after training.
