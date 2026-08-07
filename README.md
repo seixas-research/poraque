@@ -211,6 +211,11 @@ energy module itself is validated against
 exact Madelung constants and uniform-electron-gas limits; it is the *fields*
 that are not yet accurate enough. See `docs/source/energy/index.md`.
 
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Poraquê is released under the [MIT License](LICENSE). Copyright © 2026 Leandro Seixas Rocha.
+
+## Acknowledgements
+
+We thank financial support from INCT Materials Informatics (Grant No. 406447/2022-5).

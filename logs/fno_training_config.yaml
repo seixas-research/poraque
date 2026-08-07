@@ -1,6 +1,6 @@
 task:
   type: all
-  name: au_w16_m8_l3
+  name: au_w16_m8_l3_p0.3
 data:
   train_paths: null
   root: data/vasp
@@ -16,7 +16,7 @@ data:
   spin: auto
 model:
   width: 16
-  modes: 8
+  modes: 12
   n_layers: 3
   projection_channels: 64
   activation: gelu
@@ -46,7 +46,7 @@ training:
   loss: relative_l2
   sobolev_weight: 0.1
   physics:
-    electron_count_weight: 0.1
+    electron_count_weight: 0.3
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0
@@ -61,8 +61,8 @@ output:
 symbolic:
   enable_symbolic_distillation: true
   target: model
-  features: gga
-  template: none
+  features: reduced
+  template: pauli
   epsilon: 1.0e-08
   constraints:
     ^:

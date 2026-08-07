@@ -14,17 +14,12 @@ license = {file = "LICENSE"} # MIT License
 requires-python = ">=3.11"
 dependencies = [
     'numpy',
-    # 'pandas',
     'ase',
     'scipy',
     'matplotlib',
     'pytest',
     'torch>=2.0',
     'pyyaml',
-    # Materials Project ingestion (poraque.data.materials_project). The client
-    # is a base dependency rather than an extra because the dataset builder it
-    # feeds is part of the ordinary pipeline; python-dotenv is what keeps the
-    # API key in a .env file instead of in a config or a shell history.
     'mp-api',
     'python-dotenv',
 ]
@@ -41,20 +36,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics"
 ]
 
-# NOTE: every `key = value` below a table header belongs to that table, so this
-# section must come *after* the last plain `[project]` key. Placed above
-# `classifiers`, TOML reads the classifier list as a dependency specification
-# and the build fails at metadata generation.
 [project.optional-dependencies]
-# Symbolic distillation. Optional because PySR carries a Julia toolchain, which
-# it fetches on first use -- a large download, network access, and a second
-# language runtime to keep working. Too much to impose on every install for a
-# feature that is off by default.
-#
 #   pip install -e ".[symbolic]"
-#
-# sympy is named here rather than in the base dependencies because only this
-# feature uses it: the LaTeX rendering and the expression scoring.
 symbolic = [
     'pysr>=1.0',
     'sympy',
@@ -63,21 +46,13 @@ symbolic = [
 [project.urls]
 "Homepage" = "https://github.com/seixas-research/poraque"
 
-# Console commands, available anywhere once the environment is active.
-# They call the same ``main()`` that ``python scripts/<name>.py`` calls, so the
-# two invocations are identical in behaviour and take the same arguments.
 [project.scripts]
 poraque-train = "poraque_train:main"
 poraque-inference = "poraque_inference:main"
 poraque-committee = "poraque_committee:main"
-# Unlike the three above, this one lives in the package rather than in
-# ``scripts/``: the downloader is a library class first and a command second.
 poraque-mp = "poraque.data.materials_project:main"
 
 [tool.hatch.build.targets.wheel]
-# Two source roots: the package itself, plus the two driver scripts, which ship
-# as top-level modules so ``[project.scripts]`` can import them. The rest of
-# ``scripts/`` stays out of the wheel -- those are repository-local utilities.
 sources = ["src", "scripts"]
 only-include = [
     "src/poraque",
