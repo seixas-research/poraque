@@ -621,3 +621,141 @@ class TestCommandLine:
 
         args = build_parser().parse_args(["--promote", "copy"])
         assert args.promote == "copy" and "copy" in TRANSFERS
+
+
+class TestRankingTable:
+    """
+    One table, one definition.
+
+    ``poraque-active-learning`` and ``poraque-committee`` print the same
+    measure over the same committee. They had drifted into two hand-written
+    tables: different widths, different precision on the same number, a rule a
+    character short of its heading, and the normalisation labelled ``JSD/lnM``
+    in one and ``JSD/lnK`` in the other -- while ``K`` separately names the
+    top-K selection in the very same output.
+    """
+
+    @staticmethod
+    def _records(error=False):
+        records = [
+            {"material": "cand_04", "jsd": 5.1862e-2, "jsd_normalised": 0.0748,
+             "relative": 0.6033, "integral_relative": 0.3316},
+            {"material": "cand_02", "jsd": 4.2185e-2, "jsd_normalised": 0.0609,
+             "relative": 0.5150, "integral_relative": 0.3601},
+        ]
+        if error:
+            for index, record in enumerate(records):
+                record["error"] = 0.12 + 0.03 * index
+        return records
+
+    def test_the_rule_matches_the_heading_it_underlines(self):
+        from poraque.ml.active_learning import format_ranking
+
+        for error in (False, True):
+            rows = format_ranking(self._records(error)).splitlines()
+            assert len(rows[0]) == len(rows[1]), (
+                f"heading and rule differ by "
+                f"{len(rows[0]) - len(rows[1])} characters")
+
+    def test_rows_line_up_with_the_heading(self):
+        from poraque.ml.active_learning import format_ranking
+
+        rows = format_ranking(self._records(error=True)).splitlines()
+        assert {len(row) for row in rows} == {len(rows[0])}
+
+    def test_the_error_column_appears_only_when_there_is_an_error(self):
+        from poraque.ml.active_learning import format_ranking
+
+        assert "error" not in format_ranking(self._records(error=False))
+        assert "error" in format_ranking(self._records(error=True))
+
+    def test_the_member_count_is_M_because_K_is_the_selection_size(self):
+        from poraque.ml.active_learning import format_ranking
+
+        text = format_ranking(self._records())
+        assert "JSD/lnM" in text
+        assert "lnK" not in text
+
+    def test_ordering_is_most_uncertain_first(self):
+        from poraque.ml.active_learning import format_ranking
+
+        rows = format_ranking(self._records()).splitlines()[2:]
+        assert [row.split()[0] for row in rows] == ["cand_04", "cand_02"]
+
+    def test_limit_truncates_the_rows_not_the_heading(self):
+        from poraque.ml.active_learning import format_ranking
+
+        rows = format_ranking(self._records(), limit=1).splitlines()
+        assert len(rows) == 3 and rows[2].split()[0] == "cand_04"
+
+
+class TestMemberBundleDiscovery:
+    """
+    A committee must be discoverable however the run named its checkpoints.
+
+    ``poraque-train`` writes ``<checkpoint_dir>/<task.name>.pfno``, and
+    ``task.name`` is exactly the key users are told to set so two runs cannot
+    overwrite each other. Looking only for the default filename found the
+    members of a default run and none of the members of a named one -- then
+    reported it as "train members with --init-seed", which is what the user had
+    just done.
+    """
+
+    @staticmethod
+    def _members(root, filename, n=3):
+        import sys
+
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
+                                        "scripts"))
+        for seed in range(n):
+            directory = root / f"committee_{seed}"
+            directory.mkdir()
+            (directory / filename).write_bytes(b"checkpoint")
+        return str(root / "committee_*")
+
+    def test_a_default_run_is_found(self, tmp_path):
+        from poraque_committee import resolve_bundles
+
+        pattern = self._members(tmp_path, "poraque_models.pfno")
+        assert len(resolve_bundles(pattern)) == 3
+
+    def test_a_named_run_is_found(self, tmp_path):
+        from poraque_committee import resolve_bundles
+
+        pattern = self._members(tmp_path, "si_res32.pfno")
+        assert len(resolve_bundles(pattern)) == 3, (
+            "a run with task.name set is still a committee")
+
+    def test_the_default_wins_when_both_are_present(self, tmp_path):
+        from poraque_committee import member_bundle
+
+        directory = tmp_path / "committee_0"
+        directory.mkdir()
+        (directory / "poraque_models.pfno").write_bytes(b"x")
+        (directory / "si_res32.pfno").write_bytes(b"x")
+        assert member_bundle(str(directory)).endswith("poraque_models.pfno")
+
+    def test_an_ambiguous_directory_is_refused_rather_than_guessed(self,
+                                                                  tmp_path):
+        from poraque_committee import member_bundle
+
+        directory = tmp_path / "committee_0"
+        directory.mkdir()
+        (directory / "a.pfno").write_bytes(b"x")
+        (directory / "b.pfno").write_bytes(b"x")
+        with pytest.raises(SystemExit, match="2 checkpoints"):
+            member_bundle(str(directory))
+
+    def test_an_empty_directory_is_simply_not_a_member(self, tmp_path):
+        from poraque_committee import member_bundle
+
+        directory = tmp_path / "committee_0"
+        directory.mkdir()
+        assert member_bundle(str(directory)) is None
+
+    def test_a_single_member_is_still_refused(self, tmp_path):
+        from poraque_committee import resolve_bundles
+
+        pattern = self._members(tmp_path, "si_res32.pfno", n=1)
+        with pytest.raises(SystemExit, match="needs at least two"):
+            resolve_bundles(pattern)

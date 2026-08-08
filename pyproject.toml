@@ -63,6 +63,14 @@ only-include = [
     "scripts/poraque_active_learning.py",
 ]
 
+# The C kernel ships as *source* and is compiled on first use into a user
+# cache (see poraque.ml.backend). Shipping the .c rather than a built object
+# keeps the wheel pure-Python and platform-independent, and costs one ~1 s
+# compile the first time a CPU inference runs. Without this rule hatchling
+# would install only the .py files and the backend could never be built.
+[tool.hatch.build.targets.wheel.force-include]
+"src/poraque/ml/_spectral.c" = "poraque/ml/_spectral.c"
+
 [tool.hatch.version]
 path = "src/poraque/version.py"
 

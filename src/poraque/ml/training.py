@@ -201,6 +201,45 @@ class FieldOperator:
     # Inference
     # ------------------------------------------------------------------ #
     @torch.no_grad()
+    def compute_dtype(self):
+        """
+        The real dtype the model computes in, read from its own weights.
+
+        Returns
+        -------
+        torch.dtype
+            ``torch.float32`` or ``torch.float64``. Falls back to
+            ``torch.float32`` for a model with no floating parameters at all,
+            which only a stub has.
+        """
+        for parameter in self.model.parameters():
+            if parameter.is_floating_point():
+                return parameter.dtype
+        return torch.float32
+
+    def set_precision(self, precision):
+        """
+        Convert the operator to another precision.
+
+        Parameters
+        ----------
+        precision : str or torch.dtype
+            ``"float32"`` or ``"float64"``. See
+            :func:`~poraque.ml.fno.set_precision` for why neither
+            ``model.double()`` nor ``model.to(torch.float64)`` is a substitute:
+            the first leaves the complex spectral weights behind, the second
+            deletes their imaginary part.
+
+        Returns
+        -------
+        FieldOperator
+            ``self``, so this can be chained onto a constructor.
+        """
+        from .fno import set_precision as convert
+
+        convert(self.model, precision)
+        return self
+
     def predict(self, field):
         """
         Apply the operator to a :class:`~poraque.fields.ScalarField`.
@@ -220,9 +259,14 @@ class FieldOperator:
             :math:`(\\rho, m)`; a one-channel operator returns the plain field.
         """
         self.model.eval()
+        # The model's own precision, not a literal float32: an operator
+        # converted with `set_precision(model, "float64")` would otherwise be
+        # handed single-precision input and fail on the first spectral layer.
+        # The dtype is read from the weights, so the two cannot disagree.
+        compute = self.compute_dtype()
         values = torch.as_tensor(np.ascontiguousarray(field.data),
-                                 dtype=torch.float32, device=self.device)
-        cell = torch.as_tensor(field.grid.cell, dtype=torch.float32,
+                                 dtype=compute, device=self.device)
+        cell = torch.as_tensor(field.grid.cell, dtype=compute,
                                device=self.device).unsqueeze(0)
 
         # A field is either (Nx, Ny, Nz) or, when spin-polarised, already
@@ -236,9 +280,11 @@ class FieldOperator:
 
         prediction = self.target_transform.inverse(self.model(normalized, cell))
 
-        # .float() before .numpy(): accelerators may hand back a dtype numpy
-        # cannot consume directly, and .cpu() alone does not convert it.
-        channels = prediction[0].detach().to("cpu", torch.float32).numpy()
+        # To CPU in the compute dtype before .numpy(): accelerators may hand
+        # back a dtype numpy cannot consume directly, and .cpu() alone does not
+        # convert it. Narrowing to float32 here would throw away exactly the
+        # precision a float64 run was asked for.
+        channels = prediction[0].detach().to("cpu", compute).numpy()
         metadata = {"predicted_by": type(self.model).__name__,
                     "task": self.task.name,
                     "device": str(self.device)}

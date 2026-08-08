@@ -494,6 +494,14 @@ def run(args, log):
     log("=" * 78)
     log(f"  torch {torch.__version__}   device: {describe_device(device)}")
     log(f"  structure directory: {args.directory}")
+    # Only on CPU, because that is the only place it is consulted. Printed
+    # because a silent optimisation is one nobody can tell is missing: a run
+    # that falls back to PyTorch is 2-3x slower at cache resolutions and looks
+    # exactly the same otherwise.
+    if device.type == "cpu":
+        from poraque.ml.backend import describe as describe_backend
+
+        log(f"  {describe_backend()}")
 
     # ---------------- 1. geometry and pseudopotentials ---------------- #
     reader = resolve_reader(args.directory, args.code)

@@ -623,9 +623,32 @@ def format_statistics(statistics, indent="    "):
     return "\n".join(lines)
 
 
-def format_ranking(records, limit=None, indent="    "):
+#: Columns of the disagreement ranking, as ``(heading, key, width, format)``.
+#:
+#: One definition, used by both ``poraque-active-learning`` and
+#: ``poraque-committee``, because the two print the same measure over the same
+#: committee and had drifted into two tables: different column widths, a
+#: different precision on the same number, and the normalisation labelled
+#: ``JSD/lnM`` in one and ``JSD/lnK`` in the other. ``M`` is the member count
+#: throughout; ``K`` is reserved for the size of the top-K selection, which is
+#: a different number that appears in the same output.
+RANKING_COLUMNS = (
+    ("structure", "material", 18, "<18s"),
+    ("JSD", "jsd", 12, "12.4e"),
+    ("JSD/lnM", "jsd_normalised", 9, "9.4f"),
+    ("L2 spread", "relative", 10, "10.4f"),
+    ("int spread", "integral_relative", 11, "11.4f"),
+    ("error", "error", 9, "9.4f"),
+)
+
+
+def format_ranking(records, limit=None, indent="    ", columns=None):
     """
     The ranked pool as a terminal table, most uncertain first.
+
+    The heading and its rule are both derived from ``columns``, so the rule
+    cannot end up a character short of the heading it underlines — which is
+    what a hand-counted ``"-" * 63`` had done.
 
     Parameters
     ----------
@@ -633,6 +656,10 @@ def format_ranking(records, limit=None, indent="    "):
     limit : int, optional
         Show only this many rows.
     indent : str, optional
+    columns : sequence, optional
+        Subset of :data:`RANKING_COLUMNS` to print. Defaults to every column
+        the records actually carry, so a pool with no reference field simply
+        omits ``error`` rather than printing a column of blanks.
 
     Returns
     -------
@@ -643,16 +670,19 @@ def format_ranking(records, limit=None, indent="    "):
     if limit is not None:
         ranked = ranked[:int(limit)]
 
-    lines = [
-        f"{indent}{'structure':<18s} {'JSD':>12s} {'JSD/lnM':>9s} "
-        f"{'L2 spread':>10s} {'int spread':>11s}",
-        indent + "-" * 63,
-    ]
+    if columns is None:
+        present = {key for record in ranked for key, value in record.items()
+                   if value is not None}
+        columns = [column for column in RANKING_COLUMNS
+                   if column[1] in present or column[1] == "material"]
+
+    heading = " ".join(f"{title:>{width}s}" if spec[0] != "<"
+                       else f"{title:<{width}s}"
+                       for title, _, width, spec in columns)
+    lines = [indent + heading, indent + "-" * len(heading)]
     for record in ranked:
-        lines.append(
-            f"{indent}{record['material']:<18s} {record['jsd']:12.4e} "
-            f"{record['jsd_normalised']:9.4f} {record['relative']:10.4f} "
-            f"{record['integral_relative']:11.4f}")
+        lines.append(indent + " ".join(
+            f"{record[key]:{spec}}" for _, key, _, spec in columns))
     return "\n".join(lines)
 
 

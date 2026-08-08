@@ -28,6 +28,102 @@ import numpy as np
 from .grid import FieldGrid
 from .vasp.volumetric import read_volumetric, write_volumetric
 
+#: Precisions a field may be stored in, by name.
+#:
+#: ``float64``
+#:     The default, and what every field used before this was selectable.
+#:     Integrals over the cell — the electron count, the energy terms — are
+#:     sums of :math:`N^3` terms, and at :math:`128^3` that is two million
+#:     values whose accumulated rounding in single precision is no longer
+#:     obviously negligible against the quantities being compared.
+#: ``float32``
+#:     Half the memory, which is the whole argument: a :math:`160^3` field is
+#:     16 MB in double and 8 MB in single, and a committee of five models
+#:     scoring a pool holds several at once. Adequate wherever the field is on
+#:     its way into a network that will compute in single precision anyway.
+#: ``float16``
+#:     Storage only, for archiving or for a first pass over a very large pool.
+#:     Roughly three decimal digits: too coarse for any integral, and offered
+#:     so that a deliberate choice is available rather than an improvised
+#:     ``astype`` somewhere downstream.
+FIELD_DTYPES = {
+    "float16": np.float16,
+    "float32": np.float32,
+    "float64": np.float64,
+}
+
+#: Dtype used when a field is built without an explicit one.
+_DEFAULT_DTYPE = np.float64
+
+
+def resolve_dtype(dtype=None):
+    """
+    Normalise a dtype argument to a numpy floating type.
+
+    Parameters
+    ----------
+    dtype : str, numpy.dtype or None, optional
+        A name from :data:`FIELD_DTYPES`, anything ``numpy.dtype`` accepts, or
+        ``None`` for :func:`get_default_dtype`.
+
+    Returns
+    -------
+    numpy.dtype
+
+    Raises
+    ------
+    TypeError
+        For a non-floating dtype. A field holds physical values; storing them
+        as integers would silently truncate a density to zero rather than lose
+        a little precision, so it is refused rather than allowed through.
+    """
+    if dtype is None:
+        return np.dtype(_DEFAULT_DTYPE)
+    if isinstance(dtype, str):
+        dtype = FIELD_DTYPES.get(dtype.strip().lower(), dtype)
+    resolved = np.dtype(dtype)
+    if resolved.kind != "f":
+        raise TypeError(
+            f"A field must be stored in a floating type, not {resolved!r}. "
+            f"Known names: {sorted(FIELD_DTYPES)}.")
+    return resolved
+
+
+def get_default_dtype():
+    """The dtype new fields are built in when none is given."""
+    return np.dtype(_DEFAULT_DTYPE)
+
+
+def set_default_dtype(dtype):
+    """
+    Set the dtype new fields are built in.
+
+    Process-wide, and deliberately so: the point is to load a whole dataset in
+    one precision without threading an argument through every reader. It does
+    **not** touch fields that already exist — use :meth:`ScalarField.astype`
+    for those.
+
+    Parameters
+    ----------
+    dtype : str or numpy.dtype
+        See :func:`resolve_dtype`.
+
+    Returns
+    -------
+    numpy.dtype
+        The previous default, so a caller can restore it.
+
+    Examples
+    --------
+    >>> from poraque.fields import set_default_dtype
+    >>> previous = set_default_dtype("float32")   # doctest: +SKIP
+    >>> set_default_dtype(previous)               # doctest: +SKIP
+    """
+    global _DEFAULT_DTYPE
+    previous = np.dtype(_DEFAULT_DTYPE)
+    _DEFAULT_DTYPE = resolve_dtype(dtype)
+    return previous
+
 
 class ScalarField(ABC):
     """
@@ -43,6 +139,12 @@ class ScalarField(ABC):
         The atomic structure; written into the file header.
     metadata : dict, optional
         Free-form provenance (model parameters, source file, ...).
+    dtype : str or numpy.dtype, optional
+        Precision the values are stored in; see :data:`FIELD_DTYPES`. Defaults
+        to :func:`get_default_dtype`, i.e. ``float64`` unless the process has
+        been told otherwise. The grid and the structure are **not** affected:
+        geometry stays in double precision, where it costs nine numbers per
+        material and where a rounding error moves an atom.
 
     Attributes
     ----------
@@ -64,8 +166,8 @@ class ScalarField(ABC):
     unit = ""
     volume_scaled = False
 
-    def __init__(self, data, grid, structure, metadata=None):
-        self.data = np.asarray(data, dtype=float)
+    def __init__(self, data, grid, structure, metadata=None, dtype=None):
+        self.data = np.asarray(data, dtype=resolve_dtype(dtype))
         self.grid = grid
         self.structure = structure
         self.metadata = dict(metadata or {})
@@ -75,6 +177,40 @@ class ScalarField(ABC):
                 f"{type(self).__name__}: data shape {self.data.shape} does not "
                 f"match grid shape {grid.shape}."
             )
+
+    @property
+    def dtype(self):
+        """Precision the values are stored in."""
+        return self.data.dtype
+
+    def astype(self, dtype):
+        """
+        The same field, stored in another precision.
+
+        A new object: fields are shared between the three members of a
+        material and converting one in place would change the others.
+
+        Parameters
+        ----------
+        dtype : str or numpy.dtype
+            See :func:`resolve_dtype`.
+
+        Returns
+        -------
+        ScalarField
+            Of the same subclass, on the same grid and structure.
+        """
+        # `dtype=` as well as the cast: without it the constructor applies the
+        # process default and converts straight back, so `astype("float32")`
+        # on a default build returned float64.
+        resolved = resolve_dtype(dtype)
+        return type(self)(self.data.astype(resolved), self.grid,
+                          self.structure, metadata=dict(self.metadata),
+                          dtype=resolved)
+
+    def nbytes(self):
+        """Memory the values occupy, in bytes. The reason ``dtype`` exists."""
+        return int(self.data.nbytes)
 
     # ------------------------------------------------------------------ #
     # I/O
@@ -127,7 +263,7 @@ class ScalarField(ABC):
         )
 
     @classmethod
-    def read(cls, path, grid=None):
+    def read(cls, path, grid=None, dtype=None):
         """
         Read a field from a ``CHGCAR``-format file.
 
@@ -139,6 +275,11 @@ class ScalarField(ABC):
             Grid to attach. When given, its shape must match the file — this is
             how the three fields of one material are tied to a single shared
             grid object. When omitted, a grid is built from the file header.
+        dtype : str or numpy.dtype, optional
+            Precision to store the values in; see :data:`FIELD_DTYPES`. The
+            file is parsed in double precision regardless and narrowed at the
+            end, so the volume division of a ``volume_scaled`` field is not
+            done in the narrower type.
 
         Returns
         -------
@@ -161,11 +302,21 @@ class ScalarField(ABC):
             grid,
             structure,
             metadata={"source": str(path)},
+            dtype=dtype,
         )
 
     def to_file_values(self):
-        """Convert :attr:`data` to the on-disk convention."""
-        return self.data * self.grid.volume if self.volume_scaled else self.data
+        """
+        Convert :attr:`data` to the on-disk convention.
+
+        Widened to double first. The file format writes eleven significant
+        digits, and a ``float32`` field multiplied by the cell volume in
+        ``float32`` would print eleven digits of which only seven mean
+        anything — a written file that silently claims more precision than it
+        holds is worse than one that holds less.
+        """
+        values = self.data.astype(np.float64, copy=False)
+        return values * self.grid.volume if self.volume_scaled else values
 
     @classmethod
     def from_file_values(cls, raw, grid):

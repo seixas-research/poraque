@@ -30,7 +30,13 @@ Typical use::
     print(v_ext.interaction_energy(rho), "eV")
 """
 
-from .base import ScalarField
+from .base import (
+    FIELD_DTYPES,
+    ScalarField,
+    get_default_dtype,
+    resolve_dtype,
+    set_default_dtype,
+)
 from .constants import (
     ANGSTROM_TO_BOHR,
     BOHR_TO_ANGSTROM,
@@ -53,6 +59,7 @@ from .spin import SpinDensity, is_spin_polarized, spin_from_incar
 from .structure import Structure, element_of, symbol_to_z
 
 __all__ = [
+    "FIELD_DTYPES",
     "ChargeDensity",
     "ExternalPotential",
     "FieldGrid",
@@ -66,6 +73,9 @@ __all__ = [
     "element_of",
     "symbol_to_z",
     "fft_friendly_size",
+    "get_default_dtype",
+    "resolve_dtype",
+    "set_default_dtype",
     "spectral_gradient",
     "thomas_fermi_tau",
     "von_weizsacker_tau",

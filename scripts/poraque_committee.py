@@ -8,12 +8,41 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-Query by committee: rank structures by how much the ensemble disagrees.
+**Calibration.** Does committee disagreement actually predict error?
 
-Reference data costs a plane-wave DFT run, so the question worth answering is
-which structure to compute next. This scores every structure in the dataset by
-the **Jensen-Shannon divergence** across an ensemble whose members differ only
-in their weight initialisation, and orders them.
+.. rubric:: This command, or ``poraque-active-learning``?
+
+They are the two halves of one loop and they are not interchangeable. The
+difference is the data each one runs on, and it decides everything else:
+
+==================  ==========================  ==============================
+                    ``poraque-committee``       ``poraque-active-learning``
+==================  ==========================  ==============================
+runs on             a **labelled** dataset      an **unlabelled** pool
+                    (``--cache``): inputs       (``--pool``): inputs only,
+                    *and* targets               targets not computed yet
+answers             "is this measure worth      "which structures should I
+                    trusting?"                  compute next?"
+produces            a Spearman correlation      a ranking, and a transfer of
+                    between disagreement and    the top K into the training
+                    the *known* error           set
+costs               nothing — the DFT is        the DFT runs it selects
+                    already done
+==================  ==========================  ==============================
+
+Run this one **first**. Disagreement is only a proxy for error, and until the
+correlation is measured on data where the error is known, a ranking built from
+it is a guess with a decimal point. Once the Spearman coefficient says the
+ordering is sound, ``poraque-active-learning`` is what spends the budget.
+
+Both share the same committee, the same Jensen-Shannon divergence and the same
+ranking table (:func:`poraque.ml.active_learning.format_ranking`), which is why
+the two outputs look alike — they differ in what the number is *for*.
+
+.. rubric:: What it measures
+
+Scores every structure by the **Jensen-Shannon divergence** across an ensemble
+whose members differ only in their weight initialisation, and orders them.
 
 .. code-block:: text
 
@@ -56,13 +85,13 @@ Usage
 Installed (``pip install -e .``), this is the ``poraque-committee`` console
 command and runs from any directory::
 
-    # 1. train the members (same seed, different init_seed)
+    # 1. train the members (same seed, different init_seed). One --name per
+    #    member is all it takes: everything each run writes lands in
+    #    models/committee_<s>/, weights and log together.
     for s in 0 1 2 3; do
       poraque-train --config configs/train_config.yaml \
-          --init-seed $s --valid-fraction 0 \
-          --checkpoint-dir models/committee_$s \
-          --log logs/committee_$s.log --json logs/committee_$s.json \
-          --no-plots --report-dir ""
+          --init-seed $s --name committee_$s \
+          --valid-fraction 0 --no-plots --no-report
     done
 
     # 2. rank the structures, and check the ranking against known errors
@@ -93,24 +122,65 @@ from poraque.ml import (  # noqa: E402
     Committee,
     disagreement_error_correlation,
 )
+from poraque.ml.active_learning import format_ranking  # noqa: E402
 from poraque.ml.data import discover_materials  # noqa: E402
 from poraque.ml.device import describe_device, resolve_device  # noqa: E402
 from poraque.ml.tasks import resolve_task  # noqa: E402
 
 
+def member_bundle(entry):
+    """
+    The checkpoint inside one member directory, whatever the run named it.
+
+    ``poraque-train`` writes ``<output.root>/<name>/<name>.pfno``, and
+    ``task.name`` is exactly the key a user is told to set so two runs cannot
+    overwrite each other. Looking only for :data:`BUNDLE_FILENAME` therefore
+    finds the members of a *default* run and none of the members of a named
+    one — and reports it as "no committee here", which sends the user back to
+    train the members they already trained.
+
+    Returns
+    -------
+    str or None
+        Path to the bundle, or ``None`` when the directory holds no checkpoint.
+
+    Raises
+    ------
+    SystemExit
+        When a directory holds several checkpoints and none is the default
+        name, since picking one arbitrarily would silently build a committee
+        out of unrelated models.
+    """
+    if not os.path.isdir(entry):
+        return entry if os.path.isfile(entry) else None
+
+    default = os.path.join(entry, BUNDLE_FILENAME)
+    if os.path.isfile(default):
+        return default
+
+    found = sorted(glob.glob(os.path.join(entry, "*.pfno")))
+    if len(found) == 1:
+        return found[0]
+    if len(found) > 1:
+        raise SystemExit(
+            f"{entry} holds {len(found)} checkpoints "
+            f"({', '.join(os.path.basename(p) for p in found)}) and none is "
+            f"the default {BUNDLE_FILENAME}. Point --models at the files "
+            f"themselves so the members are unambiguous."
+        )
+    return None
+
+
 def resolve_bundles(pattern):
     """Expand ``--models`` into one bundle path per member."""
-    matches = sorted(glob.glob(pattern))
-    paths = []
-    for entry in matches:
-        candidate = (os.path.join(entry, BUNDLE_FILENAME)
-                     if os.path.isdir(entry) else entry)
-        if os.path.isfile(candidate):
-            paths.append(candidate)
+    paths = [bundle for bundle in
+             (member_bundle(entry) for entry in sorted(glob.glob(pattern)))
+             if bundle is not None]
     if len(paths) < 2:
         raise SystemExit(
             f"{pattern!r} matched {len(paths)} checkpoint(s); a committee "
-            f"needs at least two. Train members with poraque-train --init-seed."
+            f"needs at least two. Train members with poraque-train "
+            f"--init-seed S --name committee_S, one per seed."
         )
     return paths
 
@@ -134,7 +204,14 @@ def reference_errors(path, task):
 def rank(argv=None):
     """Parse ``argv``, score every structure, and return the ranked records."""
     parser = argparse.ArgumentParser(
-        description="Rank structures by committee disagreement (JSD).")
+        description="CALIBRATION: does committee disagreement predict error? "
+                    "Correlates the two on data where the error is known.",
+        epilog="Runs on a LABELLED dataset (--cache): inputs AND targets, so "
+               "the true error is available to correlate against. Its sibling "
+               "poraque-active-learning runs on an unlabelled pool and spends "
+               "a DFT budget on the ranking. Run this one first -- read the "
+               "Spearman coefficient before trusting that ordering.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--models", default="models/committee_*",
                         help="glob matching one directory or bundle per member")
     parser.add_argument("--task", default="ext2chg",
@@ -156,15 +233,26 @@ def rank(argv=None):
     print("=" * 78)
     print(f"Query by committee - {task.name}: {task.input_field} -> "
           f"{task.target_field}")
+    print("CALIBRATION: does disagreement predict error on data where the")
+    print("error is known? Read the Spearman coefficient below.")
+    print("(To spend a DFT budget on a ranking, that is")
+    print(" poraque-active-learning, on an unlabelled pool.)")
     print("=" * 78)
     print(f"  members    : {len(committee)}  (init_seed "
           f"{committee.init_seeds})")
     print(f"  device     : {describe_device(device)}")
     print(f"  cache      : {args.cache}")
 
-    materials = discover_materials(args.cache)
+    # This task's two fields, not the default triple. Asking for TAUCAR as
+    # well made an ext2chg dataset -- which by definition has no TAUCAR --
+    # report as "no materials", so the very data the committee was trained on
+    # could not be ranked.
+    materials = discover_materials(args.cache, required=task.required_files)
     if not materials:
-        raise SystemExit(f"no materials under {args.cache!r}.")
+        raise SystemExit(
+            f"no materials under {args.cache!r} carry both "
+            f"{task.input_field} and {task.target_field}, which "
+            f"{task.name} needs.")
 
     records = []
     for material in materials:
@@ -183,20 +271,43 @@ def rank(argv=None):
             "ratio": scored["ratio"],
         })
 
-    order = sorted(records, key=lambda r: -r["jsd"])
-    print("\n  ranked by Jensen-Shannon divergence (most uncertain first):")
-    print(f"    {'structure':<14s} {'JSD':>10s} {'JSD/lnK':>9s} "
-          f"{'L2 spread':>10s} {'int spread':>11s} {'error':>9s}")
-    print("    " + "-" * 68)
-    for record in order:
-        print(f"    {record['material']:<14s} {record['jsd']:10.3e} "
-              f"{record['jsd_normalised']:9.4f} {record['relative']:10.4f} "
-              f"{record['integral_relative']:11.4f} {record['error']:9.4f}")
+    # `disagreement` returns jsd=None by design when the members predict a
+    # signed field -- which is exactly what an under-trained density model
+    # does. Sorting on that raised `bad operand type for unary -: NoneType`
+    # and lost the whole ranking, including the structures that did score.
+    ranked = [record for record in records if record["jsd"] is not None]
+    unscored = [record for record in records if record["jsd"] is None]
+
+    print(f"\n  ranked by Jensen-Shannon divergence (most uncertain first): "
+          f"{len(ranked)} of {len(records)}")
+    if ranked:
+        # The same table poraque-active-learning prints, from the same
+        # definition: it is the same measure over the same committee, and two
+        # hand-written tables had drifted apart in width, precision and column
+        # name.
+        print(format_ranking(ranked))
+    if unscored:
+        print(f"\n    {len(unscored)} structure(s) have no JSD: the members "
+              f"predict a signed field there, which is")
+        print("    not a density and has no divergence. The L2 spread below "
+              "still applies to them.")
+        for record in unscored:
+            print(f"      {record['material']:<18s} L2 spread "
+                  f"{record['relative']:.4f}")
+    if not ranked:
+        print("\n  no structure could be ranked by JSD; train the members "
+              "further before")
+        print("  spending a DFT budget on this ordering.")
 
     # ---------------- does the ranking mean anything? ---------------- #
     print("\n  calibration (committee spread vs its own error):")
     for key, label in (("jsd", "JSD"), ("relative", "L2 spread")):
-        scored = [{"relative": r[key], "error": r["error"]} for r in records]
+        scored = [{"relative": r[key], "error": r["error"]} for r in records
+                  if r[key] is not None and r["error"] is not None]
+        if len(scored) < 3:
+            print(f"    {label:<11s} needs 3 scored structures, has "
+                  f"{len(scored)}")
+            continue
         stats = disagreement_error_correlation(scored)
         print(f"    {label:<11s} Spearman {stats['spearman']:+.3f}   "
               f"Pearson {stats['pearson']:+.3f}")
@@ -209,7 +320,12 @@ def rank(argv=None):
                   f"{os.path.basename(args.against)} ({len(shared)} structures):")
             for key, label in (("jsd", "JSD"), ("relative", "L2 spread")):
                 scored = [{"relative": r[key],
-                           "error": truth[r["material"]]} for r in shared]
+                           "error": truth[r["material"]]} for r in shared
+                          if r[key] is not None]
+                if len(scored) < 3:
+                    print(f"    {label:<11s} needs 3 scored structures, has "
+                          f"{len(scored)}")
+                    continue
                 stats = disagreement_error_correlation(scored)
                 print(f"    {label:<11s} Spearman {stats['spearman']:+.3f}   "
                       f"Pearson {stats['pearson']:+.3f}")

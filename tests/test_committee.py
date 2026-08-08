@@ -391,3 +391,56 @@ class TestCommitteeClass:
         assert len(committee) == 3
         assert committee.init_seeds == [0, 1, 2]
         assert committee.disagreement(potential)["relative"] >= 0.0
+
+
+class TestRankingSurvivesAnUndefinedJSD:
+    """
+    ``Committee.disagreement`` returns ``jsd=None`` by design when the members
+    predict a signed field -- which is what an under-trained density model
+    does. ``poraque-committee`` sorted on that value directly and died with
+    ``bad operand type for unary -: NoneType``, losing the whole ranking
+    including the structures that had scored perfectly well.
+    """
+
+    @staticmethod
+    def _rank():
+        import sys
+
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
+                                        "scripts"))
+        from poraque_committee import rank
+
+        return rank
+
+    def test_the_script_exposes_a_task_aware_requirement(self):
+        """
+        An ext2chg dataset has no TAUCAR, by definition. Requiring the default
+        triple reported it as "no materials" -- so the very data the committee
+        was trained on could not be ranked.
+        """
+        from poraque.ml.tasks import resolve_task
+
+        assert resolve_task("ext2chg").required_files == ("EXTCAR", "CHGCAR")
+        assert "TAUCAR" not in resolve_task("ext2chg").required_files
+
+    def test_format_ranking_drops_unscored_rows_rather_than_raising(self):
+        from poraque.ml.active_learning import format_ranking
+
+        records = [
+            {"material": "a", "jsd": None, "jsd_normalised": None,
+             "relative": 0.5, "integral_relative": 0.1},
+            {"material": "b", "jsd": 0.2, "jsd_normalised": 0.3,
+             "relative": 0.4, "integral_relative": 0.2},
+        ]
+        rows = format_ranking(records).splitlines()[2:]
+        assert [row.split()[0] for row in rows] == ["b"]
+
+    def test_a_wholly_unscorable_pool_is_reported_not_crashed(self, capsys):
+        """The end state the smoke test hit: no structure scores at all."""
+        from poraque.ml.active_learning import format_ranking
+
+        records = [{"material": f"m{i}", "jsd": None, "jsd_normalised": None,
+                    "relative": 1.0, "integral_relative": 0.1}
+                   for i in range(3)]
+        text = format_ranking(records)
+        assert len(text.splitlines()) == 2, "heading and rule, no rows"

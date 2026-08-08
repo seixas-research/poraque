@@ -11,6 +11,7 @@ caught by asserting that a figure was written.
 """
 
 import os
+import shutil
 
 import matplotlib
 import numpy as np
@@ -570,3 +571,90 @@ class TestSymbolicParityPlot:
                                                     parity_file):
         captured = report_source(self._symbolic(parity_file, validated=True))
         assert "penalised inside" not in captured["source"]
+
+
+class TestLongTableBreaking:
+    r"""
+    Every table whose length is set by the data must be able to turn the page.
+
+    A ``tabular`` is one unbreakable box. LaTeX does not truncate it and does
+    not fail: it prints as much as fits and lets the rest run off the bottom of
+    the page, where it is simply not on the paper. The per-structure metrics
+    table is the one whose row count is the size of the dataset, so it is the
+    one that silently lost rows -- 88 of 140 structures, in the case that
+    prompted this -- while the report still looked complete.
+    """
+
+    @staticmethod
+    def _per_material(n):
+        return {f"mp-{i:06d}": {"split": "train" if i % 5 else "validation",
+                                "metrics": {"mse": 1e-6, "mae": 2e-4,
+                                            "rmse": 1e-3, "relative_l2": 0.01,
+                                            "r2": 0.999}}
+                for i in range(n)}
+
+    def test_metrics_table_can_break_across_pages(self):
+        from poraque.vis.pdf_report import ModelReport
+
+        source = ModelReport(logo=None)._metrics_table(
+            self._per_material(120), "eV")
+        assert r"\begin{longtable}" in source
+        assert r"\begin{tabular}" not in source, (
+            "a tabular cannot break, so its overflow leaves the page")
+
+    def test_the_header_repeats_on_continuation_pages(self):
+        from poraque.vis.pdf_report import ModelReport
+
+        source = ModelReport(logo=None)._metrics_table(
+            self._per_material(120), "eV")
+        assert r"\endfirsthead" in source and r"\endhead" in source, (
+            "columns of bare numbers are unreadable without their heading")
+        assert source.count("Structure & Split") == 2
+
+    def test_the_mean_row_survives_the_conversion(self):
+        from poraque.vis.pdf_report import ModelReport
+
+        source = ModelReport(logo=None)._metrics_table(
+            self._per_material(8), "eV")
+        assert r"\textbf{mean}" in source
+
+    def test_the_pareto_front_header_repeats(self):
+        from poraque.vis.pdf_report import ModelReport
+
+        source = ModelReport(logo=None)._symbolic_block({
+            "latex": "1", "full_latex": r"F = 1", "complexity": 3,
+            "r2": 0.9, "relative_l2": 0.1, "n_samples": 10,
+            "scheme": "reduced", "units": "atomic", "target": "model",
+            "target_name": "F", "template": "pauli",
+            "pareto": [{"complexity": c, "loss": 1e-3,
+                        "limits": {"badge": "TF/vW"}, "expression": "x0"}
+                       for c in range(1, 60)],
+        })
+        assert r"\endhead" in source
+
+    @pytest.mark.skipif(
+        not (shutil.which("pdflatex") and shutil.which("pdftotext")),
+        reason="needs a LaTeX toolchain and poppler's pdftotext")
+    def test_every_structure_reaches_the_page(self, tmp_path):
+        """
+        The end-to-end statement: compile the PDF and read the rows back out.
+
+        This is the only check that would have caught the original defect --
+        the source was valid LaTeX and the build reported success.
+        """
+        import re
+        import subprocess
+
+        from poraque.vis.pdf_report import ModelReport
+
+        per_material = self._per_material(140)
+        pdf = ModelReport(str(tmp_path), logo=None).build(
+            task="chg2tau", per_material=per_material, unit="eV")
+        assert pdf.endswith(".pdf"), "the LaTeX fallback path was taken"
+
+        text = subprocess.run(["pdftotext", pdf, "-"], capture_output=True,
+                              text=True, check=True).stdout
+        found = set(re.findall(r"mp-\d{6}", text))
+        assert found == set(per_material), (
+            f"{len(set(per_material)) - len(found)} structures never reached "
+            f"the page")

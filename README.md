@@ -45,6 +45,46 @@ the environment is active. The first four are the `main()` of the script of the
 same name under `scripts/`, so `python scripts/poraque_train.py` is equivalent
 to `poraque-train` and needs nothing installed.
 
+### Faster CPU inference (optional)
+
+Poraquê ships a small C kernel for the spectral contraction, the one part of a
+Fourier layer that PyTorch runs poorly at batch 1. It is **optional**: without
+it everything works and simply falls back to `torch.einsum`.
+
+There is nothing to configure. The kernel is compiled on first use — about half
+a second, once — and cached in `~/.cache/poraque`. To do that compile now, and
+check it:
+
+```bash
+python -m poraque.ml.backend --benchmark
+```
+
+```text
+  compiler  : /usr/bin/cc
+  cache dir : /home/you/.cache/poraque
+  C spectral backend: loaded from ...poraque_spectral_89feecc6.dylib (pthreads)
+  agreement with torch.einsum: 2.76e-07 relative (float32 rounding is ~1e-7)
+
+  one contraction (batch 1, width 32, modes 12^3):
+    torch.einsum (4 threads)     4.528 ms
+    C, serial                    0.606 ms     7.5x
+    C, 4 pthreads                0.200 ms    22.6x
+```
+
+All it needs is a C compiler: `xcode-select --install` on macOS, or
+`build-essential` on Debian/Ubuntu. Add `--rebuild` after editing the kernel.
+
+| | |
+| --- | --- |
+| Whole-model inference | 2–3.4× faster at 24–32³, tapering to ~1× at 96³ where the FFTs dominate |
+| Threading | pthreads, not OpenMP — a second OpenMP runtime beside PyTorch's raises `OMP: Error #15`. Saturates memory bandwidth at ~4 threads |
+| Training | unaffected — the kernel records nothing on the autograd tape, so it is used only under `torch.no_grad()` |
+| Accuracy | identical to float32 rounding (~1e-7 relative), checked on every call path by `tests/test_backend.py` |
+| To disable | `PORAQUE_C_BACKEND=0` |
+
+`poraque-inference` prints which path it used, so a run that silently fell back
+is visible rather than merely slow.
+
 ## Use
 
 ```bash
@@ -58,13 +98,97 @@ poraque-train --config configs/train_config.yaml --kfold --k-folds 5
 # 3. predict a structure that has never been computed
 poraque-inference new_structure/ --output predictions/new_structure
 
-# 4. choose the next DFT runs: rank an unlabelled pool by how much a
-#    committee of models disagrees about it (Jensen-Shannon divergence)
+# 4. calibrate: does committee disagreement predict error? Run this on
+#    LABELLED data first -- it costs nothing and says whether step 5 means
+#    anything. Read the Spearman coefficient.
+poraque-committee --models "models/committee_*" --task ext2chg \
+    --cache data/cache --against logs/kfold.json
+
+# 5. select: which UNLABELLED structures to compute next. This one spends
+#    the DFT budget, so it is the one that needs step 4 to have passed.
 poraque-active-learning --models "models/committee_*" --task ext2chg \
     --pool data/pool --select 5
 ```
 
+`poraque-committee` and `poraque-active-learning` are two halves of one loop,
+not two ways of doing the same thing. They differ in the data they run on, and
+that decides everything else:
+
+| | `poraque-committee` | `poraque-active-learning` |
+| --- | --- | --- |
+| runs on | a **labelled** dataset — inputs *and* targets | an **unlabelled** pool — inputs only |
+| answers | is this measure worth trusting? | which structures do I compute next? |
+| produces | a Spearman correlation against the *known* error | a ranking, and a transfer into the training set |
+| costs | nothing, the DFT is already done | the DFT runs it selects |
+
+Both share the same committee, the same divergence and the same ranking table,
+which is why their output looks alike — they differ in what the number is *for*.
+
 Every predicted field is written in `CHGCAR` format.
+
+### Configuration
+
+**Every key in a config is optional.** A file needs to state only what the run
+does differently; everything omitted takes its default. That is why the shipped
+examples are short — of the 80 settings a full config carries,
+`configs/train_config.yaml` differs in 15.
+
+```bash
+poraque-train --write-config /tmp/all.yaml              # every key, with defaults
+poraque-train --config mine.yaml --write-config mine.yaml --minimal
+```
+
+The second compresses a config you already have down to its differences, and
+`--minimal` also works after command-line overrides, so a swept run can be
+frozen back into a file:
+
+```bash
+poraque-train --config base.yaml --epochs 500 --write-config sweep.yaml --minimal
+```
+
+### One directory per model
+
+Everything a run writes lands under `models/<name>/`:
+
+```text
+models/au_w16_m8_l3/
+    au_w16_m8_l3.pfno     the weights
+    log/                  training log, metrics JSON, resolved config
+    plots/                loss curves, parity, field slices
+    report/               the generated PDF
+```
+
+A trained model is not one file: it is weights, plus the numbers that say how
+good they are, plus the figures behind those numbers, plus the config that
+produced them. Naming the run is the only thing you set — `task.name` — and
+two runs with different names cannot collide.
+
+Each part can be switched off independently:
+
+```yaml
+output:
+  root: models              # null disables all output
+  write_log: true
+  plot_figures: true
+  write_pdf_report: true
+  checkpoint: true
+```
+
+or from the shell with `--output-root DIR`, `--no-plots`, `--no-report`.
+
+### Precision
+
+Two independent settings, because they control different costs:
+
+```yaml
+data:  {precision: float64}    # how fields are stored: float16 | float32 | float64
+model: {precision: float32}    # what the operator computes in: float32 | float64
+```
+
+`data.precision` is memory — a 160³ field is 16 MB in double and 8 MB in
+single. `model.precision: float64` roughly doubles time and memory and is for
+checking that a physical result is not a single-precision artefact; it needs
+`training.device: cpu`, since Metal has no float64 at all.
 
 Or drive it from ASE:
 
@@ -139,8 +263,9 @@ in its first lines.
 | `src/poraque/physics/` | Total-energy components integrated from the predicted fields |
 | `src/poraque/calculator.py` | ASE calculator wrapping the whole chain |
 | `src/poraque/vis/` | Figures and automatic PDF reports |
+| `models/` | One folder per trained model: weights, log, plots, report |
 | `scripts/` | Validation, training, inference, experiments |
-| `configs/` | YAML run definitions |
+| `configs/` | YAML run definitions — every key is optional; see `--minimal` |
 | `docs/source/` | Sphinx documentation |
 | `docs/notes/` | Design and analysis notes — start at `roadmap.md` |
 | `latex/user_guide/` | User guide (how to run it) |

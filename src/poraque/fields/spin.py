@@ -45,6 +45,7 @@ a mixed dataset train a single operator.
 
 import numpy as np
 
+from .base import resolve_dtype
 from .density import ChargeDensity
 from .grid import FieldGrid
 from .vasp.volumetric import read_volumetric, write_volumetric
@@ -128,9 +129,14 @@ class SpinDensity:
     volume_scaled = True
     n_channels = 2
 
-    def __init__(self, total, magnetization, grid, structure, metadata=None):
-        self.total = np.asarray(total, dtype=float)
-        self.magnetization = np.asarray(magnetization, dtype=float)
+    def __init__(self, total, magnetization, grid, structure, metadata=None,
+                 dtype=None):
+        # Both channels in one dtype, always: they are added and subtracted to
+        # form the up/down views, and a mixed pair would promote silently and
+        # undo whatever the caller asked for.
+        resolved = resolve_dtype(dtype)
+        self.total = np.asarray(total, dtype=resolved)
+        self.magnetization = np.asarray(magnetization, dtype=resolved)
         self.grid = grid
         self.structure = structure
         self.metadata = dict(metadata or {})
@@ -157,6 +163,23 @@ class SpinDensity:
         return np.stack([self.total, self.magnetization], axis=0)
 
     @property
+    def dtype(self):
+        """Precision both channels are stored in."""
+        return self.total.dtype
+
+    def astype(self, dtype):
+        """The same pair, stored in another precision. See :meth:`ScalarField.astype`."""
+        resolved = resolve_dtype(dtype)
+        return type(self)(self.total.astype(resolved),
+                          self.magnetization.astype(resolved),
+                          self.grid, self.structure,
+                          metadata=dict(self.metadata), dtype=resolved)
+
+    def nbytes(self):
+        """Memory both channels occupy, in bytes."""
+        return int(self.total.nbytes + self.magnetization.nbytes)
+
+    @property
     def up(self):
         r""":math:`\rho_\uparrow = (\rho + m)/2`."""
         return 0.5 * (self.total + self.magnetization)
@@ -177,7 +200,7 @@ class SpinDensity:
         obtainable this way; see :func:`~poraque.physics.energy.xc_energy`.
         """
         return ChargeDensity(self.total, self.grid, self.structure,
-                             metadata=dict(self.metadata))
+                             metadata=dict(self.metadata), dtype=self.dtype)
 
     # ------------------------------------------------------------------ #
     # Integrals

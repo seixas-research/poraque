@@ -1,98 +1,39 @@
 # =====================================================================
-# Poraque - training on a mixture of data sources
+# Poraque - one operator from several datasets at once
 #
 #   poraque-train --config configs/train_mixed_config.yaml
 #
-# `train_paths` is a list, and each entry is detected independently:
-# local DFT calculation directories, an archive of standalone CHGCARs,
-# or a prepared cache from an earlier run. Everything found is pooled
-# into one training set.
-#
-# CAVEAT, and it is not a small one. A calculation directory carries a
-# POTCAR, so V_ext there is the *tabulated* local pseudopotential. A bulk
-# archive carries none, so V_ext there is the Gaussian pseudo-ion model,
-# which differs from the tabulated form by roughly 0.1 relative L2. Train
-# across both and the input field is two different quantities under one
-# name; the run warns about it. The trade can be worth making -- a far
-# larger and more chemically diverse dataset for a fuzzier input -- but
-# make it deliberately. Set `sigma` from a fit against a reference EXTCAR
-# to narrow the gap.
-#
-# `task: ext2chg` is what makes the mixture possible at all: no public
-# archive publishes a kinetic energy density, so chg2tau can only ever be
-# trained on the local runs. Leaving `task: all` is also fine -- chg2tau
-# then trains on whichever materials do carry a TAUCAR, and the run says
-# how many that was.
+# Every key is optional; only the differences from the defaults are listed.
+# See configs/train_config.yaml for the model settings explained in full.
 # =====================================================================
 task:
+  # ext2chg only: a bulk CHGCAR archive carries no kinetic energy density, so
+  # mixing one in leaves chg2tau with targets for part of the set and none
+  # for the rest.
   type: ext2chg
-  # models/<name>.pfno, reports/<name>_report.pdf, results/plots/<name>/.
-  # Named for the mixture, so it can never be confused with a model trained
-  # on the local runs alone -- the two see different external potentials.
+  # Everything this run writes goes in models/mixed_ext2chg/ -- weights, log,
+  # plots and report together. There is nothing else to name.
   name: mixed_ext2chg
+
 data:
+  # Several roots, pooled into one training set. Each is auto-detected, so a
+  # directory of local VASP runs and an archive of standalone CHGCARs can be
+  # listed side by side.
+  #
+  # CAVEAT, and it is a real one: these two supply *different definitions* of
+  # the external potential. A calculation directory carries its POTCAR, so
+  # V_ext comes from the tabulated local pseudopotential; a bulk CHGCAR
+  # archive has none, so unless `potcar_dir` covers it the Gaussian pseudo-ion
+  # model stands in -- roughly 0.1 relative L2 away. The run warns when it
+  # happens. It is a legitimate trade (far more data, a fuzzier input) but
+  # never a good accident.
   train_paths:
     - data/vasp
     - data/MP/chgcar
-  source: auto
   cache: data/cache/mixed
-  pattern: struct
-  code: auto
-  resolution: 32
-  # Setting this to the library MP used makes both archives build the *same*
-  # tabulated V_ext, which removes the caveat above entirely -- the mixture
-  # stops being a mixture of two quantities. Strongly recommended here.
-  potcar_dir: null
-  sigma: null
-  gaussian_blur: null
-  blur_method: spectral
-model:
-  width: 16
-  modes: 8
-  n_layers: 4
-  projection_channels: 48
-  activation: gelu
-  use_coordinates: true
-  cell_conditioning: true
-  embedding_dim: 32
-  mode_selection: fixed
-  g_max: null
-  pauli_residual: false
+
 training:
+  # Shorter than the default: this set is large, so an epoch is expensive and
+  # the early-stopping window can be tighter.
   epochs: 200
-  batch_size: 4
-  learning_rate: 0.002
-  weight_decay: 0.0001
-  scheduler: cosine
-  grad_clip: 1.0
-  valid_fraction: 0.2
-  enable_kfold: false
-  k_folds: 5
-  eval_epoch: 10
   early_stopping: 50
-  seed: 42
-  device: auto
-  loss: relative_l2
-  physics:
-    # Charge conservation: squared relative error between the integral of the
-    # predicted density and the reference electron count. Left at zero *here*
-    # and only here -- this config's whole subject is a mixed input field, and
-    # a physics term switched on at the same time would confound what the
-    # mixture cost with what the constraint bought. Measure the baseline
-    # first, then raise it to 0.1 as the other configs do.
-    electron_count_weight: 0.0
-    positivity_weight: 0.0
-    von_weizsacker_weight: 0.0
-    euler_lagrange_weight: 0.0
-output:
-  log: logs/mixed_training.log
-  json: logs/mixed_training.json
-  checkpoint_dir: models/mixed
-  plot_dir: results/plots/mixed
-  report_dir: reports/mixed
-  plot_format: png
-  dpi: 160
-symbolic:
-  enable_symbolic_distillation: false
-fine_tuning:
-  enable: false

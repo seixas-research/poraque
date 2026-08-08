@@ -122,6 +122,9 @@ _LAZY = {
     "score_candidate": "poraque.ml.active_learning",
     "score_pool": "poraque.ml.active_learning",
     "select_top_k": "poraque.ml.active_learning",
+    # C backend for CPU inference
+    "backend_available": "poraque.ml.backend",
+    "backend_describe": "poraque.ml.backend",
     # unified checkpoint
     "BUNDLE_FILENAME": "poraque.ml.training",
     "BUNDLE_FORMAT": "poraque.ml.training",

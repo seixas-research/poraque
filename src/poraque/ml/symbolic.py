@@ -127,7 +127,7 @@ _HA_PER_BOHR3_TO_EV_PER_ANG3 = HARTREE_TO_EV / BOHR_TO_ANGSTROM ** 3
 
 @dataclass
 class FeatureTable:
-    """
+    r"""
     Design matrix for the search.
 
     Attributes
@@ -578,6 +578,38 @@ DEFAULT_PHYSICS_WEIGHTS = {
 
 #: Data terms the physics penalties are added to.
 DATA_LOSSES = {"mse": "abs2", "mae": "abs"}
+
+
+def symbolic_physics(config):
+    """
+    The ``symbolic.physics`` block, with every key guaranteed present.
+
+    Reads a mapping when the config carries one and falls back to
+    :data:`DEFAULT_PHYSICS_WEIGHTS` and :data:`DEFAULT_P_INFINITY` otherwise,
+    so a partial block -- ``physics: {enable: false}`` -- is a valid config
+    rather than a ``KeyError`` two hundred lines into a run.
+
+    Parameters
+    ----------
+    config : SymbolicConfig or object
+        Anything carrying a ``physics`` mapping.
+
+    Returns
+    -------
+    dict
+        ``enable`` plus the three weights and ``p_infinity``.
+    """
+    defaults = {
+        "enable": True,
+        "positivity_weight": DEFAULT_PHYSICS_WEIGHTS["positivity"],
+        "thomas_fermi_weight": DEFAULT_PHYSICS_WEIGHTS["thomas_fermi"],
+        "von_weizsacker_weight": DEFAULT_PHYSICS_WEIGHTS["von_weizsacker"],
+        "p_infinity": DEFAULT_P_INFINITY,
+    }
+    supplied = getattr(config, "physics", None)
+    if isinstance(supplied, dict):
+        defaults.update({k: v for k, v in supplied.items() if v is not None})
+    return defaults
 
 
 def physics_probes(feature_names, template, p_infinity=DEFAULT_P_INFINITY,
@@ -1243,16 +1275,22 @@ class SymbolicDistiller:
         unary = list(config.unary_operations or DEFAULT_UNARY)
         binary = list(config.binary_operations or DEFAULT_BINARY)
 
+        # `symbolic.physics`, never `training.physics`: the latter constrains
+        # the neural operator over voxels, this constrains a candidate algebraic
+        # expression over probe points. Two of the key names are the same in
+        # both blocks and mean different things, which is why they are nested
+        # separately rather than sharing a prefix.
+        physics = symbolic_physics(config)
         objective, enforced = None, []
-        if table is not None and getattr(config, "physics_constraints", False):
+        if table is not None and physics.get("enable", False):
             objective, enforced = julia_physics_loss(
                 table.feature_names, table.template,
                 weights={
-                    "positivity": float(config.positivity_weight),
-                    "thomas_fermi": float(config.thomas_fermi_weight),
-                    "von_weizsacker": float(config.von_weizsacker_weight),
+                    "positivity": float(physics["positivity_weight"]),
+                    "thomas_fermi": float(physics["thomas_fermi_weight"]),
+                    "von_weizsacker": float(physics["von_weizsacker_weight"]),
                 },
-                p_infinity=float(config.p_infinity),
+                p_infinity=float(physics["p_infinity"]),
                 data_loss=str(config.data_loss),
             )
         return {
@@ -1568,7 +1606,8 @@ def distill_dataset(dataset, config, operator=None, log=None, engine=None,
     if enforced:
         emit(f"  physical constraints penalised inside the search: "
              f"{', '.join(enforced)}  "
-             f"[{config.data_loss} data term, p_inf = {config.p_infinity:g}]")
+             f"[{config.data_loss} data term, "
+             f"p_inf = {symbolic_physics(config)['p_infinity']:g}]")
         missing = {"thomas_fermi", "von_weizsacker"} - set(enforced)
         if missing:
             # Said out loud rather than left to be inferred: under `template:
@@ -1579,7 +1618,7 @@ def distill_dataset(dataset, config, operator=None, log=None, engine=None,
                  f"only: {', '.join(sorted(missing))}")
     else:
         emit("  physical constraints are not penalised in the search "
-             "(symbolic.physics_constraints is off); limits checked afterwards")
+             "(symbolic.physics.enable is off); limits checked afterwards")
 
     result = distiller.fit(table)
 

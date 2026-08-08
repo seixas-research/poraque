@@ -2,194 +2,238 @@
 # Poraque - Fourier Neural Operator training configuration
 #
 #   poraque-train --config configs/train_config.yaml
-#
-# Command-line flags override these values, so one committed config can
-# be swept from the shell without editing it:
-#
-#   poraque-train --config configs/train_config.yaml --epochs 500
-#
-# Equivalent, from a checkout with nothing installed:
-#
+#   poraque-train --config configs/train_config.yaml --epochs 800
 #   python scripts/poraque_train.py --config configs/train_config.yaml
+#
+# EVERY KEY IS OPTIONAL. Anything omitted takes its default, so this file
+# lists only what this run does *differently* -- which is what makes it
+# readable as the description of one experiment rather than a dump of every
+# knob. To see the full set with its defaults:
+#
+#   poraque-train --write-config /tmp/all.yaml
+#
+# and to compress a config you already have back down to its differences:
+#
+#   poraque-train --config mine.yaml --write-config mine.yaml --minimal
+#
+# Command-line flags override these values, so one committed config can be
+# swept from the shell without editing it.
 # =====================================================================
 task:
-  # all | ext2chg | chg2tau. `task: all` on its own -- without this block --
-  # is still accepted and means the same thing.
+  # all | ext2chg | chg2tau.
+  #   ext2chg : V_ext -> rho     the Hohenberg-Kohn map
+  #   chg2tau : rho  -> tau      the kinetic energy density
+  #   all     : both, saved into one bundle. Only `all` gives a model that
+  #             can reach a total energy, since the ASE calculator needs the
+  #             whole chain.
   type: all
-  # Names every artefact the run writes:
-  #
-  #   models/<name>.pfno            the weights
-  #   reports/<name>_report.pdf     the PDF report
-  #   results/plots/<name>/         the figures
-  #
-  # Change it for a run worth keeping beside the last one; two runs sharing a
-  # name share their output files, and the second wins.
-  name: au_w16_m8_l3_p0.1
+  name: au_w16_m8_l3
+
 data:
-  # One dataset directory. For several -- which may mix layouts, e.g. local
-  # runs beside an archive of standalone CHGCARs -- use `train_paths`:
-  #
-  #   train_paths:
-  #     - data/vasp
-  #     - data/MP/chgcar
-  #
-  # See configs/train_mixed_config.yaml, and mind the caveat there about
-  # mixing two definitions of V_ext.
-  train_paths: null
-  root: data/vasp
-  # Layout of each path: auto | vasp | bulk | prepared.
-  source: auto
-  cache: data/cache
-  pattern: struct
-  code: auto
-  resolution: 32
+  # A POTCAR *library* (one subdirectory per pseudopotential). With it the
+  # external potential comes from VASP's tabulated local potential; without
+  # it a Gaussian pseudo-ion model stands in, which is ~0.1 relative L2 away.
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
-  sigma: null
-  gaussian_blur: null
-  blur_method: spectral
+
 model:
+  # THE THREE THAT SET THE SIZE. All three are "some number of channels",
+  # which is why they are easy to confuse. Written out with every index, the
+  # operator is:
+  #
+  #   lift        v[0]_o(r) = sum_{i=1..Cin+3} Wlift_{o,i} x_i(r) + blift_o
+  #
+  #   layer l     vh[l-1]_i(k) = F_{r->k}[ v[l-1]_i ](k)
+  #
+  #               zh[l]_o(k) = sum_{i=1..C} R[l,c(k)]_{o,i,k1,k2,k3} vh[l-1]_i(k)
+  #                              for |k1|<m1, |k2|<m2, 0 <= k3 < m3
+  #                          = 0  otherwise
+  #
+  #               z[l]_o(r)  = F^-1_{k->r}[ zh[l]_o ](r)
+  #
+  #               y[l]_o(r)  = GroupNorm( z[l]_o(r)
+  #                              + sum_{i=1..C} W[l]_{o,i} v[l-1]_i(r) + b[l]_o )
+  #
+  #               y[l]_o(r) <- gamma_o(cell) y[l]_o(r) + beta_o(cell)    (FiLM)
+  #
+  #               v[l]_o(r)  = v[l-1]_o(r) + sigma( y[l]_o(r) )      (residual)
+  #
+  #   read-out    u_p(r)   = sigma( sum_{o=1..C} P1_{p,o} v[L]_o(r) + b1_p )
+  #               out_q(r) =        sum_{p=1..P} P2_{q,p} u_p(r)    + b2_q
+  #
+  # with
+  #
+  #   o, i = 1..C      C = width                  channels through the stack
+  #   l    = 1..L      L = n_layers               how many times the cycle runs
+  #   p    = 1..P      P = projection_channels    hidden width of the read-out
+  #   q    = 1..Cout                              physical output channels
+  #   c    = 1..4      the four (+-k1, +-k2) corners
+  #   m1 = min(modes, Nx/2), m2 = min(modes, Ny/2), m3 = min(modes, Nz/2 + 1)
+  #
+  # Four corners and not eight because v is real, so vh(-k) = conj(vh(k)) and
+  # only k3 >= 0 is stored. That 4 is the leading axis of R, whose shape is
+  # (4, C, C, m1, m2, m3).
+  #
+  # Parameter count -- this is where the three settings separate:
+  #
+  #   spectral   L * 4 * C^2 * m1*m2*m3   complex    <- dominates: C^2 and m^3
+  #   pointwise  L * (C^2 + C)
+  #   lift       C * (Cin + 3) + C
+  #   read-out   C*P + P + P*Cout + Cout             <- linear in P, once
+  #
+  # width  -- how many CHANNELS carry the field through the layers. The
+  #   operator's representational capacity: how many distinct features of the
+  #   density it can hold at once. Spectral weights go as width^2, so
+  #   doubling it roughly quadruples parameters and time.
+  #
+  # modes  -- how many FOURIER COEFFICIENTS PER AXIS the spectral multiplier
+  #   acts on, counted from the lowest. The operator's spatial reach: mode m
+  #   in a cell of length L is a wavelength L/m, so this fixes the finest
+  #   feature the learned convolution resolves and the longest range it can
+  #   correlate. A capacity limit, not a requirement -- on a coarser grid
+  #   fewer are used automatically, which is what lets one model serve
+  #   materials on different grids. Parameters go as modes^3: the most
+  #   expensive knob here, 8 -> 12 is 3.4x.
+  #
+  # projection_channels -- the hidden width of the final read-out head that
+  #   maps width channels back to the physical output. Appears once, at the
+  #   end, never inside a Fourier layer, and is purely pointwise, so it is
+  #   cheap. Usually worth more than the same budget spent on width.
+  #
+  # In short: width is how much information travels through, modes is how far
+  # it travels in space, projection_channels is only how it is read out.
+  #
+  # n_layers stacks the whole cycle, which composes the learned convolutions
+  # and buys effective range at linear cost -- unlike modes.
   width: 16
-  modes: 12
-  n_layers: 3
+  modes: 8
   projection_channels: 64
-  activation: gelu
-  use_coordinates: true
-  cell_conditioning: true
-  embedding_dim: 32
+
+  # HOW `modes` IS TRUNCATED, and the one setting to revisit when the dataset
+  # stops being uniform.
+  #
+  #   fixed     keep the lowest `modes` coefficients per axis, whatever the
+  #             cell. Mode k on an axis of length L is |G| = 2*pi*k/L, so a
+  #             fixed index keeps a DIFFERENT PHYSICAL BAND in every material.
+  #             Fine only while the cells are alike.
+  #
+  #   physical  keep floor(g_max * L_i / 2*pi) modes on axis i, so every
+  #             material contributes the same band of physics. Needs `g_max`
+  #             in 1/Ang. This is the right choice for a dataset spanning a
+  #             range of cell sizes -- see configs/train_mp_config.yaml.
+  #
+  # `fixed` here because this dataset was built with similar cells to exercise
+  # the training pipeline, not to span chemistry. Switch to `physical` when
+  # that stops being true.
+  #
+  # `modes` AND `g_max` DO NOT CONFLICT -- they compose, as
+  #
+  #   retained = min( modes, floor(g_max * L_i / 2*pi), N_i/2 )
+  #
+  # but they are not symmetric, and that asymmetry is the thing to watch:
+  #
+  #   modes  ALLOCATES. It sizes the weight tensor R = (4, C, C, m, m, m),
+  #          whatever g_max later does.
+  #   g_max  only MASKS at run time. It can take modes away, never add them.
+  #
+  # So a g_max tighter than `modes` leaves the unreached weights with exactly
+  # zero gradient: allocated, saved into the .pfno, never trained. At modes=8
+  # and g_max=6 a 4.08 Ang fcc Au cell keeps 3 modes -- 5.3% of R -- and the
+  # other 94.7% is dead.
+  #
+  # And the sharper trap: dead is not harmless, because it is dead *at random
+  # initialisation*. Predict a larger cell later and floor(g_max*L/2pi) grows,
+  # switching those untrained weights on:
+  #
+  #   L = 4.08 Ang -> 3 modes ->   5.3% of R engaged   (what was trained)
+  #   L = 6.00 Ang -> 5 modes ->  24.4%
+  #   L = 8.40 Ang -> 8 modes -> 100.0%                (94.7% of it random)
+  #
+  # A model trained only on small cells with `physical` is therefore not
+  # merely less accurate on a large one -- it is actively wrong, in exactly
+  # the regime `physical` was chosen to serve.
+  #
+  # The rule: pick g_max for the physics, then set
+  #
+  #   modes = floor(g_max * L_max / 2*pi)
+  #
+  # for the LARGEST cell in the dataset, so nothing is allocated that no
+  # structure can reach. Smaller cells legitimately use fewer -- that is what
+  # "the same physical band everywhere" means.
+  #
+  # The run prints the retained range and says so when it truncates. Read
+  # that line before trusting a `physical` run.
   mode_selection: fixed
-  g_max: null
-  pauli_residual: false
-  pauli_scale: null
-  learn_pauli_scale: true
+  # g_max: 6
+
 training:
-  epochs: 500
-  batch_size: 4
-  learning_rate: 0.002
-  weight_decay: 0.0001
-  scheduler: cosine
-  grad_clip: 1.0
-  valid_fraction: 0.2
-  enable_kfold: false
-  k_folds: 5
-  eval_epoch: 10
-  early_stopping: 300
-  seed: 42
-  init_seed: null
-  device: auto
-  loss: relative_l2
-  sobolev_weight: 0.1
-  # Physics-informed terms, added to the data loss as
+  # Physics-informed terms for the NEURAL OPERATOR, added to the data loss as
   #
   #   total = data + sum_i weight_i * term_i
   #
-  # and reported as separate `data loss` / `physics loss` / `total loss`
-  # columns during training, because a falling total says nothing about which
-  # half fell. Introduce them one at a time against a measured baseline: a
-  # badly scaled constraint degrades accuracy while looking principled.
+  # and reported as separate data/physics/total columns, because a falling
+  # total says nothing about which half fell. Introduce them one at a time
+  # against a measured baseline: a badly scaled constraint degrades accuracy
+  # while looking principled.
+  #
+  # NOT to be confused with `symbolic.physics` below. These constrain the
+  # network over voxels; those constrain an algebraic expression over probe
+  # points. Two of the names appear in both blocks and mean different things,
+  # which is why they are nested separately.
   physics:
     electron_count_weight: 0.1
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0
-output:
-  log: logs/fno_training.log
-  json: logs/fno_training.json
-  checkpoint_dir: models
-  plot_dir: results/plots
-  report_dir: reports
-  plot_format: png
-  dpi: 200
+
 symbolic:
   enable_symbolic_distillation: true
-  target: model
+
   # THE PAULI ENHANCEMENT FACTOR, on the two reduced variables and nothing
-  # else. `features` picks the inputs, `template` picks how the target is
-  # factorised, and these two together define the search as
+  # else. `features` picks the inputs and `template` picks how the target is
+  # factorised; together they define the search as
   #
-  #   F(p, q) = (tau - tau_vW) / tau_TF,     tau = tau_vW + tau_TF * F(p, q)
+  #   F(p, q) = (tau - tau_vW) / tau_TF,   tau = tau_vW + tau_TF * F(p, q)
   #
-  # so the formula found *is* the kinetic energy density, reconstructed from
-  # two terms already known in closed form:
+  # so the formula found *is* the kinetic energy density, rebuilt from two
+  # terms already known in closed form:
   #
-  #   tau_vW = |grad rho|^2 / (8 rho)        tau_TF = C_TF rho^(5/3)
+  #   tau_vW = |grad rho|^2 / (8 rho)      tau_TF = C_TF rho^(5/3)
   #
   # p = |grad rho| / (2 k_F rho) and q = lap rho / (4 k_F^2 rho) are
   # dimensionless and invariant under the coordinate scaling that fixes T_s,
-  # so a functional written in them holds at every density scale rather than
-  # having to be rediscovered at each. That invariance is also why rho itself
-  # is *dropped*: F cannot depend on it, and offering it as a third variable
-  # only gives the search a way to fit the dataset's particular densities.
+  # so a functional written in them holds at every density scale. That
+  # invariance is also why rho itself is dropped: F cannot depend on it, and
+  # offering it only gives the search a way to fit this dataset's densities.
   #
   # `pauli` rather than `thomas_fermi` because tau - tau_vW >= 0 by
-  # Hoffmann-Ostenhof and is exactly the part a kinetic functional has to
-  # model. Leaving tau_vW in the target means fitting a quantity that is
-  # mostly already known, and near the vW limit it means fitting a
-  # near-cancellation between two large numbers.
-  #
-  # Every constant to be found is then order unity, and the two limits the
-  # run checks are statements about F alone: F -> 1 as (p, q) -> 0
-  # (Thomas-Fermi, the uniform gas) and F -> 0 as p -> infinity (von
-  # Weizsacker, one orbital).
+  # Hoffmann-Ostenhof and is exactly the part a kinetic functional must model.
   features: reduced
   template: pauli
-  epsilon: 1.0e-08
-  constraints:
-    ^:
-    - -1
-    - 1
-  # THE PHYSICS AS FITNESS, not as a filter applied afterwards.
+
+  # PHYSICS CONSTRAINTS ON THE SEARCH -- as fitness, not as a filter applied
+  # afterwards. Checking the front once the run is over only measures how few
+  # candidates were physical; by then the populations have spent their budget
+  # on forms that must be discarded. With `enable: true` the objective is
   #
-  # Checking the front once the run is over only measures how few candidates
-  # were physical; by then the populations have already spent their budget
-  # converging on forms that have to be discarded. With this on, the engine's
-  # objective becomes
+  #   L = MSE + w+   * mean(min(F,0)^2)        [positivity]
+  #           + w_TF * |F(0,0) - 1|            [uniform gas, Thomas-Fermi]
+  #           + w_vW * |F(p_infinity,0) - 0|   [one orbital, von Weizsacker]
   #
-  #   L = MSE  +  w+ * mean(min(F, 0)^2)                      [positivity]
-  #            +  w_TF * |F(0, 0) - 1|                        [uniform gas]
-  #            +  w_vW * |F(p_infinity, 0) - 0|               [one orbital]
-  #
-  # The first term is evaluated on the batch; the other two on synthetic probe
-  # points, which is why this has to be PySR's *full objective* rather than an
-  # elementwise loss --- an elementwise loss sees only (prediction, target)
-  # pairs and can never evaluate a candidate where the data does not sit.
-  #
-  # Under `features: reduced` with `template: pauli` all three apply. Under
-  # `template: none` the fitted quantity is tau rather than an enhancement
-  # factor, so only positivity does; the run says which it enforced.
+  # The first term is evaluated on the batch, the other two on synthetic
+  # probe points -- which is why this needs PySR's *full objective* rather
+  # than an elementwise loss, since an elementwise loss only sees
+  # (prediction, target) pairs and can never evaluate a candidate where the
+  # data does not sit.
   #
   # NOTE: the `loss` column of the reported front is then this *constrained*
   # objective and is not comparable with an unconstrained run's. R2 and the
   # relative L2 are computed from the expression itself and are unaffected.
-  physics_constraints: true
-  data_loss: mse
-  positivity_weight: 100.0
-  thomas_fermi_weight: 100.0
-  von_weizsacker_weight: 100.0
-  # Large enough that no smooth interpolating form is still in its crossover
-  # region, small enough that p^(8/3) stays far inside the 32-bit float the
-  # engine searches in.
-  p_infinity: 1.0e+06
-  unary_operations:
-  - exp
-  - log
-  - sqrt
-  - abs
-  binary_operations:
-  - +
-  - '-'
-  - '*'
-  - /
-  - ^
-  iterations: 40
-  population_size: 33
-  populations: 15
-  max_depth: 10
-  max_size: 30
-  parsimony: 0.0032
-  n_samples: 4000
-  seed: 0
-fine_tuning:
-  enable: false
-  pretrained_checkpoint: models/poraque_models.pfno
-  learning_rate: 1.0e-05
-  freeze_lifting_layers: false
+  physics:
+    enable: true
+    positivity_weight: 100.0
+    thomas_fermi_weight: 100.0
+    von_weizsacker_weight: 100.0
+    # Large enough that no smooth interpolating form is still in its crossover
+    # region, small enough that p^(8/3) stays inside the 32-bit float the
+    # engine searches in.
+    p_infinity: 1.0e+06

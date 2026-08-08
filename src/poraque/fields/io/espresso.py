@@ -60,10 +60,22 @@ without a full parser.
 **Units of the fields themselves.** QE's charge density is in
 :math:`e/\mathrm{Bohr}^3` and potentials from ``pp.x`` are in **Rydberg**, not
 eV. Convert in :meth:`read_field` so that everything downstream keeps the
-Å/eV convention of :mod:`poraque.fields`. There is no volume pre-factor, unlike
-VASP's ``CHGCAR``, so :attr:`ScalarField.volume_scaled` must be ``False`` for
-QE-sourced fields — subclass the field classes or pass the flag explicitly
-rather than silently reusing the VASP convention.
+Å/eV convention of :mod:`poraque.fields`.
+
+There is no volume pre-factor, unlike VASP's ``CHGCAR``. That is *not* a
+problem to solve with :attr:`ScalarField.volume_scaled`: that attribute is a
+class-level statement about **VASP's file format**, consumed only by
+:meth:`~poraque.fields.base.ScalarField.read` and
+:meth:`~poraque.fields.base.ScalarField.write`, and it cannot be set per
+instance. ``read_field`` should parse the cube itself and construct the field
+directly::
+
+    return field_class(values_in_physical_units, grid, structure,
+                       metadata={"source": path, "code": "espresso"})
+
+Constructed that way, ``data`` is already in physical units — which is the
+invariant every consumer downstream relies on — and the VASP convention is
+simply never involved.
 
 **Kinetic energy density** — available via ``pp.x`` ``plot_num=6`` only for
 meta-GGA runs; otherwise it must come from the wavefunctions.

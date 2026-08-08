@@ -132,6 +132,7 @@ _preimport_symbolic_engine(sys.argv[1:])
 
 import torch  # noqa: E402
 
+from poraque.fields import FIELD_DTYPES, set_default_dtype  # noqa: E402
 from poraque.ml import (  # noqa: E402
     resolve_bundle_path,
     FieldOperator,
@@ -141,12 +142,14 @@ from poraque.ml import (  # noqa: E402
 )
 from poraque.ml.config import SAMPLE_CONFIG_HEADER, TrainingConfig  # noqa: E402
 from poraque.ml.device import describe_device, resolve_device  # noqa: E402
+from poraque.ml.fno import PRECISIONS  # noqa: E402
 from poraque.ml.losses import PhysicsInformedLoss  # noqa: E402
 from poraque.ml.symbolic import (  # noqa: E402
     DATA_LOSSES,
     FEATURE_SCHEMES,
     TEMPLATES,
     result_to_dict,
+    symbolic_physics,
 )
 from poraque.ml.tasks import TASKS, resolve_task  # noqa: E402
 
@@ -175,45 +178,30 @@ FIELD_LABELS = {
 # ===================================================================== #
 def model_name(config):
     """The run's name, falling back to the historical default."""
-    return str(config.task.name or "poraque_models")
+    return config.run_name()
 
 
 def bundle_path(config):
     """
-    Where the trained weights go: ``<checkpoint_dir>/<name>.pfno``.
-
-    A fine-tune gets its own stem. It is a specialisation, usually onto a
-    narrower set of materials, and writing it over the general model would
-    replace something broad with something narrow, silently and by default.
+    Where the trained weights go: ``<output.root>/<name>/<name>.pfno``.
 
     Returns
     -------
     str or None
         ``None`` when checkpointing is switched off.
     """
-    if not config.output.checkpoint_dir:
-        return None
-    stem = model_name(config)
-    if config.fine_tuning.enable:
-        stem += "_finetuned"
-    return os.path.join(config.output.checkpoint_dir, f"{stem}.pfno")
+    return config.checkpoint_path()
 
 
 def plot_directory(config):
     """
-    Figures go in a subdirectory of their own, ``<plot_dir>/<name>/``.
-
-    The figure filenames carry the task and the structure but not the run, so
-    two runs sharing ``plot_dir`` would otherwise interleave their plots in one
-    directory with no way to tell which came from which.
+    Figures go in the run's own ``plots/`` directory.
 
     Returns
     -------
     str or None
     """
-    if not config.output.plot_dir:
-        return None
-    return os.path.join(config.output.plot_dir, model_name(config))
+    return config.plot_dir()
 
 
 def report_filename(config, task_name, n_tasks=1, kind="report"):
@@ -594,10 +582,65 @@ def build_operator(task, train_set, config, log):
         init_seed=config.training.init_seed,
         **config.model_kwargs(), **head,
     )
+    if config.model.precision != "float32":
+        operator.set_precision(config.model.precision)
     log(f"      model: {type(operator.model).__name__} width={config.model.width} "
         f"modes={config.model.modes} layers={config.model.n_layers}  "
         f"({operator.model.n_parameters():,} parameters)")
+    if config.model.precision != "float32":
+        log(f"      precision: {config.model.precision} — roughly twice the "
+            f"time and memory of the float32 default")
+    report_mode_selection(train_set, config, log)
     return operator
+
+
+def report_mode_selection(train_set, config, log):
+    r"""
+    Say how many modes the run will actually use, per structure.
+
+    ``mode_selection: physical`` truncates at a constant wavevector rather than
+    a constant index, keeping :math:`\lfloor G_{\max} L_i / 2\pi \rfloor` modes
+    along an axis of length :math:`L_i`. That count is then **capped** by
+    ``modes`` and by the grid, so ``g_max`` can only ever take modes away.
+
+    Which makes a badly chosen ``g_max`` invisible: it costs capacity silently,
+    with no error and nothing in the log. A ``g_max`` of 6 on a 4 Å cell keeps
+    3 of 8 modes — about 5 % of the spectral parameters the model allocated —
+    and the run would otherwise look identical to one that used all of them.
+    """
+    if config.model.mode_selection != "physical" or config.model.g_max is None:
+        return
+
+    import numpy as np
+
+    ceiling = config.model.modes
+    counts = []
+    # The cells come from the dataset's own samples rather than from a second
+    # read of the files: they are already the geometry `physical_modes` will be
+    # handed at forward time.
+    for index in range(len(train_set)):
+        cell = np.asarray(train_set[index]["cell"], dtype=float)
+        lengths = np.linalg.norm(cell, axis=-1)
+        counts.append([min(int(ceiling),
+                           max(1, int(np.floor(config.model.g_max * length
+                                               / (2.0 * np.pi)))))
+                       for length in lengths])
+    if not counts:
+        return
+
+    counts = np.asarray(counts)
+    lowest, highest = int(counts.min()), int(counts.max())
+    log(f"      mode selection: physical, g_max = {config.model.g_max:g} "
+        f"1/Ang -> {lowest}-{highest} of {ceiling} modes retained")
+    if highest < ceiling:
+        starved = int((counts < ceiling).all(axis=1).sum())
+        log(f"      NOTE: g_max truncates every structure below the {ceiling} "
+            f"modes the model allocates.")
+        log(f"      {starved}/{len(counts)} structures use fewer on every "
+            f"axis; the unused spectral weights are dead parameters.")
+        log(f"      A cell needs L >= {ceiling * 2 * np.pi / config.model.g_max:.1f} "
+            f"Ang to supply {ceiling} modes at this g_max. Raise g_max, or "
+            f"lower modes.")
 
 
 def load_pretrained_operator(task, train_set, validation, config, log):
@@ -845,8 +888,68 @@ def validate_fine_tuning_settings(config):
                 settings.pretrained_checkpoint):
             raise SystemExit(
                 f"the fine-tuned model would be written over its own base "
-                f"checkpoint at {destination}. Point output.checkpoint_dir "
+                f"checkpoint at {destination}. Point output.root "
                 f"somewhere else.")
+
+
+def compute_dtype(config):
+    """
+    The torch dtype the batches must be produced in.
+
+    Set by ``model.precision``, not by ``data.precision``: the first governs
+    what the operator computes in, and a dataset yielding float32 into a
+    float64 model fails with ``Input type (float) and bias type (double)
+    should be the same``. The two settings are separate on purpose -- fields
+    may be held in float64 and fed to a float32 operator -- but the tensor
+    handed to the model is the model's business.
+
+    Returns
+    -------
+    torch.dtype
+    """
+    return PRECISIONS[config.model.precision][0]
+
+
+def validate_precision_settings(config):
+    """
+    Check the two precision settings before anything is read or built.
+
+    Both are names rather than dtypes, so a typo is caught here — at the cost
+    of a millisecond, on the command line — instead of surfacing as a numpy or
+    torch error somewhere inside the cache build.
+    """
+    if config.data.precision not in FIELD_DTYPES:
+        raise SystemExit(
+            f"data.precision={config.data.precision!r} is not known; expected "
+            f"one of {sorted(FIELD_DTYPES)}. This is how the volumetric fields "
+            f"are stored in memory.")
+    if config.model.precision not in PRECISIONS:
+        raise SystemExit(
+            f"model.precision={config.model.precision!r} is not known; "
+            f"expected one of {sorted(PRECISIONS)}. This is what the operator "
+            f"computes in.")
+    if (config.data.precision == "float16"
+            and config.model.precision == "float64"):
+        raise SystemExit(
+            "data.precision='float16' with model.precision='float64' asks for "
+            "double-precision arithmetic on data that carries about three "
+            "decimal digits. Raise data.precision, or lower model.precision.")
+
+    # Apple's Metal backend has no float64 at all -- not slow, absent. Caught
+    # here rather than left to surface as a TypeError from inside the first
+    # conversion, and refused rather than quietly rerouted to the CPU: that
+    # substitution changes the run's speed by an order of magnitude and is the
+    # user's call to make.
+    if config.model.precision == "float64":
+        device = resolve_device(config.training.device)
+        if device.type == "mps":
+            raise SystemExit(
+                f"model.precision='float64' cannot run on {describe_device(device)}: "
+                f"the Metal backend does not implement double precision.\n"
+                f"  Set training.device: cpu to run this in float64, or "
+                f"model.precision: float32 to keep the accelerator.\n"
+                f"  (data.precision is unaffected — fields may still be held "
+                f"in float64 while the operator computes in float32.)")
 
 
 def validate_symbolic_settings(settings):
@@ -881,11 +984,28 @@ def validate_symbolic_settings(settings):
         raise SystemExit(
             f"symbolic.data_loss={settings.data_loss!r} is not known; expected "
             f"one of {sorted(DATA_LOSSES)}.")
-    if settings.physics_constraints and settings.p_infinity <= 0:
+    physics = symbolic_physics(settings)
+    unknown = set(physics) - {"enable", "positivity_weight",
+                              "thomas_fermi_weight", "von_weizsacker_weight",
+                              "p_infinity"}
+    if unknown:
         raise SystemExit(
-            f"symbolic.p_infinity={settings.p_infinity!r} must be positive: it "
-            f"is the reduced gradient standing in for the von Weizsacker "
-            f"limit, and p is a magnitude.")
+            f"Unknown key(s) in symbolic.physics: {sorted(unknown)}.\n"
+            f"  Note that this block constrains the symbolic *search*. The "
+            f"terms that constrain the neural operator -- electron count, "
+            f"Euler-Lagrange -- belong in training.physics.")
+    if physics["enable"] and float(physics["p_infinity"]) <= 0:
+        raise SystemExit(
+            f"symbolic.physics.p_infinity={physics['p_infinity']!r} must be "
+            f"positive: it is the reduced gradient standing in for the von "
+            f"Weizsacker limit, and p is a magnitude.")
+    for key in ("positivity_weight", "thomas_fermi_weight",
+                "von_weizsacker_weight"):
+        if float(physics[key]) < 0:
+            raise SystemExit(
+                f"symbolic.physics.{key}={physics[key]!r} must not be "
+                f"negative: a negative penalty rewards the violation it is "
+                f"meant to forbid.")
     # PySR's tournament selection draws 10 individuals by default and refuses
     # to run when the population cannot supply them. Caught here it is one
     # line; caught by the engine it is a Julia stack trace after training.
@@ -905,10 +1025,11 @@ def save_task_checkpoint(task, operator, config, log):
     str or None
         Path written, or ``None`` when checkpointing is switched off.
     """
-    if not config.output.checkpoint_dir:
+    run = config.run_dir()
+    if run is None or not config.output.checkpoint:
         return None
 
-    path = os.path.join(config.output.checkpoint_dir,
+    path = os.path.join(run,
                         f"{model_name(config)}_{task.name}_trained.pfno")
     save_bundle(path, {task.name: operator},
                 metadata={"note": "single-task safety copy, written before "
@@ -926,12 +1047,12 @@ def _figure_sink(config):
     output configured there is nothing the figure could appear in, and writing
     it would only litter.
     """
-    if not config.output.report_dir:
+    if not config.report_dir():
         return None
 
     from poraque.vis import TrainingReport
 
-    return TrainingReport(os.path.join(config.output.report_dir,
+    return TrainingReport(os.path.join(config.report_dir(),
                                        f"{model_name(config)}_figures"),
                           dpi=config.output.dpi, fmt=config.output.plot_format)
 
@@ -984,7 +1105,7 @@ def run_symbolic_distillation(task, dataset, operator, config, log,
     #
     # It is drawn whenever distillation produced something to draw, not only
     # when figures were asked for: the PDF report is meant to carry it, and
-    # `plot_dir` and `report_dir` are independent settings, so a run with a
+    # `plot_figures` and `write_pdf_report` are independent settings, so a run with a
     # report but no figure directory would otherwise silently lose the one plot
     # that shows whether the formula is any good. Held-out data is used when
     # there is any, and the fitted voxels otherwise, with the caption saying
@@ -1047,7 +1168,8 @@ def run_task(task_name, cache, config, log, n_tasks=1):
     log(f"      {task.description}")
     log("=" * 78)
 
-    dataset = FieldPairDataset(cache, task=task)
+    dataset = FieldPairDataset(cache, task=task,
+                               dtype=compute_dtype(config))
     validation_names, split_origin = resolve_validation_split(dataset, config)
 
     train_records = [m for m in dataset.materials
@@ -1055,11 +1177,13 @@ def run_task(task_name, cache, config, log, n_tasks=1):
     test_records = [m for m in dataset.materials
                     if m.identifier in validation_names]
 
-    train_set = FieldPairDataset(cache, task=task, materials=train_records)
+    train_set = FieldPairDataset(cache, task=task, materials=train_records,
+                                 dtype=compute_dtype(config))
     source_transform, target_transform = train_set.fit_transforms()
     validation = (FieldPairDataset(cache, task=task, materials=test_records,
                                    input_transform=source_transform,
-                                   target_transform=target_transform)
+                                   target_transform=target_transform,
+                                   dtype=compute_dtype(config))
                   if test_records else None)
 
     shapes = train_set.shapes()
@@ -1222,7 +1346,7 @@ def run_task(task_name, cache, config, log, n_tasks=1):
 
     # ---------------- PDF report ---------------- #
     pdf = None
-    if config.output.report_dir:
+    if config.report_dir():
         from poraque.vis import ModelReport
 
         caveats = [
@@ -1233,7 +1357,7 @@ def run_task(task_name, cache, config, log, n_tasks=1):
                 "No structure was held out, so every number in the table is "
                 "training fit, not a generalisation estimate."
             )
-        reporter = ModelReport(config.output.report_dir)
+        reporter = ModelReport(config.report_dir())
         summary = {
             "name": model_name(config),
             "weights": bundle_path(config) or "not saved",
@@ -1338,7 +1462,8 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
     ``valid_fraction`` is ignored here — the folds define the splits.
     """
     task = resolve_task(task_name)
-    dataset = FieldPairDataset(cache, task=task)
+    dataset = FieldPairDataset(cache, task=task,
+                               dtype=compute_dtype(config))
     names = [m.identifier for m in dataset.materials]
     folds = structure_level_folds(names, config.training.k_folds,
                                   config.training.seed)
@@ -1368,7 +1493,8 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
         train_records = [by_name[n] for n in names if n not in group]
         val_records = [by_name[n] for n in group]
 
-        train_set = FieldPairDataset(cache, task=task, materials=train_records)
+        train_set = FieldPairDataset(cache, task=task, materials=train_records,
+                                 dtype=compute_dtype(config))
         source_transform, target_transform = train_set.fit_transforms()
         val_set = FieldPairDataset(cache, task=task, materials=val_records,
                                    input_transform=source_transform,
@@ -1437,13 +1563,13 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
 
     # ---------------- consolidated report ---------------- #
     pdf = None
-    if config.output.report_dir:
+    if config.report_dir():
         from poraque.vis import ModelReport
 
         per_material = {r["material"]: {"split": r["split"],
                                         "metrics": r["metrics"]}
                         for r in records}
-        reporter = ModelReport(config.output.report_dir)
+        reporter = ModelReport(config.report_dir())
         pdf = reporter.build(
             task=task.name, per_material=per_material, figures=figures,
             unit=task.target_unit,
@@ -1501,7 +1627,13 @@ def build_parser():
     parser.add_argument("--config", default=None,
                         help="YAML configuration file (defaults are used if omitted)")
     parser.add_argument("--write-config", metavar="PATH", default=None,
-                        help="write a sample configuration to PATH and exit")
+                        help="write a configuration to PATH and exit")
+    parser.add_argument("--minimal", action="store_true",
+                        help="with --write-config, write only the settings "
+                             "that differ from the defaults. Combined with "
+                             "--config it compresses an existing file: every "
+                             "key is optional, and most of a typical config "
+                             "restates a default.")
 
     parser.add_argument("--task", dest="task.type", default=None,
                         choices=["all", "ext2chg", "chg2tau"])
@@ -1649,9 +1781,14 @@ def build_parser():
     group = parser.add_argument_group("output overrides")
     group.add_argument("--log", dest="output.log", default=None)
     group.add_argument("--json", dest="output.json", default=None)
-    group.add_argument("--checkpoint-dir", dest="output.checkpoint_dir", default=None)
-    group.add_argument("--plot-dir", dest="output.plot_dir", default=None)
-    group.add_argument("--report-dir", dest="output.report_dir", default=None)
+    group.add_argument("--output-root", dest="output.root", default=None,
+                       metavar="DIR",
+                       help="parent of the run folder; every artefact goes in "
+                            "<DIR>/<name>/ (default: models)")
+
+    group.add_argument("--no-report", dest="output.write_pdf_report",
+                       action="store_false", default=None,
+                       help="skip the PDF report")
     group.add_argument("--no-plots", action="store_true",
                        help="skip figure generation")
     return parser
@@ -1662,26 +1799,55 @@ def run(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.write_config:
-        os.makedirs(os.path.dirname(args.write_config) or ".", exist_ok=True)
-        with open(args.write_config, "w") as handle:
-            handle.write(SAMPLE_CONFIG_HEADER)
-            handle.write(TrainingConfig().to_yaml())
-        print(f"Sample configuration written to {args.write_config}")
-        return None
+    # Flags that steer this function rather than describing a run; they must
+    # not be fed to `apply_overrides`, which would look for a config section
+    # named after each of them.
+    NOT_SETTINGS = ("config", "write_config", "no_plots", "minimal")
 
     config = (TrainingConfig.from_yaml(args.config) if args.config
               else TrainingConfig())
-    overrides = {k: v for k, v in vars(args).items()
-                 if k not in ("config", "write_config", "no_plots")}
+    overrides = {k: v for k, v in vars(args).items() if k not in NOT_SETTINGS}
     config.apply_overrides(overrides)
+
+    if args.write_config:
+        # Built from --config and the overrides, not from the defaults, so
+        # `--config long.yaml --write-config short.yaml --minimal` compresses
+        # an existing file and `--epochs 500 --write-config` freezes a swept
+        # run back into one.
+        os.makedirs(os.path.dirname(args.write_config) or ".", exist_ok=True)
+        with open(args.write_config, "w") as handle:
+            handle.write(SAMPLE_CONFIG_HEADER)
+            handle.write(config.to_yaml(minimal=args.minimal))
+
+        def count(mapping):
+            return sum(len(v) for v in mapping.values()
+                       if isinstance(v, dict))
+
+        differing, total = count(config.non_default_dict()), count(
+            config.to_dict())
+        if args.minimal:
+            print(f"Minimal configuration written to {args.write_config}: "
+                  f"{differing} of {total} keys differ from the defaults. The "
+                  f"rest are omitted and take their default value — every key "
+                  f"is optional.")
+        else:
+            print(f"Configuration written to {args.write_config}: {total} "
+                  f"keys, {total - differing} of them at their default. "
+                  f"Add --minimal to write only the {differing} that differ.")
+        return None
+
     if args.no_plots:
-        config.output.plot_dir = None
+        config.output.plot_figures = False
     validate_fine_tuning_settings(config)
     validate_symbolic_settings(config.symbolic)
+    validate_precision_settings(config)
 
-    log = Tee(config.output.log)
+    log = Tee(config.log_path())
     try:
+        # Process-wide, and set before anything reads a field: this governs how
+        # the volumetric data is held in memory, so it has to be in force
+        # before the cache is built rather than applied to fields afterwards.
+        set_default_dtype(config.data.precision)
         device = resolve_device(config.training.device)
         log("=" * 78)
         log("Poraque - Fourier Neural Operator training")
@@ -1696,7 +1862,7 @@ def run(argv=None):
         # worth knowing before the hours rather than after them.
         log(f"  name   : {model_name(config)}")
         log(f"  weights: {bundle_path(config) or 'not saved'}")
-        log(f"  reports: {config.output.report_dir or 'not written'}")
+        log(f"  reports: {config.report_dir() or 'not written'}")
         log(f"  figures: {plot_directory(config) or 'not written'}")
         log("")
         log("  configuration")
@@ -1719,8 +1885,8 @@ def run(argv=None):
         operators = {r["task"]: r.pop("operator") for r in results
                      if r.get("operator") is not None}
         bundle = None
-        if operators and config.output.checkpoint_dir:
-            # <checkpoint_dir>/<task.name>.pfno, with a distinct stem for a
+        if operators and config.checkpoint_path():
+            # <output.root>/<name>/<name>.pfno, with a distinct stem for a
             # fine-tune: it is a specialisation, usually to a narrower set of
             # materials, and writing it over the general model would replace
             # something broad with something narrow, silently and by default.
@@ -1731,7 +1897,7 @@ def run(argv=None):
                         config.fine_tuning.pretrained_checkpoint)):
                 raise SystemExit(
                     f"refusing to write the fine-tuned model over its own base "
-                    f"checkpoint at {bundle}. Point output.checkpoint_dir "
+                    f"checkpoint at {bundle}. Point output.root "
                     f"somewhere else.")
 
             metadata = {
@@ -1764,7 +1930,7 @@ def run(argv=None):
             # neither exists.
             for task_name in operators:
                 stale = os.path.join(
-                    config.output.checkpoint_dir,
+                    config.run_dir(),
                     f"{model_name(config)}_{task_name}_trained.pfno")
                 if os.path.exists(stale):
                     os.remove(stale)
@@ -1815,15 +1981,16 @@ def run(argv=None):
 
         # Archive the resolved config beside the results, so the run is
         # reproducible even if the source config is later edited.
-        resolved = os.path.splitext(config.output.json)[0] + "_config.yaml"
+        metrics_path = config.json_path()
+        resolved = os.path.splitext(metrics_path)[0] + "_config.yaml"
         os.makedirs(os.path.dirname(resolved) or ".", exist_ok=True)
         config.to_yaml(resolved)
 
-        with open(config.output.json, "w") as handle:
+        with open(metrics_path, "w") as handle:
             json.dump({"config": config.to_dict(), "device": str(device),
                        "results": results}, handle, indent=2, default=float)
-        log(f"\n  log             -> {config.output.log}")
-        log(f"  metrics         -> {config.output.json}")
+        log(f"\n  log             -> {config.log_path()}")
+        log(f"  metrics         -> {metrics_path}")
         log(f"  resolved config -> {resolved}")
         if plot_directory(config):
             log(f"  figures         -> {plot_directory(config)}")

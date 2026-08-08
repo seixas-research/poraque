@@ -8,7 +8,37 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-One round of active learning: score an unlabelled pool, take the top-K.
+**Selection.** Which unlabelled structures should the next DFT runs be spent on?
+
+.. rubric:: This command, or ``poraque-committee``?
+
+They are the two halves of one loop and they are not interchangeable. The
+difference is the data each one runs on, and it decides everything else:
+
+==================  ==============================  ==========================
+                    ``poraque-active-learning``     ``poraque-committee``
+==================  ==============================  ==========================
+runs on             an **unlabelled** pool          a **labelled** dataset
+                    (``--pool``): inputs only,      (``--cache``): inputs
+                    targets not computed yet        *and* targets
+answers             "which structures should I      "is this measure worth
+                    compute next?"                  trusting?"
+produces            a ranking, and a transfer of    a Spearman correlation
+                    the top K into the training     between disagreement and
+                    set                             the *known* error
+costs               the DFT runs it selects         nothing — the DFT is
+                                                    already done
+==================  ==============================  ==========================
+
+Run ``poraque-committee`` **first**. This command turns a disagreement measure
+into a spending decision, and until that measure has been correlated against
+known errors the ordering it produces is a guess with a decimal point.
+
+Both share the same committee, the same Jensen-Shannon divergence and the same
+ranking table (:func:`~poraque.ml.active_learning.format_ranking`), which is
+why the two outputs look alike — they differ in what the number is *for*.
+
+.. rubric:: What it does
 
 A reference structure costs a plane-wave DFT run. Labelling at random spends
 that budget uniformly over structures the model already predicts well. This
@@ -42,8 +72,8 @@ step between two rounds is a training run:
 
     # ... run DFT on the five new structures, then retrain the members ...
     for s in 0 1 2 3; do
-      poraque-train --config configs/train_config.yaml --init-seed $s \
-          --checkpoint-dir models/committee_$s
+      poraque-train --config configs/train_config.yaml \
+          --init-seed $s --name committee_$s
     done
 
 Without ``--promote`` nothing on disk is touched: the run scores, ranks and
@@ -103,8 +133,15 @@ def existing_identifiers(directory):
 def build_parser():
     """The command line, as its own function so the tests can exercise it."""
     parser = argparse.ArgumentParser(
-        description="One active-learning round: rank an unlabelled pool by "
-                    "committee disagreement (JSD) and select the top K.")
+        description="SELECTION: which unlabelled structures to compute next. "
+                    "Ranks a pool by committee disagreement (JSD) and takes "
+                    "the top K.",
+        epilog="Runs on an UNLABELLED pool (--pool): input fields only, "
+               "targets not yet computed. Its sibling poraque-committee runs "
+               "on LABELLED data and answers a different question -- whether "
+               "the disagreement measure predicts error at all. Run that one "
+               "first; this one spends the DFT budget.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--models", default="models/committee_*",
                         help="glob matching one directory or bundle per member")
     parser.add_argument("--task", default="ext2chg",
@@ -155,6 +192,9 @@ def select(argv=None):
     print("=" * 78)
     print(f"Active learning round {args.round} - {task.name}: "
           f"{task.input_field} -> {task.target_field}")
+    print("SELECTION: choosing which unlabelled structures to compute next.")
+    print("(To ask whether this measure predicts error at all, that is")
+    print(" poraque-committee, on labelled data.)")
     print("=" * 78)
     print(f"  members    : {len(committee)}  (init_seed "
           f"{committee.init_seeds})")

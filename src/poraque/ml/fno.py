@@ -73,6 +73,115 @@ _ACTIVATIONS = {
 #: Contraction performed by the spectral convolution.
 _SPECTRAL_EQUATION = "bixyz,ioxyz->boxyz"
 
+#: Precisions an operator can compute in, as ``name -> (real, complex)``.
+#:
+#: The pair is the point. An FNO carries **complex** parameters — the mode
+#: multipliers of :class:`SpectralConv3d` — alongside the real weights of its
+#: pointwise layers, and the two must move together: a float64 activation
+#: entering a complex64 multiplier fails outright, and the reverse silently
+#: rounds.
+PRECISIONS = {
+    "float32": (torch.float32, torch.complex64),
+    "float64": (torch.float64, torch.complex128),
+}
+
+
+def resolve_precision(precision):
+    """
+    Normalise a precision name to its ``(real, complex)`` torch dtypes.
+
+    Parameters
+    ----------
+    precision : str or torch.dtype
+        ``"float32"``/``"float64"``, or either torch dtype.
+
+    Returns
+    -------
+    tuple of torch.dtype
+    """
+    if isinstance(precision, torch.dtype):
+        precision = {torch.float32: "float32",
+                     torch.float64: "float64"}.get(precision, str(precision))
+    key = str(precision).strip().lower().replace("torch.", "")
+    if key not in PRECISIONS:
+        raise ValueError(
+            f"Unknown precision {precision!r}; expected one of "
+            f"{sorted(PRECISIONS)}.")
+    return PRECISIONS[key]
+
+
+def set_precision(module, precision):
+    r"""
+    Convert a model to another precision, complex parameters included.
+
+    .. warning::
+
+       Neither PyTorch idiom does the right thing to an FNO, and both fail
+       quietly enough to matter:
+
+       * ``model.double()`` converts only tensors for which
+         ``is_floating_point()`` is true. A complex64 spectral weight is not
+         one, so it is **left behind** — and the next forward pass dies with
+         ``expected scalar type ComplexDouble but found ComplexFloat``.
+       * ``model.to(torch.float64)`` is worse: it converts complex64 to
+         *float64*, **discarding the imaginary part of every Fourier
+         multiplier**. No error, and a model that has lost half of its
+         spectral parameters.
+
+       This function maps real dtypes to the real target and complex dtypes to
+       the matching complex target, which is the only conversion that leaves
+       the operator meaning what it meant.
+
+    Parameters
+    ----------
+    module : torch.nn.Module
+    precision : str or torch.dtype
+        See :func:`resolve_precision`.
+
+    Returns
+    -------
+    torch.nn.Module
+        ``module``, converted in place, so this can be chained.
+
+    Examples
+    --------
+    >>> model = FNO3d(width=8, modes=4, n_layers=1)
+    >>> _ = set_precision(model, "float64")
+    >>> {p.dtype for p in model.parameters()} == {torch.float64,
+    ...                                           torch.complex128}
+    True
+    """
+    real, complex_dtype = resolve_precision(precision)
+
+    def convert(tensor):
+        if tensor.is_complex():
+            return tensor.to(complex_dtype)
+        if tensor.is_floating_point():
+            return tensor.to(real)
+        return tensor
+
+    # `_apply` rather than a loop over `parameters()`: it also reaches buffers
+    # and any `.grad` already attached, and it rebinds parameters in place.
+    return module._apply(convert)
+
+
+def model_precision(module):
+    """
+    The precision a model currently computes in.
+
+    Returns
+    -------
+    str
+        ``"float32"``, ``"float64"``, or ``"mixed"`` when the real and complex
+        halves disagree — which is a broken model rather than a configuration,
+        and is reported rather than guessed at.
+    """
+    dtypes = {parameter.dtype for parameter in module.parameters()}
+    for name, (real, complex_dtype) in PRECISIONS.items():
+        if dtypes <= {real, complex_dtype}:
+            return name
+    return "mixed"
+
 
 def complex_contract(equation, x, weight):
     r"""
@@ -115,6 +224,25 @@ def complex_contract(equation, x, weight):
     torch.Tensor
         Complex result of the contraction.
     """
+    # The C kernel, when this is an inference call on CPU. It is ~7x faster
+    # than `einsum` at batch 1 (see poraque.ml.backend), which is the shape
+    # every prediction has.
+    #
+    # `torch.is_grad_enabled()` is the load-bearing condition, not a
+    # micro-optimisation: the kernel writes into a plain tensor and records
+    # nothing on the autograd tape, so using it while a graph is being built
+    # would produce a model that trains to a constant with no error anywhere.
+    # `predict()` is wrapped in `torch.no_grad()`, so inference takes this path
+    # and training does not.
+    if (equation == _SPECTRAL_EQUATION
+            and x.device.type == "cpu"
+            and not torch.is_grad_enabled()):
+        from . import backend
+
+        contracted = backend.contract(x, weight)
+        if contracted is not None:
+            return contracted
+
     if x.device.type != "mps":
         return torch.einsum(equation, x, weight)
 
@@ -216,9 +344,14 @@ class SpectralConv3d(nn.Module):
         # norm="forward" -> resolution-invariant Fourier-series coefficients.
         x_ft = torch.fft.rfftn(x, dim=(-3, -2, -1), norm="forward")
 
+        # `x_ft.dtype`, not a literal `torch.cfloat`: `rfftn` of a float64
+        # input gives ComplexDouble, so a hard-coded ComplexFloat accumulator
+        # made `model.double()` fail outright with "expected scalar type
+        # ComplexDouble but found ComplexFloat" -- the whole double-precision
+        # path was unreachable.
         out_ft = torch.zeros(
             batch, self.out_channels, nx, ny, nz // 2 + 1,
-            dtype=torch.cfloat, device=x.device,
+            dtype=x_ft.dtype, device=x.device,
         )
 
         # The four low-frequency corners of the (axis-0, axis-1) plane.

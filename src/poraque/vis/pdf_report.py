@@ -267,13 +267,24 @@ class ModelReport:
 """
 
     def _metrics_table(self, per_material, unit):
-        """Per-structure metrics as a booktabs table."""
+        r"""
+        Per-structure metrics as a booktabs table.
+
+        A ``longtable``, not a ``tabular``. The number of rows is the number of
+        structures in the run, which is unbounded -- a ``tabular`` is a single
+        unbreakable box, so past roughly forty structures it overran the bottom
+        of the page and every row after that was simply not printed. The table
+        that most needs to be complete was the one silently truncated.
+
+        The header repeats on each continuation page, because a column of bare
+        numbers three pages from its heading cannot be read.
+        """
         rows = []
         for name, entry in sorted(per_material.items()):
             values = entry.get("metrics", entry)
             split = entry.get("split", "")
             rows.append(
-                f"{_escape(name)} & {_escape(split)} & "
+                f"{_wrappable(name, 18)} & {_escape(split)} & "
                 f"{_number(values.get('mse'))} & {_number(values.get('mae'))} & "
                 f"{_number(values.get('rmse'))} & "
                 f"{_number(values.get('relative_l2'), 4)} & "
@@ -295,18 +306,35 @@ class ModelReport:
                 f"\\textbf{{{mean('relative_l2')}}} & \\textbf{{{mean('r2')}}} \\\\"
             )
 
+        heading = (f"Structure & Split & MSE & MAE & RMSE & "
+                   f"rel.\\ $L^2$ & $R^2$ \\\\\n")
         return (
-            r"\begin{center}" "\n"
-            r"\begin{tabular}{@{}llrrrrr@{}}" "\n"
+            r"\begin{longtable}{@{}"
+            r">{\raggedright\arraybackslash}p{0.20\textwidth}"
+            r"lrrrrr@{}}" "\n"
+            # First page: the full heading, with the unit row.
             r"\toprule" "\n"
-            f"Structure & Split & MSE & MAE & RMSE & rel.\\ $L^2$ & $R^2$ \\\\\n"
-            f"& & \\multicolumn{{3}}{{c}}{{[{_escape(unit)}]}} & & \\\\\n"
+            + heading
+            + f"& & \\multicolumn{{3}}{{c}}{{[{_escape(unit)}]}} & & \\\\\n"
+            + r"\midrule" "\n"
+            r"\endfirsthead" "\n"
+            # Continuation pages: the same columns, marked as a continuation so
+            # the second page is not mistaken for a second table.
+            r"\multicolumn{7}{@{}l}{\small\color{shadegray}"
+            r"Per-structure metrics, continued}\\[2pt]" "\n"
+            r"\toprule" "\n"
+            + heading
+            + r"\midrule" "\n"
+            r"\endhead" "\n"
             r"\midrule" "\n"
+            r"\multicolumn{7}{r@{}}{\small\color{shadegray}"
+            r"continued on the next page}\\" "\n"
+            r"\endfoot" "\n"
+            r"\bottomrule" "\n"
+            r"\endlastfoot" "\n"
             + "\n".join(rows) + "\n"
             + aggregate + "\n"
-            r"\bottomrule" "\n"
-            r"\end{tabular}" "\n"
-            r"\end{center}" "\n"
+            r"\end{longtable}" "\n"
         )
 
     #: Maths symbols for the quantities a distillation can fit. Without this
@@ -430,8 +458,11 @@ class ModelReport:
             body.append(r"\begin{center}\begin{longtable}"
                         r"{@{}rrc>{\raggedright\arraybackslash}p{8.4cm}@{}}"
                         r"\toprule" "\n")
+            # `\endhead`, so a front long enough to turn the page keeps its
+            # column names. Without it the second page is four unlabelled
+            # columns of numbers and a formula.
             body.append(r"Nodes & Loss & Limits & Expression \\" "\n"
-                        r"\midrule" "\n")
+                        r"\midrule" "\n" r"\endhead" "\n")
             for entry in front:
                 limits = entry.get("limits") or {}
                 body.append(f"{entry['complexity']} & "

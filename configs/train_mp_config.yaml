@@ -1,131 +1,56 @@
 # =====================================================================
-# Poraque - training on a Materials Project chemical space
+# Poraque - training on a Materials Project charge-density download
 #
-#   poraque-mp --elements Ag Au Pt --outdir data/MP --max-size-mb 20
 #   poraque-train --config configs/train_mp_config.yaml
 #
-# The download is a flat directory of compressed charge densities and
-# nothing else, so two things differ from configs/train_config.yaml:
+# Every key is optional; only the differences from the defaults are listed.
+# See configs/train_config.yaml for the model settings explained in full, and
+# `poraque-train --write-config /tmp/all.yaml` for every setting there is.
 #
-#   * a bulk-archive path    reads CHGCAR_<id>.gz in place, gzip and all,
-#                            and builds V_ext from the structure each
-#                            density carries in its own header. The layout
-#                            is detected, so `source: auto` suffices.
-#   * task: ext2chg          MP publishes no kinetic energy density, so
-#                            chg2tau has nothing to regress onto. Leaving
-#                            `task: all` is also fine -- the run reports
-#                            chg2tau as skipped and trains the other.
-#
-# THE EXTERNAL POTENTIAL, which is the input the model learns from, and
-# the one setting here worth understanding before quoting any number.
-#
-# An MP download has a structure and a density and no pseudopotentials.
-# Two constructions are therefore possible:
-#
-#   potcar_dir set    V_ext is VASP's tabulated local pseudopotential,
-#                     reproducing a reference EXTCAR to ~2e-5 relative.
-#                     The archive supplies the structure, the library the
-#                     pseudopotentials; together that is everything the
-#                     exact construction needs. PREFER THIS.
-#
-#   potcar_dir null   V_ext is the Gaussian pseudo-ion model. On the
-#                     Ag-Au-Pt set the two differ by 0.38 relative L2 --
-#                     they are different fields, not different roundings
-#                     of one. The map learned is then model-potential ->
-#                     DFT density: well-posed and self-consistent, since
-#                     inference builds the same potential, but not
-#                     comparable with a model trained on tabulated ones.
-#
-# Point potcar_dir at the library that generated the data. MP uses the
-# VASP PBE set (PAW_PBE); PAW_LDA would build a potential the densities
-# were never computed from -- worse than the Gaussian fallback, because
-# it looks exact. Missing entries warn and fall back rather than failing.
+# This file differs from train_config.yaml only where the *data* forces it:
+# the task, the mode selection and the resolution. Everything the two runs
+# agree on -- width, layers, read-out width, epochs, seed, the physics
+# weights -- is the shared default and is not restated here.
 # =====================================================================
 task:
+  # ext2chg, not `all`: MP publishes densities but no kinetic energy density,
+  # so chg2tau has no target to train against on this dataset. A model from
+  # here predicts rho and stops there; it cannot reach a total energy on its
+  # own.
   type: ext2chg
-  # Names every artefact of the run:
-  #
-  #   models/mp_ag_au_pt.pfno           the weights
-  #   reports/mp_ag_au_pt_report.pdf    the PDF report
-  #   results/plots/mp/mp_ag_au_pt/     the figures
-  #
-  # Name it after the chemical space, because that is what distinguishes one
-  # of these runs from the next -- a model fitted on Ag-Au-Pt and one fitted
-  # on Ag-Au-Cu-Pd-Pt are different models and must not share a file.
   name: mp_ag_au_pt
+
 data:
   train_paths:
     - data/MP/Ag-Au-Pt
-  source: auto
-  cache: data/cache
+  # Coarser than the raw grids but finer than the default, because this set
+  # spans large cells and the spectral downsample is exact for band-limited
+  # fields -- there is no interpolation error to trade against.
   resolution: 40
+  # Essential for this dataset, not optional. An MP download is a structure
+  # and a density and no pseudopotentials, so without a library the external
+  # potential falls back to the Gaussian pseudo-ion model. Point it at the set
+  # the data was computed with -- MP uses VASP PBE (PAW_PBE); PAW_LDA would
+  # build a potential these densities were never computed from, which is worse
+  # than the Gaussian fallback because it looks exact.
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
-  sigma: null
-  gaussian_blur: null
-  blur_method: spectral
+
 model:
-  width: 16
-  modes: 8
-  n_layers: 3
-  projection_channels: 64
-  activation: gelu
-  use_coordinates: true
-  cell_conditioning: true
-  embedding_dim: 32
-  # Cell sizes vary widely across a chemical space -- elementals through
-  # eight-site alloys -- and a constant mode index would then mean a different
-  # band of physics per material. `physical` truncates at a constant
-  # wavevector instead, so every material contributes the same one. g_max is
-  # in 1/Angstrom and belongs to the set: 6.0 covers the fcc reciprocal shells
-  # of Ag-Au-Pt out to G(400), and `modes` remains the ceiling on the weight
-  # tensor. The two settings go together -- neither means anything alone.
+  # Truncate at a fixed physical wavevector rather than a fixed mode index.
+  # This is the one architectural difference from train_config.yaml, and the
+  # dataset is the reason: it spans a wide range of cell sizes, and a fixed
+  # index keeps a different physical band for every one of them. A fixed
+  # G_max makes the operator act on the same physics in every material.
+  #
+  # `modes` is still the ceiling -- G_max only ever selects fewer.
   mode_selection: physical
   g_max: 6
-  pauli_residual: false
+
 training:
-  epochs: 500
-  batch_size: 4
-  learning_rate: 0.002
-  weight_decay: 0.0001
-  scheduler: cosine
-  grad_clip: 1.0
-  valid_fraction: 0.2
-  enable_kfold: false
-  k_folds: 5
-  eval_epoch: 10
-  early_stopping: 500
-  seed: 42
-  device: auto
-  loss: relative_l2
-  # Physics-informed terms, added to the data loss and reported as separate
-  # `data loss` / `physics loss` / `total loss` columns while training.
+  # See train_config.yaml: these constrain the NEURAL OPERATOR, not the
+  # symbolic search.
   physics:
-    # CHARGE CONSERVATION. Squared relative error between the integral of the
-    # predicted density and the integral of the reference -- the valence
-    # electron count. It needs no labels beyond the density itself, which is
-    # what makes it the one physics term an MP download can carry: the archive
-    # publishes rho and nothing else, and the count is its own integral.
-    #
-    # It is also the term this data most needs. A relative L2 is indifferent
-    # to a percent of charge spread thinly through the interstitial region,
-    # and a total energy is not; across a chemical space where N runs from 10
-    # to 90 electrons, nothing else pins the scale per material.
-    #
-    # 0.1 keeps it an order of magnitude below the data term. Set 0.0 to
-    # recover the supervised baseline and measure what it bought.
     electron_count_weight: 0.1
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0
-output:
-  log: logs/mp_training.log
-  json: logs/mp_training.json
-  checkpoint_dir: models/mp
-  plot_dir: results/plots/mp
-  report_dir: reports/mp
-  plot_format: png
-  dpi: 200
-symbolic:
-  enable_symbolic_distillation: false
-fine_tuning:
-  enable: false

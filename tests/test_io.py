@@ -278,6 +278,56 @@ class TestSkeletons:
         assert set(reader_class.field_files) == {"external", "density", "kinetic"}
 
 
+class TestNonVaspRunsAreReachable:
+    """
+    Registering a reader must be all a new code needs.
+
+    ``CalculationSource`` resolves a reader for each directory, but decided
+    *whether a directory was a calculation at all* from a hard-coded
+    ``("POSCAR", "CONTCAR")``. A Quantum ESPRESSO or GPAW run therefore never
+    reached the reader written for it: ingestion skipped the directory before
+    the abstraction was ever consulted.
+    """
+
+    @pytest.mark.parametrize("marker,code", [
+        ("POSCAR", "vasp"),
+        ("CONTCAR", "vasp"),
+        ("pw.in", "espresso"),
+        ("scf.in", "espresso"),
+        ("gpaw.gpw", "gpaw"),
+        ("restart.gpw", "gpaw"),
+    ])
+    def test_a_run_of_any_registered_code_is_a_calculation_directory(
+            self, marker, code, tmp_path):
+        from poraque.data.sources import _is_calculation_directory
+
+        (tmp_path / marker).write_text("")
+        assert _is_calculation_directory(str(tmp_path))
+        assert detect_reader(str(tmp_path)).code == code
+
+    def test_the_markers_come_from_the_registry_not_a_literal(self):
+        from poraque.data.sources import calculation_markers
+        from poraque.fields.io import _READERS
+
+        markers = calculation_markers()
+        for reader_class in _READERS.values():
+            for name in reader_class.structure_files:
+                assert name in markers, (
+                    f"{reader_class.code} declares {name}, which ingestion "
+                    f"does not recognise")
+
+    def test_vasps_own_markers_still_come_first(self):
+        from poraque.data.sources import calculation_markers
+
+        assert calculation_markers()[:2] == ("POSCAR", "CONTCAR")
+
+    def test_an_unmarked_directory_is_still_not_a_calculation(self, tmp_path):
+        from poraque.data.sources import _is_calculation_directory
+
+        (tmp_path / "CHGCAR").write_text("")
+        assert not _is_calculation_directory(str(tmp_path))
+
+
 def test_espresso_reader_exposes_the_rydberg_conversion():
     """The unit trap QE support must handle; pinned so it cannot drift."""
     from poraque.fields.io.espresso import RY_TO_EV

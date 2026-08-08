@@ -238,8 +238,11 @@ class TestEarlyStopping:
         both makes a change to either deliberate rather than incidental.
         """
         training = TrainingConfig().training
-        assert training.early_stopping == 100
-        assert training.epochs == 300
+        # Raised together when the shipped configs were unified: both of them
+        # already used 500/300, so the numbers moved out of the files and into
+        # the defaults rather than being restated in each.
+        assert training.early_stopping == 300
+        assert training.epochs == 500
         assert training.early_stopping < training.epochs
 
     def test_triggers_once_patience_runs_out(self, toy, monkeypatch):
@@ -660,7 +663,7 @@ class TestFineTuningValidation:
     def _config(self, tmp_path, **overrides):
         config = TrainingConfig()
         config.fine_tuning.enable = True
-        config.output.checkpoint_dir = str(tmp_path)
+        config.output.root = str(tmp_path)
         for key, value in overrides.items():
             setattr(config.fine_tuning, key, value)
         return config
@@ -682,6 +685,9 @@ class TestFineTuningValidation:
         """
         config = self._config(tmp_path, pretrained_checkpoint="unset")
         base = poraque_train.bundle_path(config)
+        # The run folder is created by the run, not by `bundle_path`, which
+        # only forms the name.
+        os.makedirs(os.path.dirname(base), exist_ok=True)
         with open(base, "w") as handle:
             handle.write("x")
         config.fine_tuning.pretrained_checkpoint = base
@@ -701,13 +707,16 @@ class TestFineTuningValidation:
         """One string decides the weights, the report and the figure folder."""
         config = TrainingConfig()
         config.task.name = "ag_au_pt_v2"
-        config.output.checkpoint_dir = str(tmp_path)
-        config.output.plot_dir = str(tmp_path / "plots")
+        config.output.root = str(tmp_path)
 
+        run = os.path.join(str(tmp_path), "ag_au_pt_v2")
         assert poraque_train.bundle_path(config) == \
-            os.path.join(str(tmp_path), "ag_au_pt_v2.pfno")
+            os.path.join(run, "ag_au_pt_v2.pfno")
         assert poraque_train.plot_directory(config) == \
-            os.path.join(str(tmp_path / "plots"), "ag_au_pt_v2")
+            os.path.join(run, "plots")
+        assert config.report_dir() == os.path.join(run, "report")
+        assert config.log_path() == \
+            os.path.join(run, "log", "ag_au_pt_v2.log")
         assert poraque_train.report_filename(config, "ext2chg") == \
             "ag_au_pt_v2_report.pdf"
         # Two tasks cannot share one report name.

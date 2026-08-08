@@ -710,7 +710,7 @@ class TestPhysicsConstraints:
         grid, density = cell
         table = build_features(density, thomas_fermi_tau(density), grid,
                                scheme="enhancement")
-        SymbolicDistiller(SymbolicConfig(physics_constraints=False),
+        SymbolicDistiller(SymbolicConfig(physics={"enable": False}),
                           engine=recording_engine).fit(table)
 
         assert seen["loss_function"] is None
@@ -727,8 +727,11 @@ class TestPhysicsConstraints:
         table = build_features(density, thomas_fermi_tau(density), grid,
                                scheme="enhancement")
         SymbolicDistiller(
-            SymbolicConfig(positivity_weight=7.0, thomas_fermi_weight=11.0,
-                           von_weizsacker_weight=13.0, p_infinity=1234.0),
+            SymbolicConfig(physics={"enable": True,
+                                    "positivity_weight": 7.0,
+                                    "thomas_fermi_weight": 11.0,
+                                    "von_weizsacker_weight": 13.0,
+                                    "p_infinity": 1234.0}),
             engine=recording_engine).fit(table)
 
         assert "L(7.0) * min(L(shortfall), ceiling)" in seen["loss_function"]
@@ -756,12 +759,39 @@ class TestPhysicsConstraints:
         table = build_features(density, thomas_fermi_tau(density), grid,
                                scheme="enhancement")
         front = [{"complexity": 3, "loss": 0.1, "expression": "exp(-p**2)"}]
-        result = SymbolicDistiller(SymbolicConfig(physics_constraints=False),
+        result = SymbolicDistiller(SymbolicConfig(physics={"enable": False}),
                                    engine=lambda *a: front).fit(table)
         assert "none in-loop" in result.summary()
 
     def test_defaults_to_on(self):
-        assert SymbolicConfig().physics_constraints is True
+        assert SymbolicConfig().physics["enable"] is True
+
+    def test_a_partial_block_keeps_the_other_defaults(self):
+        """
+        `physics: {enable: false}` is a valid config: the accessor fills in
+        the weights rather than raising a KeyError inside the search.
+        """
+        from poraque.ml.symbolic import symbolic_physics
+
+        physics = symbolic_physics(SymbolicConfig(physics={"enable": False}))
+        assert physics["enable"] is False
+        assert physics["p_infinity"] > 0
+        assert physics["positivity_weight"] > 0
+
+    def test_it_does_not_share_names_with_the_operator_block(self):
+        """
+        `training.physics` constrains the FNO over voxels; `symbolic.physics`
+        constrains an algebraic expression over probe points. Two key names
+        appear in both and mean different things, which is why they are nested
+        separately instead of sharing a prefix.
+        """
+        from poraque.ml.config import TrainingConfig
+
+        config = TrainingConfig()
+        shared = set(config.training.physics) & set(config.symbolic.physics)
+        assert shared == {"positivity_weight", "von_weizsacker_weight"}, (
+            "the collision is real, which is the reason for the nesting")
+        assert config.training.physics is not config.symbolic.physics
 
 
 @pytest.mark.skipif(

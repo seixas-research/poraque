@@ -316,13 +316,13 @@ def jensen_shannon_spread(predictions, grid, floor=1e-12):
 
     .. math::
 
-        \mathrm{JSD} = \frac1K\sum_k D_{\rm KL}\!\left(p_k \,\|\, \bar p\right),
-        \qquad \bar p = \frac1K\sum_k p_k ,
+        \mathrm{JSD} = \frac1M\sum_m D_{\rm KL}\!\left(p_m \,\|\, \bar p\right),
+        \qquad \bar p = \frac1M\sum_m p_m ,
 
     which is exactly the mutual information between the prediction and the
     member index — the quantity active learning maximises. Unlike a raw
     :math:`D_{\rm KL}`, it is symmetric, finite whenever the members are, and
-    bounded by :math:`\ln K`, so ``normalised`` lands in :math:`[0, 1]`.
+    bounded by :math:`\ln M`, so ``normalised`` lands in :math:`[0, 1]`.
 
     Parameters
     ----------
@@ -340,7 +340,7 @@ def jensen_shannon_spread(predictions, grid, floor=1e-12):
     Returns
     -------
     dict
-        ``jsd`` in nats, ``normalised`` = ``jsd / ln K``, ``pointwise`` (the
+        ``jsd`` in nats, ``normalised`` = ``jsd / ln M``, ``pointwise`` (the
         integrand, a field showing where the members disagree in information
         terms) and ``clipped`` — how many voxels the clamp touched.
 

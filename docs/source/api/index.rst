@@ -115,6 +115,9 @@ Training
 .. automodule:: poraque.ml.device
    :members:
 
+.. automodule:: poraque.ml.backend
+   :members:
+
 Physics operators and losses
 ----------------------------
 

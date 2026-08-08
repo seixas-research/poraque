@@ -76,7 +76,36 @@ BULK_SUBDIRECTORY = "chgcar"
 
 #: Files whose presence marks a directory as a DFT calculation rather than an
 #: archive of outputs.
+#:
+#: VASP's names, kept as the fallback so this constant still reads as it always
+#: did; the live list comes from :func:`calculation_markers`, which asks the
+#: registered readers. Hard-coding ``POSCAR``/``CONTCAR`` meant a Quantum
+#: ESPRESSO or GPAW directory was not recognised as a calculation at all, so
+#: :class:`CalculationSource` never even reached its reader — the one class a
+#: new code is supposed to need.
 CALCULATION_MARKERS = ("POSCAR", "CONTCAR")
+
+
+def calculation_markers():
+    """
+    Structure filenames of every registered code, VASP's first.
+
+    Each :class:`~poraque.fields.io.base.CalculationReader` already declares
+    :attr:`structure_files`, which is exactly this information. Deriving the
+    markers from the registry means registering a reader is genuinely all that
+    a new code requires, rather than a reader *and* an edit here.
+
+    Returns
+    -------
+    tuple of str
+    """
+    from ..fields.io import _READERS
+
+    names = list(CALCULATION_MARKERS)
+    for reader_class in _READERS.values():
+        names.extend(name for name in reader_class.structure_files
+                     if name not in names)
+    return tuple(names)
 
 
 def _is_density_file(entry, prefixes=BULK_PREFIXES):
@@ -99,9 +128,9 @@ def _is_density_file(entry, prefixes=BULK_PREFIXES):
 
 
 def _is_calculation_directory(path):
-    """Whether ``path`` holds the input files of a DFT run."""
+    """Whether ``path`` holds the input files of a DFT run, in any code."""
     return any(os.path.exists(os.path.join(path, name))
-               for name in CALCULATION_MARKERS)
+               for name in calculation_markers())
 
 
 def _subdirectories(root):
@@ -477,9 +506,12 @@ class CalculationSource(MaterialSource):
         has_own = os.path.exists(os.path.join(record.directory, "POTCAR"))
 
         if not has_own:
-            from ..fields.vasp.poscar import Poscar
-
-            structure = Poscar.from_file(reader.structure_path(record.directory))
+            # `reader.read_structure`, not `Poscar.from_file`: the reader is
+            # already resolved for this directory and the neutral contract is
+            # what makes a non-VASP run readable here at all. Parsing the
+            # structure file with VASP's parser regardless of which code wrote
+            # it defeats the abstraction one line after resolving it.
+            structure = reader.read_structure(record.directory)
             potcar = self.library_potcar(structure)
             if potcar is not None:
                 return ExternalPotential.from_potcar_tables(
@@ -645,7 +677,7 @@ class BulkDensitySource(MaterialSource):
         from_library = {}
         if self.options.get("potcar_dir"):
             from ..fields.vasp.volumetric import read_structure_header
-            from ..fields.vasp.potcar import Potcar, find_potcar
+            from ..fields.vasp.potcar import Potcar
 
             # Header reads only: a few hundred bytes per material.
             elements = sorted({element for record in records

@@ -201,6 +201,22 @@ class DataConfig:
         spin-polarised ``CHGCAR`` has a second grid block and a collinear one
         does not. Set ``true`` or ``false`` to require one, turning a
         mislabelled dataset into an error rather than a silent reinterpretation.
+    precision : str
+        Dtype the volumetric fields are **held in**: ``float64`` (the default,
+        and what every field used before this was selectable), ``float32`` or
+        ``float16``.
+
+        A memory setting, not an accuracy one. A 160³ field is 16 MB in double
+        and 8 MB in single, and a committee of five models scoring a pool holds
+        several at once. Integrals over the cell — the electron count, the
+        energy terms — are sums of N³ values, so keep ``float64`` wherever
+        those numbers are the result, and drop to ``float32`` when the field is
+        on its way into a network that computes in single precision anyway.
+        ``float16`` is for archiving a large pool and is too coarse for any
+        integral.
+
+        Distinct from ``model.precision``, which is what the operator
+        *computes* in.
     """
 
     train_paths: list = None
@@ -215,6 +231,7 @@ class DataConfig:
     gaussian_blur: float = None
     blur_method: str = "spectral"
     spin: str = "auto"
+    precision: str = "float64"
 
     def paths(self):
         """
@@ -249,28 +266,283 @@ class DataConfig:
 
 @dataclass
 class ModelConfig:
-    """
+    r"""
     Architecture of the Fourier Neural Operator.
+
+    The three that set the size
+    ---------------------------
+    ``width``, ``modes`` and ``projection_channels`` are the settings that
+    decide how big the operator is and what it can represent. They are easy to
+    confuse because all three are "some number of channels", so it is worth
+    being precise about what each one counts.
+
+    Written out with every index, and matching
+    :meth:`~poraque.ml.fno.FNO3d.forward` rather than the textbook schematic:
+
+    **Lift** — the only place :math:`C_{\rm in}` appears. The ``+3`` are the
+    fractional-coordinate channels, present when ``use_coordinates``:
+
+    .. math::
+
+        v^{(0)}_o(\mathbf r) = \sum_{i=1}^{C_{\rm in}+3}
+            W^{\rm lift}_{oi}\, x_i(\mathbf r) + b^{\rm lift}_o ,
+        \qquad o = 1 \dots C
+
+    **Layer** :math:`\ell = 1 \dots L`:
+
+    .. math::
+
+        \hat v^{(\ell-1)}_i(\mathbf k)
+            &= \mathcal{F}_{\mathbf r \to \mathbf k}
+               \big[ v^{(\ell-1)}_i \big](\mathbf k) \\[2pt]
+        \hat z^{(\ell)}_o(\mathbf k)
+            &= \begin{cases}
+               \displaystyle\sum_{i=1}^{C}
+                 R^{(\ell,\,c(\mathbf k))}_{oi,\,k_1k_2k_3}\,
+                 \hat v^{(\ell-1)}_i(\mathbf k)
+                 & |k_1| < m_1,\ |k_2| < m_2,\ 0 \le k_3 < m_3 \\[4pt]
+               0 & \text{otherwise}
+               \end{cases} \\[2pt]
+        z^{(\ell)}_o(\mathbf r)
+            &= \mathcal{F}^{-1}_{\mathbf k \to \mathbf r}
+               \big[ \hat z^{(\ell)}_o \big](\mathbf r) \\[2pt]
+        y^{(\ell)}_o(\mathbf r)
+            &= \mathrm{GroupNorm}\Big( z^{(\ell)}_o(\mathbf r)
+               + \sum_{i=1}^{C} W^{(\ell)}_{oi}\, v^{(\ell-1)}_i(\mathbf r)
+               + b^{(\ell)}_o \Big) \\[2pt]
+        y^{(\ell)}_o(\mathbf r)
+            &\leftarrow \gamma_o(\text{cell})\, y^{(\ell)}_o(\mathbf r)
+               + \beta_o(\text{cell})
+               \qquad\text{(FiLM, when \tt cell\_conditioning)} \\[2pt]
+        v^{(\ell)}_o(\mathbf r)
+            &= v^{(\ell-1)}_o(\mathbf r)
+               + \sigma\big( y^{(\ell)}_o(\mathbf r) \big)
+               \qquad\text{(residual)}
+
+    **Read-out** — the only place :math:`P` appears:
+
+    .. math::
+
+        u_p(\mathbf r) &= \sigma\Big(
+            \sum_{o=1}^{C} P^{(1)}_{po}\, v^{(L)}_o(\mathbf r)
+            + b^{(1)}_p \Big),
+            \qquad p = 1 \dots P \\
+        \text{out}_q(\mathbf r) &=
+            \sum_{p=1}^{P} P^{(2)}_{qp}\, u_p(\mathbf r) + b^{(2)}_q,
+            \qquad q = 1 \dots C_{\rm out}
+
+    The retained band is capped by the grid, not fixed by it:
+
+    .. math::
+
+        m_1 = \min(\texttt{modes}, N_x/2), \quad
+        m_2 = \min(\texttt{modes}, N_y/2), \quad
+        m_3 = \min(\texttt{modes}, N_z/2 + 1)
+
+    There are **four** corners :math:`c` and not eight because :math:`v` is
+    real, so :math:`\hat v(-\mathbf k) = \hat v(\mathbf k)^{*}` and only
+    :math:`k_3 \ge 0` is stored: :math:`2\,(\pm k_1) \times 2\,(\pm k_2)
+    \times 1`. That 4 is the leading axis of :math:`R`, whose shape is
+    ``(4, C, C, m1, m2, m3)``.
+
+    The parameter count is where the three settings separate:
+
+    .. code-block:: text
+
+        spectral   L * 4 * C^2 * m1*m2*m3   complex   <- dominates: C^2 and m^3
+        pointwise  L * (C^2 + C)
+        lift       C * (C_in + 3) + C
+        read-out   C*P + P + P*C_out + C_out          <- linear in P, and once
+
+    ``width`` (:math:`C`)
+        How many **channels** carry the field through those layers. The input
+        is lifted from 1-2 physical channels to :math:`C` at the start and
+        projected back at the end; everything between works at width :math:`C`.
+
+        This is the operator's *representational* capacity — how many distinct
+        features of the density it can carry at once — and it is the setting
+        that costs the most, because the spectral weights go as :math:`C^2`.
+        Doubling it roughly quadruples both parameters and time.
+
+    ``modes`` (:math:`m`)
+        How many **Fourier coefficients per axis** the spectral multiplier
+        acts on, counted from the lowest. The rest of the spectrum passes
+        through the layer untouched by :math:`R` (it is still carried by
+        :math:`W`).
+
+        This is the operator's *spatial* reach: mode :math:`m` on a cell of
+        length :math:`L` is a wavelength :math:`L/m`, so :math:`m` fixes the
+        finest feature the learned convolution can resolve and, equivalently,
+        the longest range it can correlate. It is a **capacity limit, not a
+        requirement**: on a grid too coarse to supply :math:`m` modes, fewer
+        are used automatically and the same weights still apply — which is
+        what lets one model serve materials on different grids.
+
+        The parameter count is :math:`4 C^2 m^3` complex numbers per layer, so
+        ``modes`` is by far the most expensive knob: 8 → 12 is a 3.4× increase.
+
+    ``projection_channels`` (:math:`P`)
+        The hidden width of the **final two-layer head** that maps the
+        :math:`C` channels back down to the physical output. It appears once,
+        at the end, and never inside a Fourier layer.
+
+        Purely pointwise, so it costs :math:`O(P)` and no spectral weights at
+        all. It exists because collapsing :math:`C` channels to one with a
+        single linear map is a bottleneck; a wider head is cheap and usually
+        worth more than the same budget spent on ``width``.
+
+    A useful way to hold them apart: ``width`` is how much information travels
+    *through* the operator, ``modes`` is how far it travels *in space*, and
+    ``projection_channels`` is only how it is *read out* at the end.
+
+    Typical ranges are ``width`` 16-64, ``modes`` 8-16, ``projection_channels``
+    64-128; ``modes`` above about 16 is rarely worth its cost, since the high
+    coefficients of a smooth field carry little of its norm.
+
+    GroupNorm and FiLM: the rest of the layer
+    -----------------------------------------
+    The two terms in the layer equation that are not sizes. They sit next to
+    each other in :meth:`~poraque.ml.fno.FNOBlock.forward`, and the order is
+    the whole point::
+
+        y = spectral(x) + pointwise(x)      # mix
+        y = norm(y)                         # GroupNorm
+        y = film(y, embedding)              # FiLM
+        return x + activation(y)            # residual
+
+    **GroupNorm** — keeping the stack numerically sane.
+
+    :class:`torch.nn.GroupNorm` splits the :math:`C` channels into :math:`G`
+    groups and, for each *(sample, group)* pair, takes a mean and variance over
+    **both the channels of that group and every voxel** — then normalises and
+    applies a learned per-channel scale and shift. At ``width: 16`` that is 8
+    groups of 2.
+
+    Why this normaliser and not another, here specifically:
+
+    * **BatchNorm would be wrong twice over.** Batches are small
+      (``batch_size: 4``, and bucketed by grid shape so often smaller) and
+      heterogeneous — different materials, different cells. Statistics over one
+      to four crystals are noise. Worse, BatchNorm keeps *running* statistics
+      and behaves differently in train and eval, so a single-structure
+      :meth:`~poraque.ml.training.FieldOperator.predict` would not reproduce
+      what training saw.
+    * **LayerNorm is the** :math:`G = 1` **case**, pooling every channel into
+      one statistic. :math:`G = 8` keeps the groups partly independent.
+    * **It is grid-shape agnostic.** The statistics are taken over whatever
+      :math:`N_x N_y N_z` is present, so a :math:`24^3` and a :math:`120^3`
+      sample are treated identically. That is a requirement here, not a
+      nicety: one model must serve materials on different grids.
+
+    What it is *for*: the spectral branch multiplies Fourier coefficients by
+    learned complex weights and adds a pointwise branch, once per layer, in a
+    residual stack. Without renormalisation the activation scale drifts with
+    depth.
+
+    :func:`~poraque.ml.fno._group_count` exists because ``GroupNorm`` requires
+    ``C % G == 0`` while ``width`` is user-set. It takes the largest divisor of
+    :math:`C` not exceeding 8 — so ``width: 16`` gives 8 groups but
+    ``width: 12`` gives **6**, since ``12 % 8 != 0``. Without it, ``width: 12``
+    would fail at construction.
+
+    **FiLM** — how the unit cell reaches the network.
+
+    Feature-wise linear modulation. One ``Linear(embedding_dim -> 2C)``
+    produces :math:`\gamma` and :math:`\beta`, a pair per channel, and
+
+    .. math::
+
+        y^{(\ell)}_{b,o}(\mathbf r) \leftarrow
+            \big(1 + \gamma_o(\text{cell}_b)\big)\,
+            y^{(\ell)}_{b,o}(\mathbf r) + \beta_o(\text{cell}_b)
+
+    The reshape to ``(B, -1, 1, 1, 1)`` broadcasts over every voxel, so this is
+    **spatially uniform**: one gain and one offset per channel per sample,
+    constant across the grid — which is why it is indifferent to grid shape.
+
+    The embedding comes from :class:`~poraque.ml.fno.CellEncoder`: seven
+    rotation-invariant descriptors — the three lattice lengths, the three angle
+    cosines, and :math:`V^{1/3}`, lengths divided by a 10 Å scale — through an
+    MLP :math:`7 \to E \to E`.
+
+    Why it is needed at all is specific to an FNO. The spectral weights
+    :math:`R` act on *mode indices*, not physical wavevectors: mode :math:`k`
+    on a cell of edge :math:`L` is :math:`|\mathbf G| = 2\pi k / L`. The same
+    :math:`R` therefore means different physics in a 5 Å cell than in a 15 Å
+    one — and because the operator is deliberately grid-shape invariant, two
+    :math:`32^3` samples pass through the layers identically whatever their
+    lattice constant. Without conditioning the network **cannot tell them
+    apart**. The fractional-coordinate channels do not help: they are
+    dimensionless and identical for both cells. FiLM is what carries physical
+    scale in.
+
+    .. note::
+       The zero-init is deliberate. Both the projection weight and its bias are
+       zeroed, and the form is :math:`(1 + \gamma)`, not :math:`\gamma`. At
+       initialisation :math:`\gamma = \beta = 0`, so FiLM is *exactly the
+       identity*: the model starts as the unconditioned operator and learns to
+       use the cell only where it earns its place. Written as
+       :math:`\gamma \cdot x` with the same init it would annihilate the signal
+       instead.
+
+    **Why they are adjacent, in that order.** This is the
+    conditional-normalisation pattern (cf. conditional BatchNorm, AdaIN):
+    GroupNorm strips each sample's own scale and offset, and FiLM puts back a
+    scale and offset that are a learned function of the cell. Put FiLM first
+    and the normaliser would erase it on the next line.
+
+    .. warning::
+       FiLM's :math:`\gamma, \beta` are **not** GroupNorm's affine parameters,
+       which are conventionally written with the same letters. In the layer
+       equation above, :math:`\gamma_o(\text{cell})` and
+       :math:`\beta_o(\text{cell})` are FiLM's; GroupNorm's own affine is
+       folded inside :math:`\mathrm{GroupNorm}(\cdot)`.
+
+    Neither costs anything worth counting. Measured on ``width`` 16, ``modes``
+    8, ``n_layers`` 3, ``projection_channels`` 64, ``embedding_dim`` 32:
+
+    .. code-block:: text
+
+        spectral R          3,145,728   99.79%
+        FiLM projection         3,168    0.10%
+        CellEncoder MLP         1,312    0.04%
+        GroupNorm affine           96    0.00%
+        TOTAL               3,152,353
+
+    Conditioning and normalisation together are 0.15% of the parameters. The
+    spectral tensor is the model.
 
     Attributes
     ----------
     width : int
-        Channel width of the Fourier layers.
+        Channel width of the Fourier layers. See above: cost grows as the
+        square, and it is the operator's representational capacity.
     modes : int
-        Retained Fourier modes per axis. This is a *capacity* limit: on a grid
-        too coarse to supply them, fewer are used automatically.
+        Retained Fourier modes per axis, counted from the lowest. A *capacity*
+        limit: on a grid too coarse to supply them, fewer are used
+        automatically. Cost grows as the cube.
     n_layers : int
-        Number of Fourier layers.
+        Number of Fourier layers — how many times the lift/spectral/project
+        cycle is applied. Depth composes the learned convolutions, so it buys
+        effective range at linear cost, unlike ``modes``.
     projection_channels : int
-        Hidden width of the output projection.
+        Hidden width of the output projection head. Pointwise and cheap; see
+        above.
     activation : str
         ``gelu``, ``relu``, ``silu`` or ``tanh``.
     use_coordinates : bool
-        Append fractional-coordinate channels.
+        Append three fractional-coordinate channels to the input, so the
+        operator knows *where* in the cell it is. Dimensionless, so they carry
+        position but not scale — see ``cell_conditioning`` for the latter.
     cell_conditioning : bool
-        Condition the layers on lattice descriptors (FiLM).
+        Condition every layer on the lattice through FiLM. ``false`` drops both
+        the modulation and the :class:`~poraque.ml.fno.CellEncoder` entirely,
+        which leaves the operator unable to distinguish two samples on the same
+        grid whose cells differ in size. See "GroupNorm and FiLM" above.
     embedding_dim : int
-        Width of the cell embedding.
+        Width :math:`E` of the cell embedding the FiLM projections read. Costs
+        :math:`E^2 + 8E` once, plus :math:`2CE + 2C` per layer — a fraction of
+        a percent of the model either way.
     mode_selection : str
         ``"fixed"`` truncates at a constant mode index; ``"physical"``
         truncates at a constant wavevector ``g_max``, so every material
@@ -284,14 +556,27 @@ class ModelConfig:
     pauli_scale : float or None
         Initial Pauli-term scale in eV/Å³; ``null`` fits it from the training
         split.
+    precision : str
+        Dtype the operator computes in: ``float32`` (the default) or
+        ``float64``.
+
+        ``float64`` roughly doubles time and memory, and is for checking that a
+        physical result is not a single-precision artefact — an energy
+        difference of a few meV assembled from N³ voxel sums has no obvious
+        margin in float32. Conversion goes through
+        :func:`~poraque.ml.fno.set_precision`, because an FNO carries complex
+        spectral weights and neither ``model.double()`` nor
+        ``model.to(torch.float64)`` handles them correctly.
+
+        Distinct from ``data.precision``, which is how the fields are *stored*.
     learn_pauli_scale : bool
         Optimise the scale alongside the backbone.
     """
 
     width: int = 16
     modes: int = 8
-    n_layers: int = 4
-    projection_channels: int = 48
+    n_layers: int = 3
+    projection_channels: int = 64
     activation: str = "gelu"
     use_coordinates: bool = True
     cell_conditioning: bool = True
@@ -301,6 +586,7 @@ class ModelConfig:
     pauli_residual: bool = False
     pauli_scale: float = None
     learn_pauli_scale: bool = True
+    precision: str = "float32"
 
 
 @dataclass
@@ -415,7 +701,7 @@ class TrainingConfig_:
         which is the intended balance: the physics guides, the data decides.
     """
 
-    epochs: int = 300
+    epochs: int = 500
     batch_size: int = 4
     learning_rate: float = 2e-3
     weight_decay: float = 1e-4
@@ -425,8 +711,8 @@ class TrainingConfig_:
     enable_kfold: bool = False
     k_folds: int = 5
     eval_epoch: int = 10
-    early_stopping: int = 100
-    seed: int = 0
+    early_stopping: int = 300
+    seed: int = 42
     init_seed: int = None
     device: str = "auto"
     loss: str = "relative_l2"
@@ -442,35 +728,69 @@ class TrainingConfig_:
 @dataclass
 class OutputConfig:
     """
-    Where artefacts are written.
+    Where a run's artefacts go, and which of them are produced.
+
+    One directory per model
+    -----------------------
+    Everything a run writes lives under ``<root>/<name>/``::
+
+        models/au_w16_m8_l3/
+            au_w16_m8_l3.pfno        the weights
+            log/                     the training log, the metrics JSON,
+                                     and the resolved config
+            plots/                   loss curves, parity, slices, histograms
+            report/                  the generated PDF
+
+    A trained model is not one file: it is weights plus the numbers that say
+    how good they are, the figures behind those numbers, and the configuration
+    that produced them. Scattering those across ``models/``, ``logs/``,
+    ``results/plots/`` and ``reports/`` made them four things to keep in step,
+    and made "delete this experiment" or "send me that model" a job of
+    collecting fragments by filename. Here they arrive and leave together.
+
+    ``root`` is the only path setting; ``name`` (from ``task.name``) is the
+    only thing that distinguishes two runs.
 
     Attributes
     ----------
-    log : str
-        Plain-text training log.
-    json : str
-        Machine-readable metrics.
-    checkpoint_dir : str or None
-        Directory for model weights; ``null`` disables checkpointing.
-    plot_dir : str or None
-        Directory for the figures produced by
-        :class:`~poraque.vis.TrainingReport`; ``null`` disables plotting.
-    report_dir : str or None
-        Directory for the automatically generated PDF report; ``null``
-        disables it.
+    root : str or None
+        Parent directory for every run folder. ``null`` disables **all**
+        output — no weights, no log, no figures, no report — which is what a
+        smoke test wants and nothing else does.
+    write_log : bool
+        Write ``log/<name>.log``, ``log/<name>.json`` and the resolved
+        ``log/<name>_config.yaml``. On by default: the JSON is what
+        ``poraque-committee --against`` reads, and the archived config is what
+        makes the run repeatable after the source config is edited.
+    plot_figures : bool
+        Render the figures into ``plots/``. Off costs nothing else — the
+        metrics are computed either way — and saves the matplotlib time on a
+        long sweep.
+    write_pdf_report : bool
+        Typeset the PDF into ``report/``. Needs a LaTeX toolchain; without one
+        the source ``.tex`` is written instead and the run says so.
+    checkpoint : bool
+        Write the ``.pfno``. Off only makes sense for a run whose purpose is
+        the metrics, such as a k-fold estimate.
+    log, json : str or None
+        Explicit override for the log and metrics paths. ``null`` (the
+        default) puts them under the run folder as described above. Set them
+        only to write somewhere the layout does not cover.
     plot_format : str
         Image format for saved figures.
     dpi : int
         Raster resolution for saved figures.
     """
 
-    log: str = "logs/fno_training.log"
-    json: str = "logs/fno_training.json"
-    checkpoint_dir: str = "models"
-    plot_dir: str = "results/plots"
-    report_dir: str = "reports"
+    root: str = "models"
+    write_log: bool = True
+    plot_figures: bool = True
+    write_pdf_report: bool = True
+    checkpoint: bool = True
+    log: str = None
+    json: str = None
     plot_format: str = "png"
-    dpi: int = 160
+    dpi: int = 200
 
 
 @dataclass
@@ -567,9 +887,27 @@ class SymbolicConfig:
         and an exponent that is itself a subtree is unreadable and almost never
         physical. Real functionals have simple exponents: ``5/3``, ``4/3``,
         ``2``.
-    physics_constraints : bool
-        Penalise violations of the physics **inside** the evolutionary loop,
-        rather than filtering the front afterwards. On by default.
+    physics : dict
+        Physics constraints on the **symbolic search**, and nothing else.
+
+        .. important::
+
+           This is not ``training.physics``. That block constrains the *neural
+           operator* — charge conservation, positivity of a predicted density,
+           the Euler-Lagrange residual — and its terms are added to a training
+           loss over voxels. This block constrains a *candidate algebraic
+           expression* for the Pauli enhancement factor, and its terms are
+           added to a symbolic-regression fitness over probe points.
+
+           They are separate objectives on separate objects, evaluated at
+           different times by different engines. Two of the names collide
+           (``positivity_weight``, ``von_weizsacker_weight``) and mean
+           different things in each, which is exactly why they live in
+           separate blocks rather than sharing a prefix.
+
+        ``enable``
+            Penalise violations **inside** the evolutionary loop rather than
+            filtering the front afterwards. On by default.
 
         Filtering after a run only measures how few candidates were physical;
         by then the populations have already spent their budget converging on
@@ -605,19 +943,24 @@ class SymbolicConfig:
            **constrained** objective and is not comparable with an
            unconstrained run's. The :math:`R^2` and relative :math:`L^2` are
            computed separately from the expression itself and are unaffected.
+
+        ``positivity_weight``, ``thomas_fermi_weight``, ``von_weizsacker_weight``
+            Penalty weights, four orders of magnitude above a converged data
+            term by default. These are constraints, not regularisers: the
+            intent is that no accuracy gain can buy a violation. Each limit
+            carries its weight once, however many probe points express it.
+
+        ``p_infinity``
+            The reduced gradient standing in for :math:`p \to \infty` in the
+            von Weizsäcker probe. Large enough that no smooth interpolating
+            form is still in its crossover region, and small enough that
+            :math:`p^{8/3}` stays far inside the range of the 32-bit float the
+            engine searches in.
     data_loss : {"mse", "mae"}
-        The unpenalised part of that objective. ``mae`` is the more robust
-        choice on a density whose tails span orders of magnitude.
-    positivity_weight, thomas_fermi_weight, von_weizsacker_weight : float
-        Penalty weights, four orders of magnitude above a converged data term
-        by default. These are constraints, not regularisers: the intent is that
-        no accuracy gain can buy a violation. Each limit carries its weight
-        once however many probe points express it.
-    p_infinity : float
-        The reduced gradient standing in for :math:`p \to \infty` in the von
-        Weizsäcker probe. Large enough that no smooth interpolating form is
-        still in its crossover region, and small enough that :math:`p^{8/3}`
-        stays far inside the range of the 32-bit float the engine searches in.
+        The unpenalised part of that objective — the data term, not a
+        constraint, which is why it stays here rather than under ``physics``.
+        ``mae`` is the more robust choice on a density whose tails span orders
+        of magnitude.
     unary_operations, binary_operations : list of str
         The operator alphabet handed to the engine. Keep it small: the search
         space grows combinatorially, and an operator that cannot appear in the
@@ -661,12 +1004,14 @@ class SymbolicConfig:
     template: str = "none"
     epsilon: float = 1e-8
     constraints: dict = field(default_factory=lambda: {"^": [-1, 1]})
-    physics_constraints: bool = True
     data_loss: str = "mse"
-    positivity_weight: float = 1.0e2
-    thomas_fermi_weight: float = 1.0e2
-    von_weizsacker_weight: float = 1.0e2
-    p_infinity: float = 1.0e6
+    physics: dict = field(default_factory=lambda: {
+        "enable": True,
+        "positivity_weight": 1.0e2,
+        "thomas_fermi_weight": 1.0e2,
+        "von_weizsacker_weight": 1.0e2,
+        "p_infinity": 1.0e6,
+    })
     unary_operations: list = field(
         default_factory=lambda: ["exp", "log", "sqrt", "abs"])
     binary_operations: list = field(
@@ -852,7 +1197,7 @@ class TrainingConfig:
         """Nested plain-``dict`` representation."""
         return asdict(self)
 
-    def to_yaml(self, path=None):
+    def to_yaml(self, path=None, minimal=False):
         """
         Serialise to YAML.
 
@@ -862,6 +1207,14 @@ class TrainingConfig:
             When given, write to this file. The resolved config is worth
             saving beside the results: it records what actually ran, including
             command-line overrides.
+        minimal : bool, optional
+            Write only the settings that differ from the defaults. Every key
+            is optional, so the result is an equivalent config — and a far
+            shorter one, since most of a typical file restates a default.
+
+            Not the right choice for the copy archived beside a run: that one
+            should record every value that was in force, so it still
+            reproduces the run if a default later changes.
 
         Returns
         -------
@@ -869,7 +1222,8 @@ class TrainingConfig:
             The YAML text.
         """
         _require_yaml()
-        text = yaml.safe_dump(self.to_dict(), sort_keys=False,
+        payload = self.non_default_dict() if minimal else self.to_dict()
+        text = yaml.safe_dump(payload, sort_keys=False,
                               default_flow_style=False)
         if path is not None:
             with open(path, "w") as handle:
@@ -924,14 +1278,152 @@ class TrainingConfig:
     # ------------------------------------------------------------------ #
     # Consumers
     # ------------------------------------------------------------------ #
+    def run_dir(self):
+        """
+        The run's own directory, ``<output.root>/<task.name>``.
+
+        Everything else hangs off this. ``None`` when ``output.root`` is
+        ``null``, which switches off all output.
+
+        Returns
+        -------
+        str or None
+        """
+        if not self.output.root:
+            return None
+        import os
+
+        return os.path.join(self.output.root, self.run_name())
+
+    def run_name(self):
+        """The run's name, falling back to the historical default."""
+        return str(self.task.name or "poraque_models")
+
+    def _subdir(self, name, wanted):
+        """One subdirectory of the run folder, or ``None`` when switched off."""
+        root = self.run_dir()
+        if root is None or not wanted:
+            return None
+        import os
+
+        return os.path.join(root, name)
+
+    def log_dir(self):
+        """``<run>/log``, or ``None`` when ``write_log`` is off."""
+        return self._subdir("log", self.output.write_log)
+
+    def plot_dir(self):
+        """``<run>/plots``, or ``None`` when ``plot_figures`` is off."""
+        return self._subdir("plots", self.output.plot_figures)
+
+    def report_dir(self):
+        """``<run>/report``, or ``None`` when ``write_pdf_report`` is off."""
+        return self._subdir("report", self.output.write_pdf_report)
+
+    def checkpoint_path(self):
+        """
+        ``<run>/<name>.pfno``, or ``None`` when checkpointing is off.
+
+        A fine-tune gets its own stem. It is a specialisation, usually onto a
+        narrower set of materials, and writing it over the general model would
+        replace something broad with something narrow, silently and by default.
+
+        Returns
+        -------
+        str or None
+        """
+        root = self.run_dir()
+        if root is None or not self.output.checkpoint:
+            return None
+        import os
+
+        stem = self.run_name()
+        if self.fine_tuning.enable:
+            stem += "_finetuned"
+        return os.path.join(root, f"{stem}.pfno")
+
+    def log_path(self):
+        """
+        The plain-text log: ``output.log``, or ``<run>/log/<name>.log``.
+
+        Returns
+        -------
+        str or None
+        """
+        return self._log_artefact(self.output.log, ".log")
+
+    def json_path(self):
+        """
+        The metrics: ``output.json``, or ``<run>/log/<name>.json``.
+
+        Returns
+        -------
+        str or None
+        """
+        return self._log_artefact(self.output.json, ".json")
+
+    def _log_artefact(self, explicit, suffix):
+        """
+        An explicit path, or one inside the run's ``log/`` directory.
+
+        Deriving is what lets a config name a run once. Every artefact comes
+        from ``task.name``; the log and the metrics were the two a user had to
+        repeat, and the only two that two different runs could end up sharing
+        while writing separate weights.
+        """
+        if explicit is not None:
+            return explicit or None
+        directory = self.log_dir()
+        if directory is None:
+            return None
+        import os
+
+        return os.path.join(directory, f"{self.run_name()}{suffix}")
+
+    def non_default_dict(self):
+        """
+        Only the settings that differ from the defaults.
+
+        A config is far shorter than it looks: of the 76 keys in the sample
+        file, 63 restate a default. This is what ``poraque-train
+        --write-config PATH --minimal`` writes, and what makes a committed
+        config readable as *the description of one experiment* rather than as
+        a dump of every knob.
+
+        Returns
+        -------
+        dict
+            Nested ``{section: {key: value}}``, sections with nothing to say
+            omitted entirely.
+        """
+        reference = type(self)().to_dict()
+        current = self.to_dict()
+        trimmed = {}
+        for section, values in current.items():
+            if not isinstance(values, dict):
+                if values != reference.get(section):
+                    trimmed[section] = values
+                continue
+            changed = {key: value for key, value in values.items()
+                       if reference.get(section, {}).get(key, object()) != value}
+            if changed:
+                trimmed[section] = changed
+        return trimmed
+
     def model_kwargs(self):
         """
         Keyword arguments for :class:`~poraque.ml.fno.FNO3d`.
 
         The Pauli-head settings are excluded: they configure
-        :class:`~poraque.ml.training.FieldOperator`, not the backbone.
+        :class:`~poraque.ml.training.FieldOperator`, not the backbone. So is
+        ``precision``, which is applied to the built model by
+        :func:`~poraque.ml.fno.set_precision` rather than passed to its
+        constructor — the conversion has to reach the complex spectral weights,
+        and a constructor argument would only cover the ones it allocates
+        itself.
         """
-        excluded = {"pauli_residual", "pauli_scale", "learn_pauli_scale"}
+        excluded = {"pauli_residual", "pauli_scale", "learn_pauli_scale",
+                    "precision"}
         return {f.name: getattr(self.model, f.name)
                 for f in fields(self.model) if f.name not in excluded}
 

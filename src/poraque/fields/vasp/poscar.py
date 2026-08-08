@@ -18,7 +18,11 @@ fields, the ML dataset — is unaffected by which code the data came from.
 
 import numpy as np
 
-from ..structure import Structure, element_of, symbol_to_z  # noqa: F401  (re-export)
+# `symbol_to_z` is re-exported: `poraque.fields.vasp` publishes it, and
+# `potcar` imports it from here. `element_of` rode along on this line without a
+# single consumer -- it is available from `poraque.fields.structure`, which is
+# where it is defined.
+from ..structure import Structure, symbol_to_z  # noqa: F401  (re-export)
 
 
 class Poscar(Structure):
