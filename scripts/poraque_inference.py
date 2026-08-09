@@ -106,6 +106,7 @@ if os.path.isdir(_SRC):
 
 import torch  # noqa: E402
 
+from poraque import banner  # noqa: E402
 from poraque.fields import (  # noqa: E402
     ChargeDensity,
     ExternalPotential,
@@ -929,6 +930,7 @@ def main(argv=None):
     calls ``sys.exit(main())`` and would treat any other object as an error
     message. :func:`predict` returns the result records themselves.
     """
+    banner()
     predict(argv)
     return 0
 

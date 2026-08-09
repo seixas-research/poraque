@@ -17,3 +17,14 @@ training:
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0
+
+symbolic:
+  enable_symbolic_distillation: true
+  features: reduced
+  template: pauli
+  physics:
+    enable: true
+    positivity_weight: 100.0
+    thomas_fermi_weight: 100.0
+    von_weizsacker_weight: 100.0
+    p_infinity: 1.0e+06

@@ -25,7 +25,7 @@ task:
   #             can reach a total energy, since the ASE calculator needs the
   #             whole chain.
   type: all
-  name: au_w16_m8_l3_symbolic
+  name: au_w16_m8_l3_complete
 
 data:
   # A POTCAR *library* (one subdirectory per pseudopotential). With it the

@@ -742,3 +742,108 @@ class TestFineTuningValidation:
                               pretrained_checkpoint=str(tmp_path / "base.pfno"))
         poraque_train.validate_fine_tuning_settings(config)
         assert config.fine_tuning.pretrained_checkpoint == str(base)
+
+
+class TestStandardOutputTables:
+    """
+    The terminal tables, checked on their alignment.
+
+    Every defect here is invisible to the code and obvious to a reader: a rule
+    a character short of its heading, a left-aligned value under a
+    right-aligned word, a column of blanks for a metric the task cannot
+    produce. None of them raises.
+    """
+
+    METRICS = {"mse": 1.1e-4, "mae": 4.5e-3, "rmse": 1.0e-2,
+               "relative_l2": 0.0107, "r2": 0.9998, "jsd": 7.8e-6}
+
+    def test_the_rule_matches_the_heading(self):
+        heading, rule = poraque_train.format_metrics_header(22)
+        assert len(rule) == len(heading), (
+            f"heading {len(heading)}, rule {len(rule)}")
+
+    def test_rows_line_up_with_the_heading(self):
+        heading, _ = poraque_train.format_metrics_header(22)
+        row = poraque_train.format_metrics_row("struct_000", "train",
+                                               self.METRICS, 22)
+        assert len(row) == len(heading)
+
+    def test_the_split_is_its_own_column(self):
+        """
+        It used to be glued to the name -- ``struct_000 (train)`` -- which put
+        two different things in the structure column.
+        """
+        row = poraque_train.format_metrics_row("struct_000", "validation",
+                                               self.METRICS, 22)
+        assert "struct_000" in row and "(validation)" not in row
+        assert "validation" in row
+
+    def test_a_left_aligned_column_has_a_left_aligned_title(self):
+        heading, _ = poraque_train.format_metrics_header(22)
+        row = poraque_train.format_metrics_row("s", "train", self.METRICS, 22)
+        assert heading.index("split") == row.index("train")
+
+    def test_a_missing_metric_leaves_the_columns_intact(self):
+        """
+        ``jsd`` is undefined for a signed field. The row must keep its width so
+        the table does not shear.
+        """
+        heading, _ = poraque_train.format_metrics_header(22)
+        without = dict(self.METRICS, jsd=None)
+        assert len(poraque_train.format_metrics_row(
+            "s", "train", without, 22)) == len(heading)
+
+    def test_a_task_without_jsd_drops_the_column_entirely(self):
+        columns = poraque_train.metric_columns([dict(self.METRICS, jsd=None)])
+        assert all(key != "jsd" for _, key, _ in columns), (
+            "a column of blanks is worse than no column")
+        heading, rule = poraque_train.format_metrics_header(22, columns)
+        assert "JSD" not in heading and len(rule) == len(heading)
+
+    def test_structure_names_wrap_into_indented_lines(self):
+        names = [f"struct_{i:03d}" for i in range(17)]
+        lines = poraque_train.format_names(names)
+        assert len(lines) > 1, "seventeen names on one line is the defect"
+        assert all(line.startswith("      ") for line in lines)
+        joined = " ".join(lines).split()
+        assert joined == names, "every name must survive the wrapping"
+
+    def test_an_empty_name_list_prints_nothing(self):
+        assert poraque_train.format_names([]) == []
+
+    def test_grid_shapes_are_one_line_each(self):
+        lines = poraque_train.format_shapes({(32, 32, 32): 9, (30, 32, 30): 1})
+        assert len(lines) == 2
+        assert "30x32x30" in lines[0] and "1 structure" in lines[0]
+        assert "32x32x32" in lines[1] and "9 structures" in lines[1]
+
+    def test_the_shape_continuation_is_indented_under_the_first(self):
+        lines = poraque_train.format_shapes({(32, 32, 32): 9, (30, 32, 30): 1})
+        assert not lines[0].startswith(" ")
+        assert lines[1].startswith("   "), "continuations align under the label"
+
+    def test_the_aggregate_is_printed_for_both_splits(self):
+        """
+        Quoting only the training aggregate is how a training fit gets read as
+        a generalisation estimate.
+        """
+        lines = []
+        poraque_train.format_aggregate("ext2chg: training", [self.METRICS],
+                                       lines.append)
+        poraque_train.format_aggregate("ext2chg: VALIDATION", [self.METRICS],
+                                       lines.append)
+        text = "\n".join(lines)
+        assert "training" in text and "VALIDATION" in text
+        assert text.count("metric") == 2
+
+    def test_an_empty_aggregate_prints_nothing(self):
+        lines = []
+        poraque_train.format_aggregate("ext2chg: VALIDATION", [], lines.append)
+        assert lines == []
+
+    def test_the_aggregate_rule_matches_its_heading(self):
+        lines = []
+        poraque_train.format_aggregate("x", [self.METRICS], lines.append)
+        heading = next(line for line in lines if "metric" in line)
+        rule = next(line for line in lines if set(line.strip()) == {"-"})
+        assert len(rule) == len(heading)

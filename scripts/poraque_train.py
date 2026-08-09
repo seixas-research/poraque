@@ -131,6 +131,7 @@ _preimport_symbolic_engine(sys.argv[1:])
 
 import torch  # noqa: E402
 
+from poraque import banner  # noqa: E402
 from poraque.fields import FIELD_DTYPES, set_default_dtype  # noqa: E402
 from poraque.ml import (  # noqa: E402
     resolve_bundle_path,
@@ -227,19 +228,31 @@ def report_filename(config, task_name, n_tasks=1, kind="report"):
 
 
 class Tee:
-    """Write to the terminal and a log file at once."""
+    """
+    Write to the terminal and, when there is one, a log file.
+
+    ``path=None`` means terminal only, which is what ``output.write_log:
+    false`` asks for. Without that case the toggle crashed the run before it
+    started, on ``os.path.dirname(None)``.
+    """
 
     def __init__(self, path):
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        self.handle = open(path, "w")
+        self.path = path
+        self.handle = None
+        if path:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            self.handle = open(path, "w")
 
     def __call__(self, message=""):
         print(message)
-        self.handle.write(str(message) + "\n")
-        self.handle.flush()
+        if self.handle is not None:
+            self.handle.write(str(message) + "\n")
+            self.handle.flush()
 
     def close(self):
-        self.handle.close()
+        if self.handle is not None:
+            self.handle.close()
+            self.handle = None
 
 
 # ===================================================================== #
@@ -524,15 +537,96 @@ def metrics_label_width(names):
     return max([MIN_LABEL_WIDTH] + [len(label) for label in labels])
 
 
-def format_metrics(name, values, unit, width=MIN_LABEL_WIDTH):
-    """One aligned line per metric set."""
-    line = (f"    {name:<{width}s} MSE {values['mse']:11.5g}  "
-            f"MAE {values['mae']:10.5g}  "
-            f"RMSE {values['rmse']:10.5g}  relL2 {values['relative_l2']:8.4f}  "
-            f"R2 {values['r2']:8.4f}   [{unit}]")
-    if values.get("jsd") is not None:
-        line += f"  JSD {values['jsd']:9.3e}"
-    return line
+#: Columns of the per-structure table, as ``(heading, key, format)``.
+#:
+#: One definition for the heading, the rule and the rows, so the three cannot
+#: drift apart -- the failure a hand-counted rule produces is a dashed line one
+#: character short of the words above it.
+METRIC_COLUMNS = (
+    ("split", "split", "<10s"),
+    ("MSE", "mse", "11.5g"),
+    ("MAE", "mae", "11.5g"),
+    ("RMSE", "rmse", "11.5g"),
+    ("rel L2", "relative_l2", "10.4f"),
+    ("R2", "r2", "9.4f"),
+    ("JSD", "jsd", "10.3e"),
+)
+
+
+def metric_columns(rows):
+    """
+    Columns to print, dropping any the data does not carry.
+
+    ``jsd`` is undefined for a signed field, so a run whose target is a
+    potential would otherwise print a column of blanks.
+    """
+    present = {key for row in rows for key, value in row.items()
+               if value is not None}
+    return [column for column in METRIC_COLUMNS
+            if column[1] in present or column[1] == "split"]
+
+
+def format_metrics_header(width, columns=METRIC_COLUMNS):
+    """
+    Heading and rule for the per-structure table.
+
+    Each title takes its own column's alignment, so a left-aligned value does
+    not sit under a right-aligned word; and the rule is measured from the
+    heading rather than counted, so it cannot end up short of it.
+
+    The unit belongs on the section title, not here: hung off the end of the
+    heading it fell outside the rule and read as a stray column.
+
+    Returns
+    -------
+    list of str
+        The heading and its rule.
+    """
+    heading = f"    {'structure':<{width}s}" + "".join(
+        f" {title:{'<' if spec.startswith('<') else '>'}{_column_width(spec)}s}"
+        for title, _, spec in columns)
+    return [heading, "    " + "-" * (len(heading) - 4)]
+
+
+def _column_width(spec):
+    """Field width declared by a format spec such as ``11.5g``."""
+    digits = spec.lstrip("<>^")
+    return int(digits.split(".")[0].rstrip("sgfe") or 0)
+
+
+def format_metrics_row(name, split, values, width=MIN_LABEL_WIDTH,
+                       columns=METRIC_COLUMNS):
+    """One aligned row of the per-structure table."""
+    cells = []
+    for _, key, spec in columns:
+        value = split if key == "split" else values.get(key)
+        if value is None:
+            cells.append(" " * _column_width(spec))
+        else:
+            cells.append(f"{value:{spec}}")
+    return f"    {name:<{width}s}" + "".join(f" {cell}" for cell in cells)
+
+
+def format_aggregate(label, rows, log):
+    """
+    Mean / min / max of every metric across a set of structures.
+
+    Printed for the training set and, when one exists, for the validation set
+    -- the two answer different questions, and quoting only the first invites
+    a training fit to be read as a generalisation estimate.
+    """
+    if not rows:
+        return
+    log(f"\n  --- {label} ({len(rows)} structures) ---")
+    heading = f"      {'metric':<12s} {'mean':>12s}   {'min':>11s}   {'max':>11s}"
+    log(heading)
+    log("      " + "-" * (len(heading) - 6))
+    for key in ("mse", "mae", "rmse", "relative_l2", "r2", "jsd"):
+        values = [m[key] for m in rows if m.get(key) is not None]
+        if not values:
+            continue
+        log(f"      {key:<12s} {np.mean(values):12.5g}   "
+            f"{np.min(values):11.5g}   {np.max(values):11.5g}")
 
 
 def build_loss(config, task_name):
@@ -831,8 +925,79 @@ def resolve_validation_split(dataset, config):
                       f"structures, seed={seed}")
 
 
+def format_names(names, indent="      ", per_line=None, width=78):
+    """
+    Structure identifiers as indented, wrapped lines.
+
+    A raw ``['struct_000', 'struct_001', ...]`` of seventeen entries is one
+    unreadable line that wraps wherever the terminal happens to end. Laid out
+    in columns it can be scanned, and a missing structure is visible.
+
+    Parameters
+    ----------
+    names : sequence of str
+    indent : str, optional
+    per_line : int, optional
+        Columns; derived from the longest name and ``width`` when omitted.
+    width : int, optional
+        Target line width, matching the section rules elsewhere.
+
+    Returns
+    -------
+    list of str
+    """
+    names = [str(name) for name in names]
+    if not names:
+        return []
+    column = max(len(name) for name in names) + 2
+    per_line = per_line or max(1, (width - len(indent)) // column)
+    return [indent + "".join(f"{name:<{column}s}" for name in chunk).rstrip()
+            for chunk in (names[i:i + per_line]
+                          for i in range(0, len(names), per_line))]
+
+
+def format_shapes(buckets, indent="                        "):
+    """
+    Grid shapes and how many structures carry each, one per line.
+
+    Replaces a raw list of every structure's shape *and* a separate bucket
+    line: the two said the same thing, and neither was readable past a handful
+    of structures.
+
+    Parameters
+    ----------
+    buckets : dict
+        ``{(nx, ny, nz): count}``.
+
+    Returns
+    -------
+    list of str
+        The first line carries no indent, so the caller can put it after a
+        label; the rest are aligned under it.
+    """
+    lines = []
+    for shape, count in sorted(buckets.items()):
+        text = "x".join(str(n) for n in shape)
+        lines.append(f"{text:<14s} {count:>3d} "
+                     f"structure{'s' if count != 1 else ''}")
+    return [lines[0]] + [indent + line for line in lines[1:]] if lines else []
+
+
+def dataset_metric_probe(operator, dataset, task):
+    """
+    Metrics for one material, to decide which columns the table needs.
+
+    Costs one extra prediction. The alternative is buffering every row until
+    the last is known, which would hold the whole section back from a terminal
+    that is otherwise reporting progress as it goes.
+    """
+    source, target = dataset.load_fields(0)
+    prediction = operator.predict(source)
+    return metrics(prediction.data, target.data, grid=target.grid)
+
+
 def evaluate_material(operator, dataset, index, task, log, label,
-                      width=MIN_LABEL_WIDTH):
+                      width=MIN_LABEL_WIDTH, split="", columns=None):
     """
     Predict one material and report metrics against its reference field.
 
@@ -842,13 +1007,19 @@ def evaluate_material(operator, dataset, index, task, log, label,
         Label-column width, from :func:`metrics_label_width`. Pass the width
         computed for the whole section, not per row, or the rows will not line
         up with one another.
+    split : str, optional
+        ``"train"`` or ``"validation"``, printed as its own column rather than
+        glued to the name -- so the structure column holds structures.
+    columns : sequence, optional
+        Subset of :data:`METRIC_COLUMNS`; defaults to all of them.
     """
     source, target = dataset.load_fields(index)
     prediction = operator.predict(source)
     # The grid enables the Jensen-Shannon divergence, which is an integral over
     # the cell; it is skipped for a signed target, which has no distribution.
     values = metrics(prediction.data, target.data, grid=target.grid)
-    log(format_metrics(label, values, task.target_unit, width))
+    log(format_metrics_row(label, split, values, width,
+                           columns or METRIC_COLUMNS))
     return prediction, target, values
 
 
@@ -1215,14 +1386,19 @@ def run_task(task_name, cache, config, log, n_tasks=1):
     for shape in shapes:
         buckets[tuple(shape)] = buckets.get(tuple(shape), 0) + 1
 
-    log(f"  training structures : {len(train_set)}  "
-        f"{[m.identifier for m in train_records]}")
-    log(f"  validation          : "
-        f"{sorted(validation_names) if validation_names else 'none'} "
-        f"({split_origin})")
-    log(f"  grid shapes         : {shapes}")
-    log("  shape buckets       : "
-        + ", ".join(f"{s}x{n}" for s, n in sorted(buckets.items())))
+    log(f"  training structures : {len(train_set)}")
+    for line in format_names([m.identifier for m in train_records]):
+        log(line)
+    if validation_names:
+        log(f"  validation          : {len(validation_names)}  ({split_origin})")
+        for line in format_names(sorted(validation_names)):
+            log(line)
+    else:
+        log(f"  validation          : none  ({split_origin})")
+    shape_lines = format_shapes(buckets)
+    log(f"  grid shapes         : {shape_lines[0]}")
+    for line in shape_lines[1:]:
+        log(line)
     log(f"  batch size          : {config.training.batch_size} "
         f"(capped per bucket; batches mix structures of equal shape)")
     log(f"  transforms          : in {source_transform}  out {target_transform}")
@@ -1286,16 +1462,26 @@ def run_task(task_name, cache, config, log, n_tasks=1):
         figures.append(report.loss_curves(
             history, title=f"{task.name} ({len(train_set)} training structures)"))
 
+    unit_note = f"  [{task.target_unit}]" if task.target_unit else ""
     log(f"\n  per-structure results "
-        f"({'TRAINING FIT' if not validation_names else 'train / validation'}):")
+        f"({'TRAINING FIT' if not validation_names else 'train / validation'})"
+        f"{unit_note}:")
     label_width = metrics_label_width(
         [record.identifier for record in train_records + test_records])
+
+    # The heading is printed once, and the columns are chosen from what the
+    # task actually produces -- a signed target has no JSD, and a column of
+    # blanks is worse than no column.
+    probe = dataset_metric_probe(operator, train_set, task)
+    columns = metric_columns([probe])
+    for line in format_metrics_header(label_width, columns):
+        log(line)
 
     for index in range(len(train_set)):
         name = train_records[index].identifier
         prediction, target, values = evaluate_material(
-            operator, train_set, index, task, log, f"{name} (train)",
-            width=label_width)
+            operator, train_set, index, task, log, name,
+            width=label_width, split="train", columns=columns)
         per_material[name] = {"split": "train", "metrics": values,
                               "predicted_integral": prediction.integrate(),
                               "reference_integral": target.integrate()}
@@ -1312,8 +1498,8 @@ def run_task(task_name, cache, config, log, n_tasks=1):
         for index in range(len(validation)):
             name = test_records[index].identifier
             prediction, target, values = evaluate_material(
-                operator, validation, index, task, log, f"{name} (VALIDATION)",
-                width=label_width)
+                operator, validation, index, task, log, name,
+                width=label_width, split="validation", columns=columns)
             per_material[name] = {"split": "validation", "metrics": values,
                                   "predicted_integral": prediction.integrate(),
                                   "reference_integral": target.integrate()}
@@ -1333,13 +1519,14 @@ def run_task(task_name, cache, config, log, n_tasks=1):
     # ---------------- aggregate ---------------- #
     train_metrics = [v["metrics"] for v in per_material.values()
                      if v["split"] == "train"]
-    log(f"\n  --- {task.name}: aggregate over {len(train_metrics)} training structures ---")
-    for key in ("mse", "mae", "rmse", "relative_l2", "r2", "jsd"):
-        values = [m[key] for m in train_metrics if m.get(key) is not None]
-        if not values:
-            continue
-        log(f"      {key:<12s} mean {np.mean(values):12.5g}   "
-            f"min {np.min(values):11.5g}   max {np.max(values):11.5g}")
+    validation_metrics = [v["metrics"] for v in per_material.values()
+                          if v["split"] == "validation"]
+    format_aggregate(f"{task.name}: aggregate over training", train_metrics, log)
+    # The held-out set gets the same treatment. Quoting only the training
+    # aggregate is how a training fit gets read as a generalisation estimate,
+    # and the two numbers are usually not close.
+    format_aggregate(f"{task.name}: aggregate over VALIDATION",
+                     validation_metrics, log)
 
     if not validation_names:
         log("\n      NOTE: valid_fraction is 0, so nothing was held out and these")
@@ -1545,11 +1732,18 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
         log(f"      trained {len(history['train_loss'])}/{config.training.epochs} epochs in {elapsed:.1f} s   "
             f"loss {history['train_loss'][0]:.4f} -> {history['train_loss'][-1]:.4f}")
 
+        # Same table as the single-fit path, headed once per fold: without a
+        # heading these rows are seven unlabelled numbers.
+        fold_columns = metric_columns(
+            [dataset_metric_probe(operator, val_set, task)])
+        for line in format_metrics_header(label_width, fold_columns):
+            log(line)
         for position in range(len(val_set)):
             name = val_records[position].identifier
             prediction, target, values = evaluate_material(
-                operator, val_set, position, task, log, f"{name} (VALIDATION)",
-                width=label_width)
+                operator, val_set, position, task, log, name,
+                width=label_width, split=f"fold {index}",
+                columns=fold_columns)
             records.append({"fold": index, "material": name,
                             "split": f"fold {index}", "metrics": values,
                             "predicted_integral": prediction.integrate(),
@@ -1572,6 +1766,10 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
     log(f"\n  --- {task.name}: {len(folds)}-fold summary "
         f"({len(records)} validation structures) ---")
     aggregate = {}
+    heading = (f"      {'metric':<12s} {'mean':>12s} {'+/- std':>13s} "
+               f"{'min':>11s}   {'max':>11s}")
+    log(heading)
+    log("      " + "-" * (len(heading) - 6))
     for key in ("mse", "mae", "rmse", "relative_l2", "r2", "jsd"):
         scored = [r["metrics"][key] for r in records
                   if r["metrics"].get(key) is not None]
@@ -1580,8 +1778,8 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
         values = np.array(scored, dtype=float)
         aggregate[key] = {"mean": float(values.mean()), "std": float(values.std()),
                           "min": float(values.min()), "max": float(values.max())}
-        log(f"      {key:<12s} {values.mean():12.5g} +/- {values.std():<11.4g}"
-            f"  [{values.min():.5g}, {values.max():.5g}]")
+        log(f"      {key:<12s} {values.mean():12.5g} {values.std():>13.4g} "
+            f"{values.min():11.5g}   {values.max():11.5g}")
 
     log("\n      These ARE generalisation numbers: every score above comes from")
     log("      a model that never saw that structure. The spread across folds")
@@ -1838,6 +2036,10 @@ def run(argv=None):
 
     log = Tee(config.log_path())
     try:
+        # Through the Tee, so the environment that produced a run is recorded
+        # in its log rather than only shown once on a terminal that is long
+        # gone by the time anyone reads the results.
+        banner(log)
         # Process-wide, and set before anything reads a field: this governs how
         # the volumetric data is held in memory, so it has to be in force
         # before the cache is built rather than applied to fields afterwards.
@@ -1846,18 +2048,35 @@ def run(argv=None):
         log("=" * 78)
         log("Poraque - Fourier Neural Operator training")
         log("=" * 78)
-        log(f"  torch {torch.__version__}")
-        log(f"  device: {describe_device(device)}  (requested "
+        # The versions, the platform and the interpreter are already on screen:
+        # `poraque.banner()` prints them at import. Repeating torch's version
+        # here said the same thing twice and pushed what is specific to *this
+        # run* -- the device it resolved to, the config it read, where the
+        # results will land -- further down the page.
+        log(f"  run    : {model_name(config)}")
+        log(f"  device : {describe_device(device)}  (requested "
             f"{config.training.device!r})")
-        log(f"  config: {args.config or '<built-in defaults>'}")
-        log("")
-        # Where everything this run produces will land, named once and up
-        # front: if the name is wrong -- or is the previous run's -- that is
-        # worth knowing before the hours rather than after them.
-        log(f"  name   : {model_name(config)}")
-        log(f"  weights: {bundle_path(config) or 'not saved'}")
-        log(f"  reports: {config.report_dir() or 'not written'}")
-        log(f"  figures: {plot_directory(config) or 'not written'}")
+        log(f"  config : {args.config or '<built-in defaults>'}")
+        # Every artefact now lives under one directory, so the four separate
+        # path lines this replaces were four repetitions of the same prefix.
+        run_dir = config.run_dir()
+        if run_dir:
+            log(f"  output : {run_dir}{os.sep}")
+            entries = [
+                (os.path.basename(bundle_path(config))
+                 if bundle_path(config) else None, "weights"),
+                ("log/" if config.log_dir() else None, "log, metrics, config"),
+                ("plots/" if plot_directory(config) else None, "figures"),
+                ("report/" if config.report_dir() else None, "PDF report"),
+            ]
+            for index, (name, what) in enumerate(entries):
+                glyph = "\u2514\u2500\u2500" if index == len(entries) - 1 else "\u251c\u2500\u2500"
+                if name:
+                    log(f"           {glyph} {name:<22s} {what}")
+                else:
+                    log(f"           {glyph} ({what}: not written)")
+        else:
+            log("  output : nothing written (output.root is null)")
         log("")
         log("  configuration")
         for line in config.describe().splitlines():

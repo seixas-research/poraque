@@ -1051,3 +1051,73 @@ class TestParetoKnee:
                                    engine=lambda *a: front).fit(table)
         assert result.knee.get("complexity") == 5
         assert result.knee_expression() == "exp(-p)"
+
+
+class TestResultIsSerialisable:
+    """
+    The summary is written *after* training, the report and the figures.
+
+    A field that ``json.dump`` cannot encode therefore destroys the record of a
+    run that already succeeded — which is what happened when the knee sections
+    were added carrying the same voxel arrays as ``fitted`` and ``validation``
+    while the stripper kept a hand-written list of two key names.
+    """
+
+    @staticmethod
+    def _result():
+        import numpy as np
+
+        from poraque.ml.symbolic import SymbolicResult
+
+        result = SymbolicResult(expression="1-p", latex="1-p", complexity=3,
+                                loss=0.1, r2=0.9, relative_l2=0.1)
+        scored = {"n_points": 10, "relative_l2": 0.1, "r2": 0.9,
+                  "predicted": np.arange(5.0), "reference": np.arange(5.0)}
+        result.fitted = dict(scored)
+        result.validation = dict(scored)
+        result.knee_fitted = dict(scored)
+        result.knee_validation = dict(scored)
+        result.knee = {"complexity": 2, "loss": 0.2, "expression": "1"}
+        result.pareto = [{"complexity": 2, "loss": 0.2, "expression": "1",
+                          "distance": 0.3}]
+        return result
+
+    def test_it_encodes_as_json(self):
+        import json
+
+        from poraque.ml.symbolic import result_to_dict
+
+        json.dumps(result_to_dict(self._result()), default=float)
+
+    def test_no_array_survives_anywhere(self):
+        """
+        Checked over *every* section rather than a named few, because the
+        named-few version is the bug.
+        """
+        import numpy as np
+
+        from poraque.ml.symbolic import result_to_dict
+
+        payload = result_to_dict(self._result())
+
+        def arrays(node, path=""):
+            if isinstance(node, np.ndarray):
+                return [path]
+            if isinstance(node, dict):
+                return [p for key, value in node.items()
+                        for p in arrays(value, f"{path}.{key}")]
+            if isinstance(node, (list, tuple)):
+                return [p for i, value in enumerate(node)
+                        for p in arrays(value, f"{path}[{i}]")]
+            return []
+
+        assert arrays(payload) == []
+
+    def test_the_scores_themselves_survive(self):
+        """Stripping the arrays must not take the metrics with them."""
+        from poraque.ml.symbolic import result_to_dict
+
+        payload = result_to_dict(self._result())
+        for key in ("fitted", "validation", "knee_fitted", "knee_validation"):
+            assert payload[key]["relative_l2"] == pytest.approx(0.1)
+            assert "predicted" not in payload[key]

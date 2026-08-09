@@ -1634,18 +1634,24 @@ def result_to_dict(result):
     """
     Serialisable form of a :class:`SymbolicResult`.
 
-    The validation and fitted entries carry the two voxel arrays a parity plot
-    is drawn from. They belong in a figure, not in a JSON summary -- thousands
-    of floats that no reader consults, and which ``json.dump`` cannot encode
-    anyway.
+    The scored sections -- ``fitted``, ``validation`` and their knee
+    counterparts -- carry the two voxel arrays a parity plot is drawn from.
+    They belong in a figure, not in a JSON summary: thousands of floats no
+    reader consults, and which ``json.dump`` cannot encode anyway.
+
+    Every dict-valued field is stripped, not a named list of them. A hand-kept
+    list is exactly what broke when the knee sections were added: they carried
+    the same arrays, were not on the list, and the run died at the very end
+    with ``TypeError: only 0-dimensional arrays can be converted to Python
+    scalars`` -- after the training, the report and the figures were done.
     """
     from dataclasses import asdict
 
     payload = asdict(result)
-    for key in ("validation", "fitted"):
-        section = payload.get(key) or {}
-        payload[key] = {name: value for name, value in section.items()
-                        if not isinstance(value, np.ndarray)}
+    for key, section in payload.items():
+        if isinstance(section, dict):
+            payload[key] = {name: value for name, value in section.items()
+                            if not isinstance(value, np.ndarray)}
     return payload
 
 

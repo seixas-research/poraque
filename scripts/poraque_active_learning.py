@@ -109,6 +109,7 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 if os.path.isdir(_SRC):
     sys.path.insert(0, _SRC)
 
+from poraque import banner  # noqa: E402
 from poraque.ml import Committee  # noqa: E402
 from poraque.ml.active_learning import (  # noqa: E402
     TRANSFERS,
@@ -276,6 +277,7 @@ def main(argv=None):
     calls ``sys.exit(main())`` and would treat any other object as an error
     message. :func:`select` returns the round itself.
     """
+    banner()
     select(argv)
     return 0
 

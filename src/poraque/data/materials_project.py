@@ -76,6 +76,8 @@ import os
 import shutil
 import sys
 import time
+
+from .. import banner
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from itertools import combinations
@@ -1028,6 +1030,7 @@ def build_parser():
 
 def main(argv=None):
     """Console entry point for ``poraque-mp``."""
+    banner()
     args = build_parser().parse_args(argv)
 
     try:
