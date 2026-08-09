@@ -12,10 +12,10 @@ with `--fine-tune` on the command line.
 
 ```bash
 # 1. the base model, trained across everything you have
-poraque-train --config configs/train_config.yaml
+poraque-train --config configs/train.yaml
 
 # 2. specialise it on one family
-poraque-train --config configs/train_config.yaml \
+poraque-train --config configs/train.yaml \
     --fine-tune --pretrained models/poraque_models.pfno \
     --root data/oxides --checkpoint-dir models/oxides
 ```

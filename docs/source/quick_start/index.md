@@ -42,8 +42,8 @@ The result is written in `CHGCAR` format.
 ## 3. Train
 
 ```bash
-poraque-train --write-config configs/train_config.yaml
-poraque-train --config configs/train_config.yaml
+poraque-train --write-config configs/my_run.yaml
+poraque-train --config configs/train.yaml
 ```
 
 This trains **one** `ext2chg` model and **one** `chg2tau` model on the combined
@@ -198,7 +198,7 @@ held out. For a tighter estimate — every structure scored by a model that neve
 saw it — run the cross-validation protocol instead:
 
 ```bash
-poraque-train --config configs/train_config.yaml --kfold
+poraque-train --config configs/train.yaml --kfold
 ```
 
 That is the only variation on the training protocol. It fits *K* models and

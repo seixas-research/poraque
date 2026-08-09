@@ -1,9 +1,9 @@
 # =====================================================================
 # Poraque - Fourier Neural Operator training configuration
 #
-#   poraque-train --config configs/train_config.yaml
-#   poraque-train --config configs/train_config.yaml --epochs 800
-#   python scripts/poraque_train.py --config configs/train_config.yaml
+#   poraque-train --config configs/train_complete_and_commented.yaml
+#   poraque-train --config configs/train_complete_and_commented.yaml --epochs 800
+#   python scripts/poraque_train.py --config configs/train_complete_and_commented.yaml
 #
 # EVERY KEY IS OPTIONAL. Anything omitted takes its default, so this file
 # lists only what this run does *differently* -- which is what makes it
@@ -119,7 +119,7 @@ model:
   #   physical  keep floor(g_max * L_i / 2*pi) modes on axis i, so every
   #             material contributes the same band of physics. Needs `g_max`
   #             in 1/Ang. This is the right choice for a dataset spanning a
-  #             range of cell sizes -- see configs/train_mp_config.yaml.
+  #             range of cell sizes -- see configs/train_materialsproject.yaml.
   #
   # `fixed` here because this dataset was built with similar cells to exercise
   # the training pipeline, not to span chemistry. Switch to `physical` when

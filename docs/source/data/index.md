@@ -102,7 +102,7 @@ So the recipe for a broad `ext2chg` model is:
 ```bash
 poraque-mp --elements Ag Au Pt --estimate                    # size it first
 poraque-mp --elements Ag Au Pt --output data/MP --max-size-mb 20
-poraque-train --config configs/train_mp_config.yaml
+poraque-train --config configs/train_materialsproject.yaml
 ```
 
 and to specialise it on your own chemistry afterwards, point `train_paths` at

@@ -4,26 +4,36 @@
 \section{The short version}
 
 \begin{lstlisting}
-poraque-train --write-config configs/train_config.yaml
-poraque-train --config configs/train_config.yaml
+poraque-train --write-config configs/my_run.yaml
+poraque-train --config configs/train.yaml
 \end{lstlisting}
 
 This trains \textbf{one} \opt{ext2chg} model and \textbf{one} \opt{chg2tau}
 model on the combined data of every structure, and writes:
+
+Everything it writes lands in \emph{one directory named after the run}, so a
+trained model and the evidence for it stay together:
 
 \begin{center}
 \begin{tabular}{@{}ll@{}}
 \toprule
 Path & Contents \\
 \midrule
-\file{models/poraque\_models.pfno} & both trained operators, in one file \\
-\file{logs/*.log}, \file{logs/*.json} & metrics and full history \\
-\file{logs/*\_config.yaml} & the resolved configuration \\
-\file{results/plots/} & loss curves, cross-sections, parity plots \\
-\file{reports/*.pdf} & a typeset report per model \\
+\file{models/<name>/<name>.pfno} & both trained operators, in one file \\
+\file{models/<name>/log/} & training log, metrics, resolved configuration \\
+\file{models/<name>/plots/} & loss curves, cross-sections, parity plots \\
+\file{models/<name>/report/} & the typeset PDF report \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\noindent
+\opt{<name>} is \opt{task.name} from the configuration, and it is the only
+thing you set: two runs with different names cannot overwrite each other, and
+there are no output paths to keep in step by hand. A trained model is not one
+file --- it is weights, the numbers that say how good they are, the figures
+behind those numbers, and the configuration that produced them --- so they
+arrive and leave together.
 
 \section{One model, all structures}
 
@@ -55,7 +65,7 @@ Splitting is always at the \emph{structure} level.
 \subsection{The default split}
 
 \begin{lstlisting}
-poraque-train --config configs/train_config.yaml \
+poraque-train --config configs/train.yaml \
        --valid-fraction 0.2
 \end{lstlisting}
 
@@ -68,7 +78,7 @@ This is the only variation on the protocol; \opt{valid\_fraction} is ignored,
 since the folds define the splits.
 
 \begin{lstlisting}
-poraque-train --config configs/train_config.yaml \
+poraque-train --config configs/train.yaml \
        --kfold --k-folds 5
 \end{lstlisting}
 

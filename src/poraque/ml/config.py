@@ -55,12 +55,15 @@ class TaskConfig:
     type : str
         ``"ext2chg"``, ``"chg2tau"`` or ``"all"``.
     name : str
-        Identifier for **this run's outputs**, and the stem of every file it
-        writes::
+        Identifier for **this run**, and the only thing that separates it from
+        another. Everything the run writes goes in one directory named after
+        it::
 
-            models/<name>.pfno              the weights
-            reports/<name>_report.pdf       the PDF report
-            results/plots/<name>/           the figures
+            models/<name>/
+                <name>.pfno         the weights
+                log/                training log, metrics JSON, resolved config
+                plots/              loss curves, parity, field slices
+                report/             the generated PDF
 
         Two runs that differ in anything worth keeping — a chemical space, a
         resolution, a set of physics weights — should differ in ``name``, or
@@ -1092,7 +1095,7 @@ class TrainingConfig:
 
     Examples
     --------
-    >>> config = TrainingConfig.from_yaml("configs/train_config.yaml")  # doctest: +SKIP
+    >>> config = TrainingConfig.from_yaml("configs/train.yaml")  # doctest: +SKIP
     >>> config.model.width                                              # doctest: +SKIP
     16
     """
@@ -1510,15 +1513,15 @@ SAMPLE_CONFIG_HEADER = """\
 # =====================================================================
 # Poraque - Fourier Neural Operator training configuration
 #
-#   poraque-train --config configs/train_config.yaml
+#   poraque-train --config configs/train.yaml
 #
 # Command-line flags override these values, so one committed config can
 # be swept from the shell without editing it:
 #
-#   poraque-train --config configs/train_config.yaml --epochs 500
+#   poraque-train --config configs/train.yaml --epochs 500
 #
 # Equivalent, from a checkout with nothing installed:
 #
-#   python scripts/poraque_train.py --config configs/train_config.yaml
+#   python scripts/poraque_train.py --config configs/train.yaml
 # =====================================================================
 """

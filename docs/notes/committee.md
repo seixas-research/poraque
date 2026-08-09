@@ -16,7 +16,7 @@ did not pin it down.
 
 ```bash
 for s in 0 1 2 3 4; do
-  poraque-train --config configs/train_config.yaml \
+  poraque-train --config configs/train.yaml \
       --init-seed $s --json logs/committee_$s.json \
       --checkpoint-dir models/committee_$s
 done

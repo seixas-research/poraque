@@ -64,7 +64,7 @@ material. Batches are drawn across materials, so a gradient step generally
 mixes several.
 
 ```bash
-poraque-train --config configs/train_config.yaml
+poraque-train --config configs/train.yaml
 ```
 
 A fifth of the structures is held back for validation (`valid_fraction`), so
@@ -77,7 +77,7 @@ written beside it as `poraque_finetuned.pfno`, never over the top of it.
 K-fold cross-validation is the only variation on this:
 
 ```bash
-poraque-train --config configs/train_config.yaml --kfold
+poraque-train --config configs/train.yaml --kfold
 ```
 
 ```{warning}

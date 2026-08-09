@@ -89,7 +89,7 @@ command and runs from any directory::
     #    member is all it takes: everything each run writes lands in
     #    models/committee_<s>/, weights and log together.
     for s in 0 1 2 3; do
-      poraque-train --config configs/train_config.yaml \
+      poraque-train --config configs/train.yaml \
           --init-seed $s --name committee_$s \
           --valid-fraction 0 --no-plots --no-report
     done

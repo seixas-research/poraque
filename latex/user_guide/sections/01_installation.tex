@@ -19,21 +19,44 @@ pip install poraque
 \section{Console commands}
 \label{sec:console-scripts}
 
-Installing also registers three commands, which run from \emph{any} directory
+Installing also registers five commands, which run from \emph{any} directory
 once the environment is active --- no path to a script, no \opt{cd} into the
 repository:
 
 \begin{center}
-\begin{tabular}{@{}ll@{}}
+\begin{tabular}{@{}lp{9.2cm}@{}}
 \toprule
 Command & Does \\
 \midrule
 \opt{poraque-train} & trains the operators \\
 \opt{poraque-inference} & predicts a new structure \\
-\opt{poraque-committee} & ranks structures by ensemble disagreement \\
+\opt{poraque-mp} & downloads densities from the Materials Project \\
+\opt{poraque-committee} & \textbf{calibration}: does ensemble disagreement
+predict error? \\
+\opt{poraque-active-learning} & \textbf{selection}: which structures should
+the next DFT runs be spent on? \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\begin{pnote}[title={The last two are not the same command twice}]
+They are the two halves of one loop, and they differ in the data they run on
+--- which decides everything else.
+
+\opt{poraque-committee} runs on a \textbf{labelled} dataset (inputs
+\emph{and} targets), so the true error is available to correlate the
+disagreement against. It answers \emph{is this measure worth trusting?} and
+produces a Spearman coefficient. It costs nothing: the DFT is already done.
+
+\opt{poraque-active-learning} runs on an \textbf{unlabelled} pool (inputs
+only, targets not yet computed). It answers \emph{which structures do I
+compute next?} and produces a ranking and a transfer into the training set.
+It costs the DFT runs it selects.
+
+Run the first one first. Both share the same committee, the same divergence
+and the same ranking table, which is why their output looks alike --- what
+differs is what the number is \emph{for}.
+\end{pnote}
 
 Each is the \opt{main()} of the script of the same name, with the hyphen
 written as an underscore: \opt{python scripts/poraque\_train.py} is equivalent
@@ -67,6 +90,53 @@ python -c "from poraque.ml.device import available_devices; print(available_devi
 
 The device list is ordered by preference, so the first entry is what
 \opt{device: auto} will select --- \opt{cuda}, then \opt{mps}, then \opt{cpu}.
+
+\section{Faster CPU inference}
+\label{sec:cbackend}
+
+Poraqu\^e ships a small C kernel for the spectral contraction --- the one part
+of a Fourier layer that PyTorch runs poorly at batch~1, which is the shape
+every prediction has. It is \textbf{optional}: without it everything works and
+falls back to \opt{torch.einsum}.
+
+There is nothing to configure. The kernel is compiled on first use --- about
+half a second, once --- and cached in \file{\textasciitilde/.cache/poraque}.
+To do that compile now, and check it:
+
+\begin{lstlisting}
+python -m poraque.ml.backend --benchmark
+\end{lstlisting}
+
+\begin{lstlisting}
+  C spectral backend: loaded from ...poraque_spectral_89feecc6.dylib (pthreads)
+  agreement with torch.einsum: 2.76e-07 relative (float32 rounding is ~1e-7)
+
+  one contraction (batch 1, width 32, modes 12^3):
+    torch.einsum (4 threads)     4.528 ms
+    C, serial                    0.606 ms     7.5x
+    C, 4 pthreads                0.200 ms    22.6x
+\end{lstlisting}
+
+All it needs is a C compiler: \opt{xcode-select --install} on macOS, or
+\opt{build-essential} on Debian/Ubuntu. Add \opt{--rebuild} after editing the
+kernel.
+
+\begin{center}
+\begin{tabular}{@{}lp{9.4cm}@{}}
+\toprule
+Whole-model inference & 2--3.4$\times$ faster at $24^3$--$32^3$, tapering to
+$\sim$1$\times$ at $96^3$ where the FFTs dominate \\
+Training & unaffected: the kernel records nothing on the autograd tape, so it
+is used only under \opt{torch.no\_grad()} \\
+Accuracy & identical to float32 rounding ($\sim10^{-7}$ relative), checked on
+every call path by the test-suite \\
+To disable & \opt{PORAQUE\_C\_BACKEND=0} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\opt{poraque-inference} prints which path it used, so a run that silently fell
+back is visible rather than merely slow.
 
 \section{Optional components}
 

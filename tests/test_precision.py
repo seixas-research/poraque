@@ -444,6 +444,21 @@ class TestMinimalConfig:
             "the archived copy beside a run must record every value in force")
 
 
+def _shipped_configs():
+    """
+    Every config in ``configs/``, discovered rather than listed.
+
+    A hard-coded list silently stops covering a file the moment one is renamed
+    or added, which is exactly when the coverage is wanted.
+    """
+    import glob
+    import os
+
+    root = os.path.join(os.path.dirname(__file__), "..", "configs")
+    return sorted(os.path.basename(p)[:-5]
+                  for p in glob.glob(os.path.join(root, "*.yaml")))
+
+
 class TestShippedConfigs:
     """The committed examples must load, and must stay short."""
 
@@ -451,8 +466,7 @@ class TestShippedConfigs:
 
     ROOT = _os.path.join(_os.path.dirname(__file__), "..", "configs")
 
-    @pytest.mark.parametrize("name", ["train_config", "train_mixed_config",
-                                      "train_mp_config"])
+    @pytest.mark.parametrize("name", _shipped_configs())
     def test_it_loads(self, name):
         import os
 
@@ -483,8 +497,7 @@ class TestShippedConfigs:
                   "model.projection_channels", "model.mode_selection",
                   "symbolic.physics"}
 
-    @pytest.mark.parametrize("name", ["train_config", "train_mixed_config",
-                                      "train_mp_config"])
+    @pytest.mark.parametrize("name", _shipped_configs())
     def test_it_states_only_what_it_changes(self, name):
         """
         A shipped config that restated defaults taught readers to restate
@@ -508,8 +521,7 @@ class TestShippedConfigs:
                      and f"{section}.{key}" not in self.DELIBERATE]
         assert not redundant, f"these keys restate the default: {redundant}"
 
-    @pytest.mark.parametrize("name", ["train_config", "train_mixed_config",
-                                      "train_mp_config"])
+    @pytest.mark.parametrize("name", _shipped_configs())
     def test_the_task_type_is_always_spelled_out(self, name):
         """The first decision a reader makes should not be implicit."""
         import os

@@ -1,13 +1,13 @@
 # =====================================================================
 # Poraque - training on a Materials Project charge-density download
 #
-#   poraque-train --config configs/train_mp_config.yaml
+#   poraque-train --config configs/train_materialsproject.yaml
 #
 # Every key is optional; only the differences from the defaults are listed.
-# See configs/train_config.yaml for the model settings explained in full, and
+# See configs/train_complete_and_commented.yaml for the model settings explained in full, and
 # `poraque-train --write-config /tmp/all.yaml` for every setting there is.
 #
-# This file differs from train_config.yaml only where the *data* forces it:
+# This file differs from train_complete_and_commented.yaml only where the *data* forces it:
 # the task, the mode selection and the resolution. Everything the two runs
 # agree on -- width, layers, read-out width, epochs, seed, the physics
 # weights -- is the shared default and is not restated here.
@@ -37,7 +37,7 @@ data:
 
 model:
   # Truncate at a fixed physical wavevector rather than a fixed mode index.
-  # This is the one architectural difference from train_config.yaml, and the
+  # This is the one architectural difference from train_complete_and_commented.yaml, and the
   # dataset is the reason: it spans a wide range of cell sizes, and a fixed
   # index keeps a different physical band for every one of them. A fixed
   # G_max makes the operator act on the same physics in every material.
@@ -47,7 +47,7 @@ model:
   g_max: 6
 
 training:
-  # See train_config.yaml: these constrain the NEURAL OPERATOR, not the
+  # See train_complete_and_commented.yaml: these constrain the NEURAL OPERATOR, not the
   # symbolic search.
   physics:
     electron_count_weight: 0.1

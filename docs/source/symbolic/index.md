@@ -13,7 +13,7 @@ with `--symbolic` on the command line.
 
 ```bash
 pip install -e ".[symbolic]"     # PySR + sympy; not installed by default
-poraque-train --config configs/train_config.yaml --task chg2tau --symbolic
+poraque-train --config configs/train.yaml --task chg2tau --symbolic
 ```
 
 The extra is separate because PySR carries a **Julia toolchain**, which it

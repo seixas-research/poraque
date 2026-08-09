@@ -72,7 +72,7 @@ step between two rounds is a training run:
 
     # ... run DFT on the five new structures, then retrain the members ...
     for s in 0 1 2 3; do
-      poraque-train --config configs/train_config.yaml \
+      poraque-train --config configs/train.yaml \
           --init-seed $s --name committee_$s
     done
 

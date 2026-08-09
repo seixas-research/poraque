@@ -47,53 +47,29 @@ to `poraque-train` and needs nothing installed.
 
 ### Faster CPU inference (optional)
 
-Poraquê ships a small C kernel for the spectral contraction, the one part of a
-Fourier layer that PyTorch runs poorly at batch 1. It is **optional**: without
-it everything works and simply falls back to `torch.einsum`.
-
-There is nothing to configure. The kernel is compiled on first use — about half
-a second, once — and cached in `~/.cache/poraque`. To do that compile now, and
-check it:
+Poraquê ships a small C kernel for the spectral contraction — the one part of a
+Fourier layer PyTorch runs poorly at batch 1, which is the shape every
+prediction has. It compiles itself on first use and needs no configuration.
 
 ```bash
-python -m poraque.ml.backend --benchmark
+python -m poraque.ml.backend --benchmark    # compile now and check it
 ```
 
-```text
-  compiler  : /usr/bin/cc
-  cache dir : /home/you/.cache/poraque
-  C spectral backend: loaded from ...poraque_spectral_89feecc6.dylib (pthreads)
-  agreement with torch.einsum: 2.76e-07 relative (float32 rounding is ~1e-7)
-
-  one contraction (batch 1, width 32, modes 12^3):
-    torch.einsum (4 threads)     4.528 ms
-    C, serial                    0.606 ms     7.5x
-    C, 4 pthreads                0.200 ms    22.6x
-```
-
-All it needs is a C compiler: `xcode-select --install` on macOS, or
-`build-essential` on Debian/Ubuntu. Add `--rebuild` after editing the kernel.
-
-| | |
-| --- | --- |
-| Whole-model inference | 2–3.4× faster at 24–32³, tapering to ~1× at 96³ where the FFTs dominate |
-| Threading | pthreads, not OpenMP — a second OpenMP runtime beside PyTorch's raises `OMP: Error #15`. Saturates memory bandwidth at ~4 threads |
-| Training | unaffected — the kernel records nothing on the autograd tape, so it is used only under `torch.no_grad()` |
-| Accuracy | identical to float32 rounding (~1e-7 relative), checked on every call path by `tests/test_backend.py` |
-| To disable | `PORAQUE_C_BACKEND=0` |
-
-`poraque-inference` prints which path it used, so a run that silently fell back
-is visible rather than merely slow.
+**2–3.4× on whole-model CPU inference** at 24–32³ (less at 96³, where the FFTs
+dominate). Optional in every sense: without a C compiler everything works and
+falls back to `torch.einsum`. Training is unaffected, accuracy is identical to
+float32 rounding, and `PORAQUE_C_BACKEND=0` turns it off. See the User Guide
+§1.5 for the details.
 
 ## Use
 
 ```bash
 # 1. train one ext2chg and one chg2tau model on all structures
-poraque-train --write-config configs/train_config.yaml
-poraque-train --config configs/train_config.yaml
+poraque-train --write-config configs/my_run.yaml
+poraque-train --config configs/train.yaml
 
 # 2. measure generalisation
-poraque-train --config configs/train_config.yaml --kfold --k-folds 5
+poraque-train --config configs/train.yaml --kfold --k-folds 5
 
 # 3. predict a structure that has never been computed
 poraque-inference new_structure/ --output predictions/new_structure
@@ -102,7 +78,7 @@ poraque-inference new_structure/ --output predictions/new_structure
 #    LABELLED data first -- it costs nothing and says whether step 5 means
 #    anything. Read the Spearman coefficient.
 poraque-committee --models "models/committee_*" --task ext2chg \
-    --cache data/cache --against logs/kfold.json
+    --cache data/cache --against models/<name>/log/<name>.json
 
 # 5. select: which UNLABELLED structures to compute next. This one spends
 #    the DFT budget, so it is the one that needs step 4 to have passed.
@@ -110,41 +86,38 @@ poraque-active-learning --models "models/committee_*" --task ext2chg \
     --pool data/pool --select 5
 ```
 
-`poraque-committee` and `poraque-active-learning` are two halves of one loop,
-not two ways of doing the same thing. They differ in the data they run on, and
-that decides everything else:
-
-| | `poraque-committee` | `poraque-active-learning` |
-| --- | --- | --- |
-| runs on | a **labelled** dataset — inputs *and* targets | an **unlabelled** pool — inputs only |
-| answers | is this measure worth trusting? | which structures do I compute next? |
-| produces | a Spearman correlation against the *known* error | a ranking, and a transfer into the training set |
-| costs | nothing, the DFT is already done | the DFT runs it selects |
-
-Both share the same committee, the same divergence and the same ranking table,
-which is why their output looks alike — they differ in what the number is *for*.
+Steps 4 and 5 are two halves of one loop, not two ways of doing the same
+thing. **`poraque-committee` runs on labelled data** and asks whether the
+disagreement measure predicts error at all — it costs nothing and produces a
+Spearman coefficient. **`poraque-active-learning` runs on an unlabelled pool**
+and turns that measure into a spending decision. Run the first one first.
 
 Every predicted field is written in `CHGCAR` format.
 
 ### Configuration
 
-**Every key in a config is optional.** A file needs to state only what the run
-does differently; everything omitted takes its default. That is why the shipped
-examples are short — of the 80 settings a full config carries,
-`configs/train_config.yaml` differs in 15.
+**Every key is optional** — a file states only what the run does differently.
+That is why `configs/train.yaml` is 19 lines: of the 78 settings a full config
+carries, it changes 3.
 
 ```bash
-poraque-train --write-config /tmp/all.yaml              # every key, with defaults
+poraque-train --write-config /tmp/all.yaml               # every key, with defaults
 poraque-train --config mine.yaml --write-config mine.yaml --minimal
 ```
 
-The second compresses a config you already have down to its differences, and
-`--minimal` also works after command-line overrides, so a swept run can be
-frozen back into a file:
+The second rewrites a config as only its differences. It applies command-line
+overrides first, so a swept run can be frozen back into a file:
 
 ```bash
-poraque-train --config base.yaml --epochs 500 --write-config sweep.yaml --minimal
+poraque-train --config base.yaml --epochs 800 --write-config sweep.yaml --minimal
 ```
+
+| File | Purpose |
+| --- | --- |
+| `configs/train.yaml` | the clean starting point — copy this one |
+| `configs/train_complete_and_commented.yaml` | the same run with every choice explained; a reference to read, not to copy |
+| `configs/train_materialsproject.yaml` | training on a Materials Project download |
+| `configs/train_mixed.yaml` | one operator from several datasets at once |
 
 ### One directory per model
 
@@ -238,7 +211,7 @@ data:
 ```
 
 ```bash
-poraque-train --config configs/train_mp_config.yaml
+poraque-train --config configs/train_materialsproject.yaml
 ```
 
 **Set `potcar_dir`.** An MP download has a structure and a density and no

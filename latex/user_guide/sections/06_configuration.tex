@@ -5,7 +5,7 @@ A run is defined by \file{configs/train\_config.yaml}: one top-level key and
 four sections. Generate a copy with every default written out explicitly with
 
 \begin{lstlisting}
-poraque-train --write-config configs/train_config.yaml
+poraque-train --write-config configs/my_run.yaml
 \end{lstlisting}
 
 This chapter documents every key that file can contain.
@@ -24,7 +24,7 @@ That ordering is what lets a single committed configuration be swept from the
 shell without being edited or copied:
 
 \begin{lstlisting}
-poraque-train --config configs/train_config.yaml --epochs 500
+poraque-train --config configs/train.yaml --epochs 500
 \end{lstlisting}
 
 \begin{pnote}
@@ -36,8 +36,48 @@ to describe them. The error message names the valid keys for that section.
 
 The \emph{resolved} configuration --- defaults, file and command-line overrides
 merged --- is written beside the results as \file{<json-stem>\_config.yaml}
-(by default \file{logs/fno\_training\_config.yaml}). That is the file worth
+(by default \file{models/<name>/log/<name>\_config.yaml}). That is the file worth
 keeping: it records what actually ran, overrides included.
+
+\section{Every key is optional}
+\label{sec:minimal}
+
+Anything omitted takes its default, so a configuration needs to state only
+what the run does \emph{differently}. That is what makes a committed file
+readable as the description of one experiment rather than a dump of every
+knob: of the eighty settings a full configuration carries,
+\file{configs/train.yaml} differs in a handful.
+
+\begin{lstlisting}
+poraque-train --write-config /tmp/all.yaml           # every key, with defaults
+poraque-train --config mine.yaml --write-config mine.yaml --minimal
+\end{lstlisting}
+
+The second rewrites a configuration you already have as only its differences.
+It also applies command-line overrides first, so a swept run can be frozen
+back into a file:
+
+\begin{lstlisting}
+poraque-train --config base.yaml --epochs 800 --write-config sweep.yaml --minimal
+\end{lstlisting}
+
+Four configurations ship with the source:
+
+\begin{center}
+\begin{tabular}{@{}lp{8.4cm}@{}}
+\toprule
+File & Purpose \\
+\midrule
+\file{configs/train.yaml} & The clean starting point. Copy this one. \\
+\file{configs/train\_complete\_and\_commented.yaml} & The same run, with every
+choice explained at length --- the reference to read, not to copy. \\
+\file{configs/train\_materialsproject.yaml} & Training on a Materials Project
+density download. \\
+\file{configs/train\_mixed.yaml} & One operator from several datasets
+at once. \\
+\bottomrule
+\end{tabular}
+\end{center}
 
 \section{Top level}
 
@@ -226,6 +266,40 @@ The bound is a theorem for all-electron densities, whereas \file{CHGCAR} and
 head --- the training log reports any reference points that violate it.
 \end{pwarn}
 
+\section{Numerical precision}
+
+Two independent settings, because they control different costs:
+
+\begin{center}
+\begin{tabular}{@{}llp{7.4cm}@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\opt{data.precision} & \opt{float64} & How the volumetric fields are
+\emph{stored}: \opt{float16}, \opt{float32} or \opt{float64}. A memory
+setting --- a $160^3$ field is 16\,MB in double and 8\,MB in single. \\
+\opt{model.precision} & \opt{float32} & What the operator \emph{computes} in:
+\opt{float32} or \opt{float64}. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Keep \opt{data.precision} at \opt{float64} wherever an integral over the cell
+is the result --- the electron count, the energy terms are sums of $N^3$
+values. Drop to \opt{float32} when the field is on its way into a network that
+computes in single precision anyway.
+
+\opt{model.precision: float64} roughly doubles time and memory and exists to
+check that a physical result is not a single-precision artefact: an energy
+difference of a few meV assembled from $N^3$ voxel sums has no obvious margin
+in float32.
+
+\begin{pwarn}
+\opt{model.precision: float64} requires \opt{training.device: cpu}. Apple's
+Metal backend does not implement double precision at all --- not slowly,
+absent --- and the run refuses at startup rather than failing an hour in.
+\end{pwarn}
+
 \section{\opt{training} --- how it is fitted}
 
 \begin{center}
@@ -403,15 +477,18 @@ Where a constraint can be imposed structurally, prefer that:
 \toprule
 Key & Default & Meaning \\
 \midrule
-\opt{log} & \file{logs/fno\_training.log} & Human-readable training log. \\
-\opt{json} & \file{logs/fno\_training.json} & Metrics and full loss history. \\
-\opt{checkpoint\_dir} & \file{models} & Model weights; \opt{null} disables
-checkpointing. \\
-\opt{plot\_dir} & \file{results/plots} & Figures; \opt{null} disables
-plotting. \\
-\opt{report\_dir} & \file{reports} & PDF reports; \opt{null} disables them. \\
+\opt{root} & \file{models} & Parent of the run folder. Everything goes in
+\file{<root>/<name>/}; \opt{null} disables \emph{all} output. \\
+\opt{checkpoint} & \opt{true} & Write \file{<name>.pfno}. \\
+\opt{write\_log} & \opt{true} & Write \file{log/}: the log, the metrics JSON
+and the resolved configuration. \\
+\opt{plot\_figures} & \opt{true} & Render \file{plots/}. \\
+\opt{write\_pdf\_report} & \opt{true} & Typeset \file{report/}. \\
+\opt{log}, \opt{json} & \opt{null} & Override the two log paths. \opt{null}
+derives them from \opt{task.name}; set them only to write outside the run
+folder. \\
 \opt{plot\_format} & \opt{png} & \opt{png}, \opt{pdf} or \opt{svg}. \\
-\opt{dpi} & \opt{160} & Raster resolution for saved figures. \\
+\opt{dpi} & \opt{200} & Raster resolution for saved figures. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -454,9 +531,69 @@ knob. \\
 worse-fitting expressions. \\
 \opt{n\_samples} & \opt{4000} & Voxels sampled across the dataset. \\
 \opt{seed} & \opt{0} & Seeds the sampling and the engine. \\
+\opt{template} & \opt{none} & How the target is factorised: \opt{none},
+\opt{thomas\_fermi} or \opt{pauli}. \\
+\opt{data\_loss} & \opt{mse} & The unpenalised part of the objective;
+\opt{mae} is more robust on a density whose tails span orders of magnitude. \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\subsection*{\opt{symbolic.physics} --- constraints on the search}
+
+\begin{center}
+\begin{tabular}{@{}p{4.9cm}p{2.3cm}p{7.8cm}@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\opt{enable} & \opt{true} & Penalise violations \emph{inside} the
+evolutionary loop rather than filtering the front afterwards. \\
+\opt{positivity\_weight} & \opt{100.0} & $F \ge 0$, on the batch. \\
+\opt{thomas\_fermi\_weight} & \opt{100.0} & $F(0,0) = 1$: the uniform gas. \\
+\opt{von\_weizsacker\_weight} & \opt{100.0} & $F \to 0$ as $p \to \infty$:
+one orbital. \\
+\opt{p\_infinity} & \opt{1.0e6} & The reduced gradient standing in for
+$p \to \infty$ in that probe. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{pwarn}[title={Two blocks named \opt{physics}, and they are not the same}]
+\opt{training.physics} constrains the \textbf{neural operator}: charge
+conservation, positivity of a predicted density, the Euler--Lagrange residual.
+Its terms are added to a training loss over voxels.
+
+\opt{symbolic.physics} constrains a \textbf{candidate algebraic expression}
+for the Pauli enhancement factor. Its terms are added to a symbolic-regression
+fitness over synthetic probe points.
+
+Separate objectives, on separate objects, evaluated at different times by
+different engines. Two of the key names appear in both ---
+\opt{positivity\_weight} and \opt{von\_weizsacker\_weight} --- and mean
+different things in each, which is exactly why they live in separate blocks
+rather than sharing a prefix.
+\end{pwarn}
+
+\noindent
+Filtering the front after a run only measures how few candidates were
+physical; by then the populations have spent their budget converging on forms
+that must be discarded. With \opt{enable} on, the objective is
+\[
+  \mathcal{L} = \mathcal{L}_{\rm data}
+  + w_{+}\,\overline{\min(F,0)^2}
+  + w_{\rm TF}\,|F(0,0) - 1|
+  + w_{\rm vW}\,|F(p_\infty, 0)| .
+\]
+The first term is evaluated on the batch, the other two on probe points --- so
+this needs the engine's \emph{full objective}, not an elementwise loss, which
+only ever sees \opt{(prediction, target)} pairs and can never evaluate a
+candidate where the data does not sit.
+
+\begin{pnote}
+The \opt{loss} column of the reported front is then this \emph{constrained}
+objective and is not comparable with an unconstrained run's. The $R^2$ and
+relative $L^2$ are computed from the expression itself and are unaffected.
+\end{pnote}
 
 \section{Worked examples}
 

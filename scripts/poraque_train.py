@@ -63,11 +63,11 @@ Usage
 Installed (``pip install -e .``), this is the ``poraque-train`` console command
 and runs from any directory::
 
-    poraque-train --write-config configs/train_config.yaml
-    poraque-train --config configs/train_config.yaml
-    poraque-train --config configs/train_config.yaml --epochs 500
-    poraque-train --config configs/train_config.yaml --device mps
-    poraque-train --config configs/train_config.yaml --kfold
+    poraque-train --write-config configs/my_run.yaml
+    poraque-train --config configs/train.yaml
+    poraque-train --config configs/train.yaml --epochs 500
+    poraque-train --config configs/train.yaml --device mps
+    poraque-train --config configs/train.yaml --kfold
 
 Running this file directly — ``python scripts/poraque_train.py`` — is
 equivalent, and needs nothing installed.

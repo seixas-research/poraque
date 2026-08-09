@@ -41,8 +41,8 @@ needs. Command-line flags override individual entries, so one committed
 configuration can be swept from the shell without being edited or copied:
 
 \begin{lstlisting}
-poraque-train --write-config configs/train_config.yaml
-poraque-train --config configs/train_config.yaml --epochs 500
+poraque-train --write-config configs/my_run.yaml
+poraque-train --config configs/train.yaml --epochs 500
 \end{lstlisting}
 
 Unknown keys are \emph{rejected} rather than ignored: a typo such as
@@ -113,7 +113,7 @@ network with a fixed mode truncation may not use the highest spatial
 frequencies, an optional Gaussian blur is available:
 
 \begin{lstlisting}
-poraque-train --config configs/train_config.yaml \
+poraque-train --config configs/train.yaml \
        --gaussian-blur 0.15 --blur-method spectral
 \end{lstlisting}
 
@@ -183,7 +183,7 @@ where the model could actually use those frequencies.
 never one per material.
 
 \begin{lstlisting}
-poraque-train --config configs/train_config.yaml
+poraque-train --config configs/train.yaml
 \end{lstlisting}
 
 There is one protocol and one variation on it: \opt{valid\_fraction} holds back
@@ -218,7 +218,7 @@ number as a result would be a serious overstatement.
 \label{sec:kfold}
 
 \begin{lstlisting}
-poraque-train --config configs/train_config.yaml \
+poraque-train --config configs/train.yaml \
        --kfold --k-folds 5
 \end{lstlisting}
 
@@ -255,7 +255,8 @@ every structure appears in exactly one validation fold.
 \label{sec:pdfreports}
 
 Every run assembles its metrics and figures into a typeset PDF under
-\file{reports/}. In cross-validation mode a single \emph{consolidated} report
+\file{models/<name>/report/}. In cross-validation mode a single
+\emph{consolidated} report
 covers all folds, with the per-fold table and the mean $\pm$ standard deviation
 of each metric.
 
@@ -285,11 +286,14 @@ were, and whether the figures support a generalisation claim.
 Path & Contents \\
 \midrule
 \file{models/poraque\_models.pfno} & both trained operators, in one file \\
-\file{logs/*.log} & human-readable training log \\
-\file{logs/*.json} & machine-readable metrics and full history \\
-\file{logs/*\_config.yaml} & the resolved configuration, for reproduction \\
-\file{results/plots/} & loss curves, cross-sections, parity plots \\
-\file{reports/*.pdf} & typeset report per model or per cross-validation \\
+\file{models/<name>/<name>.pfno} & the trained operators, in one file \\
+\file{models/<name>/log/*.log} & human-readable training log \\
+\file{models/<name>/log/*.json} & machine-readable metrics and full history \\
+\file{models/<name>/log/*\_config.yaml} & the resolved configuration, for
+reproduction \\
+\file{models/<name>/plots/} & loss curves, cross-sections, parity plots \\
+\file{models/<name>/report/} & typeset report per model or per
+cross-validation \\
 \bottomrule
 \end{tabular}
 \end{center}

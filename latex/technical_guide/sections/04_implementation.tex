@@ -186,6 +186,127 @@ $64^3$ & $262.2$\,ms & $45.9$\,ms & $5.71\times$ \\
 Forward pass, five-run average, synchronised. CPU and MPS agree to
 $\sim10^{-6}$ relative on a single forward pass with identical weights.
 
+\section{A C kernel for CPU inference}
+\label{sec:cbackend-tech}
+
+The accelerator path above is the answer when there is an accelerator. On CPU
+the picture is different, and profiling says where:
+
+\begin{center}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Grid & \opt{rfftn} & contract & \opt{irfftn} & total & contract \\
+\midrule
+$32^3$ & $2.1$\,ms & $16.7$\,ms & $2.8$\,ms & $22.6$\,ms & $74\,\%$ \\
+$64^3$ & $16.7$\,ms & $16.7$\,ms & $22.5$\,ms & $57.9$\,ms & $29\,\%$ \\
+$96^3$ & $62.0$\,ms & $16.7$\,ms & $80.8$\,ms & $164.2$\,ms & $10\,\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+One spectral layer, width 32, modes 12. The FFTs scale as $N^3\log N$; the
+contraction does not scale with the grid at all, because its cost is fixed by
+the retained mode count --- a model hyper-parameter. So at the $32^3$
+resolution a training cache is normally built at, \emph{the contraction is the
+layer}.
+
+And \opt{torch.einsum} runs it at roughly $3.4$\,GFLOP/s. The pattern
+\opt{bixyz,ioxyz->boxyz} reduces to a batched product over a layout whose
+reduction axis is strided by the whole mode block. Reordering the loops so the
+flattened mode index is innermost --- contiguous in all three operands --- is
+the whole optimisation, and it is not expressible through \opt{einsum}:
+
+\begin{lstlisting}
+for b, o:                       /* accumulator row stays in L1 */
+    zero(acc)
+    for i:
+        for m in 0..M:          /* contiguous in x, w and acc */
+            acc[m] += x[b][i][m] * w[i][o][m]
+\end{lstlisting}
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Path & one contraction & GFLOP/s \\
+\midrule
+\opt{torch.einsum} (4 threads) & $4.53$\,ms & $2.6$ \\
+C, serial & $0.61$\,ms & $23.1$ \\
+C, 4 pthreads & $0.20$\,ms & $67.3$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Batch 1 --- the shape every prediction has. End to end that is
+$2$--$3.4\times$ on whole-model inference at $24^3$--$32^3$, tapering to
+$\sim$$1\times$ at $96^3$ where the FFTs dominate again.
+
+\subsection{Why pthreads, and why not MPI}
+
+The kernel's arithmetic intensity is \textbf{1 FLOP per byte}: at batch~1 every
+weight element is read exactly once for one complex multiply--add. It is
+memory-bound, not compute-bound, which decides both questions.
+
+Threading is POSIX threads rather than OpenMP because PyTorch already links an
+OpenMP runtime, and a second one in the same process is what libomp reports as
+\opt{OMP: Error \#15 ... can degrade performance or cause incorrect results} ---
+whose only documented workaround its own documentation calls unsafe. pthreads
+have no runtime to collide with. Threads buy aggregate memory bandwidth, so
+the useful count saturates well below the core count: measured, at four of
+eight.
+
+MPI was implemented and measured, then removed. Splitting the same output rows
+across ranks is correct to $2.7\times10^{-7}$ and reaches
+$0.26$\,ms on four ranks --- the \emph{same} bandwidth ceiling as threads,
+while costing a process and a full model replica per rank plus a gather on
+every one of the sixteen contractions in a forward pass. The operands already
+share an address space; moving them between processes spends the one resource
+that is scarce. Across nodes it is hopeless regardless: the kernel is
+$0.2$\,ms, below the latency floor of any interconnect. Rank-level parallelism
+belongs one level up, over structures, where it is embarrassingly parallel and
+communicates one scalar per structure.
+
+\subsection{How it is loaded}
+
+Plain C, no Python C API and no numpy headers, called through \opt{ctypes}.
+That keeps the extension out of the build system entirely: the wheel is pure
+Python, and the shared library is compiled on first use into
+\file{\textasciitilde/.cache/poraque} and reused. Every failure path --- no
+compiler, rejected flags, an unwritable cache, an unsupported dtype or device,
+\opt{PORAQUE\_C\_BACKEND=0} --- falls back to \opt{torch.einsum}. It is an
+optimisation and never a dependency.
+
+\begin{pwarn}
+The kernel writes into a plain tensor and records nothing on the autograd
+tape, so it is gated on \opt{torch.is\_grad\_enabled()}. Using it while a graph
+is being built would leave the spectral weights with no gradient --- a model
+that trains to a constant, with no error anywhere and a loss curve that merely
+looks disappointing.
+\end{pwarn}
+
+\section{Numerical precision}
+
+The operator carries \textbf{complex} parameters --- the mode multipliers of
+\opt{SpectralConv3d} --- alongside the real weights of its pointwise layers,
+and converting between precisions has to move both together. Neither PyTorch
+idiom does:
+
+\begin{description}
+  \item[\opt{model.double()}] converts only tensors for which
+    \opt{is\_floating\_point()} is true. A complex64 spectral weight is not
+    one, so it is left behind and the next forward pass dies with
+    \opt{expected scalar type ComplexDouble but found ComplexFloat}.
+  \item[\opt{model.to(torch.float64)}] is worse: it casts complex64 to
+    \emph{float64}, discarding the imaginary part of every Fourier multiplier.
+    No error, and a model that has silently lost half of its spectral
+    parameters.
+\end{description}
+
+\opt{set\_precision} maps real dtypes to the real target and complex dtypes to
+the matching complex target, which is the only conversion that leaves the
+operator meaning what it meant. It is reached from \opt{model.precision}, and
+is separate from \opt{data.precision}, which governs only how the volumetric
+fields are held in memory.
+
 \section{Configuration}
 
 A training run is defined by a YAML file with four sections --- \opt{data},
@@ -194,7 +315,7 @@ needs; Chapter~\ref{ch:pipeline} walks the pipeline end to end. Command-line fla
 can be swept from the shell without being edited:
 
 \begin{lstlisting}
-poraque-train --config configs/train_config.yaml --epochs 500
+poraque-train --config configs/train.yaml --epochs 500
 \end{lstlisting}
 
 Unknown keys are rejected rather than ignored: a typo such as \opt{learn\_rate}

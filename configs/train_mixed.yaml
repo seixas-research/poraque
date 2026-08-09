@@ -1,10 +1,10 @@
 # =====================================================================
 # Poraque - one operator from several datasets at once
 #
-#   poraque-train --config configs/train_mixed_config.yaml
+#   poraque-train --config configs/train_mixed.yaml
 #
 # Every key is optional; only the differences from the defaults are listed.
-# See configs/train_config.yaml for the model settings explained in full.
+# See configs/train_complete_and_commented.yaml for the model settings explained in full.
 # =====================================================================
 task:
   # ext2chg only: a bulk CHGCAR archive carries no kinetic energy density, so
