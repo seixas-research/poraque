@@ -4,8 +4,8 @@
 #   poraque-train --config configs/train_materialsproject.yaml
 #
 # Every key is optional; only the differences from the defaults are listed.
-# See configs/train_complete_and_commented.yaml for the model settings explained in full, and
-# `poraque-train --write-config /tmp/all.yaml` for every setting there is.
+# See configs/train_complete_and_commented.yaml for every setting explained
+# in full.
 #
 # This file differs from train_complete_and_commented.yaml only where the *data* forces it:
 # the task, the mode selection and the resolution. Everything the two runs

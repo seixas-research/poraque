@@ -17,8 +17,10 @@ the calculator protocol::
     from poraque.calculator import Poraque
 
     atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-    atoms.calc = Poraque("models/poraque_models.pfno", potcar="POTCAR")
-    energy = atoms.get_potential_energy()
+    atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
+
+    rho = atoms.calc.get_charge_density(atoms)   # ChargeDensity, e/Ang^3
+    charges = atoms.get_charges()                # net charge per atom, +e
 
 Each call runs
 
@@ -169,10 +171,18 @@ class Poraque(Calculator):
     >>> from ase.build import bulk                                # doctest: +SKIP
     >>> atoms = bulk("Au", "fcc", a=4.08, cubic=True)             # doctest: +SKIP
     >>> atoms.calc = Poraque("models/poraque_models.pfno",
-    ...                      potcar="POTCAR")                     # doctest: +SKIP
-    >>> atoms.get_potential_energy()                              # doctest: +SKIP
-    -123.456
-    >>> print(atoms.calc.components)                              # doctest: +SKIP
+    ...                      potcar_dir="POTCARs")                # doctest: +SKIP
+
+    The fields are the prediction; the energy is one thing integrated from
+    them:
+
+    >>> rho = atoms.calc.get_charge_density(atoms)                # doctest: +SKIP
+    >>> rho.electron_count()                                      # doctest: +SKIP
+    44.0
+    >>> rho.write("CHGCAR_pred")                                  # doctest: +SKIP
+    >>> atoms.get_charges()                                       # doctest: +SKIP
+    array([-0.001,  0.001, -0.000,  0.000])
+    >>> print(atoms.calc.charge_analysis)                         # doctest: +SKIP
     """
 
     implemented_properties = ["energy", "free_energy", "forces"]

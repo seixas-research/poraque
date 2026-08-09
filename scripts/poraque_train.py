@@ -63,7 +63,6 @@ Usage
 Installed (``pip install -e .``), this is the ``poraque-train`` console command
 and runs from any directory::
 
-    poraque-train --write-config configs/my_run.yaml
     poraque-train --config configs/train.yaml
     poraque-train --config configs/train.yaml --epochs 500
     poraque-train --config configs/train.yaml --device mps
@@ -140,9 +139,10 @@ from poraque.ml import (  # noqa: E402
     save_bundle,
     train,
 )
-from poraque.ml.config import SAMPLE_CONFIG_HEADER, TrainingConfig  # noqa: E402
+from poraque.ml.config import TrainingConfig  # noqa: E402
 from poraque.ml.device import describe_device, resolve_device  # noqa: E402
 from poraque.ml.fno import PRECISIONS  # noqa: E402
+from poraque.ml.training import OPTIMIZERS  # noqa: E402
 from poraque.ml.losses import PhysicsInformedLoss  # noqa: E402
 from poraque.ml.symbolic import (  # noqa: E402
     DATA_LOSSES,
@@ -1114,21 +1114,45 @@ def run_symbolic_distillation(task, dataset, operator, config, log,
     if scored.get("reference") is None:
         scored, provenance = result.fitted, "the fitted voxels (training fit)"
 
-    if scored.get("reference") is not None:
-        destination = report if report is not None else _figure_sink(config)
-        if destination is not None:
-            label_text, unit = FIELD_LABELS[task.target_field]
-            previous, destination.prefix = (destination.prefix,
-                                            f"{task.name}_symbolic")
-            try:
+    destination = report if report is not None else _figure_sink(config)
+    if destination is not None:
+        label_text, unit = FIELD_LABELS[task.target_field]
+        previous, destination.prefix = (destination.prefix,
+                                        f"{task.name}_symbolic")
+        try:
+            if scored.get("reference") is not None:
                 result.parity_plot = destination.parity(
                     scored["reference"], scored["predicted"],
                     name="parity", label=label_text, unit=unit, log=True,
                     prediction_label="symbolic formula",
-                    title=f"{task.name} · distilled formula on {provenance}")
-            finally:
-                destination.prefix = previous
-            log(f"  parity plot  : {result.parity_plot}  [{provenance}]")
+                    title=f"{task.name} · lowest loss "
+                          f"({result.complexity} nodes) on {provenance}")
+                log(f"  parity plot  : {result.parity_plot}  [{provenance}]")
+
+            # The knee gets its own parity plot, on the same voxels. Two
+            # panels of one number each say less than two plots that can be
+            # laid side by side: the question is whether the shorter formula
+            # gives anything away, and that is visible rather than summarised.
+            knee_scored = (result.knee_validation
+                           if result.knee_validation.get("reference") is not None
+                           else result.knee_fitted)
+            if knee_scored.get("reference") is not None:
+                result.knee_parity_plot = destination.parity(
+                    knee_scored["reference"], knee_scored["predicted"],
+                    name="parity_knee", label=label_text, unit=unit, log=True,
+                    prediction_label="symbolic formula",
+                    title=f"{task.name} · Pareto knee "
+                          f"({result.knee.get('complexity')} nodes) on "
+                          f"{provenance}")
+                log(f"  knee parity  : {result.knee_parity_plot}")
+
+            if result.pareto:
+                result.pareto_plot = destination.pareto(
+                    result.pareto, knee=result.knee, name="pareto",
+                    title=f"{task.name} · accuracy against complexity")
+                log(f"  pareto plot  : {result.pareto_plot}")
+        finally:
+            destination.prefix = previous
 
     log(f"\n{result.summary()}")
     log(f"  search time  : {time.time() - start:.1f} s")
@@ -1237,6 +1261,7 @@ def run_task(task_name, cache, config, log, n_tasks=1):
         epochs=config.training.epochs, batch_size=config.training.batch_size,
         learning_rate=learning_rate,
         weight_decay=config.training.weight_decay,
+        optimizer=config.training.optimizer,
         scheduler=config.training.scheduler, grad_clip=config.training.grad_clip,
         loss=build_loss(config, task.name), seed=config.training.seed,
         eval_every=config.training.eval_epoch, early_stopping=patience,
@@ -1508,6 +1533,7 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
             epochs=config.training.epochs, batch_size=config.training.batch_size,
             learning_rate=config.training.learning_rate,
             weight_decay=config.training.weight_decay,
+            optimizer=config.training.optimizer,
             scheduler=config.training.scheduler,
             grad_clip=config.training.grad_clip,
             loss=build_loss(config, task.name), seed=config.training.seed,
@@ -1626,14 +1652,6 @@ def build_parser():
     )
     parser.add_argument("--config", default=None,
                         help="YAML configuration file (defaults are used if omitted)")
-    parser.add_argument("--write-config", metavar="PATH", default=None,
-                        help="write a configuration to PATH and exit")
-    parser.add_argument("--minimal", action="store_true",
-                        help="with --write-config, write only the settings "
-                             "that differ from the defaults. Combined with "
-                             "--config it compresses an existing file: every "
-                             "key is optional, and most of a typical config "
-                             "restates a default.")
 
     parser.add_argument("--task", dest="task.type", default=None,
                         choices=["all", "ext2chg", "chg2tau"])
@@ -1696,6 +1714,9 @@ def build_parser():
     group.add_argument("--epochs", dest="training.epochs", type=int, default=None)
     group.add_argument("--batch-size", dest="training.batch_size", type=int,
                        default=None)
+    group.add_argument("--optimizer", dest="training.optimizer", default=None,
+                       choices=list(OPTIMIZERS),
+                       help="adamw (default), adam or sgd")
     group.add_argument("--learning-rate", dest="training.learning_rate",
                        type=float, default=None)
     group.add_argument("--valid-fraction", dest="training.valid_fraction",
@@ -1802,39 +1823,12 @@ def run(argv=None):
     # Flags that steer this function rather than describing a run; they must
     # not be fed to `apply_overrides`, which would look for a config section
     # named after each of them.
-    NOT_SETTINGS = ("config", "write_config", "no_plots", "minimal")
+    NOT_SETTINGS = ("config", "no_plots")
 
     config = (TrainingConfig.from_yaml(args.config) if args.config
               else TrainingConfig())
     overrides = {k: v for k, v in vars(args).items() if k not in NOT_SETTINGS}
     config.apply_overrides(overrides)
-
-    if args.write_config:
-        # Built from --config and the overrides, not from the defaults, so
-        # `--config long.yaml --write-config short.yaml --minimal` compresses
-        # an existing file and `--epochs 500 --write-config` freezes a swept
-        # run back into one.
-        os.makedirs(os.path.dirname(args.write_config) or ".", exist_ok=True)
-        with open(args.write_config, "w") as handle:
-            handle.write(SAMPLE_CONFIG_HEADER)
-            handle.write(config.to_yaml(minimal=args.minimal))
-
-        def count(mapping):
-            return sum(len(v) for v in mapping.values()
-                       if isinstance(v, dict))
-
-        differing, total = count(config.non_default_dict()), count(
-            config.to_dict())
-        if args.minimal:
-            print(f"Minimal configuration written to {args.write_config}: "
-                  f"{differing} of {total} keys differ from the defaults. The "
-                  f"rest are omitted and take their default value — every key "
-                  f"is optional.")
-        else:
-            print(f"Configuration written to {args.write_config}: {total} "
-                  f"keys, {total - differing} of them at their default. "
-                  f"Add --minimal to write only the {differing} that differ.")
-        return None
 
     if args.no_plots:
         config.output.plot_figures = False

@@ -739,10 +739,73 @@ def physics_terms_active(criterion):
                for name in PHYSICS_WEIGHTS)
 
 
+#: Optimisers selectable through ``training.optimizer``.
+#:
+#: ``adamw`` is the default and was the only one for most of this project's
+#: life. The distinction from ``adam`` is not cosmetic: both keep the same
+#: per-parameter adaptive step, but Adam folds weight decay into the gradient,
+#: where the adaptive denominator then rescales it, so a parameter with small
+#: historical gradients is decayed *harder* than one with large ones. AdamW
+#: applies the decay directly to the weight, decoupled from the gradient and
+#: from that denominator, which is what makes ``weight_decay`` mean the same
+#: thing for every parameter.
+#:
+#: With ``weight_decay = 0`` the two are numerically identical, which is worth
+#: knowing before reading anything into a comparison at that setting.
+#:
+#: ``sgd`` carries momentum 0.9 and is here as the non-adaptive control: it is
+#: what the adaptive methods have to beat, and on a spectral operator whose
+#: parameter scales differ by orders of magnitude between the pointwise and
+#: the Fourier weights, it usually does not.
+OPTIMIZERS = ("adamw", "adam", "sgd")
+
+
+def build_optimizer(parameters, name="adamw", learning_rate=1e-3,
+                    weight_decay=1e-4, momentum=0.9):
+    """
+    Construct one of :data:`OPTIMIZERS`.
+
+    Parameters
+    ----------
+    parameters : iterable
+        Tensors to optimise -- the *trainable* ones; see the note at the call
+        site about frozen weights and decoupled decay.
+    name : str, optional
+        One of :data:`OPTIMIZERS`.
+    learning_rate, weight_decay : float, optional
+    momentum : float, optional
+        ``sgd`` only; ignored by the adaptive methods, which derive their own
+        first moment from ``betas``.
+
+    Returns
+    -------
+    torch.optim.Optimizer
+
+    Raises
+    ------
+    ValueError
+        For an unknown name, listing what is available -- a typo here would
+        otherwise fall through to a default and train something other than
+        what the config describes.
+    """
+    key = str(name).strip().lower()
+    if key == "adamw":
+        return torch.optim.AdamW(parameters, lr=learning_rate,
+                                 weight_decay=weight_decay)
+    if key == "adam":
+        return torch.optim.Adam(parameters, lr=learning_rate,
+                                weight_decay=weight_decay)
+    if key == "sgd":
+        return torch.optim.SGD(parameters, lr=learning_rate,
+                               momentum=momentum, weight_decay=weight_decay)
+    raise ValueError(
+        f"Unknown optimizer {name!r}; expected one of {list(OPTIMIZERS)}.")
+
+
 def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
           weight_decay=1e-4, validation=None, loss=None, scheduler="cosine",
           grad_clip=1.0, eval_every=1, early_stopping=0, checkpoint=None,
-          seed=0, verbose=True, log=None):
+          seed=0, verbose=True, log=None, optimizer="adamw"):
     """
     Train a :class:`FieldOperator`.
 
@@ -757,7 +820,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     batch_size : int, optional
         Maximum batch size within one shape bucket.
     learning_rate, weight_decay : float, optional
-        AdamW hyper-parameters.
+        Step size and decay, passed to whichever optimiser is selected.
     validation : FieldPairDataset, optional
         Held-out materials, evaluated every ``eval_every`` epochs.
     loss : nn.Module, optional
@@ -820,8 +883,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     # shrink them towards zero every step, quietly undoing the pre-training the
     # freeze was meant to preserve.
     trainable = [p for p in operator.model.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(trainable, lr=learning_rate,
-                                  weight_decay=weight_decay)
+    optimizer = build_optimizer(trainable, name=optimizer,
+                                learning_rate=learning_rate,
+                                weight_decay=weight_decay)
     lr_schedule = (
         torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
         if scheduler == "cosine" else None

@@ -1031,3 +1031,165 @@ class TestFortranDensityFormat:
         lines = path.read_text().splitlines()
         blank = next(i for i, line in enumerate(lines) if not line.strip())
         return lines[blank + 2:]
+
+
+class TestAimsReader:
+    r"""
+    FHI-aims is implemented, not a skeleton: ASE parses both formats it needs.
+
+    What the tests guard is the two places it differs from every other reader
+    -- a units flag whose default contradicts the cube standard, and the fact
+    that there is no kinetic-energy-density output at all.
+    """
+
+    @pytest.fixture
+    def calculation(self, tmp_path):
+        """A minimal FHI-aims directory: geometry.in plus a density cube."""
+        import ase.io
+        from ase.build import bulk
+
+        atoms = bulk("Si", "diamond", a=5.43, cubic=True)
+        ase.io.write(str(tmp_path / "geometry.in"), atoms, format="aims")
+        values = (np.random.default_rng(0).random((10, 10, 10)) * 0.2 + 0.05)
+        ase.io.write(str(tmp_path / "total_density.cube"), atoms, data=values,
+                     format="cube")
+        (tmp_path / "control.in").write_text("xc pbe\n")
+        return tmp_path, atoms, values
+
+    def test_it_is_registered_and_auto_detected(self, calculation):
+        directory, _, _ = calculation
+        assert "aims" in available_codes()
+        assert detect_reader(str(directory)).code == "aims"
+
+    def test_reads_the_geometry(self, calculation):
+        directory, atoms, _ = calculation
+        structure = get_reader("aims").read_structure(str(directory))
+        assert structure.natoms == len(atoms)
+        assert structure.elements == ["Si"]
+        np.testing.assert_allclose(structure.cell, atoms.cell.array, atol=1e-8)
+
+    def test_there_is_no_plane_wave_cutoff(self, calculation):
+        """
+        Numeric atom-centred orbitals have no cutoff. Reporting one would be
+        inventing a number, so ``cutoff`` stays None and the grid comes from
+        the cube the run actually wrote.
+        """
+        directory, _, values = calculation
+        parameters = get_reader("aims").read_parameters(str(directory))
+        assert parameters.cutoff is None
+        assert parameters.grid_shape == values.shape
+        assert parameters.xc == "pbe"
+
+    def test_pseudopotentials_are_empty_because_it_is_all_electron(
+            self, calculation):
+        directory, _, _ = calculation
+        assert get_reader("aims").read_pseudopotentials(str(directory)) == {}
+
+    def test_reads_a_density_cube(self, calculation):
+        directory, atoms, values = calculation
+        from poraque.fields import ChargeDensity
+
+        grid = FieldGrid(values.shape, atoms.cell.array)
+        field = get_reader("aims").read_field(
+            str(directory / "total_density.cube"), ChargeDensity, grid=grid)
+        # The cube format writes five decimals, so this is its own precision.
+        np.testing.assert_allclose(field.data, values, atol=1e-5)
+
+    def test_a_mismatched_grid_raises(self, calculation):
+        directory, atoms, _ = calculation
+        from poraque.fields import ChargeDensity
+
+        with pytest.raises(ValueError, match="does not match"):
+            get_reader("aims").read_field(
+                str(directory / "total_density.cube"), ChargeDensity,
+                grid=FieldGrid((8, 8, 8), atoms.cell.array))
+
+    def test_the_units_flag_changes_what_the_same_file_means(self,
+                                                             calculation):
+        r"""
+        The trap. FHI-aims defaults to ``cube_content_unit legacy``, which
+        writes Å⁻³ although the cube format specifies atomic units; ``bohr``
+        writes a₀⁻³. Nothing in the file records which, so the reader has to
+        take it from ``control.in``.
+        """
+        from poraque.fields import ChargeDensity
+        from poraque.fields.io.aims import read_content_unit
+
+        directory, atoms, values = calculation
+        grid = FieldGrid(values.shape, atoms.cell.array)
+        reader = get_reader("aims")
+        path = str(directory / "total_density.cube")
+
+        assert read_content_unit(str(directory)) == "legacy"
+        legacy = reader.read_field(path, ChargeDensity, grid=grid)
+
+        (directory / "control.in").write_text("xc pbe\ncube_content_unit bohr\n")
+        assert read_content_unit(str(directory)) == "bohr"
+        bohr = reader.read_field(path, ChargeDensity, grid=grid)
+
+        from poraque.fields.constants import BOHR_TO_ANGSTROM
+
+        ratio = bohr.data.mean() / legacy.data.mean()
+        assert ratio == pytest.approx(BOHR_TO_ANGSTROM ** -3, rel=1e-6)
+
+    def test_a_comment_does_not_hide_the_units_flag(self, tmp_path):
+        from poraque.fields.io.aims import read_content_unit
+
+        (tmp_path / "control.in").write_text(
+            "# cube_content_unit bohr\nxc pbe\n")
+        assert read_content_unit(str(tmp_path)) == "legacy", (
+            "a commented-out tag must not be read as set")
+
+
+class TestPauliFactorFromELF:
+    r"""
+    FHI-aims writes no :math:`\tau` cube, but ELF is defined through it.
+
+    With ``n_spin = 1`` it computes ``ELF = t1^2/(t1^2 + t2^2 + 1e-6)`` where
+    ``t1 = rho*tau_TF`` and ``t2 = rho*(tau - tau_vW)``, so
+    ``ELF = 1/(1 + F^2)`` with ``F`` the Pauli enhancement factor. Inverting it
+    is the only route from an FHI-aims run to a kinetic energy density.
+    """
+
+    @pytest.mark.parametrize("factor", [0.0, 0.25, 1.0, 2.0, 5.0])
+    def test_it_inverts_the_elf_definition(self, factor):
+        from poraque.fields.io.aims import pauli_factor_from_elf
+
+        elf = 1.0 / (1.0 + factor ** 2)
+        assert pauli_factor_from_elf(np.array([elf]))[0] == pytest.approx(
+            factor, abs=1e-9)
+
+    def test_vacuum_gives_zero_rather_than_infinity(self):
+        """
+        FHI-aims adds 1e-6 to the denominator, so ELF tends to 0 where the
+        density does. Inverting that literally diverges.
+        """
+        from poraque.fields.io.aims import pauli_factor_from_elf
+
+        values = pauli_factor_from_elf(np.array([0.0, 1e-12, 1e-30]))
+        assert np.all(np.isfinite(values))
+        assert np.all(values == 0.0)
+
+    def test_the_factor_is_never_negative(self):
+        """:math:`F \\ge 0` by Hoffmann-Ostenhof, so no sign is lost."""
+        from poraque.fields.io.aims import pauli_factor_from_elf
+
+        values = pauli_factor_from_elf(
+            np.linspace(1e-6, 1.0, 500).reshape(10, 10, 5))
+        assert np.all(values >= 0.0)
+        assert np.all(np.isfinite(values))
+
+    def test_it_is_ill_conditioned_near_the_von_weizsacker_limit(self):
+        """
+        The caveat, made explicit. As ELF -> 1 the numerator is a difference
+        of nearly equal numbers, so a small error in ELF becomes a large
+        relative error in F -- precisely at the vW limit.
+        """
+        from poraque.fields.io.aims import pauli_factor_from_elf
+
+        def amplification(elf, delta=1e-4):
+            base = pauli_factor_from_elf(np.array([elf]))[0]
+            moved = pauli_factor_from_elf(np.array([elf - delta]))[0]
+            return abs(moved - base) / max(base, 1e-12) / (delta / elf)
+
+        assert amplification(0.9999) > amplification(0.5) * 10

@@ -550,3 +550,99 @@ class TestBackboneInference:
         restored = load_bundle(path, "chg2tau", device="cpu")
         assert restored.pauli_residual is True
         assert restored.pauli_scale == pytest.approx(2.5)
+
+
+class TestOptimizerSelection:
+    """
+    The optimiser is a setting, not a hard-coded choice.
+
+    It was always an Adam-family method -- ``torch.optim.AdamW`` -- so the key
+    exists to make the choice *measurable* rather than to introduce Adam. The
+    distinction between the two is the one worth guarding: they share the
+    adaptive step and differ only in how ``weight_decay`` reaches the weights.
+    """
+
+    @staticmethod
+    def _parameters():
+        return [torch.zeros(4, requires_grad=True)]
+
+    @pytest.mark.parametrize("name,expected", [
+        ("adamw", torch.optim.AdamW),
+        ("adam", torch.optim.Adam),
+        ("sgd", torch.optim.SGD),
+    ])
+    def test_each_name_builds_its_optimizer(self, name, expected):
+        from poraque.ml.training import build_optimizer
+
+        assert isinstance(build_optimizer(self._parameters(), name), expected)
+
+    def test_the_name_is_case_insensitive(self):
+        from poraque.ml.training import build_optimizer
+
+        assert isinstance(build_optimizer(self._parameters(), "AdamW"),
+                          torch.optim.AdamW)
+
+    def test_an_unknown_name_is_refused_rather_than_defaulted(self):
+        """
+        A typo must not fall through to the default and train something other
+        than what the config says it trained.
+        """
+        from poraque.ml.training import build_optimizer
+
+        with pytest.raises(ValueError, match="rmsprop"):
+            build_optimizer(self._parameters(), "rmsprop")
+
+    def test_the_default_is_unchanged(self):
+        """AdamW was the behaviour before the key existed; it stays the default."""
+        from poraque.ml.config import TrainingConfig
+        from poraque.ml.training import build_optimizer
+
+        assert TrainingConfig().training.optimizer == "adamw"
+        assert isinstance(build_optimizer(self._parameters()),
+                          torch.optim.AdamW)
+
+    def test_sgd_carries_momentum(self):
+        from poraque.ml.training import build_optimizer
+
+        optimizer = build_optimizer(self._parameters(), "sgd")
+        assert optimizer.param_groups[0]["momentum"] == pytest.approx(0.9)
+
+    def test_adam_and_adamw_differ_only_through_weight_decay(self):
+        r"""
+        The claim the docstring makes, checked.
+
+        Adam folds the decay into the gradient, where the adaptive denominator
+        rescales it; AdamW applies it to the weight directly. At
+        ``weight_decay = 0`` there is nothing to apply, so the two must take
+        *identical* steps -- which is why a comparison run at that setting
+        measures nothing, and why one at a non-zero setting measures exactly
+        this difference.
+        """
+        def step(name, decay):
+            torch.manual_seed(0)
+            weight = torch.nn.Parameter(torch.tensor([1.0, -2.0, 0.5]))
+            from poraque.ml.training import build_optimizer
+
+            optimizer = build_optimizer([weight], name, learning_rate=0.1,
+                                        weight_decay=decay)
+            for _ in range(3):
+                optimizer.zero_grad()
+                (weight * torch.tensor([1.0, 0.5, 0.25])).sum().backward()
+                optimizer.step()
+            return weight.detach().clone()
+
+        torch.testing.assert_close(step("adam", 0.0), step("adamw", 0.0))
+        assert not torch.allclose(step("adam", 0.1), step("adamw", 0.1))
+
+    def test_train_accepts_the_setting(self, dataset_root):
+        """End to end: the loop runs under each optimiser."""
+        from poraque.ml import FieldOperator, FieldPairDataset, train
+
+        data = FieldPairDataset(dataset_root, task="ext2chg")
+        for name in ("adamw", "adam", "sgd"):
+            operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+                                     projection_channels=8, device="cpu",
+                                     init_seed=0)
+            history = train(operator, data, epochs=1, batch_size=1,
+                            optimizer=name, scheduler=None, verbose=False)
+            assert np.isfinite(history["train_loss"][-1])

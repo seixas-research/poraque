@@ -5,16 +5,14 @@
 #   poraque-train --config configs/train_complete_and_commented.yaml --epochs 800
 #   python scripts/poraque_train.py --config configs/train_complete_and_commented.yaml
 #
-# EVERY KEY IS OPTIONAL. Anything omitted takes its default, so this file
-# lists only what this run does *differently* -- which is what makes it
+# EVERY KEY IS OPTIONAL. Anything omitted takes its default, so a config
+# lists only what its run does *differently* -- which is what makes it
 # readable as the description of one experiment rather than a dump of every
-# knob. To see the full set with its defaults:
+# knob.
 #
-#   poraque-train --write-config /tmp/all.yaml
-#
-# and to compress a config you already have back down to its differences:
-#
-#   poraque-train --config mine.yaml --write-config mine.yaml --minimal
+# This is the REFERENCE copy: the settings worth knowing about, each with the
+# reasoning behind it. Read it here and copy only what you need.
+# configs/train.yaml is the same run, stated in nineteen lines.
 #
 # Command-line flags override these values, so one committed config can be
 # swept from the shell without editing it.
@@ -27,7 +25,7 @@ task:
   #             can reach a total energy, since the ASE calculator needs the
   #             whole chain.
   type: all
-  name: au_w16_m8_l3
+  name: au_w16_m8_l3_symbolic
 
 data:
   # A POTCAR *library* (one subdirectory per pseudopotential). With it the

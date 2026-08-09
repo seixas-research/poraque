@@ -412,6 +412,116 @@ class TrainingReport:
     # ------------------------------------------------------------------ #
     # 3. Parity
     # ------------------------------------------------------------------ #
+    def pareto(self, front, knee=None, name="pareto", title=None,
+               annotate=6):
+        r"""
+        The accuracy/complexity front of a symbolic search, with its knee.
+
+        A search does not return *an* expression, it returns a trade: every
+        candidate that was the best of its length. This is that trade drawn,
+        which is the plot a reader needs to decide what to quote.
+
+        The loss axis is logarithmic. A front spans orders of magnitude, and on
+        a linear axis every candidate but the most accurate collapses onto the
+        floor -- the knee would then always be the shortest expression,
+        whatever it cost.
+
+        Two points are marked: the **lowest loss** (the leftmost value on the
+        y axis) and the **knee**, the candidate nearest the ideal corner once
+        both axes are rescaled to :math:`[0, 1]`. Where they coincide, nothing
+        was traded away and the plot says so.
+
+        Parameters
+        ----------
+        front : sequence of dict
+            Entries with ``complexity`` and ``loss``; ``expression`` is used
+            for the annotations when present.
+        knee : dict, optional
+            The chosen knee, from
+            :func:`~poraque.ml.symbolic.pareto_knee`. Computed here when
+            omitted, so the plot is usable on a bare front.
+        name : str, optional
+        title : str, optional
+        annotate : int, optional
+            How many expressions to label. Beyond a handful the labels overlap
+            and the curve is what carries the message.
+
+        Returns
+        -------
+        str or None
+            Path written, or ``None`` for a front with nothing plottable.
+        """
+        import numpy as np
+
+        usable = [e for e in front
+                  if e.get("complexity") is not None
+                  and e.get("loss") is not None
+                  and np.isfinite(e["loss"]) and e["loss"] > 0]
+        if not usable:
+            return None
+        usable = sorted(usable, key=lambda e: e["complexity"])
+
+        if knee is None:
+            from ..ml.symbolic import pareto_knee
+
+            knee = pareto_knee(usable)
+
+        complexity = np.array([e["complexity"] for e in usable], dtype=float)
+        loss = np.array([e["loss"] for e in usable], dtype=float)
+        best = usable[int(np.argmin(loss))]
+
+        with self._context():
+            import matplotlib.pyplot as plt
+
+            figure, axes = plt.subplots(figsize=(7.0, 4.4))
+            axes.step(complexity, loss, where="post", color=self.ink["muted"],
+                      linewidth=1.2, zorder=1)
+            axes.scatter(complexity, loss, s=34, color=self.ink["secondary"],
+                         zorder=2, label="front")
+
+            def mark(entry, colour, marker, text):
+                if not entry:
+                    return
+                axes.scatter([entry["complexity"]], [entry["loss"]], s=170,
+                             marker=marker, facecolor=colour, zorder=4,
+                             edgecolor=self.ink["surface"], linewidth=1.8,
+                             label=text)
+
+            same = (knee and knee.get("complexity") == best["complexity"]
+                    and knee.get("loss") == best["loss"])
+            mark(best, series_color(0), "o", "lowest loss")
+            if not same:
+                mark(knee, series_color(1), "D", "Pareto knee")
+
+            # Labelled sparsely and only on the interesting end: a formula
+            # printed beside every point is unreadable at any figure size.
+            marked = {id(best), id(knee)}
+            step = max(1, len(usable) // max(1, annotate))
+            for index, entry in enumerate(usable):
+                if index % step and id(entry) not in marked:
+                    continue
+                text = str(entry.get("expression", ""))
+                if len(text) > 26:
+                    text = text[:25] + "\u2026"
+                axes.annotate(text, (entry["complexity"], entry["loss"]),
+                              textcoords="offset points", xytext=(6, 6),
+                              fontsize=7, color=self.ink["muted"])
+
+            axes.set_yscale("log")
+            axes.set_xlabel("complexity (nodes)")
+            axes.set_ylabel("loss")
+            axes.set_title(title or "Accuracy against complexity")
+            axes.grid(True, which="both", alpha=0.3)
+            axes.legend(frameon=False, loc="upper right")
+            if same:
+                axes.text(0.02, 0.04,
+                          "the knee is the lowest-loss expression:\n"
+                          "nothing was traded away",
+                          transform=axes.transAxes, fontsize=8,
+                          color=self.ink["muted"])
+            figure.tight_layout()
+            return self._save(figure, name)
+
     def parity(self, reference, prediction, name="parity", label="field",
                unit="", title=None, bins=200, max_points=200_000,
                scatter=False, log=False, validation=None,

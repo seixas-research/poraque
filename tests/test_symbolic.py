@@ -920,3 +920,134 @@ class TestConfig:
 
         with pytest.raises(ValueError, match="symbolic"):
             TrainingConfig.from_dict({"symbolic": {"iteratons": 10}})
+
+
+class TestExpressionRounding:
+    """
+    A search returns constants at full float precision.
+
+    ``0.33333334326744079589843750`` is a real example, and three of those in
+    one formula overrun the width of a PDF page. Three places is also what the
+    numbers are worth: the search is stochastic and its constants move in the
+    third place between seeds.
+    """
+
+    def test_constants_are_rounded(self):
+        from poraque.ml.symbolic import round_expression
+
+        rounded = round_expression(
+            "0.33333334326744079589843750*p**2 + 1.9999999523162841796875",
+            feature_names=["p"])
+        assert "0.333" in rounded
+        assert "0.33333334" not in rounded
+
+    def test_latex_rounds_by_default(self):
+        from poraque.ml.symbolic import expression_to_latex
+
+        latex = expression_to_latex("0.142857142857142857*p", ["p"])
+        assert "0.143" in latex and "0.1428571" not in latex
+
+    def test_rounding_can_be_switched_off(self):
+        from poraque.ml.symbolic import expression_to_latex
+
+        latex = expression_to_latex("0.142857142857142857*p", ["p"],
+                                    decimals=None)
+        assert "0.1428571" in latex
+
+    def test_an_unparsable_expression_survives(self):
+        """A display convenience must never lose the result."""
+        from poraque.ml.symbolic import round_expression
+
+        assert round_expression("this is not ) an expression") == \
+            "this is not ) an expression"
+
+    def test_integers_are_untouched(self):
+        from poraque.ml.symbolic import round_expression
+
+        assert "2" in round_expression("2*p + 3", feature_names=["p"])
+
+
+class TestParetoKnee:
+    r"""
+    The knee: the front entry nearest the ideal corner :math:`(0, 0)` once
+    complexity and log-loss are each rescaled to :math:`[0, 1]`.
+    """
+
+    FRONT = [
+        {"complexity": 1, "loss": 1.0},
+        {"complexity": 3, "loss": 0.1},
+        {"complexity": 7, "loss": 0.02},
+        {"complexity": 20, "loss": 0.019},
+    ]
+
+    def test_it_finds_the_elbow(self):
+        """
+        Complexity 20 buys 0.001 over complexity 7. The knee is 7.
+        """
+        from poraque.ml.symbolic import pareto_knee
+
+        assert pareto_knee(self.FRONT)["complexity"] == 7
+
+    def test_the_distance_is_written_onto_the_front(self):
+        """
+        So the report's table can show the column it ranked on, and the figure
+        and the table cannot disagree.
+        """
+        from poraque.ml.symbolic import pareto_knee
+
+        front = [dict(entry) for entry in self.FRONT]
+        knee = pareto_knee(front)
+        assert all("distance" in entry for entry in front)
+        assert min(entry["distance"] for entry in front) == pytest.approx(
+            knee["distance"])
+
+    def test_the_loss_is_compared_logarithmically(self):
+        """
+        On a linear axis a front spanning decades collapses: every candidate
+        but the most accurate sits at ~1, and the knee becomes the shortest
+        expression whatever it costs. This front is exactly that case.
+        """
+        from poraque.ml.symbolic import pareto_knee
+
+        front = [{"complexity": 1, "loss": 1.0},
+                 {"complexity": 5, "loss": 1e-3},
+                 {"complexity": 9, "loss": 1e-6}]
+        assert pareto_knee(front)["complexity"] == 5, (
+            "a linear comparison would pick the 1-node expression")
+
+    def test_a_single_candidate_is_its_own_knee(self):
+        from poraque.ml.symbolic import pareto_knee
+
+        assert pareto_knee([{"complexity": 4, "loss": 0.1}])["complexity"] == 4
+
+    def test_an_empty_front_gives_nothing(self):
+        from poraque.ml.symbolic import pareto_knee
+
+        assert pareto_knee([]) == {}
+
+    def test_non_finite_losses_are_skipped(self):
+        from poraque.ml.symbolic import pareto_knee
+
+        front = [{"complexity": 1, "loss": float("inf")},
+                 {"complexity": 5, "loss": 0.1}]
+        assert pareto_knee(front)["complexity"] == 5
+
+    def test_it_is_marked_as_the_knee(self):
+        from poraque.ml.symbolic import pareto_knee
+
+        assert pareto_knee(self.FRONT)["knee"] is True
+
+    def test_the_result_carries_it(self, cell):
+        """The distiller computes the knee with the front, not separately."""
+        from poraque.ml.symbolic import SymbolicDistiller, build_features
+
+        grid, density = cell
+        table = build_features(density, thomas_fermi_tau(density), grid,
+                               scheme="enhancement")
+        front = [{"complexity": 1, "loss": 0.5, "expression": "1.0"},
+                 {"complexity": 5, "loss": 0.01, "expression": "exp(-p)"},
+                 {"complexity": 15, "loss": 0.009, "expression": "exp(-p*p)"}]
+        result = SymbolicDistiller(SymbolicConfig(),
+                                   engine=lambda *a: front).fit(table)
+        assert result.knee.get("complexity") == 5
+        assert result.knee_expression() == "exp(-p)"

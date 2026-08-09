@@ -318,7 +318,10 @@ $\rho\mapsto\tau$ supervised & done (rel.\ $L^2$ $0.0620$, $R^2$ $0.9924$) \\
 $\tau\ge\tauvW$ structural & done (\pyclass{PauliResidualOperator}) \\
 Exact spectral $\nabla$, $\nabla^2$, $\vH$ & done \\
 Euler--Lagrange residual, analytic functional & done \\
-$\delta\Ts/\delta\rho$ via autograd & \textbf{not implemented} \\
+$\delta\Ts/\delta\rho$ via autograd & \textbf{done}
+(\pyclass{kinetic\_potential}, \pyclass{operator\_kinetic\_potential}) \\
+Euler--Lagrange residual, \emph{learned} functional & done in the library
+(\opt{kinetic=}); not wired into training \\
 Joint training & not implemented \\
 Pauli potential $v_{\mathrm{P}}\ge0$ & not implemented \\
 Orbital-free minimiser integration & not implemented \\
@@ -326,6 +329,73 @@ Orbital-free minimiser integration & not implemented \\
 \end{tabular}
 \end{center}
 
-The gap between the fourth and fifth rows is the whole programme: everything up
-to the analytic residual is infrastructure, and the autograd derivative is what
-turns two regressions into a differentiable orbital-free solver.
+The autograd derivative is what turns two regressions into a differentiable
+orbital-free solver, and it is exact: against analytic Thomas--Fermi it
+reproduces the closed-form potential to $1\times10^{-14}$~eV, and it satisfies
+Euler's homogeneity sum rule
+$\int (\delta\Ts/\delta\rho)\,\rho\,d^3r = \tfrac53 \Ts$ to ten decimal places.
+On a rough density it is \emph{more} reliable than the hand-derived analytic
+von Weizs\"acker potential, which drifts from that sum rule by several per cent
+where the autograd route stays exact.
+
+\begin{pwarn}[title={Accuracy in $\tau$ does not imply accuracy in its derivative}]
+Measured on a model trained to reproduce analytic Thomas--Fermi: relative
+$L^2$ of $3.0\times10^{-3}$ on $\tau$, and $9.2\times10^{-1}$ on
+$\delta\Ts/\delta\rho$ --- a $307\times$ amplification, with the \emph{mean}
+wrong by a factor of fifteen.
+
+A mean that wrong is not high-frequency amplification, which would give noise
+about the right value. It is a direction the training data never explored: the
+derivative's mean is exactly the response of $\Ts$ to a \emph{uniform}
+rescaling of $\rho$, and every training density had the same mean. Retrained on
+densities whose mean varies, the same architecture with the same $\tau$ error
+gave $1.6\times10^{-1}$, and the sum rule went from $0.057$ to $0.973$.
+
+The sum rule is the diagnostic, and it is computable from a learned functional
+with no reference potential --- the only check available when there is no
+closed form. Read it before closing the loop.
+\end{pwarn}
+
+
+\section{Distilling the Pauli factor, and which candidate to quote}
+\label{sec:pareto-knee}
+
+What Model 2 has to get right is the Pauli enhancement factor
+$F = (\tau - \tauvW)/\tauTF$, so that is what the symbolic search fits.
+A search does not return \emph{an} expression: it returns a front, every
+candidate that was the best of its length. The front states a trade and
+refuses to resolve it.
+
+The \textbf{knee} is where resolving it costs least --- the candidate nearest
+the ideal corner $(0,0)$ once both axes are rescaled to $[0,1]$ across the
+front:
+\[
+  d_i = \sqrt{\hat c_i^{\,2} + \hat{\mathcal{L}}_i^{\,2}},
+  \qquad
+  \hat x_i = \frac{x_i - \min_j x_j}{\max_j x_j - \min_j x_j} .
+\]
+
+Two choices in that definition are load-bearing.
+
+\textbf{Both axes are rescaled.} A node count and a loss have no common unit,
+so a Euclidean distance between them is meaningless until they are made
+comparable. Rescaling across the front is what gives the metric a meaning
+relative to the range the search actually produced.
+
+\textbf{The loss enters logarithmically.} A front spans orders of magnitude. On
+a linear scale every candidate but the most accurate collapses onto
+$\hat{\mathcal{L}}\approx1$, and the knee degenerates to the shortest
+expression whatever it cost --- which is not a trade-off, it is a constant.
+
+The report carries both candidates: the lowest-loss expression and the knee,
+each with its own parity plot on identical voxels, laid side by side. Where the
+two clouds are indistinguishable the extra nodes bought nothing, and that is
+visible rather than summarised.
+
+\begin{pnote}
+A knee is a heuristic, not a theorem. With one candidate it is that candidate;
+where the front is a straight line every point is equidistant. It answers
+\emph{which expression is worth its length}. Whether an expression is
+\emph{right} is what the asymptotic limits test ---
+and those are statements about physics the search was never shown.
+\end{pnote}

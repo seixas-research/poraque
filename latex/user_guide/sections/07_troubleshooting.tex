@@ -8,8 +8,8 @@
     \opt{data.pattern}. The pattern is a prefix, not a glob.
   \item[``Unknown key(s) in section \ldots''] A configuration key was
     removed. \opt{mode}, \opt{holdout}, \opt{use\_vasp\_extcar},
-    \opt{train\_fraction} and \opt{split} no longer exist; regenerate the
-    file with \opt{--write-config}. The split is now one number,
+    \opt{train\_fraction} and \opt{split} no longer exist; delete them, or
+    start again from \file{configs/train.yaml}. The split is now one number,
     \opt{valid\_fraction}, and \file{EXTCAR} is always computed.
   \item[``No valence charge for \ldots''] No \file{POTCAR} was found. Supply one,
     or pass \opt{--zval Au=11}.

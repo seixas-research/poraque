@@ -594,7 +594,7 @@ class ModelConfig:
 
 @dataclass
 class TrainingConfig_:
-    """
+    r"""
     Optimisation settings.
 
     Attributes
@@ -678,29 +678,170 @@ class TrainingConfig_:
         ``"auto"`` (CUDA, then Apple MPS, then CPU), or an explicit backend.
     loss : str
         ``"relative_l2"`` or ``"sobolev"``.
+    optimizer : str
+        ``adamw`` (default), ``adam`` or ``sgd``.
+
+        The default has always been an Adam-family method; the key exists so
+        the choice can be *measured* rather than assumed. ``adam`` and
+        ``adamw`` share the same per-parameter adaptive step and differ only in
+        how ``weight_decay`` is applied: Adam folds it into the gradient, where
+        the adaptive denominator then rescales it, so a parameter with small
+        historical gradients is decayed harder than one with large ones. AdamW
+        applies it straight to the weight, decoupled, which is what makes
+        ``weight_decay`` mean the same thing for every parameter — and matters
+        here because an FNO's pointwise and spectral weights differ in scale by
+        orders of magnitude.
+
+        At ``weight_decay: 0`` the two are numerically identical, so a
+        comparison run at that setting measures nothing.
+
+        ``sgd`` (momentum 0.9) is the non-adaptive control.
     sobolev_weight : float
         Weight of the gradient term when ``loss: sobolev``.
     physics : dict
-        Weights of the physics-informed terms; all default to zero, so the
-        objective is the supervised baseline until one is enabled deliberately.
+        Weights of the physics-informed terms for the **neural operator**. All
+        default to zero, so the objective is the supervised baseline until one
+        is enabled deliberately.
 
-        ``electron_count_weight`` is the **charge-conservation** weight, and
-        the one to reach for first on ``ext2chg``:
+        .. important::
+
+           Not ``symbolic.physics``. This block constrains the *network* over
+           voxels; that one constrains a *candidate algebraic expression* over
+           probe points. Two of the names collide — ``positivity_weight`` and
+           ``von_weizsacker_weight`` — and mean different things in each,
+           which is why they live in separate blocks rather than sharing a
+           prefix.
+
+        **The shape of the objective.**
+        :class:`~poraque.ml.losses.PhysicsInformedLoss` builds one scalar,
 
         .. math::
 
-            \\mathcal{L}_{N} = \\left\\langle
-            \\left(\\frac{\\int\\hat\\rho\\,d^3r - \\int\\rho\\,d^3r}
-                        {\\int\\rho\\,d^3r}\\right)^{2}\\right\\rangle ,
+            \mathcal{L} = \mathcal{L}_{\rm data}(\hat y, y)
+                        + \sum_i w_i \, \mathcal{L}_i ,
 
-        the squared relative error between the integral of the predicted
-        density and the integral of the reference — the valence electron
-        count. It costs one reduction per batch and pins the single global
-        degree of freedom a pointwise regression loss controls worst, since a
-        relative :math:`L^2` is indifferent to a percent of charge spread
-        thinly across the cell while a total energy is not.
+        and two structural decisions matter more than the individual terms.
 
-        ``0.1`` puts the constraint an order of magnitude below the data term,
+        *The data term acts on normalised fields; every physics term acts on
+        decoded ones.* A density is ``Asinh``- or ``Log``-transformed for the
+        fit, and :math:`\int\rho\,d^3r = N` is simply not true of the
+        transform's output. Constraints are statements about physics, not
+        about whatever normalisation the training happens to use.
+
+        *Every term is dimensionless by construction* — each is divided by its
+        own scale. Without that, one weight could not serve a dataset spanning
+        a light semiconductor and a transition-metal oxide, whose raw
+        penalties differ by orders of magnitude.
+
+        The loss returns a dict rather than a scalar, which is why training
+        reports ``data`` / ``physics`` / ``total`` as separate columns: a
+        falling total says nothing about which half fell.
+
+        **Which term applies to which model.** They are not all available to
+        both operators, and a weight set for the wrong task is silently inert:
+
+        .. code-block:: text
+
+            weight                   ext2chg  chg2tau  needs
+            positivity_weight           x        x     nothing
+            electron_count_weight       x        -     N, or a reference rho
+            euler_lagrange_weight       x        -     v_ext (the input)
+            von_weizsacker_weight       -        x     rho   (the input)
+
+        ``positivity_weight`` — *both models.*
+
+        .. math::
+
+            \mathcal{L}_{+} = \frac{\langle\,\mathrm{ReLU}(-f)^2\,\rangle}
+                                   {\langle f^{2}\rangle}
+
+        Both :math:`\rho` and :math:`\tau` are non-negative *by definition*. An
+        unconstrained head can ring below zero near a nucleus, and a negative
+        density is not a small error but a meaningless one that propagates into
+        every energy integral. Prefer a ``Log`` output parameterisation where
+        you can: it makes positivity **structural rather than penalised**, and
+        a constraint that cannot be violated beats one that is merely
+        expensive to violate.
+
+        ``electron_count_weight`` — *``ext2chg`` only.*
+
+        .. math::
+
+            \mathcal{L}_{N} = \left\langle \left(
+                \frac{\int\hat\rho\,d^3r - N}{N}\right)^{2}\right\rangle
+
+        Particle-number conservation is exact and is the cheapest useful
+        constraint there is — one reduction. It also fixes precisely the degree
+        of freedom a pointwise loss controls worst: a per-voxel MSE is nearly
+        indifferent to a uniform 2 % error in :math:`\rho`, but the
+        electrostatic terms are of order :math:`10^{4}` eV, so that 2 % moves a
+        total energy by tens of eV — by a different amount for every structure,
+        so it does not cancel.
+
+        :math:`N` comes from the pseudopotentials when available (exact),
+        otherwise from the integral of the reference density in the batch. That
+        fallback is what keeps the term active on an archive that ships
+        densities and no valence table — which is every public one.
+
+        ``von_weizsacker_weight`` — *``chg2tau`` only.*
+
+        .. math::
+
+            \mathcal{L}_{\rm vW} =
+              \frac{\langle\,\mathrm{ReLU}(\tau_{\rm vW}[\rho] - \hat\tau)^2\,
+                    \rangle}{\langle \tau_{\rm vW}^{2}\rangle} ,
+              \qquad \tau_{\rm vW} = \frac{|\nabla\rho|^{2}}{8\rho}
+
+        The Hoffmann-Ostenhof bound :math:`\tau \ge \tau_{\rm vW}[\rho]` is a
+        **theorem**, not a heuristic, which is why it can be weighted
+        aggressively. It is **one-sided**: a prediction above the bound is
+        free, one below is penalised quadratically. And :math:`\tau_{\rm vW}`
+        is built from the network's own *input*, so it needs no extra labels.
+
+        This is the same physics as the Pauli enhancement factor
+        :math:`F = (\tau - \tau_{\rm vW})/\tau_{\rm TF}` the symbolic search
+        fits: the bound is exactly the statement :math:`F \ge 0`.
+
+        ``euler_lagrange_weight`` — *``ext2chg`` only, and the deepest of the
+        four.* At the ground state the orbital-free variational condition holds
+        pointwise,
+
+        .. math::
+
+            \frac{\delta T_s}{\delta\rho}(\mathbf r) + v_{\rm ext}(\mathbf r)
+            + v_{H}[\rho](\mathbf r) + v_{xc}[\rho](\mathbf r) = \mu ,
+
+        with a **constant** :math:`\mu`. Subtracting the cell average removes
+        :math:`\mu` — unknown and material-dependent — and leaves a residual
+        that must vanish for the exact density. Because it involves only
+        :math:`v_{\rm ext}` (the input) and :math:`\hat\rho` (the output), it
+        is **self-contained and needs no additional labels**: it asks whether
+        this density is the *ground state* of this potential, which a
+        supervised loss never asks.
+
+        Two caveats. :math:`\delta T_s/\delta\rho` defaults to a
+        Thomas-Fermi + :math:`\lambda\,`von-Weizsäcker surrogate with
+        :math:`\lambda = 1/9`, the second-order gradient expansion — an
+        approximation, so this term is softer than the other three. And
+        :math:`v_{xc}` is optional; omitting it weakens the constraint but does
+        not bias it, since what is enforced is the *constancy* of the sum.
+
+        Passing a trained ``chg2tau`` operator's :math:`\tau` as ``kinetic=``
+        to :func:`~poraque.ml.physics.euler_lagrange_residual` replaces the
+        surrogate with the **learned** functional, closing the loop between the
+        two models. Available from the library; the training script does not
+        wire it up.
+
+        **Using them.** Introduce one at a time against a measured baseline. A
+        badly scaled constraint degrades accuracy while looking principled, and
+        with all four on at once you cannot tell which one did it. Roughly in
+        order of confidence: ``electron_count`` (exact, cheap, fixes the
+        worst-controlled degree of freedom), ``von_weizsacker`` (a theorem,
+        one-sided, free), ``positivity`` (true, but a ``Log`` head is better),
+        ``euler_lagrange`` (the deepest statement, resting on an approximate
+        kinetic functional).
+
+        ``0.1`` puts a constraint an order of magnitude below the data term,
         which is the intended balance: the physics guides, the data decides.
     """
 
@@ -708,6 +849,7 @@ class TrainingConfig_:
     batch_size: int = 4
     learning_rate: float = 2e-3
     weight_decay: float = 1e-4
+    optimizer: str = "adamw"
     scheduler: str = "cosine"
     grad_clip: float = 1.0
     valid_fraction: float = 0.2
@@ -1387,11 +1529,10 @@ class TrainingConfig:
         """
         Only the settings that differ from the defaults.
 
-        A config is far shorter than it looks: of the 76 keys in the sample
-        file, 63 restate a default. This is what ``poraque-train
-        --write-config PATH --minimal`` writes, and what makes a committed
-        config readable as *the description of one experiment* rather than as
-        a dump of every knob.
+        A config is far shorter than it looks: of the 78 keys a full one
+        carries, ``configs/train.yaml`` changes three. This is what makes a
+        committed config readable as *the description of one experiment*
+        rather than as a dump of every knob.
 
         Returns
         -------
@@ -1506,22 +1647,3 @@ class TrainingConfig:
                 {entry.name: getattr(section, entry.name)
                  for entry in fields(section)}, indent=2))
         return "\n".join(lines)
-
-
-#: Written by ``poraque-train --write-config``.
-SAMPLE_CONFIG_HEADER = """\
-# =====================================================================
-# Poraque - Fourier Neural Operator training configuration
-#
-#   poraque-train --config configs/train.yaml
-#
-# Command-line flags override these values, so one committed config can
-# be swept from the shell without editing it:
-#
-#   poraque-train --config configs/train.yaml --epochs 500
-#
-# Equivalent, from a checkout with nothing installed:
-#
-#   python scripts/poraque_train.py --config configs/train.yaml
-# =====================================================================
-"""

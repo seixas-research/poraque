@@ -42,6 +42,7 @@ from .compressed import (
     open_text,
     strip_compression_suffix,
 )
+from .aims import AimsReader
 from .espresso import EspressoReader
 from .gpaw import GpawReader
 from .vasp import VaspReader
@@ -150,10 +151,12 @@ def resolve_reader(directory=None, code="auto"):
 
 
 register_reader(VaspReader)
+register_reader(AimsReader)
 register_reader(EspressoReader)
 register_reader(GpawReader)
 
 __all__ = [
+    "AimsReader",
     "COMPRESSION_SUFFIXES",
     "FIELD_KINDS",
     "CalculationParameters",

@@ -143,7 +143,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-atoms.calc = Poraque("models/poraque_models.pfno", potcar="POTCAR")
+atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
 
 energy = atoms.get_potential_energy()
 print(atoms.calc.components)          # the full decomposition
@@ -260,7 +260,7 @@ data/vasp/ref/
 
 ```python
 atoms.calc = Poraque("models/poraque_models.pfno",
-                     potcar="POTCAR",
+                     potcar_dir="POTCARs",
                      references="data/vasp/ref")
 
 atoms.get_potential_energy()                  # total, as always

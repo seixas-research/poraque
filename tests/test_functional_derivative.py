@@ -204,3 +204,99 @@ class TestOperatorInterface:
         potential = operator_kinetic_potential(operator, rho, cell)
         assert potential.shape == rho.shape
         assert torch.isfinite(potential).all()
+
+
+class TestHomogeneitySumRule:
+    r"""
+    Euler's theorem, as a check that needs no reference potential.
+
+    A functional homogeneous of degree :math:`n` in :math:`\rho` satisfies
+
+    .. math::
+
+        \int \frac{\delta F}{\delta\rho}\,\rho\,d^3r = n\,F ,
+
+    exactly. Thomas-Fermi has :math:`n = 5/3` and von Weizsacker
+    :math:`n = 1`. The ratio is computable from a *learned* functional too,
+    without knowing its derivative — which makes it the one diagnostic
+    available when there is no closed form to compare against.
+
+    It is also the sharpest one, because the ratio is precisely the response
+    of :math:`T_s` to a **uniform** rescaling of the density. A model trained
+    only on densities of one mean never sees that direction; measured, such a
+    model fit :math:`\tau` to 5.6e-03 and returned a sum rule of **0.057**.
+    Trained on densities spanning a range of means, the same architecture and
+    the same :math:`\tau` error gave **0.973**.
+    """
+
+    @staticmethod
+    def _ratio(potential, rho, cell, energy, degree):
+        return (integrate(potential * rho, cell)
+                / (degree * integrate(energy, cell))).mean().item()
+
+    def test_thomas_fermi_autograd_is_exact(self, density, cell):
+        potential = kinetic_potential(thomas_fermi_tau, density, cell)
+        ratio = self._ratio(potential, density, cell,
+                            thomas_fermi_tau(density), 5.0 / 3.0)
+        assert abs(ratio - 1.0) < 1e-10, ratio
+
+    def test_thomas_fermi_analytic_is_exact(self, density, cell):
+        ratio = self._ratio(thomas_fermi_potential(density), density, cell,
+                            thomas_fermi_tau(density), 5.0 / 3.0)
+        assert abs(ratio - 1.0) < 1e-10, ratio
+
+    @pytest.mark.parametrize("modes", [1, 3, 6])
+    def test_von_weizsacker_autograd_is_exact_at_every_roughness(
+            self, modes, cell):
+        """
+        The autograd derivative obeys the sum rule whatever the density does.
+        """
+        rho = smooth_density(n=24, modes=modes) * 0.3
+        ratio = self._ratio(
+            kinetic_potential(lambda r: von_weizsacker_tau(r, cell), rho, cell),
+            rho, cell, von_weizsacker_tau(rho, cell), 1.0)
+        # ~1e-7 rather than machine epsilon: the density floor in
+        # `von_weizsacker_tau` does not scale with rho, so it breaks exact
+        # homogeneity by a hair. Measured 1.1e-07 at one mode, falling to
+        # 1.0e-08 on white noise.
+        assert abs(ratio - 1.0) < 1e-6, (modes, ratio)
+
+    def test_autograd_beats_the_analytic_potential_on_a_rough_density(
+            self, density, cell):
+        """
+        On white noise the *analytic* von Weizsacker potential drifts from the
+        sum rule by several percent while autograd stays exact. Differentiating
+        the energy is more reliable than a hand-derived potential where the
+        derivation assumed smoothness.
+        """
+        energy = von_weizsacker_tau(density, cell)
+        automatic = self._ratio(
+            kinetic_potential(lambda r: von_weizsacker_tau(r, cell),
+                              density, cell), density, cell, energy, 1.0)
+        analytic = self._ratio(von_weizsacker_potential(density, cell),
+                               density, cell, energy, 1.0)
+        # Measured on this fixture: autograd 1.0e-08, analytic 6.8e-02 --
+        # six orders of magnitude, so the margin demanded here is modest.
+        assert abs(automatic - 1.0) < 1e-6
+        assert abs(analytic - 1.0) > 100 * abs(automatic - 1.0)
+
+    def test_a_learned_functional_can_be_checked_without_a_reference(self):
+        """
+        The point of the rule: it applies to an operator whose derivative has
+        no closed form. An untrained model has no reason to satisfy it, which
+        is what makes a *trained* model's ratio informative.
+        """
+        from poraque.ml import FieldOperator
+
+        torch.manual_seed(0)
+        operator = FieldOperator("chg2tau", width=8, modes=4, n_layers=2,
+                                 projection_channels=16, device="cpu")
+        rho = torch.rand(1, 1, 12, 12, 12) * 0.3 + 0.1
+        cell = torch.eye(3).unsqueeze(0) * 6.0
+
+        potential = operator_kinetic_potential(operator, rho, cell)
+        ratio = (integrate(potential * rho, cell)
+                 / integrate(operator.target_transform.inverse(
+                     operator.model(operator.input_transform(rho), cell)),
+                     cell)).mean()
+        assert torch.isfinite(ratio), "the diagnostic must at least be computable"

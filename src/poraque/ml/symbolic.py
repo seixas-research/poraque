@@ -241,6 +241,23 @@ class SymbolicResult:
     #: always be drawn; read it as a training fit, not a generalisation score.
     fitted: dict = field(default_factory=dict)
 
+    #: The Pareto knee: the front entry nearest the ideal corner once
+    #: complexity and log-loss are rescaled to [0, 1]. Reported beside the
+    #: lowest-loss expression because the two answer different questions --
+    #: "what fits best" and "what is worth its length" -- and the second is
+    #: usually the one a reader wants to quote.
+    knee: dict = field(default_factory=dict)
+    #: The knee expression scored the same way as :attr:`fitted` /
+    #: :attr:`validation`, so its parity plot is drawn on identical data.
+    knee_fitted: dict = field(default_factory=dict)
+    knee_validation: dict = field(default_factory=dict)
+    knee_parity_plot: str = None
+    pareto_plot: str = None
+
+    def knee_expression(self):
+        """The knee's expression, falling back to the best one."""
+        return self.knee.get("expression") or self.expression
+
     def summary(self):
         """Multi-line text block, for the log and the terminal."""
         lines = [
@@ -931,14 +948,139 @@ def pysr_engine(features, target, feature_names, parameters):
     return front
 
 
-def expression_to_latex(expression, feature_names=()):
+#: Decimal places kept in a reported expression.
+#:
+#: A search returns constants at full float precision --
+#: ``0.33333334326744079589843750`` is a real example -- and three of those in
+#: one formula overrun the width of a PDF page. Three places is what the
+#: numbers are worth: the search is stochastic, its constants move in the third
+#: place between seeds, and printing twenty digits states a precision the
+#: method does not have.
+REPORT_DECIMALS = 3
+
+
+def round_expression(expression, decimals=REPORT_DECIMALS,
+                     feature_names=()):
+    """
+    Round every numeric constant in an expression for display.
+
+    Parameters
+    ----------
+    expression : str
+        In the engine's notation.
+    decimals : int, optional
+    feature_names : sequence of str, optional
+        Symbols to keep as symbols rather than let SymPy invent functions from.
+
+    Returns
+    -------
+    str
+        The rounded expression, or the input unchanged when it cannot be
+        parsed -- a display convenience must never lose the result.
+    """
+    try:
+        import sympy
+    except ImportError:                        # pragma: no cover
+        return str(expression)
+    try:
+        symbols = {name: sympy.Symbol(name) for name in feature_names}
+        parsed = sympy.sympify(str(expression), locals=symbols)
+        rounded = parsed.xreplace(
+            {value: sympy.Float(round(float(value), decimals), decimals + 2)
+             for value in parsed.atoms(sympy.Float)})
+        return str(rounded)
+    except (sympy.SympifyError, TypeError, SyntaxError, AttributeError,
+            ValueError, OverflowError):
+        return str(expression)
+
+
+def pareto_knee(front):
+    r"""
+    The knee of an accuracy/complexity front, by distance to the ideal point.
+
+    The front states a trade and refuses to resolve it; the knee is where
+    resolving it costs least. Both axes are rescaled to :math:`[0, 1]` across
+    the front -- they are a node count and a loss, with no common unit, so a
+    distance is only meaningful once they are made comparable -- and the knee
+    is the candidate nearest the ideal corner :math:`(0, 0)`:
+
+    .. math::
+
+        d_i = \sqrt{\hat c_i^{\,2} + \hat{\mathcal{L}}_i^{\,2}}, \qquad
+        \hat x_i = \frac{x_i - \min x}{\max x - \min x} .
+
+    The loss is compared on a **logarithmic** scale. It spans orders of
+    magnitude across a front, and on a linear scale every candidate but the
+    most accurate one collapses onto :math:`\hat{\mathcal{L}} \approx 1`, which
+    makes the knee the shortest expression regardless of what it costs.
+
+    Parameters
+    ----------
+    front : sequence of dict
+        Entries with ``complexity`` and ``loss``.
+
+    Returns
+    -------
+    dict
+        The chosen entry, with ``distance`` and ``knee=True`` added, plus
+        ``distance`` written onto every entry of ``front`` in place. ``{}``
+        for an empty front.
+
+    Notes
+    -----
+    A knee is a heuristic, not a theorem. With one candidate it is that
+    candidate; where the front is a straight line every point is equidistant
+    and the first wins. It is a defensible default, not an answer to
+    "which expression is *right*" -- that is what the asymptotic limits are
+    for.
+    """
+    entries = [dict(entry) for entry in front
+               if entry.get("complexity") is not None
+               and entry.get("loss") is not None
+               and np.isfinite(entry["loss"])]
+    if not entries:
+        return {}
+
+    complexity = np.array([float(e["complexity"]) for e in entries])
+    # log10, so a front spanning decades is compared on the scale it varies on.
+    loss = np.log10(np.maximum([float(e["loss"]) for e in entries], 1e-300))
+
+    def unit(values):
+        span = values.max() - values.min()
+        return (np.zeros_like(values) if span <= 0
+                else (values - values.min()) / span)
+
+    distance = np.hypot(unit(complexity), unit(loss))
+    for entry, value in zip(entries, distance):
+        entry["distance"] = float(value)
+
+    # Written back so the report's table can show the column it ranked on.
+    by_key = {(e["complexity"], e["loss"]): e["distance"] for e in entries}
+    for entry in front:
+        key = (entry.get("complexity"), entry.get("loss"))
+        if key in by_key:
+            entry["distance"] = by_key[key]
+
+    chosen = dict(entries[int(np.argmin(distance))])
+    chosen["knee"] = True
+    return chosen
+
+
+def expression_to_latex(expression, feature_names=(),
+                        decimals=REPORT_DECIMALS):
     """
     Render an expression as LaTeX, falling back to a verbatim box.
 
     SymPy is used rather than string surgery so that precedence and grouping
     survive. A failure here must not lose the result: an expression that cannot
     be parsed is still the answer, and is passed through as monospace text.
+
+    Constants are rounded to ``decimals`` places first. A search returns them
+    at full float precision, and three such constants in one formula overrun
+    the width of a PDF page; ``None`` keeps them verbatim.
     """
+    if decimals is not None:
+        expression = round_expression(expression, decimals, feature_names)
     try:
         import sympy
     except ImportError:  # pragma: no cover - sympy ships with the package deps
@@ -1360,6 +1502,9 @@ class SymbolicDistiller:
             r2=_r2(predicted, table.target),
             relative_l2=_relative_l2(predicted, table.target),
             pareto=front,
+            # Computed here so the front and its knee cannot disagree: the
+            # distance column is written back onto `front` in the same call.
+            knee=pareto_knee(front),
             feature_names=list(table.feature_names),
             target_name=table.target_name,
             scheme=table.scheme,
@@ -1627,6 +1772,11 @@ def distill_dataset(dataset, config, operator=None, log=None, engine=None,
     # held-out score and is labelled as such wherever it is used, but "no plot"
     # is not a better answer than "a plot that says which data it is".
     result.fitted = _score_on(result.expression, table)
+    # The knee is scored on exactly the same voxels, so the two parity plots
+    # differ in the expression and in nothing else.
+    knee = result.knee_expression()
+    if knee != result.expression:
+        result.knee_fitted = _score_on(knee, table)
 
     # Score the winner on the held-out structures, against the DFT reference
     # rather than against whatever was fitted: the question a parity plot
@@ -1636,8 +1786,18 @@ def distill_dataset(dataset, config, operator=None, log=None, engine=None,
         held_out = sample_rows(tabulate(validation, "reference"),
                                config.n_samples, seed=config.seed)
         result.validation = _score_on(result.expression, held_out)
+        if knee != result.expression:
+            result.knee_validation = _score_on(knee, held_out)
         emit(f"  validated on {len(held_out)} held-out voxels: "
              f"relative L2 {result.validation.get('relative_l2', float('nan')):.4f}")
+
+    if result.knee:
+        emit(f"  pareto knee  : complexity {result.knee['complexity']} nodes, "
+             f"loss {result.knee['loss']:.4g}  "
+             f"(lowest loss: {result.complexity} nodes, {result.loss:.4g})")
+        if knee == result.expression:
+            emit("                 the knee IS the lowest-loss expression; "
+                 "nothing was traded away")
     return result
 
 

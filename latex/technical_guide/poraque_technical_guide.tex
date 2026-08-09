@@ -30,32 +30,53 @@
 \usepackage[colorlinks=true,linkcolor=poraquered,urlcolor=poraquered,
             citecolor=poraquered]{hyperref}
 
+\usepackage{eso-pic}
 \tcbuselibrary{skins,breakable}
 \usetikzlibrary{positioning,fit,backgrounds,arrows.meta}
 
 % --- Brand palette ---------------------------------------------------------
-\definecolor{poraquered}{RGB}{248,65,55}
-\definecolor{poraqueamber}{RGB}{235,104,52}
-\definecolor{poraquedark}{RGB}{30,34,40}
-\definecolor{codebg}{RGB}{245,246,248}
+% Three colours, and each has one job. The hues run 48 -> 77 -> 160 degrees,
+% a single sweep from the logo's yellow through yellow-green into deep green.
+%
+%   poraqueyellow  the logo's own yellow. ACCENT ONLY -- 1.7:1 on white, so
+%                  it is used for rules, badges and marks on dark grounds,
+%                  never for text on paper.
+%   poraquelime    the step between. Tints and secondary rules.
+%   poraquegreen   the anchor: 12.2:1 on white, 8.0:1 against the yellow.
+%                  Headings, links, anything that has to be read.
+%   poraquecover   COVER GROUND ONLY. Named for the restriction: it is the
+%                  one colour with a single permitted use, and a name that
+%                  says so is harder to misuse than a comment. Darker than
+%                  poraquegreen by 7 points of lightness -- a visible step
+%                  rather than a shade of the same thing -- and still green
+%                  at hue 163 rather than collapsing to black.
+\definecolor{poraqueyellow}{RGB}{255,204,0}
+\definecolor{poraquelime}{RGB}{163,198,75}
+\definecolor{poraquegreen}{RGB}{15,61,46}
+\definecolor{poraquecover}{RGB}{6,35,27}
+% Retained so existing uses keep working; both now point into the new palette.
+\colorlet{poraquered}{poraquegreen}
+\definecolor{poraqueamber}{RGB}{176,125,42}
+\definecolor{poraquedark}{RGB}{15,61,46}
+\definecolor{codebg}{RGB}{246,249,242}
 \definecolor{shadegray}{RGB}{90,96,104}
 \definecolor{tipgreen}{RGB}{22,120,80}
 \definecolor{warnamber}{RGB}{176,125,42}
-\definecolor{panelgray}{RGB}{232,235,239}
+\definecolor{panelgray}{RGB}{234,238,230}
 
 % --- Chapter / section typography ------------------------------------------
 \titleformat{\chapter}[display]
   {\bfseries\color{poraquedark}}
-  {\raggedright\large\color{shadegray}\MakeUppercase{\chaptertitlename}\ \Huge\color{poraquered}\thechapter}
+  {\raggedright\large\color{shadegray}\MakeUppercase{\chaptertitlename}\ \Huge\color{poraqueyellow}\thechapter}
   {6pt}
   {\Huge\raggedright}
-  [\vspace{4pt}{\color{poraquered}\rule{\textwidth}{1.6pt}}]
+  [\vspace{4pt}{\color{poraqueyellow}\rule{\textwidth}{2.2pt}}]
 \titlespacing*{\chapter}{0pt}{-18pt}{22pt}
 
 \titleformat{\section}
   {\Large\bfseries\color{poraquedark}}
   {\textcolor{poraquered}{\thesection}}{0.8em}{}
-  [\vspace{-6pt}{\color{poraquered!35}\rule{\textwidth}{0.8pt}}]
+  [\vspace{-6pt}{\color{poraquelime}\rule{\textwidth}{0.8pt}}]
 \titleformat{\subsection}
   {\large\bfseries\color{poraquedark}}
   {\textcolor{poraquered}{\thesubsection}}{0.8em}{}
@@ -76,7 +97,7 @@
 \fancyfoot[L]{\small\color{shadegray}Poraqu\^e Technical Guide}
 \fancyfoot[R]{\small\color{shadegray}\thepage}
 \renewcommand{\headrulewidth}{0.8pt}
-\renewcommand{\headrule}{{\color{poraquered}%
+\renewcommand{\headrule}{{\color{poraqueyellow}%
   \hrule width\headwidth height\headrulewidth}}
 \renewcommand{\footrulewidth}{0pt}
 \renewcommand{\chaptermark}[1]{\markboth{\thechapter.\ #1}{}}
@@ -135,9 +156,9 @@
 
 % --- Callout boxes ---------------------------------------------------------
 \newtcolorbox{pnote}[1][]{%
-  breakable, enhanced, colback=poraquered!5, colframe=poraquered,
+  breakable, enhanced, colback=poraquelime!14, colframe=poraquegreen,
   boxrule=0pt, leftrule=3pt, arc=1pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
-  fonttitle=\bfseries\small, title={Note}, coltitle=poraquered,
+  fonttitle=\bfseries\small, title={Note}, coltitle=poraquegreen,
   attach title to upper=\par\vspace{2pt}, #1}
 \newtcolorbox{ptip}[1][]{%
   breakable, enhanced, colback=tipgreen!5, colframe=tipgreen,
@@ -145,9 +166,9 @@
   fonttitle=\bfseries\small, title={Implementation}, coltitle=tipgreen,
   attach title to upper=\par\vspace{2pt}, #1}
 \newtcolorbox{pwarn}[1][]{%
-  breakable, enhanced, colback=warnamber!7, colframe=warnamber,
+  breakable, enhanced, colback=poraqueyellow!14, colframe=poraqueyellow,
   boxrule=0pt, leftrule=3pt, arc=1pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
-  fonttitle=\bfseries\small, title={Caveat}, coltitle=warnamber,
+  fonttitle=\bfseries\small, title={Caveat}, coltitle=poraquegreen,
   attach title to upper=\par\vspace{2pt}, #1}
 
 \setlist[description]{style=unboxed,leftmargin=1.2em,itemsep=3pt,topsep=4pt}
@@ -164,24 +185,34 @@
 
 % =========================== TITLE PAGE ===================================
 \begin{titlepage}
+% A full-bleed dark-green cover. `\AddToShipoutPictureBG*` paints the whole
+% sheet including the margins, which a coloured \rule cannot reach, and the
+% starred form applies to this page only.
+\AddToShipoutPictureBG*{%
+  \AtPageLowerLeft{\color{poraquecover}\rule{\paperwidth}{\paperheight}}%
+  % The brand mark along the foot: a yellow band with a lime hairline above
+  % it, so the three colours appear together once, at full strength.
+  \AtPageLowerLeft{\color{poraqueyellow}\rule{\paperwidth}{14mm}}%
+  \AtPageLowerLeft{\raisebox{14mm}{\color{poraquelime}%
+    \rule{\paperwidth}{2mm}}}%
+}
 \centering
-\vspace*{2.0cm}
-\includegraphics[width=0.55\textwidth]{../../assets/logo/logo_light.png}\par
-\vspace{1.3cm}
-{\color{poraquered}\rule{0.74\textwidth}{1.6pt}}\par
-\vspace{0.9cm}
-{\Huge\bfseries Technical Guide\par}
-\vspace{0.5cm}
-{\Large Density-functional theory and Fourier neural operators\\[2pt]
- for three-dimensional scalar fields\par}
-\vspace{0.9cm}
-{\color{poraquered}\rule{0.74\textwidth}{1.6pt}}\par
+\sffamily\color{white}
+\vspace*{3.6cm}
+% logo_dark is the version drawn for dark grounds.
+\includegraphics[width=0.66\textwidth]{../../assets/logo/logo_dark.png}\par
 \vspace{1.5cm}
-{\large\bfseries Leandro Seixas\par}
-
+{\color{poraqueyellow}\rule{0.42\textwidth}{2.4pt}}\par
+\vspace{1.1cm}
+{\fontsize{32}{38}\selectfont\bfseries Technical Guide\par}
+\vspace{0.7cm}
+{\large\color{poraquelime} Density-functional theory and Fourier neural operators\\[2pt]
+ for three-dimensional scalar fields\par}
 \vfill
-{\large Version \poraqueversion\par}
-\vspace*{1.2cm}
+{\large\bfseries Leandro Seixas\par}
+\vspace{0.35cm}
+{\small\color{poraquelime} Version \poraqueversion\par}
+\vspace*{2.5cm}
 \end{titlepage}
 
 \input{sections/00_preface}

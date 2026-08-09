@@ -112,3 +112,59 @@ class TestTheStampMatchesThePackage:
         assert f"Version {__version__}" in text, (
             f"the built PDF does not carry {__version__}; rebuild with "
             f"`make -C latex`")
+
+
+@pytest.mark.parametrize("guide", GUIDES)
+class TestCoverPalette:
+    r"""
+    Four colours, and the darkest has exactly one permitted use.
+
+    The palette is one sweep of hues -- 48 -> 77 -> 160 -> 163 degrees --
+    anchored on the yellow the logo is drawn in. ``poraquecover`` is the
+    outlier: it exists only to be the ground a cover is printed on, and at
+    1.37:1 against ``poraquegreen`` it buys nothing anywhere else. The name
+    states the restriction; these tests enforce it.
+    """
+
+    PALETTE = {
+        "poraqueyellow": "255,204,0",
+        "poraquelime": "163,198,75",
+        "poraquegreen": "15,61,46",
+        "poraquecover": "6,35,27",
+    }
+
+    def test_every_colour_is_defined(self, guide):
+        source = _read(f"latex/{guide}.tex")
+        for name, rgb in self.PALETTE.items():
+            assert f"\\definecolor{{{name}}}{{RGB}}{{{rgb}}}" in source, name
+
+    def test_the_old_red_palette_is_gone(self, guide):
+        source = _read(f"latex/{guide}.tex")
+        assert "{RGB}{248,65,55}" not in source, "the old brand red survives"
+
+    def test_the_cover_ground_is_used_only_for_the_cover(self, guide):
+        source = _read(f"latex/{guide}.tex")
+        uses = [line.strip() for line in source.splitlines()
+                if "poraquecover" in line and not line.strip().startswith("%")]
+        # One \definecolor, and one full-page rule on the title page.
+        assert len(uses) == 2, uses
+        assert uses[0].startswith(r"\definecolor{poraquecover}")
+        assert r"\paperwidth" in uses[1] and r"\paperheight" in uses[1], uses[1]
+
+    def test_the_cover_uses_the_dark_ground_logo(self, guide):
+        source = _read(f"latex/{guide}.tex")
+        cover = source[source.index(r"\begin{titlepage}"):
+                       source.index(r"\end{titlepage}")]
+        assert "logo_dark.png" in cover
+        assert "logo_light.png" not in cover, (
+            "the light logo is for the running header, on white")
+
+    def test_the_yellow_never_carries_text(self, guide):
+        """
+        Yellow on white is 1.7:1 -- below even the 3:1 large-text floor. It
+        carries rules and bands; the green (12.2:1) carries anything read.
+        """
+        source = _read(f"latex/{guide}.tex")
+        for forbidden in ("coltitle=poraqueyellow", "linkcolor=poraqueyellow",
+                          "urlcolor=poraqueyellow"):
+            assert forbidden not in source, forbidden

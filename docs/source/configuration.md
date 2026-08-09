@@ -1,13 +1,12 @@
 # Configuration
 
 A run is defined by `configs/train.yaml`: one top-level key and four
-sections. Generate a copy with every default written out explicitly:
+sections. Every key is optional: a file states only what the run does
+differently, and anything omitted takes its default.
 
-```bash
-poraque-train --write-config configs/my_run.yaml
-```
-
-This page documents every key that file can contain.
+`configs/train.yaml` is the clean starting point;
+`configs/train_complete_and_commented.yaml` is the same run with every
+choice explained. This page documents every key either can contain.
 
 ## How a value is resolved
 

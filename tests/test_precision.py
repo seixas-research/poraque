@@ -399,9 +399,9 @@ class TestMinimalConfig:
     """
     Every key is optional, and a config that says so is far shorter.
 
-    Of the 80 keys a full config carries, the shipped example differed in 15.
-    ``--minimal`` writes those; the round trip below is what makes dropping
-    the other 65 safe rather than merely shorter.
+    Of the 78 keys a full config carries, ``configs/train.yaml`` changes
+    three. The round trip below is what makes dropping the other 75 safe
+    rather than merely shorter.
     """
 
     @staticmethod

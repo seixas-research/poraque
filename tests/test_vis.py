@@ -424,15 +424,103 @@ class TestReportStyle:
 
         return ModelReport("reports", logo=None)._preamble("chg2tau", "subtitle")
 
-    def test_uses_the_brand_red_not_the_old_blue(self, preamble):
+    def test_uses_the_four_colour_brand_palette(self, preamble):
         """
-        The accent is the logo's own colour.
+        Four colours, and the yellow is the logo's own.
 
-        The report previously used a blue that appears nowhere else in the
-        project, which is what made it look like a different document.
+        Earlier revisions used a blue that appeared nowhere else, then a red
+        that appeared only here. The palette is now a single sweep of hues --
+        48 -> 77 -> 160 -> 163 degrees -- anchored on the yellow the logo is
+        drawn in, with the last reserved for cover grounds.
         """
-        assert r"\definecolor{poraquered}{RGB}{248,65,55}" in preamble
+        assert r"\definecolor{poraqueyellow}{RGB}{255,204,0}" in preamble
+        assert r"\definecolor{poraquelime}{RGB}{163,198,75}" in preamble
+        assert r"\definecolor{poraquegreen}{RGB}{15,61,46}" in preamble
+        assert r"\definecolor{poraquecover}{RGB}{6,35,27}" in preamble
         assert "poraqueblue" not in preamble
+
+    def test_the_cover_ground_is_used_only_as_a_cover_ground(self, preamble):
+        """
+        ``poraquecover`` has exactly one permitted use, and the name says so.
+
+        Counted rather than merely present: one definition and one use, the
+        masthead panel. A third occurrence means it has leaked into ordinary
+        furniture, where it is indistinguishable from ``poraquegreen`` at
+        1.37:1 and buys nothing.
+        """
+        uses = [line.strip() for line in preamble.splitlines()
+                if "poraquecover" in line and not line.strip().startswith("%")]
+        # One \definecolor, and one panel that sets colback and colframe.
+        assert len(uses) == 2, uses
+        assert uses[0].startswith(r"\definecolor{poraquecover}")
+        assert "colback=poraquecover" in uses[1]
+
+    def test_the_yellow_is_never_used_for_text(self, preamble):
+        """
+        Yellow on white is 1.7:1 -- far below the 4.5:1 body-text floor and
+        below even the 3:1 large-text one. It carries rules and bands; the
+        green (12.2:1) carries anything that has to be read.
+        """
+        for role in (r"coltitle=poraqueyellow", r"\color{poraqueyellow}\thesection"):
+            assert role not in preamble, role
+
+    def test_the_masthead_is_the_cover_ground(self, preamble):
+        """
+        The report's masthead is its cover, so it takes the cover ground
+        rather than the anchor green the headings use.
+        """
+        assert "colback=poraquecover" in preamble
+        assert "colback=poraquegreen" not in preamble
+        assert "poraqueyellow" in preamble
+
+    def test_the_masthead_uses_the_dark_ground_logo(self):
+        """
+        The banner is dark green, so it takes the logo drawn for dark grounds.
+
+        An absolute path because the suite runs from a scratch directory: with
+        a relative one the logo simply would not exist and the branch under
+        test would never be reached.
+        """
+        from poraque.vis.pdf_report import ModelReport
+
+        logo = os.path.join(os.path.dirname(__file__), "..", "assets", "logo",
+                            "logo_light.png")
+        if not os.path.exists(logo):
+            pytest.skip("logo assets not present")
+        source = ModelReport("reports", logo=logo)._preamble("chg2tau", "sub")
+        assert "logo_dark.png" in source
+
+    def test_the_dark_logo_reaches_the_compile_directory(self, tmp_path):
+        """
+        Without the copy the banner compiles to a missing-figure box: the
+        source references logo_dark.png but only logo.png was shipped.
+        """
+        from poraque.vis.pdf_report import ModelReport
+
+        logo = os.path.join(os.path.dirname(__file__), "..", "assets", "logo",
+                            "logo_light.png")
+        if not os.path.exists(logo):
+            pytest.skip("logo assets not present")
+
+        report = ModelReport(str(tmp_path), logo=logo)
+        seen = {}
+
+        def fake_toolchain(stem):
+            return None            # stop before pdflatex; we want the workdir
+
+        report._toolchain = staticmethod(fake_toolchain)
+        original = shutil.copy
+
+        def spy(src, dst):
+            seen[os.path.basename(str(src))] = True
+            return original(src, dst)
+
+        shutil.copy = spy
+        try:
+            report.build(task="chg2tau", per_material={}, unit="eV")
+        finally:
+            shutil.copy = original
+        assert "logo_dark.png" in seen
 
     def test_shares_the_guides_geometry(self, preamble):
         assert "margin=2.5cm" in preamble
@@ -658,3 +746,127 @@ class TestLongTableBreaking:
         assert found == set(per_material), (
             f"{len(set(per_material)) - len(found)} structures never reached "
             f"the page")
+
+
+class TestParetoPlot:
+    """
+    The front drawn, with both candidates a reader might quote marked.
+    """
+
+    FRONT = [{"complexity": 1, "loss": 0.6, "expression": "1.0"},
+             {"complexity": 5, "loss": 0.08, "expression": "exp(-p)"},
+             {"complexity": 7, "loss": 0.021, "expression": "1/(1+p**2)"},
+             {"complexity": 18, "loss": 0.0188, "expression": "exp(-p*p)"}]
+
+    def test_it_writes_a_figure(self, tmp_path):
+        from poraque.vis.report import TrainingReport
+
+        path = TrainingReport(str(tmp_path)).pareto(self.FRONT)
+        assert path and os.path.exists(path)
+
+    def test_an_empty_front_writes_nothing(self, tmp_path):
+        from poraque.vis.report import TrainingReport
+
+        assert TrainingReport(str(tmp_path)).pareto([]) is None
+
+    def test_a_front_with_no_positive_loss_writes_nothing(self, tmp_path):
+        """The axis is logarithmic, so a zero loss has nowhere to go."""
+        from poraque.vis.report import TrainingReport
+
+        assert TrainingReport(str(tmp_path)).pareto(
+            [{"complexity": 3, "loss": 0.0}]) is None
+
+    def test_the_knee_is_computed_when_not_supplied(self, tmp_path):
+        from poraque.vis.report import TrainingReport
+
+        assert TrainingReport(str(tmp_path)).pareto(self.FRONT, knee=None)
+
+
+class TestSymbolicFiguresReachTheReport:
+    """
+    All three symbolic figures are referenced by basename, so each has to be
+    copied into the compile directory. A missing one renders as an empty box.
+    """
+
+    def test_every_figure_is_shipped(self, tmp_path):
+        from poraque.vis.pdf_report import ModelReport
+
+        names = {}
+        for name in ("parity_plot", "knee_parity_plot", "pareto_plot"):
+            path = tmp_path / f"{name}.png"
+            plt.figure()
+            plt.plot([0, 1], [0, 1])
+            plt.savefig(path)
+            plt.close()
+            names[name] = str(path)
+
+        report = ModelReport(str(tmp_path), logo=None)
+        captured = {}
+        report._compile = lambda source, figures, target: (
+            captured.update(source=source, figures=list(figures)), target)[1]
+        report.build(task="chg2tau", per_material={}, unit="eV",
+                     symbolic={"latex": "1", "full_latex": "F = 1",
+                               "complexity": 3, "r2": 0.9, "relative_l2": 0.1,
+                               "n_samples": 10, "scheme": "reduced",
+                               "units": "atomic", "target": "model",
+                               "target_name": "F", "template": "pauli",
+                               "knee": {"complexity": 2, "loss": 0.2,
+                                        "expression": "1 - p"},
+                               **names})
+        for name, path in names.items():
+            assert path in captured["figures"], name
+
+    def test_the_two_parity_plots_are_shown_side_by_side(self, tmp_path):
+        """
+        The question they answer is a comparison, and a comparison read across
+        a page turn is not one.
+        """
+        from poraque.vis.pdf_report import ModelReport
+
+        paths = {}
+        for name in ("parity_plot", "knee_parity_plot"):
+            path = tmp_path / f"{name}.png"
+            plt.figure()
+            plt.plot([0, 1], [0, 1])
+            plt.savefig(path)
+            plt.close()
+            paths[name] = str(path)
+
+        source = ModelReport(str(tmp_path), logo=None)._symbolic_block({
+            "latex": "1", "full_latex": "F = 1", "complexity": 9,
+            "r2": 0.9, "relative_l2": 0.1, "n_samples": 10,
+            "scheme": "reduced", "units": "atomic", "target": "model",
+            "target_name": "F", "template": "pauli",
+            "knee": {"complexity": 3, "loss": 0.2, "expression": "1 - p"},
+            **paths})
+        assert source.count("minipage") == 4        # two opened, two closed
+        assert "Pareto knee, 3 nodes" in source
+        assert "lowest loss, 9 nodes" in source
+
+    def test_a_knee_equal_to_the_winner_says_so(self, tmp_path):
+        from poraque.vis.pdf_report import ModelReport
+
+        source = ModelReport(str(tmp_path), logo=None)._symbolic_block({
+            "latex": "1", "full_latex": "F = 1", "complexity": 3,
+            "expression": "1 - p", "r2": 0.9, "relative_l2": 0.1,
+            "n_samples": 10, "scheme": "reduced", "units": "atomic",
+            "target": "model", "target_name": "F", "template": "pauli",
+            "knee": {"complexity": 3, "loss": 0.2, "expression": "1 - p"}})
+        assert "nothing was traded away" in source
+
+    def test_the_front_table_shows_the_distance_and_marks_the_knee(self,
+                                                                   tmp_path):
+        from poraque.vis.pdf_report import ModelReport
+
+        front = [{"complexity": 3, "loss": 0.2, "expression": "1 - p",
+                  "distance": 0.4, "limits": {"badge": "TF/vW"}},
+                 {"complexity": 9, "loss": 0.1, "expression": "exp(-p)",
+                  "distance": 0.9, "limits": {"badge": "TF/--"}}]
+        source = ModelReport(str(tmp_path), logo=None)._symbolic_block({
+            "latex": "1", "full_latex": "F = 1", "complexity": 9,
+            "r2": 0.9, "relative_l2": 0.1, "n_samples": 10,
+            "scheme": "reduced", "units": "atomic", "target": "model",
+            "target_name": "F", "template": "pauli", "pareto": front,
+            "knee": {"complexity": 3, "loss": 0.2, "expression": "1 - p"}})
+        assert r"Nodes & Loss & $d$ & Limits & Expression" in source
+        assert r"3\,$\bullet$" in source, "the knee must be marked in the table"

@@ -9,28 +9,28 @@
 </a>
 </h1>
 
+<div align="center">
+
+[![PyPI](https://img.shields.io/pypi/v/poraque?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/poraque/)
+[![Python](https://img.shields.io/pypi/pyversions/poraque?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/poraque/)
+[![Docs](https://img.shields.io/readthedocs/poraque?style=for-the-badge&logo=readthedocs&logoColor=white)](https://poraque.readthedocs.io/)
 [![License: MIT](https://img.shields.io/github/license/seixas-research/poraque?color=green&style=for-the-badge)](LICENSE)
+
+</div>
 
 # Poraquê
 
-**Poraquê learns maps between the three-dimensional scalar fields of
-density-functional theory.** Given only a crystal geometry it predicts the
-valence charge density and the kinetic energy density — no wavefunctions, no
-self-consistency cycle.
+**Poraquê** is a software framework for machine learning operators between the real-space fields of density functional theory. Given only a crystal geometry, it predicts the charge density and the kinetic energy density — no wavefunctions, no self-consistency cycle.
 
-```
-{POSCAR, INCAR, POTCAR} --analytic--> EXTCAR --Model 1--> CHGCAR --Model 2--> TAUCAR
-                                                                                 |
-                                                                        integrate v
-                                                                              energy
-```
-
-The first step is closed-form; only the two field-to-field maps are learned.
-They are not unrelated regressions: the first is the **Hohenberg–Kohn map**,
-whose existence is a theorem, and the second is the **kinetic energy density
-functional**, the missing ingredient of orbital-free DFT.
+Two **Fourier Neural Operators** are learned: the first maps the external potential to the charge density (`ext2chg`), the second maps the charge density to the kinetic energy density (`chg2tau`). They are not two unrelated regressions — the first is the Hohenberg–Kohn map, whose existence is a theorem, and the second is the kinetic energy density functional, the missing ingredient of orbital-free DFT.
 
 ## Install
+
+```bash
+pip install poraque
+```
+
+Or from source, which is what you want if you intend to change anything:
 
 ```bash
 git clone https://github.com/seixas-research/poraque.git
@@ -38,7 +38,8 @@ cd poraque
 pip install -e .
 ```
 
-Python 3.11 or newer. Installing registers five console commands —
+Python 3.11 or newer. Symbolic distillation is an optional extra:
+`pip install "poraque[symbolic]"`. Installing registers five console commands —
 `poraque-train`, `poraque-inference`, `poraque-committee`,
 `poraque-active-learning` and `poraque-mp` — which run from any directory once
 the environment is active. The first four are the `main()` of the script of the
@@ -65,7 +66,6 @@ float32 rounding, and `PORAQUE_C_BACKEND=0` turns it off. See the User Guide
 
 ```bash
 # 1. train one ext2chg and one chg2tau model on all structures
-poraque-train --write-config configs/my_run.yaml
 poraque-train --config configs/train.yaml
 
 # 2. measure generalisation
@@ -100,17 +100,9 @@ Every predicted field is written in `CHGCAR` format.
 That is why `configs/train.yaml` is 19 lines: of the 78 settings a full config
 carries, it changes 3.
 
-```bash
-poraque-train --write-config /tmp/all.yaml               # every key, with defaults
-poraque-train --config mine.yaml --write-config mine.yaml --minimal
-```
-
-The second rewrites a config as only its differences. It applies command-line
-overrides first, so a swept run can be frozen back into a file:
-
-```bash
-poraque-train --config base.yaml --epochs 800 --write-config sweep.yaml --minimal
-```
+`configs/train_complete_and_commented.yaml` is the reference: it lists the
+settings worth knowing about, each with the reasoning behind it. Read it there
+and copy only what you need into your own file.
 
 | File | Purpose |
 | --- | --- |
@@ -170,10 +162,20 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-atoms.calc = Poraque("models/poraque_models.pfno", potcar="POTCAR")
-atoms.get_potential_energy()
-print(atoms.calc.components)     # T_s, E_ext, alpha Z, E_H, E_xc, Ewald
+atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
+
+rho = atoms.calc.get_charge_density(atoms)   # ChargeDensity, e/Ang^3
+print(rho.electron_count())                  # 44.0, the valence count
+rho.write("CHGCAR_pred")                     # readable by any DFT tool
+
+charges = atoms.get_charges()                # net charge per atom, +e
+print(atoms.calc.charge_analysis)            # populations, valence, method
 ```
+
+`potcar_dir` is a POTCAR **library** — one subdirectory per element,
+`<potcar_dir>/Au/POTCAR` — not a single POTCAR file. The entries for whatever
+elements the `Atoms` happens to contain are assembled on demand, which is what
+lets one calculator serve arbitrary compositions.
 
 Forces and stress are not implemented, so this is single points, not
 relaxations.
@@ -230,7 +232,7 @@ in its first lines.
 
 | Path | Contents |
 | --- | --- |
-| `src/poraque/fields/` | Shared-grid scalar fields, VASP I/O, pluggable ingestion |
+| `src/poraque/fields/` | Shared-grid scalar fields, VASP and FHI-aims I/O, pluggable ingestion |
 | `src/poraque/data/` | Materials Project downloader, format detection, mixed datasets |
 | `src/poraque/ml/` | Fourier neural operators, differentiable DFT operators, training |
 | `src/poraque/physics/` | Total-energy components integrated from the predicted fields |
@@ -238,7 +240,7 @@ in its first lines.
 | `src/poraque/vis/` | Figures and automatic PDF reports |
 | `models/` | One folder per trained model: weights, log, plots, report |
 | `scripts/` | Validation, training, inference, experiments |
-| `configs/` | YAML run definitions — every key is optional; see `--minimal` |
+| `configs/` | YAML run definitions — every key is optional |
 | `docs/source/` | Sphinx documentation |
 | `docs/notes/` | Design and analysis notes — start at `roadmap.md` |
 | `latex/user_guide/` | User guide (how to run it) |

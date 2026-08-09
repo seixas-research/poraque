@@ -42,7 +42,6 @@ The result is written in `CHGCAR` format.
 ## 3. Train
 
 ```bash
-poraque-train --write-config configs/my_run.yaml
 poraque-train --config configs/train.yaml
 ```
 
@@ -215,12 +214,24 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Au", "fcc", a=4.08, cubic=True)
-atoms.calc = Poraque("models/poraque_models.pfno", potcar="POTCAR")
+atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
 
-energy = atoms.get_potential_energy()
-print(atoms.calc.components)          # the full energy decomposition
+rho = atoms.calc.get_charge_density(atoms)   # ChargeDensity, e/Ang^3
+print(rho.electron_count())                  # 44.0, the valence count
+rho.write("CHGCAR_pred")                     # readable by any DFT tool
+
+charges = atoms.get_charges()                # net charge per atom, +e
+print(atoms.calc.charge_analysis)            # populations, valence, method
 ```
 
-Forces and stress are not implemented, so this is for single points rather than
-relaxations. See {doc}`../energy/index` — including what the number does and
-does not mean.
+`potcar_dir` is a POTCAR **library** — one subdirectory per element,
+`<potcar_dir>/Au/POTCAR` — not a single POTCAR file. The entries for the
+elements the `Atoms` contains are assembled on demand and cached per
+composition, which is what lets one calculator serve arbitrary structures.
+
+The fields are the prediction; a total energy is one thing integrated from
+them, and `atoms.get_potential_energy()` returns it. See
+{doc}`../energy/index` for what that number does and does not mean, and
+{doc}`../analysis/index` for the partitioning behind `get_charges`. Forces and
+stress are not implemented, so this is for single points rather than
+relaxations.

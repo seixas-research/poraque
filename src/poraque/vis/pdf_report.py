@@ -166,8 +166,8 @@ class ModelReport:
         logo_line = ""
         header_logo = r"\fancyhead[L]{}"
         if has_logo:
-            logo_line = (r"\includegraphics[width=0.34\textwidth]{logo.png}\par"
-                         "\n" r"\vspace{0.55cm}")
+            logo_line = (r"\includegraphics[width=0.30\textwidth]"
+                         r"{logo_dark.png}\par" "\n" r"\vspace{0.5cm}")
             header_logo = (r"\fancyhead[L]{\raisebox{-4pt}"
                            r"{\includegraphics[height=14pt]{logo.png}}}")
 
@@ -200,18 +200,29 @@ class ModelReport:
 \tcbuselibrary{{skins,breakable}}
 
 % --- Brand palette, shared with the user and technical guides --------------
-\definecolor{{poraquered}}{{RGB}}{{248,65,55}}
-\definecolor{{poraqueamber}}{{RGB}}{{235,104,52}}
-\definecolor{{poraquedark}}{{RGB}}{{30,34,40}}
+% Three colours, each with one job. Hues run 48 -> 77 -> 160 degrees: one
+% sweep from the logo's yellow through yellow-green into deep green.
+% The yellow is ACCENT ONLY -- 1.7:1 on white -- so it carries rules and bands
+% and never body text. The green anchors: 12.2:1 on white.
+% poraquecover is COVER GROUND ONLY -- named for the restriction, since a
+% name that states it is harder to misuse than a comment. Darker than
+% poraquegreen by 7 points of lightness, and still green at hue 163.
+\definecolor{{poraqueyellow}}{{RGB}}{{255,204,0}}
+\definecolor{{poraquelime}}{{RGB}}{{163,198,75}}
+\definecolor{{poraquegreen}}{{RGB}}{{15,61,46}}
+\definecolor{{poraquecover}}{{RGB}}{{6,35,27}}
+\colorlet{{poraquered}}{{poraquegreen}}
+\definecolor{{poraqueamber}}{{RGB}}{{176,125,42}}
+\definecolor{{poraquedark}}{{RGB}}{{15,61,46}}
 \definecolor{{shadegray}}{{RGB}}{{90,96,104}}
-\definecolor{{codebg}}{{RGB}}{{245,246,248}}
+\definecolor{{codebg}}{{RGB}}{{246,249,242}}
 \definecolor{{warnamber}}{{RGB}}{{176,125,42}}
 
 % --- Heading typography, as in the guides ----------------------------------
 \titleformat{{\section}}
   {{\Large\bfseries\color{{poraquedark}}}}
   {{\textcolor{{poraquered}}{{\thesection}}}}{{0.8em}}{{}}
-  [\vspace{{-6pt}}{{\color{{poraquered!35}}\rule{{\textwidth}}{{0.8pt}}}}]
+  [\vspace{{-6pt}}{{\color{{poraquelime}}\rule{{\textwidth}}{{0.8pt}}}}]
 \titleformat{{\subsection}}
   {{\large\bfseries\color{{poraquedark}}}}
   {{\textcolor{{poraquered}}{{\thesubsection}}}}{{0.8em}}{{}}
@@ -229,21 +240,21 @@ class ModelReport:
 \fancyfoot[L]{{\small\color{{shadegray}}Poraqu\^e model report}}
 \fancyfoot[R]{{\small\color{{shadegray}}\thepage}}
 \renewcommand{{\headrulewidth}}{{0.8pt}}
-\renewcommand{{\headrule}}{{{{\color{{poraquered}}%
+\renewcommand{{\headrule}}{{{{\color{{poraqueyellow}}%
   \hrule width\headwidth height\headrulewidth}}}}
 \renewcommand{{\footrulewidth}}{{0pt}}
 \markboth{{{title}}}{{}}
 
 % --- Callout boxes, matching the guides ------------------------------------
 \newtcolorbox{{pwarn}}[1][]{{%
-  breakable, enhanced, colback=warnamber!7, colframe=warnamber,
+  breakable, enhanced, colback=poraqueyellow!14, colframe=poraqueyellow,
   boxrule=0pt, leftrule=3pt, arc=1pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
-  fonttitle=\bfseries\small, title={{Caveat}}, coltitle=warnamber,
+  fonttitle=\bfseries\small, title={{Caveat}}, coltitle=poraquegreen,
   attach title to upper=\par\vspace{{2pt}}, #1}}
 \newtcolorbox{{pnote}}[1][]{{%
-  breakable, enhanced, colback=poraquered!5, colframe=poraquered,
+  breakable, enhanced, colback=poraquelime!14, colframe=poraquegreen,
   boxrule=0pt, leftrule=3pt, arc=1pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
-  fonttitle=\bfseries\small, title={{Note}}, coltitle=poraquered,
+  fonttitle=\bfseries\small, title={{Note}}, coltitle=poraquegreen,
   attach title to upper=\par\vspace{{2pt}}, #1}}
 
 \setlist[itemize]{{itemsep=2pt,topsep=4pt}}
@@ -251,19 +262,22 @@ class ModelReport:
 
 \begin{{document}}
 
-\begin{{center}}
+% The report's answer to the guides' full-bleed cover: one dark-green panel
+% carrying the logo drawn for dark grounds, closed by a yellow rule. A report
+% is two or three pages, so a whole cover page would be mostly cover -- this
+% gives it the same identity in the space a masthead takes.
+\begin{{tcolorbox}}[enhanced, colback=poraquecover, colframe=poraquecover,
+  boxrule=0pt, arc=3pt, left=18pt, right=18pt, top=16pt, bottom=14pt,
+  borderline south={{3pt}}{{0pt}}{{poraqueyellow}}]
+\centering\sffamily\color{{white}}
 {logo_line}
-{{\color{{poraquered}}\rule{{0.74\textwidth}}{{1.6pt}}}}\par
-\vspace{{0.7cm}}
-{{\Huge\bfseries {title}\par}}
-\vspace{{0.35cm}}
-{{\large\color{{shadegray}} {subtitle}\par}}
-\vspace{{0.7cm}}
-{{\color{{poraquered}}\rule{{0.74\textwidth}}{{1.6pt}}}}\par
-\vspace{{0.25cm}}
-{{\small\color{{shadegray}} generated {stamp}\par}}
-\end{{center}}
-\vspace{{0.6cm}}
+{{\LARGE\bfseries {title}\par}}
+\vspace{{0.28cm}}
+{{\normalsize\color{{poraquelime}} {subtitle}\par}}
+\end{{tcolorbox}}
+\vspace{{-0.15cm}}
+\hfill{{\footnotesize\color{{shadegray}} generated {stamp}}}
+\vspace{{0.55cm}}
 """
 
     def _metrics_table(self, per_material, unit):
@@ -410,6 +424,24 @@ class ModelReport:
             "map is semi-local, not how well the search performed.\n"
             r"\end{quote}" "\n\n")
 
+        knee = get("knee") or {}
+        if knee and knee.get("expression") not in (None, get("expression")):
+            body.append(
+                f"The front's \\textbf{{knee}} --- the candidate nearest the ideal "
+                f"corner once complexity and log-loss are rescaled to "
+                f"$[0,1]$ --- is at {knee.get('complexity')} nodes with loss "
+                f"{_number(knee.get('loss'), 4)}, against "
+                f"{get('complexity', 0)} nodes and "
+                f"{_number(get('loss'), 4)} for the lowest-loss expression. "
+                f"It is the one worth quoting when length is a cost: the "
+                f"parity plots below show what, if anything, the shorter form "
+                f"gives away.\n\n")
+        elif knee:
+            body.append(
+                "The front's knee coincides with the lowest-loss expression, "
+                "so nothing was traded away: no shorter candidate came close "
+                "enough to be worth its length.\n\n")
+
         held_out = get("validation") or {}
         if held_out.get("n_points"):
             body.append(
@@ -418,20 +450,45 @@ class ModelReport:
                 f"$L^2 = {self._math_number(held_out.get('relative_l2'))}$, "
                 f"$R^2 = {self._math_number(held_out.get('r2'))}$.\n\n")
 
+        # Which data the plots are drawn from depends on whether anything was
+        # held out; saying "held-out" regardless would overstate a training
+        # fit, which is the one thing a parity plot must not do.
+        on_held_out = bool(held_out.get("n_points"))
+        provenance = ("on held-out structures" if on_held_out else
+                      "on the voxels it was fitted to --- a training fit, "
+                      "since this run held nothing out")
+
         parity = get("parity_plot")
-        if parity and os.path.exists(parity):
-            # Which data the plot is drawn from depends on whether anything was
-            # held out; saying "held-out" regardless would overstate a training
-            # fit, which is the one thing a parity plot must not do.
-            on_held_out = bool(held_out.get("n_points"))
-            provenance = ("on held-out structures" if on_held_out else
-                          "on the voxels it was fitted to --- a training fit, "
-                          "since this run held nothing out")
+        knee_parity = get("knee_parity_plot")
+        if (parity and os.path.exists(parity)
+                and knee_parity and os.path.exists(knee_parity)):
+            # Side by side, at half width. The question these two answer is a
+            # comparison -- does the shorter formula give anything away? -- and
+            # a comparison read across a page turn is not one.
+            body.append(self._pair_block(
+                parity, knee_parity,
+                f"lowest loss, {get('complexity', 0)} nodes",
+                f"Pareto knee, {(get('knee') or {}).get('complexity')} nodes",
+                f"The two candidates against the DFT reference "
+                f"{provenance}, on identical voxels. The left is the most "
+                f"accurate expression the search found; the right is the one "
+                f"the front's knee selects. Where the clouds are "
+                f"indistinguishable, the extra nodes bought nothing."))
+        elif parity and os.path.exists(parity):
             body.append(self._figure_block(
                 parity,
                 f"The distilled formula against the DFT reference "
                 f"{provenance}. Read it beside the operator's own parity plot: "
                 f"the gap between them is what the closed form gives up."))
+
+        pareto_plot = get("pareto_plot")
+        if pareto_plot and os.path.exists(pareto_plot):
+            body.append(self._figure_block(
+                pareto_plot,
+                "The accuracy/complexity front, with the lowest-loss "
+                "candidate and the knee marked. The loss axis is logarithmic: "
+                "a front spans orders of magnitude, and on a linear axis every "
+                "candidate but the most accurate collapses onto the floor."))
 
         # Which constraints were *fitness* rather than a post-hoc filter. It
         # has to be on the page beside the front, because it changes what the
@@ -456,21 +513,29 @@ class ModelReport:
         if front:
             body.append(r"\subsection*{Accuracy against complexity}" "\n")
             body.append(r"\begin{center}\begin{longtable}"
-                        r"{@{}rrc>{\raggedright\arraybackslash}p{8.4cm}@{}}"
+                        r"{@{}rrrc>{\raggedright\arraybackslash}p{7.0cm}@{}}"
                         r"\toprule" "\n")
             # `\endhead`, so a front long enough to turn the page keeps its
             # column names. Without it the second page is four unlabelled
             # columns of numbers and a formula.
-            body.append(r"Nodes & Loss & Limits & Expression \\" "\n"
+            body.append(r"Nodes & Loss & $d$ & Limits & Expression \\" "\n"
                         r"\midrule" "\n" r"\endhead" "\n")
+            chosen = knee.get("complexity") if knee else None
             for entry in front:
                 limits = entry.get("limits") or {}
-                body.append(f"{entry['complexity']} & "
+                # The knee is marked in the table it was chosen from, so the
+                # figure and the front cannot be read as saying different
+                # things.
+                mark = r"\,$\bullet$" if entry["complexity"] == chosen else ""
+                body.append(f"{entry['complexity']}{mark} & "
                             f"{_number(entry['loss'], 4)} & "
+                            f"{_number(entry.get('distance'), 3)} & "
                             f"{_escape(limits.get('badge', '--/--'))} & "
                             f"{_wrappable(entry['expression'])} \\\\\n")
             body.append(r"\bottomrule\end{longtable}\end{center}" "\n")
-            body.append(r"\emph{\small Limits: \texttt{TF} = recovers "
+            body.append(r"\emph{\small $d$ is the distance to the ideal "
+                        r"corner; $\bullet$ marks the knee. "
+                        r"Limits: \texttt{TF} = recovers "
                         r"Thomas-Fermi as $p,q\to0$; \texttt{vW} = recovers "
                         r"von Weizs\"acker as $p\to\infty$.}" "\n\n")
         return "".join(body)
@@ -539,6 +604,29 @@ class ModelReport:
                 "range, and it should not be extrapolated.\n"
                 r"\end{quote}" "\n\n")
         return "".join(body)
+
+    def _pair_block(self, left, right, left_label, right_label, caption):
+        """
+        Two figures side by side, under one caption.
+
+        Used where the point *is* the comparison. Two full-width figures would
+        put them on separate pages at this size, and a comparison read across a
+        page turn is not a comparison.
+        """
+        return (
+            r"\begin{figure}[H]" "\n"
+            r"\centering" "\n"
+            r"\begin{minipage}{0.49\textwidth}\centering" "\n"
+            rf"\includegraphics[width=\textwidth]{{{os.path.basename(left)}}}" "\n"
+            rf"\small\color{{shadegray}} {left_label}" "\n"
+            r"\end{minipage}\hfill" "\n"
+            r"\begin{minipage}{0.49\textwidth}\centering" "\n"
+            rf"\includegraphics[width=\textwidth]{{{os.path.basename(right)}}}" "\n"
+            rf"\small\color{{shadegray}} {right_label}" "\n"
+            r"\end{minipage}" "\n"
+            rf"\caption*{{\small\color{{shadegray}} {caption}}}" "\n"
+            r"\end{figure}" "\n"
+        )
 
     def _figure_block(self, path, caption):
         return (
@@ -746,10 +834,18 @@ class ModelReport:
         # in `figures`, which drives the "Comparison with DFT" section and
         # would render it a second time there.
         embedded = list(figures)
-        extra = (symbolic or {}).get("parity_plot") if isinstance(
-            symbolic, dict) else getattr(symbolic, "parity_plot", None)
-        if extra and extra not in embedded:
-            embedded.append(extra)
+        # Every symbolic figure is referenced by basename like the rest, so
+        # each has to reach the compile directory -- but none is in `figures`,
+        # which drives "Comparison with DFT" and would render them a second
+        # time there.
+        def attribute(name):
+            return ((symbolic or {}).get(name) if isinstance(symbolic, dict)
+                    else getattr(symbolic, name, None))
+
+        for name in ("parity_plot", "knee_parity_plot", "pareto_plot"):
+            extra = attribute(name)
+            if extra and extra not in embedded:
+                embedded.append(extra)
 
         return self._compile(source, embedded, target)
 
@@ -770,6 +866,12 @@ class ModelReport:
 
             if self.logo and os.path.exists(self.logo):
                 shutil.copy(self.logo, os.path.join(workdir, "logo.png"))
+                # The masthead sits on dark green, so it needs the logo drawn
+                # for dark grounds. It lives beside the light one; without
+                # this copy the banner compiles to a missing-figure box.
+                dark = os.path.join(os.path.dirname(self.logo), "logo_dark.png")
+                shutil.copy(dark if os.path.exists(dark) else self.logo,
+                            os.path.join(workdir, "logo_dark.png"))
             for path in figures:
                 if os.path.exists(path):
                     shutil.copy(path, workdir)

@@ -1,19 +1,31 @@
 \chapter{Installation}
 \label{ch:install}
 
+\section{From PyPI}
+
+The usual way:
+
+\begin{lstlisting}
+pip install poraque
+\end{lstlisting}
+
+\section{From source}
+
+What you want if you intend to change anything --- the editable install means
+an edit to the source takes effect without reinstalling:
+
 \begin{lstlisting}
 git clone https://github.com/seixas-research/poraque.git
 cd poraque
 pip install -e .
 \end{lstlisting}
 
-This installs NumPy, SciPy, ASE, Matplotlib, PyYAML and PyTorch.
+Either way this installs NumPy, SciPy, ASE, Matplotlib, PyYAML and PyTorch.
+Symbolic distillation (Chapter~\ref{ch:symbolic}) needs an optional extra,
+which pulls in PySR and its Julia toolchain:
 
-\section{From PyPI}
-
-Another way to install Poraque is via PyPI:
 \begin{lstlisting}
-pip install poraque
+pip install "poraque[symbolic]"
 \end{lstlisting}
 
 \section{Console commands}

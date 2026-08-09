@@ -151,17 +151,38 @@ a fractional power of a negative quantity leaves the reals, and an exponent
 that is itself a subtree is unreadable and almost never physical. Real
 functionals have simple exponents --- $5/3$, $4/3$, $2$.
 
-\section{Parity plot for the distilled formula}
+\section{Figures}
 
-After the search, the winning expression is evaluated on the \textbf{held-out}
-structures and compared against the DFT reference --- not against whatever was
-fitted, since with \opt{target: model} the two are different things. The plot
-is written as \file{<task>\_symbolic\_parity.png} and embedded in the report's
-Symbolic Distillation section.
+Three are written after a search, all embedded in the report's Symbolic
+Distillation section:
 
-Read it beside the operator's own parity plot: the gap between them is what the
-closed form gives up. A formula that tracks the identity line through the bulk
-and bends away at the high-density end is the usual picture --- semi-local
+\begin{center}
+\begin{tabular}{@{}lp{7.6cm}@{}}
+\toprule
+File & Shows \\
+\midrule
+\file{<task>\_symbolic\_pareto.png} & the front, with the lowest-loss
+candidate and the knee marked \\
+\file{<task>\_symbolic\_parity.png} & the \textbf{lowest-loss} expression
+against the DFT reference \\
+\file{<task>\_symbolic\_parity\_knee.png} & the \textbf{knee} expression, on
+identical voxels \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The two parity plots are laid \emph{side by side} in the report, because the
+question they answer is a comparison: does the shorter formula give anything
+away? Where the clouds are indistinguishable, the extra nodes bought nothing.
+
+Both are evaluated on the \textbf{held-out} structures and compared against the
+DFT reference --- not against whatever was fitted, since with
+\opt{target: model} the two are different things. With no validation split they
+fall back to the fitted voxels, and the caption says so.
+
+Read them beside the operator's own parity plot: the gap between them is what
+the closed form gives up. A formula that tracks the identity line through the
+bulk and bends away at the high-density end is the usual picture --- semi-local
 features cannot resolve the core peaks.
 
 \section{Regularization in vacuum}
@@ -243,6 +264,49 @@ report as display mathematics with $\rho$, $p$ and $q$ rendered properly.
 Read the front, not just the winner. A single expression hides the trade that
 produced it; the front shows what each extra node bought.
 \end{pnote}
+
+\section{The Pareto knee}
+
+The front states a trade and refuses to resolve it. The \textbf{knee} is where
+resolving it costs least: the candidate nearest the ideal corner $(0,0)$ once
+both axes are rescaled to $[0,1]$ across the front,
+\[
+  d_i = \sqrt{\hat c_i^{\,2} + \hat{\mathcal{L}}_i^{\,2}},
+  \qquad
+  \hat x_i = \frac{x_i - \min x}{\max x - \min x} .
+\]
+Both rescalings are necessary: a node count and a loss have no common unit, so
+a distance between them means nothing until they are made comparable.
+
+The loss is compared on a \textbf{logarithmic} scale. A front spans orders of
+magnitude, and on a linear scale every candidate but the most accurate
+collapses onto $\hat{\mathcal{L}} \approx 1$ --- the knee would then be the
+shortest expression whatever it cost.
+
+The run prints both candidates, and the report marks the knee with
+$\bullet$ in the front table alongside its distance $d$:
+
+\begin{lstlisting}
+  pareto knee  : complexity 7 nodes, loss 0.021  (lowest loss: 18 nodes, 0.0188)
+\end{lstlisting}
+
+\begin{pwarn}
+A knee is a heuristic, not a theorem. With one candidate it is that candidate;
+where the front is a straight line every point is equidistant. It answers
+\emph{which expression is worth its length}, not \emph{which expression is
+right} --- that is what the asymptotic limits of the next section are for.
+\end{pwarn}
+
+\section{Rounding}
+
+Constants are rounded to \textbf{three decimal places} wherever an expression
+is displayed. A search returns them at full float precision ---
+\opt{0.33333334326744079589843750} is a real example --- and three of those in
+one formula overrun the width of a PDF page.
+
+Three places is also what the numbers are worth: the search is stochastic and
+its constants move in the third place between seeds, so printing twenty digits
+states a precision the method does not have.
 
 \section{Physical asymptotic compliance}
 \label{sec:symbolic-limits}

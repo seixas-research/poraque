@@ -226,6 +226,59 @@ report as display mathematics with $\rho$, $p$ and $q$ rendered properly.
 **Read the front, not just the winner.** A single expression hides the trade
 that produced it; the front shows what each extra node bought.
 
+## The Pareto knee
+
+The front states a trade and refuses to resolve it. The **knee** is where
+resolving it costs least: the candidate nearest the ideal corner $(0, 0)$ once
+both axes are rescaled to $[0, 1]$ across the front,
+
+$$
+d_i = \sqrt{\hat c_i^{\,2} + \hat{\mathcal{L}}_i^{\,2}}, \qquad
+\hat x_i = \frac{x_i - \min x}{\max x - \min x} .
+$$
+
+Both rescalings are necessary — a node count and a loss have no common unit,
+so a distance between them is meaningless until they are made comparable.
+
+The loss is compared on a **logarithmic** scale. A front spans orders of
+magnitude, and on a linear scale every candidate but the most accurate
+collapses onto $\hat{\mathcal{L}} \approx 1$; the knee would then be the
+shortest expression regardless of what it cost.
+
+```python
+from poraque.ml.symbolic import pareto_knee
+
+knee = pareto_knee(result.pareto)
+knee["complexity"], knee["loss"], knee["distance"]
+```
+
+`pareto_knee` also writes `distance` onto every entry of the front in place, so
+the report's table can show the column it ranked on and the figure and the
+table cannot disagree.
+
+The run prints both candidates:
+
+```text
+  pareto knee  : complexity 7 nodes, loss 0.021  (lowest loss: 18 nodes, 0.0188)
+```
+
+A knee is a heuristic, not a theorem. With one candidate it is that candidate;
+where the front is a straight line every point is equidistant. It answers
+"which expression is worth its length", not "which expression is right" — that
+is what the asymptotic limits are for.
+
+## Rounding
+
+Constants are rounded to **three decimal places** wherever an expression is
+displayed. A search returns them at full float precision —
+`0.33333334326744079589843750` is a real example — and three of those in one
+formula overrun the width of a PDF page.
+
+Three places is also what the numbers are worth: the search is stochastic and
+its constants move in the third place between seeds, so printing twenty digits
+states a precision the method does not have. `expression_to_latex(...,
+decimals=None)` keeps them verbatim.
+
 ## Physical asymptotic compliance
 
 A symbolic fit is a numerical statement until it is checked against physics it
@@ -286,17 +339,29 @@ candidates are listed separately — a slightly worse expression that obeys both
 limits is usually the better functional. The PDF report gets a **Physical
 asymptotic compliance** section with the per-limit findings and a score.
 
-## Parity plot
+## Figures
 
-After the search, the winning expression is evaluated on the **held-out**
-structures and compared against the DFT reference — not against whatever was
-fitted, since with `target: model` the two are different things. The result is
-written as `<task>_symbolic_parity.png` and embedded in the report's Symbolic
-Distillation section.
+Three are written after a search, all embedded in the report's Symbolic
+Distillation section:
 
-Read it beside the operator's own parity plot: the gap between them is what the
-closed form gives up. A formula that tracks the identity line through the bulk
-and bends away at the high-density end is the usual picture — semi-local
+| File | Shows |
+| --- | --- |
+| `<task>_symbolic_pareto.png` | the front, with the lowest-loss candidate and the knee marked |
+| `<task>_symbolic_parity.png` | the **lowest-loss** expression against the DFT reference |
+| `<task>_symbolic_parity_knee.png` | the **knee** expression, on identical voxels |
+
+The two parity plots are laid side by side in the report, because the question
+they answer is a comparison: does the shorter formula give anything away? Where
+the clouds are indistinguishable, the extra nodes bought nothing.
+
+Both are evaluated on the **held-out** structures and compared against the DFT
+reference — not against whatever was fitted, since with `target: model` the two
+are different things. With no validation split they fall back to the fitted
+voxels and the caption says so.
+
+Read them beside the operator's own parity plot: the gap between them is what
+the closed form gives up. A formula that tracks the identity line through the
+bulk and bends away at the high-density end is the usual picture — semi-local
 features cannot resolve the core peaks.
 
 ```python

@@ -5,7 +5,6 @@ A run is defined by \file{configs/train\_config.yaml}: one top-level key and
 four sections. Generate a copy with every default written out explicitly with
 
 \begin{lstlisting}
-poraque-train --write-config configs/my_run.yaml
 \end{lstlisting}
 
 This chapter documents every key that file can contain.
@@ -48,18 +47,10 @@ readable as the description of one experiment rather than a dump of every
 knob: of the eighty settings a full configuration carries,
 \file{configs/train.yaml} differs in a handful.
 
-\begin{lstlisting}
-poraque-train --write-config /tmp/all.yaml           # every key, with defaults
-poraque-train --config mine.yaml --write-config mine.yaml --minimal
-\end{lstlisting}
-
-The second rewrites a configuration you already have as only its differences.
-It also applies command-line overrides first, so a swept run can be frozen
-back into a file:
-
-\begin{lstlisting}
-poraque-train --config base.yaml --epochs 800 --write-config sweep.yaml --minimal
-\end{lstlisting}
+\file{configs/train\_complete\_and\_commented.yaml} is the reference: it lists
+the settings worth knowing about, each with the reasoning behind it. Read it
+there and copy only what you need into your own file. This chapter is the
+exhaustive version of the same thing.
 
 Four configurations ship with the source:
 
