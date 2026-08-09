@@ -1,0 +1,9 @@
+### small: width 8 modes 6 layers 2
+  semi-local least squares (GGA)          1.712      0.559      3.06x
+  FNO (w8 m6 L2)                          1.712      0.702      2.44x
+    ... same model, TRAINING fit          1.735      0.420      4.13x
+  113,817 parameters, 53 s
+### medium: width 16 modes 8 layers 3
+  FNO (w16 m8 L3)                         1.712      0.706      2.42x
+    ... same model, TRAINING fit          1.735      0.073     23.83x
+  1,579,489 parameters, 134 s

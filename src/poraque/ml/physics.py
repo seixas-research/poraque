@@ -542,6 +542,302 @@ def von_weizsacker_potential(density, cell, epsilon=1e-10):
 
 
 # ---------------------------------------------------------------------- #
+# Exchange and correlation
+#
+# `euler_lagrange_residual` has always accepted a `v_xc` argument and there
+# has never been anything in the package that could produce one, so every
+# residual ever computed here silently omitted the term. That is not a small
+# omission: v_xc is of order 10 eV in a valence region, which is the same
+# order as the kinetic potential it is being weighed against.
+#
+# LDA only. PBE would need the gradient terms of its enhancement factor
+# differentiated as well, and the residual is not yet accurate enough for
+# that difference to be the limiting error.
+# ---------------------------------------------------------------------- #
+#: Dirac exchange coefficient, :math:`-\tfrac34(3/\pi)^{1/3}`.
+_DIRAC_X = -0.75 * (3.0 / np.pi) ** (1.0 / 3.0)
+
+#: Perdew-Wang 1992 correlation parameters, unpolarised branch. Identical to
+#: :data:`poraque.physics.energy._PW92`; the two must not drift apart.
+_PW92 = dict(A=0.031091, alpha1=0.21370,
+             beta1=7.5957, beta2=3.5876, beta3=1.6382, beta4=0.49294)
+
+#: PBE parameters. None are fitted: kappa is the Lieb-Oxford bound and mu and
+#: beta follow from the linear response of the uniform gas. Mirrors
+#: :mod:`poraque.physics.energy`.
+_PBE_KAPPA = 0.804
+_PBE_BETA = 0.06672455060314922
+_PBE_MU = _PBE_BETA * np.pi ** 2 / 3.0
+_PBE_GAMMA = (1.0 - np.log(2.0)) / np.pi ** 2
+
+#: Functionals :func:`xc_potential` accepts, matching
+#: :data:`poraque.physics.energy.XC_FUNCTIONALS` so one name means one thing
+#: across the package.
+XC_FUNCTIONALS = ("pbe", "lda", "pbe-x", "lda-x", "x-only", "none")
+
+#: Those needing a density gradient, and therefore a ``cell``.
+_GRADIENT_FUNCTIONALS = ("pbe", "pbe-x")
+
+
+def lda_exchange_potential(density):
+    r"""
+    Dirac exchange potential :math:`v_{\rm x} = -(3\rho/\pi)^{1/3}`, in eV.
+
+    Parameters
+    ----------
+    density : torch.Tensor
+        Density in e/Å³, any shape.
+
+    Returns
+    -------
+    torch.Tensor
+        Same shape, in eV.
+    """
+    rho = density.clamp_min(0.0) * BOHR_TO_ANGSTROM ** 3
+    return (4.0 / 3.0) * _DIRAC_X * rho.pow(1.0 / 3.0) * _HA_TO_EV
+
+
+def pw92_correlation_potential(density, epsilon=1e-12):
+    r"""
+    Perdew-Wang 1992 correlation potential, unpolarised branch, in eV.
+
+    Uses :math:`v_{\rm c} = \varepsilon_{\rm c}
+    - \tfrac{r_s}{3}\,\mathrm{d}\varepsilon_{\rm c}/\mathrm{d}r_s`, with the
+    derivative written in closed form rather than taken by autograd, so the
+    function is usable on a tensor that does not require grad and costs
+    nothing extra when it does.
+
+    Parameters
+    ----------
+    density : torch.Tensor
+        Density in e/Å³.
+    epsilon : float, optional
+        Density floor, in e/Bohr³ after conversion. In vacuum
+        :math:`r_s \to \infty` and the expression is numerically dead; the
+        floor keeps it finite without affecting any region that carries
+        electrons.
+
+    Returns
+    -------
+    torch.Tensor
+        Same shape, in eV.
+    """
+    rho = (density.clamp_min(0.0) * BOHR_TO_ANGSTROM ** 3).clamp_min(epsilon)
+    r_s = (3.0 / (4.0 * np.pi * rho)).pow(1.0 / 3.0)
+    root = r_s.sqrt()
+
+    p = _PW92
+    q0 = -2.0 * p["A"] * (1.0 + p["alpha1"] * r_s)
+    q1 = 2.0 * p["A"] * (p["beta1"] * root + p["beta2"] * r_s
+                         + p["beta3"] * r_s * root
+                         + p["beta4"] * r_s * r_s)
+    # d/dr_s of both, for the chain rule below.
+    dq0 = -2.0 * p["A"] * p["alpha1"]
+    dq1 = 2.0 * p["A"] * (0.5 * p["beta1"] / root + p["beta2"]
+                          + 1.5 * p["beta3"] * root
+                          + 2.0 * p["beta4"] * r_s)
+
+    log_term = torch.log1p(1.0 / q1)
+    eps_c = q0 * log_term
+    # d(eps_c)/dr_s; the second piece is q0 * d/dr_s log(1 + 1/q1).
+    deps_c = dq0 * log_term - q0 * dq1 / (q1 * q1 + q1)
+
+    return (eps_c - (r_s / 3.0) * deps_c) * _HA_TO_EV
+
+
+def _pw92_epsilon(rho_bohr):
+    """PW92 correlation energy per electron, Hartree. Torch mirror."""
+    r_s = (3.0 / (4.0 * np.pi * rho_bohr)).pow(1.0 / 3.0)
+    root = r_s.sqrt()
+    p = _PW92
+    denominator = 2.0 * p["A"] * (p["beta1"] * root + p["beta2"] * r_s
+                                 + p["beta3"] * r_s * root
+                                 + p["beta4"] * r_s * r_s)
+    return (-2.0 * p["A"] * (1.0 + p["alpha1"] * r_s)
+            * torch.log1p(1.0 / denominator))
+
+
+def xc_energy_density(density, cell=None, functional="pbe", epsilon=1e-30):
+    r"""
+    Exchange-correlation energy density :math:`e_{\rm xc}[\rho]`, in eV/Å³.
+
+    The torch counterpart of :func:`poraque.physics.energy.xc_energy`, written
+    so that it is differentiable with respect to ``density``. That is what lets
+    :func:`xc_potential` obtain the gradient-corrected potential by autograd
+    instead of by hand.
+
+    Parameters
+    ----------
+    density : torch.Tensor
+        Density in e/Å³.
+    cell : torch.Tensor, optional
+        ``(B, 3, 3)`` lattice vectors, Å. Required for the gradient-corrected
+        functionals and ignored by the local ones.
+    functional : str, optional
+        One of :data:`XC_FUNCTIONALS`.
+    epsilon : float, optional
+        Floor, in e/Bohr³, keeping the intermediate algebra finite in vacuum.
+
+    Returns
+    -------
+    torch.Tensor
+        Same shape as ``density``, in eV/Å³.
+    """
+    name = str(functional).lower()
+    if name in ("none", "off"):
+        return torch.zeros_like(density)
+    if name not in XC_FUNCTIONALS:
+        raise ValueError(
+            f"Unknown xc functional {functional!r}; expected one of "
+            f"{list(XC_FUNCTIONALS)}."
+        )
+    if name in _GRADIENT_FUNCTIONALS and cell is None:
+        raise ValueError(
+            f"functional={functional!r} needs the density gradient, so a "
+            f"cell is required. Pass cell=, or use 'lda' for a local one."
+        )
+
+    squeezed = density.dim() == 5
+    values = density.squeeze(1) if squeezed else density
+
+    # The gradient is taken of the UNCLIPPED field: clipping first puts a kink
+    # wherever a band-limited density rings below zero, and differentiating a
+    # kink spectrally rings far worse than the undershoot it removed.
+    raw = values * BOHR_TO_ANGSTROM ** 3
+    rho = raw.clamp_min(0.0)
+    safe = rho.clamp_min(epsilon)
+
+    if name in _GRADIENT_FUNCTIONALS:
+        gradient = spectral_gradient(raw, cell) * BOHR_TO_ANGSTROM
+        gradient_squared = gradient.pow(2).sum(1)
+    else:
+        gradient_squared = None
+
+    k_f = (3.0 * np.pi ** 2 * safe).pow(1.0 / 3.0)
+
+    # ---- exchange ---------------------------------------------------- #
+    enhancement = 1.0
+    if name in ("pbe", "pbe-x"):
+        s2 = gradient_squared / (2.0 * k_f * safe).pow(2)
+        enhancement = (1.0 + _PBE_KAPPA
+                       - _PBE_KAPPA / (1.0 + _PBE_MU * s2 / _PBE_KAPPA))
+    e_xc = _DIRAC_X * rho.pow(4.0 / 3.0) * enhancement
+
+    # ---- correlation ------------------------------------------------- #
+    if name in ("pbe", "lda"):
+        epsilon_c = _pw92_epsilon(safe)
+        if name == "pbe":
+            k_s = torch.sqrt(4.0 * k_f / np.pi)
+            t2 = gradient_squared / (2.0 * k_s * safe).pow(2)
+            # eps_c < 0, so expm1 is positive; it stays accurate where the
+            # difference of the two terms would otherwise cancel.
+            a = ((_PBE_BETA / _PBE_GAMMA)
+                 / torch.expm1(-epsilon_c / _PBE_GAMMA).clamp_min(1e-30))
+            at2 = a * t2
+            ratio = (1.0 + at2) / (1.0 + at2 + at2 * at2)
+            h = _PBE_GAMMA * torch.log1p((_PBE_BETA / _PBE_GAMMA) * t2 * ratio)
+            epsilon_c = epsilon_c + h
+        e_xc = e_xc + rho * epsilon_c
+
+    e_xc = e_xc * _HA_BOHR3_TO_EV_ANG3
+    return e_xc.unsqueeze(1) if squeezed else e_xc
+
+
+def xc_potential(density, functional="pbe", cell=None, epsilon=1e-12,
+                 create_graph=False):
+    r"""
+    Exchange-correlation potential :math:`\delta E_{\rm xc}/\delta\rho`, in eV.
+
+    Local functionals use their closed form. Gradient-corrected ones need
+
+    .. math::
+
+        v_{\rm xc} = \frac{\partial e}{\partial\rho}
+          - \nabla\!\cdot\!\frac{\partial e}{\partial\nabla\rho} ,
+
+    and that divergence term is taken by **autograd** through
+    :func:`xc_energy_density` rather than derived by hand. The spectral
+    gradient inside is itself differentiable and exact for a band-limited
+    field, so the result carries no discretisation error, and there is no
+    hand-derived expression to get wrong.
+
+    .. important::
+
+       The default is PBE, because the reference calculations this package is
+       built around are PBE (``PAW_PBE`` potentials, ``LEXCH = PE``). Using an
+       LDA potential on a PBE density does not approximate the right answer,
+       it answers a different question, and the difference is of order 1 eV in
+       a valence region. Set this to whatever generated the data.
+
+    Parameters
+    ----------
+    density : torch.Tensor
+        Density in e/Å³.
+    functional : str, optional
+        One of :data:`XC_FUNCTIONALS`. Default ``"pbe"``.
+    cell : torch.Tensor, optional
+        ``(B, 3, 3)`` lattice vectors, Å. Required for ``"pbe"`` and
+        ``"pbe-x"``.
+    epsilon : float, optional
+        Density floor for the local correlation branch.
+    create_graph : bool, optional
+        Keep the autograd graph so the potential may appear in a loss that is
+        itself backpropagated. Gradient-corrected functionals only.
+
+    Returns
+    -------
+    torch.Tensor
+        Same shape as ``density``, in eV.
+
+    Raises
+    ------
+    ValueError
+        If ``functional`` is unknown, or is gradient-corrected and no ``cell``
+        was given.
+    """
+    name = str(functional).lower()
+    if name in ("none", "off"):
+        return torch.zeros_like(density)
+    if name in ("x", "exchange", "lda_x", "x-only"):
+        name = "lda-x"
+    if name == "lda-x":
+        return lda_exchange_potential(density)
+    if name in ("lda", "lda_xc", "pw92"):
+        return (lda_exchange_potential(density)
+                + pw92_correlation_potential(density, epsilon))
+    if name not in _GRADIENT_FUNCTIONALS:
+        raise ValueError(
+            f"Unknown xc functional {functional!r}; expected one of "
+            f"{list(XC_FUNCTIONALS)}."
+        )
+    if cell is None:
+        raise ValueError(
+            f"functional={functional!r} needs the density gradient, so a "
+            f"cell is required. Pass cell=, or use 'lda' for a local one."
+        )
+
+    # Deliberately NOT via `functional_derivative`, which detaches its input.
+    # Detaching is right there: for a learned functional the graph one wants to
+    # keep runs to the model parameters, not to the density. Here there are no
+    # parameters, and the density is typically an operator's OUTPUT, so the
+    # connection back to it is the only thing worth preserving: v_xc[rho] has
+    # to be differentiable for an Euler-Lagrange residual built from a
+    # predicted density to train anything.
+    attached = density.requires_grad
+    rho = density if attached else density.detach().requires_grad_(True)
+
+    with torch.enable_grad():
+        energy = integrate(xc_energy_density(rho, cell, name), cell)
+        gradient, = torch.autograd.grad(
+            energy.sum(), rho,
+            create_graph=create_graph and attached,
+            retain_graph=create_graph and attached,
+        )
+
+    return gradient / volume_element(density, cell)
+
+
+# ---------------------------------------------------------------------- #
 # Physics-informed loss terms
 # ---------------------------------------------------------------------- #
 def electron_count_loss(density, cell, n_electrons):
@@ -730,8 +1026,113 @@ def euler_lagrange_residual(density, v_external, cell, lam=1.0 / 9.0,
 
     total = kinetic_term + v_external + hartree_potential(density, cell)
     if v_xc is not None:
+        # A string names a functional and is evaluated here; a tensor is used
+        # as given. Before this the argument existed and nothing in the
+        # package could build one, so every residual silently omitted it.
+        if isinstance(v_xc, str):
+            v_xc = xc_potential(density, v_xc, cell=cell)
         total = total + v_xc
     return total - total.mean(dim=(-3, -2, -1), keepdim=True)
+
+
+def exact_kinetic_potential(density, v_external, cell, xc="pbe", mu=None):
+    r"""
+    The exact :math:`\delta T_s/\delta\rho` of a **ground-state** density.
+
+    At the ground state the Euler-Lagrange equation holds pointwise, and every
+    term in it except the kinetic potential is known exactly. So it can be read
+    backwards:
+
+    .. math::
+
+        \frac{\delta T_s}{\delta\rho}(\rr)
+          = \mu - v_{\rm ext}(\rr) - v_{H}[\rho](\rr) - v_{xc}[\rho](\rr) .
+
+    This matters because it is the **only** route to a label for the functional
+    derivative. A derivative needs a functional, and ``TAUCAR`` is a field: no
+    amount of it yields :math:`\delta T_s/\delta\rho`. The Euler-Lagrange
+    equation converts a ground-state density, which is what reference data
+    consists of, into a pointwise target for the quantity orbital-free theory
+    actually consumes.
+
+    .. warning::
+
+       Valid **only** where the input is a converged ground-state density. Fed
+       an arbitrary or partly converged density it returns a well-defined
+       field that means nothing, and nothing here can detect the difference.
+
+       On pseudopotential data the result also absorbs whatever the local
+       picture is missing, the nonlocal projector terms above all. It is the
+       kinetic potential of an effective *local* problem reproducing that
+       density, which is what an orbital-free calculation needs, but it is not
+       the all-electron :math:`\delta T_s/\delta\rho`.
+
+    Parameters
+    ----------
+    density : torch.Tensor
+        Ground-state density, e/Å³.
+    v_external : torch.Tensor
+        External potential, eV.
+    cell : torch.Tensor
+        ``(B, 3, 3)`` lattice vectors, Å.
+    xc : str, optional
+        Passed to :func:`xc_potential`. Omitting it (``"none"``) leaves the
+        result wrong by :math:`v_{xc}`, which is of order 10 eV.
+    mu : float or torch.Tensor, optional
+        Chemical potential. When ``None`` the cell average is removed instead,
+        which is the same statement with the unknown constant eliminated.
+
+    Returns
+    -------
+    torch.Tensor
+        Kinetic potential in eV, zero-mean unless ``mu`` is given.
+    """
+    known = (v_external + hartree_potential(density, cell)
+             + xc_potential(density, xc, cell=cell))
+    if mu is None:
+        return -(known - known.mean(dim=(-3, -2, -1), keepdim=True))
+    return mu - known
+
+
+def exact_pauli_potential(density, v_external, cell, xc="pbe", mu=None):
+    r"""
+    The Pauli potential :math:`v_{\rm P} = \delta T_{\rm P}/\delta\rho` of a
+    ground-state density, from the Levy-Perdew-Sahni equation.
+
+    LPS writes the exact density as a single effective orbital,
+    :math:`-\tfrac12\nabla^2\sqrt\rho + (v_{\rm ext}+v_H+v_{xc}+v_{\rm P})
+    \sqrt\rho = \mu\sqrt\rho`. Dividing by :math:`\sqrt\rho` and using
+    :math:`\delta T_{\rm vW}/\delta\rho = -\tfrac12\nabla^2\sqrt\rho/\sqrt\rho`
+    turns it into the Euler-Lagrange equation with the kinetic potential split
+    into its bosonic and Pauli parts. The two are therefore the *same*
+    condition, and this function is :func:`exact_kinetic_potential` minus the
+    von Weizsäcker term.
+
+    The reason to want it separately is Levy-Ou-Yang: :math:`v_{\rm P}\ge0`
+    pointwise, an exact constraint on the derivative rather than on the value.
+
+    Parameters
+    ----------
+    density, v_external, cell, xc, mu
+        As :func:`exact_kinetic_potential`.
+
+    Returns
+    -------
+    torch.Tensor
+        :math:`v_{\rm P}` in eV, zero-mean unless ``mu`` is given.
+
+    Notes
+    -----
+    With ``mu=None`` the result is shifted by an unknown constant, so its sign
+    carries no information: any field can be made non-negative by raising
+    :math:`\mu`. The testable statement is how large a :math:`\mu` is required,
+    and where the binding points sit.
+    """
+    kinetic = exact_kinetic_potential(density, v_external, cell, xc, mu)
+    vw = von_weizsacker_potential(density, cell)
+    if mu is None:
+        vw = vw - vw.mean(dim=(-3, -2, -1), keepdim=True)
+    return kinetic - vw
 
 
 def euler_lagrange_loss(density, v_external, cell, **kwargs):

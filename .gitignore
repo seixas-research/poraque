@@ -218,6 +218,7 @@ CONTCAR
 *.fdb_latexmk
 latex/*/poraque_version.tex
 *.synctex.gz
+latex/article/
 
 # PySR scratch output (symbolic distillation)
 outputs/

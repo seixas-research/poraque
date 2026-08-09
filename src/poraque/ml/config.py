@@ -220,6 +220,26 @@ class DataConfig:
 
         Distinct from ``model.precision``, which is what the operator
         *computes* in.
+    xc : str
+        **The exchange-correlation functional the reference data was computed
+        with.** One of :data:`~poraque.ml.physics.XC_FUNCTIONALS` (``"pbe"``,
+        ``"lda"``, ``"pbe-x"``, ``"lda-x"``, ``"none"``), or ``"auto"`` to read
+        it off the calculation.
+
+        This is a statement about the *data*, not a choice about the model. It
+        is used wherever the Euler-Lagrange equation is evaluated, since
+        :math:`v_{\\rm xc}` is one of its terms, and getting it wrong does not
+        approximate the right answer: an LDA potential on a PBE density is of
+        order 1 eV away from the PBE one in a valence region, and that error
+        lands entirely in the residual, where it would be misread as the error
+        of the kinetic functional.
+
+        ``"auto"`` resolves in the order VASP itself does: the ``INCAR``
+        ``GGA`` tag if present, else the ``LEXCH`` tag of the pseudopotentials
+        (``PE`` for PBE, ``CA`` for LDA, ``91`` for PW91). A ``PAW_PBE``
+        library therefore resolves to ``"pbe"`` with nothing to declare. Set it
+        explicitly when the data was produced by a code whose settings are not
+        recorded beside it.
     """
 
     train_paths: list = None
@@ -235,6 +255,7 @@ class DataConfig:
     blur_method: str = "spectral"
     spin: str = "auto"
     precision: str = "float64"
+    xc: str = "auto"
 
     def paths(self):
         """
