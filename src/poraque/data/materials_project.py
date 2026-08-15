@@ -119,7 +119,8 @@ CSV_COLUMNS = [
 MANIFEST_COLUMNS = ["material_id", "formula_pretty", "nsites", "file",
                     "size_mb", "compressed", "status", "error"]
 
-#: Written beside the CHGCARs; :mod:`poraque.data.mp_dataset` reads it back.
+#: Written beside the CHGCARs as a human-readable record of what a fetch did.
+#: Nothing reads it back; the dataset layer discovers files directly.
 MANIFEST_FILENAME = "manifest.csv"
 
 
@@ -858,18 +859,6 @@ class MPDataFetcher:
         print(f"  -> recompressed {len(files)} files: {_format_bytes(before)} -> "
               f"{_format_bytes(after)}")
         return {"n": len(files), "before": before, "after": after}
-
-    def disk_usage(self):
-        """Bytes currently used by the downloaded CHGCARs, split by form."""
-        gzipped = list(self.chgcar_dir.glob("CHGCAR_*.gz"))
-        plain = [p for p in self.chgcar_dir.glob("CHGCAR_*") if p.suffix != ".gz"]
-        return {
-            "n_gz": len(gzipped),
-            "bytes_gz": sum(p.stat().st_size for p in gzipped),
-            "n_unzipped": len(plain),
-            "bytes_unzipped": sum(p.stat().st_size for p in plain),
-            "free": shutil.disk_usage(self.outdir).free,
-        }
 
     # ------------------------------------------------------------------ #
     # Pipeline

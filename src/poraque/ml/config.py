@@ -226,13 +226,17 @@ class DataConfig:
         ``"lda"``, ``"pbe-x"``, ``"lda-x"``, ``"none"``), or ``"auto"`` to read
         it off the calculation.
 
-        This is a statement about the *data*, not a choice about the model. It
-        is used wherever the Euler-Lagrange equation is evaluated, since
-        :math:`v_{\\rm xc}` is one of its terms, and getting it wrong does not
-        approximate the right answer: an LDA potential on a PBE density is of
-        order 1 eV away from the PBE one in a valence region, and that error
-        lands entirely in the residual, where it would be misread as the error
-        of the kinetic functional.
+        This is a statement about the *data*, not a choice about the model.
+        **The training loop does not yet consult it**: the Euler-Lagrange
+        penalty (``euler_lagrange_weight``) is evaluated without
+        :math:`v_{\\rm xc}` and warns to that effect. The setting is honoured
+        by the post-training analyses that evaluate the full residual — the
+        ``experiments/euler_lagrange`` scripts and
+        :func:`~poraque.fields.io.resolve_xc` — where getting it wrong does
+        not approximate the right answer: an LDA potential on a PBE density is
+        of order 1 eV away from the PBE one in a valence region, and that
+        error lands entirely in the residual, where it would be misread as the
+        error of the kinetic functional.
 
         ``"auto"`` resolves in the order VASP itself does: the ``INCAR``
         ``GGA`` tag if present, else the ``LEXCH`` tag of the pseudopotentials
@@ -553,7 +557,29 @@ class ModelConfig:
         Hidden width of the output projection head. Pointwise and cheap; see
         above.
     activation : str
-        ``gelu``, ``relu``, ``silu`` or ``tanh``.
+        ``gelu`` (default), ``relu``, ``silu``, ``tanh`` — stateless,
+        parameter-free — or ``kan_bspline`` / ``kan_cheby``: a Kolmogorov-
+        Arnold Network-style *learnable* activation, one function per channel,
+        applied elementwise. Both KAN variants are initialised close to
+        ``gelu`` (a small learnable perturbation on top of it), so switching
+        to one does not destabilise training at step 0, and every existing
+        config keeps training exactly as before unless this is changed. See
+        ``poraque.ml.kan`` for the two variants' math.
+    kan_grid_size : int
+        Number of knot-grid intervals for ``activation: kan_bspline``.
+        Ignored otherwise. More intervals give the learned function finer
+        local structure, at ``channels`` extra spline coefficients each.
+    kan_spline_order : int
+        B-spline degree for ``activation: kan_bspline`` (``3`` = cubic, the
+        original KAN paper's choice). Ignored otherwise.
+    kan_grid_range : list of float
+        ``[low, high]`` support of the B-spline knot grid, for
+        ``activation: kan_bspline``. An input outside this range is clamped,
+        not extrapolated — see ``poraque.ml.kan.BSplineKANActivation`` for
+        why. Ignored otherwise.
+    kan_degree : int
+        Highest Chebyshev order for ``activation: kan_cheby``. Ignored
+        otherwise; ``degree + 1`` coefficients per channel.
     use_coordinates : bool
         Append three fractional-coordinate channels to the input, so the
         operator knows *where* in the cell it is. Dimensionless, so they carry
@@ -602,6 +628,10 @@ class ModelConfig:
     n_layers: int = 3
     projection_channels: int = 64
     activation: str = "gelu"
+    kan_grid_size: int = 8
+    kan_spline_order: int = 3
+    kan_grid_range: list = field(default_factory=lambda: [-2.0, 2.0])
+    kan_degree: int = 6
     use_coordinates: bool = True
     cell_conditioning: bool = True
     embedding_dim: int = 32

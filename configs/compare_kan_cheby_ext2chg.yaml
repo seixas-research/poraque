@@ -1,0 +1,29 @@
+# Controlled comparison: activation: kan_cheby vs. the shipped gelu model
+# (models/au_w16_m8_l3), ext2chg only. Identical to configs/train.yaml except
+# `task.type` (ext2chg only, to isolate the comparison and skip symbolic
+# distillation, which is chg2tau-only anyway) and `model.activation` (+ its
+# kan_cheby hyperparameter, left at the documented default). Every other
+# setting -- width, modes, n_layers, resolution, potcar_dir, seed, epochs,
+# early_stopping -- is left at the same default train.yaml itself relies on,
+# so this is the same protocol with exactly one thing changed.
+task:
+  type: ext2chg
+  name: au_w16_m8_l3_kancheby
+
+data:
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+
+model:
+  width: 16
+  modes: 8
+  projection_channels: 64
+  mode_selection: fixed
+  activation: kan_cheby
+  # kan_degree: 6   # default
+
+training:
+  physics:
+    electron_count_weight: 0.1
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

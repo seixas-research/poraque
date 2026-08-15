@@ -21,7 +21,6 @@ import os
 from ..vasp.incar import Incar
 from ..vasp.poscar import Poscar
 from ..vasp.potcar import Potcar
-from ..vasp.volumetric import read_volumetric, write_volumetric
 from .base import CalculationParameters, CalculationReader, PseudopotentialInfo
 
 
@@ -115,18 +114,3 @@ class VaspReader(CalculationReader):
         return (Potcar.from_file(path, parse_tables=parse_tables)
                 if os.path.exists(path) else None)
 
-    def read_incar(self, directory):
-        """Return the raw :class:`~poraque.fields.vasp.Incar`, or ``None``."""
-        path = os.path.join(directory, "INCAR")
-        return Incar.from_file(path) if os.path.exists(path) else None
-
-    @staticmethod
-    def read_volumetric(path):
-        """Low-level access to the volumetric parser."""
-        return read_volumetric(path)
-
-    @staticmethod
-    def write_volumetric(path, structure, data, **kwargs):
-        """Low-level access to the volumetric writer."""
-        return write_volumetric(path, Poscar.from_structure(structure), data,
-                                **kwargs)

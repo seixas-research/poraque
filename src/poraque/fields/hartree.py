@@ -108,11 +108,6 @@ class HartreePotential(ScalarField):
         return cls(hartree_potential(values, grid), grid, structure,
                    metadata=payload)
 
-    @classmethod
-    def compute(cls, *args, **kwargs):
-        """Alias for :meth:`from_density`, for symmetry with the other fields."""
-        return cls.from_density(*args, **kwargs)
-
     def total_with(self, external):
         r"""
         :math:`v_{\rm H} + V_{\rm ext}`, the total local potential.

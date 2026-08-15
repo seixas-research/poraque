@@ -1,0 +1,29 @@
+# K-fold comparison: gelu vs. silu (see compare_silu_kfold_chg2tau.yaml),
+# chg2tau only, data/vasp. `activation` is left unset -- gelu is the
+# ModelConfig default, and restating it would be a redundant key (see
+# tests/test_precision.py::TestShippedConfigs::test_it_states_only_what_it_changes).
+# 5-fold cross-validation covers every one of the 17 structures as a
+# held-out fold at some point, unlike the single 14/3 split used for
+# models/au_w16_m8_l3 -- a proper generalisation estimate with a spread,
+# not one lucky (or unlucky) split.
+task:
+  type: chg2tau
+  name: au_w16_m8_l3_gelu_kfold
+
+data:
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+
+model:
+  width: 16
+  modes: 8
+  projection_channels: 64
+  mode_selection: fixed
+
+training:
+  enable_kfold: true
+  k_folds: 5
+  physics:
+    electron_count_weight: 0.1
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

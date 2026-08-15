@@ -154,7 +154,6 @@ class TrainingReport:
         self.fmt = str(fmt).lstrip(".")
         self.prefix = str(prefix)
         self.ink = INK["dark" if theme == "dark" else "light"]
-        self.written = []
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -170,7 +169,6 @@ class TrainingReport:
         path = self._path(name)
         figure.savefig(path, dpi=self.dpi, facecolor=self.ink["surface"])
         plt.close(figure)
-        self.written.append(path)
         return path
 
     def _context(self, base_size=10):
@@ -451,8 +449,6 @@ class TrainingReport:
         str or None
             Path written, or ``None`` for a front with nothing plottable.
         """
-        import numpy as np
-
         usable = [e for e in front
                   if e.get("complexity") is not None
                   and e.get("loss") is not None
@@ -731,90 +727,3 @@ class TrainingReport:
                 _rotate_if_crowded(figure, panel)
             return self._save(figure, name)
 
-    # ------------------------------------------------------------------ #
-    # 4. Error distribution
-    # ------------------------------------------------------------------ #
-    def error_histogram(self, reference, prediction, name="error_histogram",
-                        label="field", unit="", title=None, bins=120):
-        """
-        Distribution of the signed voxel-wise error.
-
-        Complements :meth:`parity` by showing bias (is the distribution
-        centred?) separately from spread, which a parity cloud conflates.
-
-        Returns
-        -------
-        str
-            Path written.
-        """
-        import matplotlib.pyplot as plt
-
-        difference = (_as_array(prediction) - _as_array(reference)).ravel()
-        difference = difference[np.isfinite(difference)]
-
-        with self._context():
-            figure, panel = plt.subplots(figsize=(6.4, 3.6),
-                                         constrained_layout=True)
-            low, high = symmetric_limits(difference, 0.999)
-            panel.hist(difference, bins=bins, range=(low, high),
-                       color=series_color(0), alpha=0.85,
-                       label="voxel-wise error")
-            panel.axvline(0.0, color=self.ink["muted"], linestyle="--",
-                          linewidth=1.4, label="zero error")
-            panel.axvline(float(difference.mean()), color=series_color(1),
-                          linewidth=1.8,
-                          label=f"mean {difference.mean():+.3g}")
-            panel.set_xlabel("prediction $-$ reference"
-                             + (f" [{unit}]" if unit else ""))
-            panel.set_ylabel("voxel count")
-            panel.set_yscale("log")
-            panel.legend(loc="upper right")
-            figure.suptitle(title or f"Error distribution: {label}", x=0.01,
-                            ha="left", fontsize=12, color=self.ink["primary"])
-            return self._save(figure, name)
-
-    # ------------------------------------------------------------------ #
-    # Convenience
-    # ------------------------------------------------------------------ #
-    def full_report(self, history=None, reference=None, prediction=None,
-                    label="field", unit="", log_field=False, title=None):
-        """
-        Produce every applicable figure in one call.
-
-        Parameters
-        ----------
-        history : dict, optional
-            Training history; skipped when absent.
-        reference, prediction : ScalarField or numpy.ndarray, optional
-            Field pair; the field figures are skipped when absent.
-        label, unit : str, optional
-            Quantity name and unit.
-        log_field : bool, optional
-            Use logarithmic colour/axes for the field and parity plots.
-        title : str, optional
-            Prefix for figure titles.
-
-        Returns
-        -------
-        list of str
-            Paths written, in order.
-        """
-        produced = []
-        prefix = f"{title} — " if title else ""
-
-        if history:
-            produced.append(self.loss_curves(
-                history, title=f"{prefix}training history".strip()))
-
-        if reference is not None and prediction is not None:
-            produced.append(self.field_comparison(
-                reference, prediction, label=label, unit=unit, log=log_field,
-                title=f"{prefix}cross-section".strip()))
-            produced.append(self.parity(
-                reference, prediction, label=label, unit=unit, log=log_field,
-                title=f"{prefix}parity".strip()))
-            produced.append(self.error_histogram(
-                reference, prediction, label=label, unit=unit,
-                title=f"{prefix}error distribution".strip()))
-
-        return produced

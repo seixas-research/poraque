@@ -62,6 +62,12 @@ PAW_REFERENCE_FILENAME = "paw_reference.json"
 #: full without re-reading a single field.
 CACHE_SUMMARY_FILENAME = "cache_summary.json"
 
+#: What the cache was built *from* and *with*. "Files exist" is not "cached":
+#: a directory built from other sources, another resolution, or another
+#: potential construction holds different physics under the same filenames,
+#: and reusing it silently would train on the wrong fields.
+CACHE_FINGERPRINT_FILENAME = "cache_fingerprint.json"
+
 
 def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
                       charges=None, potcar_dir=None, sigma=None,
@@ -150,6 +156,8 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
 
     cache = str(cache)
     os.makedirs(cache, exist_ok=True)
+    _check_fingerprint(cache, _fingerprint(paths, resolution, formats, fields,
+                                           options, spin))
 
     summary = _load_summary(cache)
     table = _CacheTable([record.identifier for record in records], fields, emit)
@@ -235,6 +243,77 @@ def _range_text(bounds):
         return "--"
     low, high = bounds
     return f"{low:.3g} .. {high:.3g}"
+
+
+def _fingerprint(paths, resolution, formats, fields, options, spin):
+    """Everything that decides what a cache directory's files contain."""
+    potcar_dir = options.get("potcar_dir")
+    return {
+        "paths": sorted(os.path.abspath(path) for path in paths),
+        "resolution": int(resolution) if resolution else None,
+        "formats": [fmt or "auto" for fmt in formats],
+        "fields": sorted(fields),
+        "spin": bool(spin),
+        "charges": options.get("charges"),
+        "potcar_dir": os.path.abspath(potcar_dir) if potcar_dir else None,
+        "sigma": options.get("sigma"),
+        "gaussian_blur": options.get("gaussian_blur"),
+        "blur_method": options.get("blur_method"),
+        "pattern": options.get("pattern"),
+        "code": options.get("code"),
+    }
+
+
+def _check_fingerprint(cache, fingerprint):
+    """
+    Refuse to extend a cache built with different parameters.
+
+    A matching or absent record proceeds; an absent record beside existing
+    material directories is adopted with a warning (caches predate the
+    record). A mismatch raises, naming the keys that differ — the caller
+    should pick another cache directory or delete this one deliberately.
+    """
+    # JSON round-trip so tuples/lists and int/float compare canonically.
+    fingerprint = json.loads(json.dumps(fingerprint, sort_keys=True))
+    path = os.path.join(cache, CACHE_FINGERPRINT_FILENAME)
+
+    recorded = None
+    if os.path.exists(path):
+        try:
+            with open(path) as handle:
+                recorded = json.load(handle)
+        except (OSError, ValueError):
+            recorded = None
+
+    if recorded is not None and recorded != fingerprint:
+        differing = sorted(key for key in set(recorded) | set(fingerprint)
+                           if recorded.get(key) != fingerprint.get(key))
+        raise ValueError(
+            f"{cache} was built with different parameters "
+            f"({', '.join(differing)} differ; see "
+            f"{CACHE_FINGERPRINT_FILENAME}). Reusing it would silently mix "
+            f"datasets or potential constructions. Point the build at a "
+            f"fresh cache directory, or delete this one to rebuild it."
+        )
+
+    if recorded is None:
+        has_materials = any(
+            os.path.isdir(os.path.join(cache, entry))
+            for entry in os.listdir(cache)
+        )
+        if has_materials:
+            import warnings
+
+            warnings.warn(
+                f"{cache} predates the cache fingerprint; adopting its "
+                f"contents as if built with the current parameters. If this "
+                f"cache came from other sources or another potential "
+                f"construction, delete it and rebuild.",
+                RuntimeWarning, stacklevel=3,
+            )
+
+    with open(path, "w") as handle:
+        json.dump(fingerprint, handle, indent=1, sort_keys=True)
 
 
 def _load_summary(cache):

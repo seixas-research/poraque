@@ -53,7 +53,7 @@ precision. Interpolation would alias, break periodicity at the cell boundary
 and shift the integral.
 
 **One protocol, one variation.** A run trains a single model per task on a
-train/validation split sized by ``data.valid_fraction`` (a fifth by default),
+train/validation split sized by ``training.valid_fraction`` (a fifth by default),
 and reports metrics in **physical units** on the held-out structures. Setting
 ``enable_kfold`` swaps that for K-fold cross-validation, which is the only
 other protocol; nothing else changes how training is organised.
@@ -106,12 +106,17 @@ def _preimport_symbolic_engine(argv):
     """
     argv = list(argv or [])
     enabled = "--symbolic" in argv
-    if not enabled and "--config" in argv:
+    config_path = None
+    for position, token in enumerate(argv):
+        if token == "--config" and position + 1 < len(argv):
+            config_path = argv[position + 1]
+        elif token.startswith("--config="):
+            config_path = token.split("=", 1)[1]
+    if not enabled and config_path:
         try:
             import yaml
 
-            index = argv.index("--config") + 1
-            with open(argv[index]) as handle:
+            with open(config_path) as handle:
                 document = yaml.safe_load(handle) or {}
             enabled = bool((document.get("symbolic") or {})
                            .get("enable_symbolic_distillation", False))
@@ -167,10 +172,10 @@ FIELD_LABELS = {
 #
 # Every artefact of a run is built from one string, `task.name`. Two runs that
 # differ in anything worth keeping -- a chemical space, a resolution, a set of
-# physics weights -- differ in that name, and so cannot overwrite each other:
+# physics weights -- differ in that name, and so cannot overwrite each other.
+# Everything lands under one directory per run:
 #
-#     models/<name>.pfno          reports/<name>_report.pdf
-#     results/plots/<name>/
+#     models/<name>/<name>.pfno    log/    plots/    report/
 #
 # The helpers below are the only places those paths are formed. They read the
 # config rather than mutating it, so re-running with the config a run archived
@@ -277,6 +282,9 @@ def cache_tag(data):
         # A tabulated potential and a Gaussian one are different fields, not
         # different roundings of one, so they must never share a cache.
         tag += "_potcar"
+    if data.spin is True:
+        # An explicit spin request caches the magnetisation channel too.
+        tag += "_spin"
 
     paths = data.paths()
     if len(paths) > 1:
@@ -320,6 +328,9 @@ def build_cache(config, log):
         potcar_dir=data.potcar_dir, sigma=data.sigma,
         gaussian_blur=data.gaussian_blur, blur_method=data.blur_method,
         pattern=data.pattern, code=data.code, log=log,
+        # "auto" is resolved by the dataset per material; only an explicit
+        # `data.spin: true` asks the cache to carry the magnetisation block.
+        spin=data.spin is True,
     )
 
     # The PAW augmentation records travel with the weights, so a prediction can
@@ -632,6 +643,16 @@ def format_aggregate(label, rows, log):
 def build_loss(config, task_name):
     """Assemble the objective from the ``training`` section of the config."""
     physics = dict(config.training.physics or {})
+    if physics.get("euler_lagrange_weight", 0.0):
+        import warnings
+
+        warnings.warn(
+            "The Euler-Lagrange residual is evaluated WITHOUT v_xc, which is "
+            "of the same order as the kinetic potential it is weighed "
+            "against; data.xc is not consulted during training. Treat the "
+            "residual as a consistency measure, not a correctness one.",
+            RuntimeWarning, stacklevel=2,
+        )
     return PhysicsInformedLoss(
         task=task_name,
         sobolev_weight=(config.training.sobolev_weight
@@ -666,6 +687,14 @@ def build_operator(task, train_set, config, log):
                     f"{entry['violations']}/{entry['points']} points "
                     f"({100 * entry['fraction']:.4f} %)")
 
+    # The dataset knows its channel counts (two for a spin-polarised density);
+    # the operator must be built to match or a 2-channel target would train
+    # against a broadcast 1-channel prediction with no error anywhere.
+    in_channels, out_channels = train_set.channels
+    if (in_channels, out_channels) != (1, 1):
+        log(f"      channels: {in_channels} in, {out_channels} out "
+            f"(spin-polarised density)")
+
     # init_seed reaches FieldOperator, which isolates the draw from the global
     # stream; the manual_seed here keeps the ambient behaviour when it is unset.
     torch.manual_seed(config.training.seed)
@@ -674,6 +703,7 @@ def build_operator(task, train_set, config, log):
         device=config.training.device,
         training_resolution=config.data.resolution,
         init_seed=config.training.init_seed,
+        in_channels=in_channels, out_channels=out_channels,
         **config.model_kwargs(), **head,
     )
     if config.model.precision != "float32":
@@ -704,8 +734,6 @@ def report_mode_selection(train_set, config, log):
     """
     if config.model.mode_selection != "physical" or config.model.g_max is None:
         return
-
-    import numpy as np
 
     ceiling = config.model.modes
     counts = []
@@ -983,7 +1011,7 @@ def format_shapes(buckets, indent="                        "):
     return [lines[0]] + [indent + line for line in lines[1:]] if lines else []
 
 
-def dataset_metric_probe(operator, dataset, task):
+def dataset_metric_probe(operator, dataset):
     """
     Metrics for one material, to decide which columns the table needs.
 
@@ -996,7 +1024,7 @@ def dataset_metric_probe(operator, dataset, task):
     return metrics(prediction.data, target.data, grid=target.grid)
 
 
-def evaluate_material(operator, dataset, index, task, log, label,
+def evaluate_material(operator, dataset, index, log, label,
                       width=MIN_LABEL_WIDTH, split="", columns=None):
     """
     Predict one material and report metrics against its reference field.
@@ -1363,7 +1391,7 @@ def run_task(task_name, cache, config, log, n_tasks=1):
     log(f"      {task.description}")
     log("=" * 78)
 
-    dataset = FieldPairDataset(cache, task=task,
+    dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
                                dtype=compute_dtype(config))
     validation_names, split_origin = resolve_validation_split(dataset, config)
 
@@ -1373,11 +1401,13 @@ def run_task(task_name, cache, config, log, n_tasks=1):
                     if m.identifier in validation_names]
 
     train_set = FieldPairDataset(cache, task=task, materials=train_records,
+                                 spin=config.data.spin,
                                  dtype=compute_dtype(config))
     source_transform, target_transform = train_set.fit_transforms()
     validation = (FieldPairDataset(cache, task=task, materials=test_records,
                                    input_transform=source_transform,
                                    target_transform=target_transform,
+                                   spin=config.data.spin,
                                    dtype=compute_dtype(config))
                   if test_records else None)
 
@@ -1472,7 +1502,7 @@ def run_task(task_name, cache, config, log, n_tasks=1):
     # The heading is printed once, and the columns are chosen from what the
     # task actually produces -- a signed target has no JSD, and a column of
     # blanks is worse than no column.
-    probe = dataset_metric_probe(operator, train_set, task)
+    probe = dataset_metric_probe(operator, train_set)
     columns = metric_columns([probe])
     for line in format_metrics_header(label_width, columns):
         log(line)
@@ -1480,7 +1510,7 @@ def run_task(task_name, cache, config, log, n_tasks=1):
     for index in range(len(train_set)):
         name = train_records[index].identifier
         prediction, target, values = evaluate_material(
-            operator, train_set, index, task, log, name,
+            operator, train_set, index, log, name,
             width=label_width, split="train", columns=columns)
         per_material[name] = {"split": "train", "metrics": values,
                               "predicted_integral": prediction.integrate(),
@@ -1498,7 +1528,7 @@ def run_task(task_name, cache, config, log, n_tasks=1):
         for index in range(len(validation)):
             name = test_records[index].identifier
             prediction, target, values = evaluate_material(
-                operator, validation, index, task, log, name,
+                operator, validation, index, log, name,
                 width=label_width, split="validation", columns=columns)
             per_material[name] = {"split": "validation", "metrics": values,
                                   "predicted_integral": prediction.integrate(),
@@ -1674,7 +1704,7 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
     ``valid_fraction`` is ignored here — the folds define the splits.
     """
     task = resolve_task(task_name)
-    dataset = FieldPairDataset(cache, task=task,
+    dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
                                dtype=compute_dtype(config))
     names = [m.identifier for m in dataset.materials]
     folds = structure_level_folds(names, config.training.k_folds,
@@ -1706,11 +1736,16 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
         val_records = [by_name[n] for n in group]
 
         train_set = FieldPairDataset(cache, task=task, materials=train_records,
-                                 dtype=compute_dtype(config))
+                                     spin=config.data.spin,
+                                     dtype=compute_dtype(config))
         source_transform, target_transform = train_set.fit_transforms()
+        # dtype was dropped here once, so a float64 run crashed at the first
+        # validation pass with a float/double mismatch.
         val_set = FieldPairDataset(cache, task=task, materials=val_records,
                                    input_transform=source_transform,
-                                   target_transform=target_transform)
+                                   target_transform=target_transform,
+                                   spin=config.data.spin,
+                                   dtype=compute_dtype(config))
         log(f"      train on {len(train_set)}: {[m.identifier for m in train_records]}")
 
         operator = build_operator(task, train_set, config, log)
@@ -1735,13 +1770,13 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
         # Same table as the single-fit path, headed once per fold: without a
         # heading these rows are seven unlabelled numbers.
         fold_columns = metric_columns(
-            [dataset_metric_probe(operator, val_set, task)])
+            [dataset_metric_probe(operator, val_set)])
         for line in format_metrics_header(label_width, fold_columns):
             log(line)
         for position in range(len(val_set)):
             name = val_records[position].identifier
             prediction, target, values = evaluate_material(
-                operator, val_set, position, task, log, name,
+                operator, val_set, position, log, name,
                 width=label_width, split=f"fold {index}",
                 columns=fold_columns)
             records.append({"fold": index, "material": name,
@@ -1842,8 +1877,8 @@ def build_parser():
     """Command-line interface. Every override defaults to ``None``.
 
     A ``None`` default is what lets the resolver distinguish "flag absent" from
-    "flag set to a falsy value", so ``--grad-clip 0`` disables clipping instead
-    of being mistaken for an unset flag.
+    "flag set to a falsy value", so ``--early-stopping 0`` disables early
+    stopping instead of being mistaken for an unset flag.
     """
     parser = argparse.ArgumentParser(
         description="Train Poraque's Fourier Neural Operators from a YAML config.",
@@ -1937,7 +1972,7 @@ def build_parser():
                        type=int, default=None, metavar="N",
                        help="stop after N epochs without validation "
                             "improvement and restore the best weights "
-                            "(default 50); 0 disables. Needs a validation "
+                            "(default 300); 0 disables. Needs a validation "
                             "split")
     group.add_argument("--seed", dest="training.seed", type=int, default=None,
                        help="seeds the split, the folds and the batch order")
@@ -2087,6 +2122,16 @@ def run(argv=None):
         names = trainable_tasks(config.task.names(), cache, log)
         # One protocol, one variation: K-fold cross-validation.
         driver = run_task_kfold if config.training.enable_kfold else run_task
+        if config.training.enable_kfold:
+            # These two settings do nothing under K-fold, and a run that
+            # silently ignores what its config asked for is worse than one
+            # that says so.
+            if config.fine_tuning.enable:
+                log("  NOTE: --kfold ignores fine_tuning.* -- every fold "
+                    "trains from scratch.")
+            if config.symbolic.enable_symbolic_distillation:
+                log("  NOTE: --kfold ignores symbolic distillation -- it "
+                    "runs only on a deployable single-split model.")
         results = [result for result in
                    (driver(name, cache, config, log, n_tasks=len(names))
                     for name in names)
@@ -2193,18 +2238,25 @@ def run(argv=None):
             log("  out, so those are not generalisation estimates at all.")
 
         # Archive the resolved config beside the results, so the run is
-        # reproducible even if the source config is later edited.
+        # reproducible even if the source config is later edited. With
+        # output.root: null there is nowhere to archive to -- the documented
+        # smoke-test setting -- and the run must end cleanly, not crash here
+        # after every epoch has already succeeded.
         metrics_path = config.json_path()
-        resolved = os.path.splitext(metrics_path)[0] + "_config.yaml"
-        os.makedirs(os.path.dirname(resolved) or ".", exist_ok=True)
-        config.to_yaml(resolved)
+        if metrics_path is not None:
+            resolved = os.path.splitext(metrics_path)[0] + "_config.yaml"
+            os.makedirs(os.path.dirname(resolved) or ".", exist_ok=True)
+            config.to_yaml(resolved)
 
-        with open(metrics_path, "w") as handle:
-            json.dump({"config": config.to_dict(), "device": str(device),
-                       "results": results}, handle, indent=2, default=float)
-        log(f"\n  log             -> {config.log_path()}")
-        log(f"  metrics         -> {metrics_path}")
-        log(f"  resolved config -> {resolved}")
+            with open(metrics_path, "w") as handle:
+                json.dump({"config": config.to_dict(), "device": str(device),
+                           "results": results}, handle, indent=2, default=float)
+            log(f"\n  log             -> {config.log_path()}")
+            log(f"  metrics         -> {metrics_path}")
+            log(f"  resolved config -> {resolved}")
+        else:
+            log("\n  output disabled (output.root: null): no log, metrics or "
+                "config archived")
         if plot_directory(config):
             log(f"  figures         -> {plot_directory(config)}")
         return results

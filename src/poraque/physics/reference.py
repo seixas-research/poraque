@@ -94,15 +94,16 @@ def _vasp_energy(directory):
     """
     outcar = os.path.join(directory, "OUTCAR")
     if os.path.isfile(outcar):
-        matches = re.findall(r"free\s+energy\s+TOTEN\s*=\s*([-\d.eE+]+)",
-                             open(outcar, errors="replace").read())
+        with open(outcar, errors="replace") as handle:
+            matches = re.findall(r"free\s+energy\s+TOTEN\s*=\s*([-\d.eE+]+)",
+                                 handle.read())
         if matches:
             return float(matches[-1])
 
     oszicar = os.path.join(directory, "OSZICAR")
     if os.path.isfile(oszicar):
-        matches = re.findall(r"F=\s*([-.\dE+]+)",
-                             open(oszicar, errors="replace").read())
+        with open(oszicar, errors="replace") as handle:
+            matches = re.findall(r"F=\s*([-.\dE+]+)", handle.read())
         if matches:
             return float(matches[-1])
     return None

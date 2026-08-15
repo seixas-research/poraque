@@ -223,4 +223,8 @@ latex/article/
 # PySR scratch output (symbolic distillation)
 outputs/
 
+# Claude Code session context (local only, not part of the repository)
+CLAUDE.md
+FUTURE.md
+
 

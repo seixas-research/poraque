@@ -312,18 +312,6 @@ class FieldGrid:
         return np.linalg.norm(self.cell, axis=1)
 
     @property
-    def angles(self):
-        """``(3,)`` cell angles ``(alpha, beta, gamma)`` in degrees."""
-        a, b, c = self.cell
-        lengths = self.lengths
-        cosines = [
-            np.dot(b, c) / (lengths[1] * lengths[2]),
-            np.dot(a, c) / (lengths[0] * lengths[2]),
-            np.dot(a, b) / (lengths[0] * lengths[1]),
-        ]
-        return np.degrees(np.arccos(np.clip(cosines, -1.0, 1.0)))
-
-    @property
     def spacing(self):
         """``(3,)`` nominal grid spacing along each lattice vector, Å."""
         return self.lengths / np.asarray(self.shape, dtype=float)
@@ -424,7 +412,10 @@ class FieldGrid:
         bool
         """
         if not isinstance(other, FieldGrid):
-            return NotImplemented
+            # A plain False, not NotImplemented: that sentinel is truthy, so
+            # returning it from an ordinary method made every mismatched-type
+            # comparison silently pass.
+            return False
         return (self.shape == other.shape
                 and np.allclose(self.cell, other.cell, atol=tol))
 
@@ -432,7 +423,10 @@ class FieldGrid:
         return self.matches(other) if isinstance(other, FieldGrid) else NotImplemented
 
     def __hash__(self):
-        return hash((self.shape, self.cell.tobytes()))
+        # Rounded to the same 1e-6 Å scale `matches` compares at, so grids
+        # that compare equal land in the same bucket. (Exact bytes hashed
+        # grids apart that __eq__ called equal.)
+        return hash((self.shape, np.round(self.cell, 6).tobytes()))
 
     def __repr__(self):
         return (f"FieldGrid(shape={self.shape}, volume={self.volume:.3f} A^3"

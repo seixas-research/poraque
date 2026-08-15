@@ -27,8 +27,11 @@ Quick start::
     from poraque.ml import FieldPairDataset, FieldOperator, train
 
     data = FieldPairDataset("dataset_root", task="ext2chg")
-    data.fit_transforms()
     train_set, val_set = data.split(0.8)
+    # Fit normalizations on the training split only -- fitting before the
+    # split would leak validation statistics into the transforms.
+    val_set.input_transform, val_set.target_transform = \
+        train_set.fit_transforms()
 
     operator = FieldOperator("ext2chg", width=32, modes=16, n_layers=4)
     train(operator, train_set, validation=val_set, epochs=200, batch_size=4)
@@ -42,9 +45,8 @@ Physics-informed training is available through
 operators in :mod:`poraque.ml.physics`; the accompanying technical plan is in
 ``docs/notes/pi_fno.md``.
 
-PyTorch is an optional dependency (``pip install poraque[ml]``); it is imported
-lazily, so ``import poraque.ml`` fails with a clear message rather than at
-package import time.
+PyTorch is imported lazily, so ``import poraque.ml`` costs nothing until a
+name that needs it is first touched.
 """
 
 _LAZY = {
@@ -66,12 +68,16 @@ _LAZY = {
     "Identity": "poraque.ml.transforms",
     "Log": "poraque.ml.transforms",
     "Standardize": "poraque.ml.transforms",
-    "SymmetricLog": "poraque.ml.transforms",
     # model
     "CellEncoder": "poraque.ml.fno",
     "FNO3d": "poraque.ml.fno",
     "FNOBlock": "poraque.ml.fno",
     "SpectralConv3d": "poraque.ml.fno",
+    # activations, incl. KAN-style learnable ones
+    "ACTIVATIONS": "poraque.ml.kan",
+    "BSplineKANActivation": "poraque.ml.kan",
+    "ChebyKANActivation": "poraque.ml.kan",
+    "build_activation": "poraque.ml.kan",
     # constraint-enforcing output heads
     "PauliResidualOperator": "poraque.ml.heads",
     "fit_pauli_scale": "poraque.ml.heads",
@@ -158,7 +164,7 @@ def __getattr__(name):
     except ImportError as error:  # pragma: no cover - environment dependent
         raise ImportError(
             f"poraque.ml.{name} requires PyTorch. Install it with "
-            f"`pip install poraque[ml]` or `pip install torch`."
+            f"`pip install torch`."
         ) from error
 
     value = getattr(module, name)

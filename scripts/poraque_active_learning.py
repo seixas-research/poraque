@@ -65,9 +65,9 @@ step between two rounds is a training run:
     poraque-active-learning --models "models/committee_*" --task ext2chg \
         --pool data/pool --select 5
 
-    # commit to it
+    # commit to it (--train is the tagged cache a training run built)
     poraque-active-learning --models "models/committee_*" --task ext2chg \
-        --pool data/pool --select 5 --train data/cache/res32 \
+        --pool data/pool --select 5 --train data/cache/res32_potcar \
         --promote move --json logs/active_round1.json
 
     # ... run DFT on the five new structures, then retrain the members ...
@@ -182,6 +182,12 @@ def build_parser():
 def select(argv=None):
     """Parse ``argv``, run one round, and return its result dict."""
     args = build_parser().parse_args(argv)
+    if args.promote and not args.train:
+        # Checked before any scoring: this mistake is knowable from the
+        # arguments alone, and finding out after the full committee pass
+        # wastes the whole run.
+        raise SystemExit("--promote needs --train: there is nowhere to "
+                         "transfer the selection to.")
 
     from poraque_committee import resolve_bundles
 
@@ -239,10 +245,8 @@ def select(argv=None):
         print("\n  nothing was moved: pass --promote {move,copy,symlink} "
               "together")
         print("  with --train to transfer the selection into the training set.")
-    elif not args.train:
-        raise SystemExit("--promote needs --train: there is nowhere to "
-                         "transfer the selection to.")
     else:
+        # --promote without --train was rejected at argument time.
         verb = "would transfer" if args.dry_run else "transferring"
         print(f"\n  {verb} the selection into {args.train}:")
         result["promoted"] = promote(result["selection"], args.train,

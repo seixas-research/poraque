@@ -39,7 +39,7 @@ import torch
 from torch.utils.data import Dataset, Sampler
 
 from ..fields import ChargeDensity, ExternalPotential, FieldGrid, KineticEnergyDensity
-from .transforms import DEFAULT_TRANSFORMS, FieldTransform, Identity
+from .transforms import DEFAULT_TRANSFORMS, Identity
 
 #: Field name -> the :class:`~poraque.fields.ScalarField` subclass handling it.
 FIELD_CLASSES = {
@@ -297,7 +297,7 @@ class FieldPairDataset(Dataset):
         -------
         dict
             ``input`` ``(C_in, Nx, Ny, Nz)``, ``target`` ``(C_out, Nx, Ny,
-            Nz)``, ``cell`` ``(3, 3)`` in Å, plus ``volume``, ``shape`` and
+            Nz)``, ``cell`` ``(3, 3)`` in Å, plus ``shape`` and
             ``material``. Fields are normalized; ``target_physical`` carries
             the untransformed target for physics losses. The channel counts
             are :attr:`channels`, which is ``(1, 1)`` unless the dataset is
@@ -317,7 +317,6 @@ class FieldPairDataset(Dataset):
             "target": self.target_transform(target_values),
             "target_physical": target_values,
             "cell": torch.as_tensor(source.grid.cell, dtype=self.dtype),
-            "volume": torch.tensor(source.grid.volume, dtype=self.dtype),
             "shape": tuple(source.grid.shape),
             "material": self.materials[index].identifier,
             "reference_energy": self.reference_energy(index),
@@ -409,6 +408,12 @@ class FieldPairDataset(Dataset):
         rng = np.random.default_rng(seed)
         order = rng.permutation(len(self.materials))
         cut = int(round(fraction * len(order)))
+        if cut == 0 or cut == len(order):
+            raise ValueError(
+                f"fraction={fraction} splits {len(order)} materials into "
+                f"{cut} and {len(order) - cut}: one side is empty. Adjust the "
+                f"fraction or add materials."
+            )
 
         def subset(indices):
             return type(self)(
@@ -417,22 +422,13 @@ class FieldPairDataset(Dataset):
                 target_transform=self.target_transform,
                 materials=[self.materials[i] for i in indices],
                 cache=self.cache, dtype=self.dtype,
+                # The resolved settings, not the constructor defaults: a
+                # subset that re-detected spin or dropped the reference
+                # energies would silently differ from its parent.
+                spin=self.spin, references=self.references,
             )
 
         return subset(order[:cut]), subset(order[cut:])
-
-    def state_dict(self):
-        """Serializable normalization state, to be stored with a checkpoint."""
-        return {
-            "task": self.task.name,
-            "input_transform": self.input_transform.state_dict(),
-            "target_transform": self.target_transform.state_dict(),
-        }
-
-    def load_state_dict(self, state):
-        """Restore normalizations saved by :meth:`state_dict`."""
-        self.input_transform = FieldTransform.from_state_dict(state["input_transform"])
-        self.target_transform = FieldTransform.from_state_dict(state["target_transform"])
 
 
 # ---------------------------------------------------------------------- #
@@ -534,7 +530,6 @@ def collate_fields(samples):
         "target": torch.stack([s["target"] for s in samples]),
         "target_physical": torch.stack([s["target_physical"] for s in samples]),
         "cell": torch.stack([s["cell"] for s in samples]),
-        "volume": torch.stack([s["volume"] for s in samples]),
         "shape": samples[0]["shape"],
         "material": [s["material"] for s in samples],
         # Kept as a plain list, not stacked: the entries are None whenever no

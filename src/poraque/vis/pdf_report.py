@@ -320,8 +320,8 @@ class ModelReport:
                 f"\\textbf{{{mean('relative_l2')}}} & \\textbf{{{mean('r2')}}} \\\\"
             )
 
-        heading = (f"Structure & Split & MSE & MAE & RMSE & "
-                   f"rel.\\ $L^2$ & $R^2$ \\\\\n")
+        heading = ("Structure & Split & MSE & MAE & RMSE & "
+                   "rel.\\ $L^2$ & $R^2$ \\\\\n")
         return (
             r"\begin{longtable}{@{}"
             r">{\raggedright\arraybackslash}p{0.20\textwidth}"
@@ -782,7 +782,6 @@ class ModelReport:
                       "line. Where a validation structure was held out it is "
                       "drawn beside the training one in its own colour: a "
                       "wider cloud about the line is the generalisation gap.",
-            "error_histogram": "Distribution of the signed voxel-wise error.",
         }
         if figures:
             body.append(r"\section*{Comparison with DFT}" "\n")
@@ -829,10 +828,6 @@ class ModelReport:
         body.append(r"\end{document}" "\n")
         source = "".join(body)
 
-        # The symbolic parity plot is referenced by basename like every other
-        # figure, so it has to reach the compile directory too -- but it is not
-        # in `figures`, which drives the "Comparison with DFT" section and
-        # would render it a second time there.
         embedded = list(figures)
         # Every symbolic figure is referenced by basename like the rest, so
         # each has to reach the compile directory -- but none is in `figures`,

@@ -43,9 +43,6 @@ field and energy layers do not need.
 """
 
 
-import warnings
-warnings.filterwarnings("ignore")
-
 from .version import __version__
 
 __all__ = ["__version__", "banner", "banner_lines"]

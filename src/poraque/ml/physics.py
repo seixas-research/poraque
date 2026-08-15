@@ -165,7 +165,9 @@ def spectral_gradient(field, cell):
     shape = tuple(values.shape[-3:])
     g = reciprocal_vectors(cell, shape, values.device, values.dtype)
 
-    transformed = torch.fft.fftn(values.to(torch.complex64), dim=(-3, -2, -1))
+    # fftn on the real tensor keeps the input precision: float64 fields get
+    # complex128 transforms, so a double-precision run stays double here.
+    transformed = torch.fft.fftn(values, dim=(-3, -2, -1))
     return torch.fft.ifftn(1j * g * transformed.unsqueeze(1),
                            dim=(-3, -2, -1)).real
 
@@ -191,7 +193,7 @@ def spectral_laplacian(field, cell):
     shape = tuple(values.shape[-3:])
     g2 = reciprocal_vectors(cell, shape, values.device, values.dtype).pow(2).sum(1)
 
-    transformed = torch.fft.fftn(values.to(torch.complex64), dim=(-3, -2, -1))
+    transformed = torch.fft.fftn(values, dim=(-3, -2, -1))
     result = torch.fft.ifftn(-g2 * transformed, dim=(-3, -2, -1)).real
     return result.unsqueeze(1) if squeezed else result
 
@@ -430,43 +432,12 @@ def hartree_potential(density, cell):
     nonzero = g2 > 1e-12
     kernel[nonzero] = 1.0 / g2[nonzero]
 
-    transformed = torch.fft.fftn(values.to(torch.complex64), dim=(-3, -2, -1))
+    transformed = torch.fft.fftn(values, dim=(-3, -2, -1))
     potential = torch.fft.ifftn(
         4.0 * np.pi * COULOMB_CONSTANT_EV_ANGSTROM * kernel * transformed,
         dim=(-3, -2, -1),
     ).real
     return potential.unsqueeze(1) if squeezed else potential
-
-
-def poisson_residual(potential, density, cell, background=True):
-    r"""
-    Residual of :math:`\nabla^2 v_{\rm ext} - 4\pi e^2 n_{\rm ion}`.
-
-    Useful as a hard consistency check on a *predicted* external potential, and
-    as the exact identity validated in ``tests/test_fields.py``.
-
-    Parameters
-    ----------
-    potential : torch.Tensor
-        Potential energy of an electron, eV.
-    density : torch.Tensor
-        Ionic number-charge density, e/Å³.
-    cell : torch.Tensor
-        ``(B, 3, 3)`` lattice vectors, Å.
-    background : bool, optional
-        Subtract the cell average of ``density``, matching the
-        :math:`\mathbf{G}=0` convention.
-
-    Returns
-    -------
-    torch.Tensor
-        Residual field in eV/Å².
-    """
-    source = density
-    if background:
-        source = density - density.mean(dim=(-3, -2, -1), keepdim=True)
-    return (spectral_laplacian(potential, cell)
-            - 4.0 * np.pi * COULOMB_CONSTANT_EV_ANGSTROM * source)
 
 
 # ---------------------------------------------------------------------- #
@@ -517,7 +488,9 @@ def von_weizsacker_tau(density, cell, epsilon=1e-10):
         Same shape as ``density``, in eV/Å³.
     """
     squeezed = density.dim() == 5
-    values = density.squeeze(1) if squeezed else density
+    # Channel 0 is rho; a spin-polarised (rho, m) pair must not reach the
+    # gradient -- squeeze(1) was a silent no-op on the size-2 channel axis.
+    values = density[:, 0] if squeezed else density
 
     rho_atomic = values.clamp_min(0.0) * BOHR_TO_ANGSTROM ** 3
     # d/d(Bohr) = d/d(Ang) * (Ang per Bohr)
@@ -532,7 +505,7 @@ def von_weizsacker_potential(density, cell, epsilon=1e-10):
     :math:`\delta T_{\rm vW}/\delta\rho = -\tfrac{1}{2}\nabla^2\sqrt{\rho}/\sqrt{\rho}`, in eV.
     """
     squeezed = density.dim() == 5
-    values = density.squeeze(1) if squeezed else density
+    values = density[:, 0] if squeezed else density  # channel 0 is rho
 
     rho_atomic = values.clamp_min(epsilon) * BOHR_TO_ANGSTROM ** 3
     root = torch.sqrt(rho_atomic)
@@ -917,34 +890,6 @@ def von_weizsacker_bound_loss(tau, density, cell):
     bound = von_weizsacker_tau(density, cell)
     scale = bound.pow(2).mean().clamp_min(1e-30)
     return torch.relu(bound - tau).pow(2).mean() / scale
-
-
-def kinetic_energy_loss(tau, cell, target_energy):
-    r"""
-    Match the integrated kinetic energy :math:`T_s = \int\tau\,d^3r`.
-
-    A pointwise loss on :math:`\tau` does not pin down its integral, yet the
-    integral is the quantity that actually enters the total energy. Constrain
-    it explicitly when reference :math:`T_s` values are available.
-
-    Parameters
-    ----------
-    tau : torch.Tensor
-        Predicted kinetic energy density, eV/Å³.
-    cell : torch.Tensor
-        ``(B, 3, 3)`` lattice vectors, Å.
-    target_energy : torch.Tensor or float
-        Reference :math:`T_s` per structure, eV.
-
-    Returns
-    -------
-    torch.Tensor
-        Scalar mean squared relative error.
-    """
-    target = torch.as_tensor(target_energy, dtype=tau.dtype,
-                             device=tau.device).reshape(-1)
-    return ((integrate(tau, cell) - target) / target.abs().clamp_min(1e-8)) \
-        .pow(2).mean()
 
 
 def euler_lagrange_residual(density, v_external, cell, lam=1.0 / 9.0,

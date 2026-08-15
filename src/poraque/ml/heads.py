@@ -214,11 +214,11 @@ def fit_pauli_scale(dataset, max_materials=8, quantile=0.5):
     float
         Scale in eV/Å³, always positive.
     """
+    from ..fields import von_weizsacker_tau as vw_numpy
+
     values = []
     for index in range(min(len(dataset), max_materials)):
         density, tau = dataset.load_fields(index)
-        from ..fields import von_weizsacker_tau as vw_numpy
-
         pauli = tau.data - vw_numpy(density.data, density.grid)
         values.append(np.quantile(pauli[np.isfinite(pauli)], quantile))
 

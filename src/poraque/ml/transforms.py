@@ -68,8 +68,7 @@ class FieldTransform(ABC):
         """Rebuild a transform from :meth:`state_dict`."""
         state = dict(state)
         registry = {cls.__name__: cls for cls in
-                    (Identity, Standardize, Asinh, Log, SymmetricLog,
-                     Channelwise)}
+                    (Identity, Standardize, Asinh, Log, Channelwise)}
         cls = registry[state.pop("type")]
         if cls is Channelwise:
             return cls([FieldTransform.from_state_dict(entry)
@@ -182,26 +181,6 @@ class Log(FieldTransform):
     def inverse(self, y):
         backend = torch if torch.is_tensor(y) else np
         return backend.exp(y) - self.epsilon
-
-
-class SymmetricLog(FieldTransform):
-    r"""
-    Sign-preserving log, :math:`y = \mathrm{sgn}(x)\log(1 + |x|/s)`.
-
-    Useful for signed fields with heavy tails, e.g. the external potential when
-    deep pseudopotential wells would otherwise dominate a standardized loss.
-    """
-
-    def __init__(self, scale=1.0):
-        self.scale = float(scale) if abs(float(scale)) > 1e-30 else 1.0
-
-    def forward(self, x):
-        backend = torch if torch.is_tensor(x) else np
-        return backend.sign(x) * backend.log1p(backend.abs(x) / self.scale)
-
-    def inverse(self, y):
-        backend = torch if torch.is_tensor(y) else np
-        return backend.sign(y) * (backend.exp(backend.abs(y)) - 1.0) * self.scale
 
 
 class Channelwise(FieldTransform):

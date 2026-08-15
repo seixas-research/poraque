@@ -77,13 +77,9 @@ def available_devices():
     list of str
         Always contains at least ``"cpu"``.
     """
-    found = []
-    if cuda_available():
-        found.append("cuda")
-    if mps_available():
-        found.append("mps")
-    found.append("cpu")
-    return found
+    checks = {"cuda": cuda_available, "mps": mps_available,
+              "cpu": lambda: True}
+    return [name for name in PREFERENCE_ORDER if checks[name]()]
 
 
 def resolve_device(preference="auto", verbose=False):

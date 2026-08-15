@@ -34,9 +34,10 @@ Every output is written in ``CHGCAR`` format, so the predictions are read by
 any tool that handles VASP volumetric files.
 
 Both operators are read from a **single unified checkpoint**,
-``models/poraque_models.pfno``, written by ``poraque-train``. One file for the
-whole chain means the two halves cannot be copied separately or mixed across
-training runs.
+``models/<name>/<name>.pfno``, written by ``poraque-train``
+(``models/poraque_models/poraque_models.pfno`` for an unnamed run). One file
+for the whole chain means the two halves cannot be copied separately or mixed
+across training runs.
 
 Grid selection
 --------------
@@ -165,6 +166,11 @@ def load_operator(bundle, task, device):
     """
     try:
         operator = load_bundle(bundle, task, device=device)
+    except FileNotFoundError as error:
+        raise SystemExit(
+            f"{bundle}: no such file. poraque-train writes the bundle to "
+            f"models/<task.name>/<task.name>.pfno; pass that path with "
+            f"--models.") from error
     except (KeyError, ValueError) as error:
         raise SystemExit(f"{bundle}: {error}") from error
 
@@ -261,7 +267,6 @@ def augmentation_from_bundle(bundle, structure, log):
     list of str or None
     """
     from poraque.fields.vasp.augmentation import records_for_structure
-    from poraque.ml import read_bundle
 
     try:
         metadata = read_bundle(bundle).get("metadata") or {}
@@ -813,9 +818,12 @@ def build_parser():
     parser.add_argument("directory",
                         help="directory with POSCAR/INCAR/POTCAR of the new structure")
     parser.add_argument("--models", "-m",
-                        default=os.path.join("models", BUNDLE_FILENAME),
+                        default=os.path.join("models", "poraque_models",
+                                             BUNDLE_FILENAME),
                         help=f"unified checkpoint holding both operators "
-                             f"(default: models/{BUNDLE_FILENAME})")
+                             f"(default: models/poraque_models/"
+                             f"{BUNDLE_FILENAME}, where an unnamed "
+                             f"poraque-train run writes it)")
     parser.add_argument("--output", "-o", default="predictions",
                         help="directory for the predicted volumetric files")
 

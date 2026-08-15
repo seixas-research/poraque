@@ -1,0 +1,24 @@
+# K-fold comparison: silu vs. gelu (see compare_gelu_kfold_chg2tau.yaml's
+# header -- same reasoning, same protocol, only the activation differs).
+task:
+  type: chg2tau
+  name: au_w16_m8_l3_silu_kfold
+
+data:
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+
+model:
+  width: 16
+  modes: 8
+  projection_channels: 64
+  mode_selection: fixed
+  activation: silu
+
+training:
+  enable_kfold: true
+  k_folds: 5
+  physics:
+    electron_count_weight: 0.1
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

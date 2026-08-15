@@ -34,6 +34,35 @@ from sys import version as __python_version__
 from .version import __version__
 
 
+def _describe_dependency(name):
+    """
+    ``"<version>    [<install dir>]"`` for a module, or ``"not installed"``.
+
+    Guarded so the banner reports an absent dependency instead of crashing the
+    console command that wanted to print it -- pytest in particular is a
+    test-only dependency a production install may not carry.
+    """
+    from importlib import import_module
+
+    try:
+        module = import_module(name)
+    except ImportError:
+        return "not installed"
+    version = getattr(module, "__version__", "unknown")
+    location = os.path.dirname(getattr(module, "__file__", "") or "")
+    return f"{version}    [{location}]"
+
+
+def _current_user():
+    """The login name, without assuming ``USER`` is set (containers, CI)."""
+    try:
+        import getpass
+
+        return os.environ.get("USER") or getpass.getuser()
+    except Exception:
+        return "unknown"
+
+
 def banner_lines():
     """
     The start-up banner, as a list of lines.
@@ -44,28 +73,13 @@ def banner_lines():
     exactly what a reader needs when a result has to be reproduced or
     explained months later.
 
-    The dependency imports are inside the function on purpose: see the module
-    docstring.
+    The dependency imports are inside :func:`_describe_dependency` on purpose:
+    see the module docstring.
 
     Returns
     -------
     list of str
     """
-    from ase import __file__ as __ase_file__
-    from ase import __version__ as __ase_version__
-    from matplotlib import __file__ as __mpl_file__
-    from matplotlib import __version__ as __mpl_version__
-    from numpy import __file__ as __numpy_file__
-    from numpy import __version__ as __numpy_version__
-    from pytest import __file__ as __pytest_file__
-    from pytest import __version__ as __pytest_version__
-    from scipy import __file__ as __scipy_file__
-    from scipy import __version__ as __scipy_version__
-    from torch import __file__ as __torch_file__
-    from torch import __version__ as __torch_version__
-    from yaml import __file__ as __yaml_file__
-    from yaml import __version__ as __yaml_version__
-
     return [
         "                                                 ",
         "    ████▄ ▄███▄ ████▄  ▀▀█▄ ▄████ ██ ██ ▄█▀█▄    ",
@@ -83,7 +97,7 @@ def banner_lines():
         "System:",
         f" ├── architecture: {platform.machine()}",
         f" ├── platform: {platform.system()}",
-        f" ├── user: {os.environ['USER']}",
+        f" ├── user: {_current_user()}",
         f" ├── hostname: {gethostname()}",
         f" ├── cwd: {os.getcwd()}",
         f" └── PID: {os.getpid()}",
@@ -93,13 +107,13 @@ def banner_lines():
         f" └── executable: {__python_executable__}      ",
         "                                               ",
         "Dependencies:",
-        f" ├── ase version: {__ase_version__}    [{__ase_file__[:-11]}]",
-        f" ├── numpy version: {__numpy_version__}    [{__numpy_file__[:-11]}]",
-        f" ├── scipy version: {__scipy_version__}    [{__scipy_file__[:-11]}]",
-        f" ├── matplotlib version: {__mpl_version__}    [{__mpl_file__[:-11]}]",
-        f" ├── torch version: {__torch_version__}    [{__torch_file__[:-11]}]",
-        f" ├── yaml version: {__yaml_version__}    [{__yaml_file__[:-11]}]",
-        f" └── pytest version: {__pytest_version__}    [{__pytest_file__[:-11]}]",
+        f" ├── ase version: {_describe_dependency('ase')}",
+        f" ├── numpy version: {_describe_dependency('numpy')}",
+        f" ├── scipy version: {_describe_dependency('scipy')}",
+        f" ├── matplotlib version: {_describe_dependency('matplotlib')}",
+        f" ├── torch version: {_describe_dependency('torch')}",
+        f" ├── yaml version: {_describe_dependency('yaml')}",
+        f" └── pytest version: {_describe_dependency('pytest')}",
         "                                               ",
     ]
 

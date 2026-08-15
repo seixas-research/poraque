@@ -211,7 +211,9 @@ class PhysicsInformedLoss(nn.Module):
             return {"total": total, **terms}
 
         if self.positivity_weight > 0.0 and self.task in ("ext2chg", "chg2tau"):
-            value = positivity_loss(physical_prediction)
+            # Only rho is sign-constrained: the magnetisation channel of a
+            # spin-polarised prediction is legitimately negative.
+            value = positivity_loss(_total_density(physical_prediction))
             total = total + self.positivity_weight * value
             terms["positivity"] = value.detach()
 

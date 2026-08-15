@@ -244,6 +244,19 @@ def rank(argv=None):
     print(f"  device     : {describe_device(device)}")
     print(f"  cache      : {args.cache}")
 
+    if not os.path.isdir(args.cache):
+        parent = os.path.dirname(args.cache) or "."
+        siblings = sorted(
+            entry for entry in os.listdir(parent)
+            if os.path.isdir(os.path.join(parent, entry))
+        ) if os.path.isdir(parent) else []
+        raise SystemExit(
+            f"--cache {args.cache!r} does not exist. Training writes caches "
+            f"under a tag encoding resolution and potential settings (e.g. "
+            f"res32_potcar), so pass the directory a run actually built"
+            + (f"; under {parent!r} there is: {', '.join(siblings)}."
+               if siblings else "."))
+
     # This task's two fields, not the default triple. Asking for TAUCAR as
     # well made an ext2chg dataset -- which by definition has no TAUCAR --
     # report as "no materials", so the very data the committee was trained on

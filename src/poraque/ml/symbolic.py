@@ -808,8 +808,8 @@ def julia_physics_loss(feature_names, template, weights=None,
                        key=["thomas_fermi", "von_weizsacker"].index)
 
     lines = [
-        f"function poraque_constrained_loss(tree, dataset::Dataset{{T,L}}, "
-        f"options)::L where {{T,L}}",
+        "function poraque_constrained_loss(tree, dataset::Dataset{T,L}, "
+        "options)::L where {T,L}",
         "    prediction, complete = eval_tree_array(tree, dataset.X, options)",
         "    if !complete",
         "        return L(Inf)",

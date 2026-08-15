@@ -61,14 +61,8 @@ dense small cell from a sparse large one.
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-_ACTIVATIONS = {
-    "gelu": F.gelu,
-    "relu": F.relu,
-    "silu": F.silu,
-    "tanh": torch.tanh,
-}
+from .kan import ACTIVATIONS, build_activation
 
 #: Contraction performed by the spectral convolution.
 _SPECTRAL_EQUATION = "bixyz,ioxyz->boxyz"
@@ -496,7 +490,13 @@ class FNOBlock(nn.Module):
     embedding_dim : int, optional
         Cell-embedding width; ``0`` disables FiLM conditioning.
     activation : str, optional
-        One of ``'gelu'``, ``'relu'``, ``'silu'``, ``'tanh'``.
+        One of :data:`~poraque.ml.kan.ACTIVATIONS`: ``'gelu'`` (default),
+        ``'relu'``, ``'silu'``, ``'tanh'`` (stateless), or ``'kan_bspline'``
+        / ``'kan_cheby'`` (per-channel learnable — see :mod:`poraque.ml.kan`).
+    activation_kwargs : dict, optional
+        Variant-specific hyperparameters, forwarded to
+        :func:`~poraque.ml.kan.build_activation`. Ignored by the stateless
+        variants.
     n_groups : int, optional
         Preferred number of ``GroupNorm`` groups; reduced to the largest
         divisor of ``channels`` that does not exceed it. Group normalization is
@@ -505,13 +505,14 @@ class FNOBlock(nn.Module):
     """
 
     def __init__(self, channels, modes, embedding_dim=0, activation="gelu",
-                 n_groups=8):
+                 activation_kwargs=None, n_groups=8):
         super().__init__()
         self.spectral = SpectralConv3d(channels, channels, modes)
         self.pointwise = nn.Conv3d(channels, channels, kernel_size=1)
         self.norm = nn.GroupNorm(_group_count(channels, n_groups), channels)
         self.film = FiLM(embedding_dim, channels) if embedding_dim else None
-        self.activation = _ACTIVATIONS[activation]
+        self.activation = build_activation(activation, channels,
+                                           **(activation_kwargs or {}))
 
     def forward(self, x, embedding=None, max_modes=None):
         """Apply the layer to ``(B, C, Nx, Ny, Nz)``."""
@@ -546,7 +547,19 @@ class FNO3d(nn.Module):
     embedding_dim : int, optional
         Width of the cell embedding.
     activation : str, optional
-        Nonlinearity used throughout.
+        Nonlinearity used throughout every :class:`FNOBlock`. One of
+        :data:`~poraque.ml.kan.ACTIVATIONS`: the stateless ``'gelu'``
+        (default), ``'relu'``, ``'silu'``, ``'tanh'``, or the per-channel
+        learnable Kolmogorov-Arnold variants ``'kan_bspline'`` /
+        ``'kan_cheby'`` (see :mod:`poraque.ml.kan`). Both KAN variants start
+        at initialisation close to ``gelu`` and are opt-in: every existing
+        config and checkpoint keeps using ``gelu`` unless this is changed.
+    kan_grid_size, kan_spline_order, kan_grid_range : optional
+        Hyperparameters of ``'kan_bspline'``; ignored otherwise. See
+        :class:`~poraque.ml.kan.BSplineKANActivation`.
+    kan_degree : int, optional
+        Hyperparameter of ``'kan_cheby'``; ignored otherwise. See
+        :class:`~poraque.ml.kan.ChebyKANActivation`.
     mode_selection : {"fixed", "physical"}, optional
         ``"fixed"`` truncates at a constant mode index (standard FNO).
         ``"physical"`` truncates at the constant wavevector :attr:`g_max`, so
@@ -569,7 +582,8 @@ class FNO3d(nn.Module):
     def __init__(self, in_channels=1, out_channels=1, width=32, modes=12,
                  n_layers=4, projection_channels=128, use_coordinates=True,
                  cell_conditioning=True, embedding_dim=32, activation="gelu",
-                 mode_selection="fixed", g_max=None):
+                 kan_grid_size=8, kan_spline_order=3, kan_grid_range=(-2.0, 2.0),
+                 kan_degree=6, mode_selection="fixed", g_max=None):
         super().__init__()
         if isinstance(modes, int):
             modes = (modes, modes, modes)
@@ -577,6 +591,11 @@ class FNO3d(nn.Module):
             raise ValueError(f"Unknown mode_selection: {mode_selection!r}.")
         if mode_selection == "physical" and g_max is None:
             raise ValueError("mode_selection='physical' requires g_max (1/Ang).")
+        if activation not in ACTIVATIONS:
+            raise ValueError(
+                f"Unknown activation: {activation!r}; expected one of "
+                f"{sorted(ACTIVATIONS)}."
+            )
 
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
@@ -585,15 +604,35 @@ class FNO3d(nn.Module):
         self.use_coordinates = bool(use_coordinates)
         self.mode_selection = mode_selection
         self.g_max = None if g_max is None else float(g_max)
+        # Recorded as plain attributes so FieldOperator.state() can persist
+        # the parts of the architecture that live in no tensor shape: a
+        # reloaded model must not silently fall back to the defaults.
+        self.cell_conditioning = bool(cell_conditioning)
+        self.embedding_dim = int(embedding_dim)
+        self.activation = activation
+        # KAN hyperparameters. Recorded unconditionally, the same way g_max is
+        # recorded even under mode_selection="fixed": harmless when unused,
+        # and it means a checkpoint's architecture record has one shape
+        # regardless of which activation trained it.
+        self.kan_grid_size = int(kan_grid_size)
+        self.kan_spline_order = int(kan_spline_order)
+        self.kan_grid_range = tuple(float(v) for v in kan_grid_range)
+        self.kan_degree = int(kan_degree)
 
         self.cell_encoder = CellEncoder(embedding_dim) if cell_conditioning else None
         conditioning = embedding_dim if cell_conditioning else 0
 
+        activation_kwargs = dict(
+            kan_grid_size=self.kan_grid_size,
+            kan_spline_order=self.kan_spline_order,
+            kan_grid_range=self.kan_grid_range,
+            kan_degree=self.kan_degree,
+        )
         lifting_channels = self.in_channels + (3 if use_coordinates else 0)
         self.lift = nn.Conv3d(lifting_channels, self.width, kernel_size=1)
         self.blocks = nn.ModuleList([
             FNOBlock(self.width, self.modes, embedding_dim=conditioning,
-                     activation=activation)
+                     activation=activation, activation_kwargs=activation_kwargs)
             for _ in range(int(n_layers))
         ])
         self.project = nn.Sequential(

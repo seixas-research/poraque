@@ -682,12 +682,6 @@ class EnergyComponents:
         return (self.n_electrons - self.nominal_electrons) / self.nominal_electrons
 
     @property
-    def electronic(self):
-        """Sum of the electron-only terms (everything but :attr:`ewald`)."""
-        return (self.kinetic + self.external + self.hartree + self.xc
-                + (self.alpha_z or 0.0))
-
-    @property
     def potential(self):
         """
         Potential energy: everything that is not kinetic.

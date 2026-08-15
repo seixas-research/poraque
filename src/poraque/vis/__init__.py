@@ -25,8 +25,8 @@ of the package never depends on it::
     from poraque.vis import TrainingReport
 
     report = TrainingReport("results/plots", prefix="chg2tau")
-    report.full_report(history=history, reference=tau_dft, prediction=tau_fno,
-                       label=r"$\tau$", unit="eV/Ang^3")
+    report.loss_curves(history)
+    report.parity(tau_dft, tau_fno, label=r"$\tau$", unit="eV/Ang^3")
 """
 
 _LAZY = {

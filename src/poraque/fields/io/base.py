@@ -276,10 +276,5 @@ class CalculationReader(ABC):
                             for k, v in overrides.items()})
         return charges
 
-    def core_radii(self, directory):
-        """``{element: core_radius_in_angstrom}``; values may be ``None``."""
-        return {element: info.core_radius
-                for element, info in self.read_pseudopotentials(directory).items()}
-
     def __repr__(self):
         return f"{type(self).__name__}(code={self.code!r})"

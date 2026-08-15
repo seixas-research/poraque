@@ -1,0 +1,24 @@
+# Controlled comparison: activation: silu vs. gelu/kan_cheby/kan_bspline
+# (see compare_kan_cheby_ext2chg.yaml's header -- same reasoning, same
+# protocol, only the activation differs). silu is stateless, like gelu, so
+# there is no extra hyperparameter to set.
+task:
+  type: ext2chg
+  name: au_w16_m8_l3_silu
+
+data:
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+
+model:
+  width: 16
+  modes: 8
+  projection_channels: 64
+  mode_selection: fixed
+  activation: silu
+
+training:
+  physics:
+    electron_count_weight: 0.1
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

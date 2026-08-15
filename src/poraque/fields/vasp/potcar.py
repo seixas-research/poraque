@@ -378,11 +378,21 @@ POTCAR_NAMES = ("POTCAR", "POTCAR.gz", "POTCAR.Z")
 
 
 def read_potcar_text(path):
-    """Read a ``POTCAR``, transparently handling ``.gz``/``.Z`` compression."""
+    """Read a ``POTCAR``, transparently handling ``.gz`` compression."""
     path = str(path)
     if path.endswith((".gz", ".Z")):
-        with gzip.open(path, "rt", errors="replace") as handle:
-            return handle.read()
+        try:
+            with gzip.open(path, "rt", errors="replace") as handle:
+                return handle.read()
+        except gzip.BadGzipFile as error:
+            # A true `.Z` is LZW (Unix `compress`), which the gzip module
+            # cannot decode; failing here with the real reason beats a
+            # BadGzipFile three frames deep in a library scan.
+            raise ValueError(
+                f"{path} is not gzip data. `.Z` archives are LZW-compressed; "
+                f"decompress the library once (`uncompress` or `gzip -d`) "
+                f"and point potcar_dir at the result."
+            ) from error
     with open(path, "r", errors="replace") as handle:
         return handle.read()
 

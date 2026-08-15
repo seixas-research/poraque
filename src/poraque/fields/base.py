@@ -251,9 +251,18 @@ class ScalarField(ABC):
             )
             comment = f"{formula}  {self.default_filename}: {self.name} [{self.unit}]"
 
+        # The volumetric writer serialises the header via Poscar.to_string,
+        # which a bare Structure (e.g. from a cube-file reader) does not
+        # have -- adapt it rather than crash on the first non-VASP source.
+        structure = self.structure
+        if not hasattr(structure, "to_string"):
+            from .vasp.poscar import Poscar
+
+            structure = Poscar.from_structure(structure)
+
         return write_volumetric(
             path,
-            self.structure,
+            structure,
             self.to_file_values(),
             comment=comment,
             columns=columns,
@@ -296,6 +305,16 @@ class ScalarField(ABC):
                 f"shared grid {tuple(grid.shape)}. All fields of one material "
                 f"must be defined on the same mesh."
             )
+        elif not np.allclose(structure.cell, grid.cell, atol=1e-5):
+            # Shape alone is not identity: a volume-scaled field read against
+            # a grid with a different cell would be silently rescaled by the
+            # volume ratio, corrupting the electron count and every integral.
+            raise ValueError(
+                f"{path}: the file's cell does not match the supplied shared "
+                f"grid's cell (max difference "
+                f"{np.abs(structure.cell - grid.cell).max():.2e} Å). All "
+                f"fields of one material must share one mesh in one cell."
+            )
 
         return cls(
             cls.from_file_values(raw, grid),
@@ -333,23 +352,6 @@ class ScalarField(ABC):
     def mean(self):
         """Volume-average of the field."""
         return float(np.mean(self.data))
-
-    def statistics(self):
-        """
-        Summary statistics, handy for dataset normalization.
-
-        Returns
-        -------
-        dict
-            ``min``, ``max``, ``mean``, ``std`` and ``integral``.
-        """
-        return {
-            "min": float(np.min(self.data)),
-            "max": float(np.max(self.data)),
-            "mean": float(np.mean(self.data)),
-            "std": float(np.std(self.data)),
-            "integral": self.integrate(),
-        }
 
     def smooth(self, sigma, method="spectral"):
         r"""

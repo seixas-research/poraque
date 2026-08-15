@@ -402,16 +402,6 @@ class TestRankingSurvivesAnUndefinedJSD:
     including the structures that had scored perfectly well.
     """
 
-    @staticmethod
-    def _rank():
-        import sys
-
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
-                                        "scripts"))
-        from poraque_committee import rank
-
-        return rank
-
     def test_the_script_exposes_a_task_aware_requirement(self):
         """
         An ext2chg dataset has no TAUCAR, by definition. Requiring the default

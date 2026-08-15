@@ -330,6 +330,18 @@ class FieldOperator:
             Suitable for :meth:`from_state`, and the per-task value stored
             inside a bundle by :func:`save_bundle`.
         """
+        # Architecture that no tensor shape encodes. Without this record, a
+        # model trained with mode_selection="physical" reloads as "fixed" and
+        # its never-trained masked modes go live -- silently.
+        backbone = getattr(self.model, "backbone", self.model)
+        architecture = {
+            key: getattr(backbone, key)
+            for key in ("modes", "mode_selection", "g_max", "activation",
+                        "cell_conditioning", "embedding_dim",
+                        "kan_grid_size", "kan_spline_order", "kan_grid_range",
+                        "kan_degree")
+            if hasattr(backbone, key)
+        }
         return {
             "task": self.task.name,
             "model_state": self.model.state_dict(),
@@ -341,6 +353,7 @@ class FieldOperator:
             "in_channels": self.in_channels,
             "out_channels": self.out_channels,
             "use_coordinates": self.use_coordinates,
+            "architecture": architecture,
             "input_transform": self.input_transform.state_dict(),
             "target_transform": self.target_transform.state_dict(),
             "pauli_residual": self.pauli_residual,
@@ -376,6 +389,12 @@ class FieldOperator:
         FieldOperator
         """
         inferred = infer_backbone_kwargs(state["model_state"])
+        # Recorded architecture wins over the inference: mode_selection,
+        # g_max, activation, cell_conditioning and embedding_dim live in no
+        # tensor shape, so inference alone would silently reset them to the
+        # constructor defaults. Checkpoints written before the record existed
+        # simply have no entry here and keep the inferred/default values.
+        inferred.update(state.get("architecture") or {})
         # Explicitly recorded channel counts win over the inference, which
         # cannot separate in_channels from the coordinate channels.
         for key in ("in_channels", "out_channels", "use_coordinates"):
@@ -464,8 +483,6 @@ def resolve_bundle_path(path, log=None):
         ``path`` unchanged when neither does — so the caller still reports the
         name the user actually asked for.
     """
-    import os
-
     if os.path.exists(path):
         return path
 

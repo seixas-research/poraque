@@ -163,6 +163,54 @@ model:
   mode_selection: fixed
   # g_max: 6
 
+  # THE NONLINEARITY INSIDE EVERY FOURIER LAYER, i.e. sigma in the equation
+  # at the top of this file: v[l] = v[l-1] + sigma(y[l]).
+  #
+  #   gelu    the default, and what every model trained before this option
+  #           existed used. Stateless -- no parameters, nothing to learn.
+  #   relu, silu, tanh   also stateless; swap in for gelu with no other
+  #           consequence.
+  #
+  #   kan_bspline, kan_cheby   Kolmogorov-Arnold Network style activations:
+  #           instead of one fixed function shared by every channel, EACH
+  #           CHANNEL LEARNS ITS OWN sigma_c, applied elementwise to every
+  #           voxel of that channel. kan_bspline parameterises sigma_c with a
+  #           B-spline on a fixed knot grid (the original KAN paper, Liu et
+  #           al. 2024); kan_cheby with a Chebyshev-polynomial expansion,
+  #           typically cheaper and smoother. Both are per-channel, not
+  #           per-(input,output)-pair -- a real KAN edge-wise layer would
+  #           replace the pointwise 1x1x1 convolution itself, which this is
+  #           not; see FUTURE.md.
+  #
+  #           Both are initialised close to `gelu` (a small learned
+  #           perturbation on top of it), so switching this on does not
+  #           destabilise training at step 0 -- it starts from behaviour
+  #           already tuned against and only departs from it as training
+  #           moves the spline/Chebyshev coefficients.
+  #
+  #           Cost: kan_cheby is the cheaper of the two (roughly 1.4x a
+  #           gelu forward+backward pass at width=16); kan_bspline's
+  #           Cox-de Boor recursion is markedly more expensive (roughly 5x).
+  #           Measure on your own hardware before committing to a long run.
+  # activation: gelu
+
+  # Read only when `activation: kan_bspline`.
+  #   kan_grid_size     number of knot-grid intervals. More gives sigma_c
+  #                     finer local structure, at `width` extra coefficients
+  #                     each.
+  #   kan_spline_order  B-spline degree; 3 (cubic) is the KAN paper's choice.
+  #   kan_grid_range    [low, high] support of the knot grid. A pre-
+  #                     activation outside it is CLAMPED before the spline
+  #                     is evaluated, not extrapolated -- see
+  #                     poraque.ml.kan.BSplineKANActivation for why.
+  # kan_grid_size: 8
+  # kan_spline_order: 3
+  # kan_grid_range: [-2.0, 2.0]
+
+  # Read only when `activation: kan_cheby`. Highest Chebyshev order; degree+1
+  # coefficients per channel.
+  # kan_degree: 6
+
 training:
   # Physics-informed terms for the NEURAL OPERATOR, added to the data loss as
   #

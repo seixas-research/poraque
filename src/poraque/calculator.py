@@ -215,6 +215,7 @@ class Poraque(Calculator):
         self.charges = dict(charges) if charges else None
         self.potcar_dir = str(potcar_dir) if potcar_dir else None
         self.fields = {}
+        self._fields_key = None
         self.components = None
         self.raw_electron_drift = None
         self.charge_analysis = None
@@ -559,6 +560,7 @@ class Poraque(Calculator):
             )
 
         self.fields = fields
+        self._fields_key = self._atoms_key(atoms)
         return components
 
     # ------------------------------------------------------------------ #
@@ -608,17 +610,28 @@ class Poraque(Calculator):
     # ------------------------------------------------------------------ #
     # Field accessors
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _atoms_key(atoms):
+        """A fingerprint of what the fields were predicted *for*."""
+        if atoms is None:
+            return None
+        return (np.asarray(atoms.cell).tobytes(),
+                np.asarray(atoms.positions).tobytes(),
+                np.asarray(atoms.numbers).tobytes())
+
     def _field(self, atoms, key):
         """
         One field of the current evaluation, predicting first if needed.
 
-        Reuses :attr:`fields` when the pipeline has already run for these
-        atoms, so asking for three fields costs one forward pass rather than
-        three.
+        Reuses :attr:`fields` only when the cached fields were predicted for
+        *these* atoms — a cache keyed on nothing served structure A's density
+        to a caller asking about structure B, silently.
         """
         atoms = atoms if atoms is not None else self.atoms
-        if not self.fields:
+        wanted = self._atoms_key(atoms)
+        if not self.fields or wanted != self._fields_key:
             self.fields = self.predict_fields(atoms)
+            self._fields_key = wanted
         return self.fields[key]
 
     def get_external_potential(self, atoms=None):
@@ -898,7 +911,8 @@ class Poraque(Calculator):
         """
         from .physics import hellmann_feynman_forces
 
-        fields = self.fields or self.predict_fields(atoms)
+        current = bool(self.fields) and self._atoms_key(atoms) == self._fields_key
+        fields = self.fields if current else self.predict_fields(atoms)
         potential = fields["external"]
         structure = potential.structure
 

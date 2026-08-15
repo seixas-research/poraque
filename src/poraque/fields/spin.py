@@ -71,28 +71,6 @@ def is_spin_polarized(path):
     return len(extra) >= 1
 
 
-def spin_from_incar(path, default=False):
-    """
-    ``ISPIN`` from an ``INCAR``, as a boolean.
-
-    Parameters
-    ----------
-    path : str or pathlib.Path
-        The ``INCAR`` to read.
-    default : bool, optional
-        Returned when the file has no ``ISPIN`` tag — VASP's own default is
-        ``ISPIN = 1``, so ``False``.
-
-    Returns
-    -------
-    bool
-    """
-    from .vasp.incar import Incar
-
-    value = Incar.from_file(path).get_int("ISPIN")
-    return default if value is None else value == 2
-
-
 class SpinDensity:
     r"""
     Valence density of a spin-polarised calculation.

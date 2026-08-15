@@ -1,0 +1,26 @@
+# Controlled comparison: activation: kan_bspline vs. the shipped gelu model
+# (models/au_w16_m8_l3), ext2chg only. See compare_kan_cheby_ext2chg.yaml's
+# header -- same reasoning, same protocol, only the activation differs.
+task:
+  type: ext2chg
+  name: au_w16_m8_l3_kanbspline
+
+data:
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+
+model:
+  width: 16
+  modes: 8
+  projection_channels: 64
+  mode_selection: fixed
+  activation: kan_bspline
+  # kan_grid_size: 8        # default
+  # kan_spline_order: 3     # default
+  # kan_grid_range: [-2.0, 2.0]   # default
+
+training:
+  physics:
+    electron_count_weight: 0.1
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

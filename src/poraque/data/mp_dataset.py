@@ -150,7 +150,7 @@ def discover_mp_chgcars(root, pattern=CHGCAR_PREFIX):
     return records
 
 
-def available_tasks(records=None):
+def available_tasks():
     """
     Which regression tasks a Materials Project download can support.
 

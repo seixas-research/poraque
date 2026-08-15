@@ -241,7 +241,7 @@ def verify_total_charge(density_grid, lattice_vectors, expected_electrons,
     True
     """
     values = _density_values(density_grid)
-    cell = _cell_of(lattice_vectors, values.shape)
+    cell = _cell_of(lattice_vectors)
 
     volume = float(abs(np.linalg.det(cell)))
     voxel = volume / values.size
@@ -280,7 +280,7 @@ def _density_values(density):
     return np.asarray(values, dtype=float)
 
 
-def _cell_of(source, shape=None):
+def _cell_of(source):
     """Lattice vectors from a grid, a structure, or a bare array."""
     cell = getattr(source, "cell", source)
     cell = np.asarray(cell, dtype=float)
@@ -496,12 +496,10 @@ def voronoi_charges(density, structure=None, grid=None, valence=None):
     voxel = grid.volume / values.size
     weighted = values / shares
     populations = np.empty(natoms, dtype=float)
-    ties = 0
     for index in range(natoms):
         distance = _distance_to_atom(scaled, positions[index], cell, orthogonal)
         owned = distance <= nearest + tolerance
         populations[index] = float(np.sum(weighted[owned]) * voxel)
-        ties += int(np.count_nonzero(owned))
 
     return PartialCharges(
         symbols=_atom_symbols(structure),

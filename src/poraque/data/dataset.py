@@ -146,6 +146,7 @@ class MixedFieldDataset(FieldPairDataset):
             raise ValueError("At least one data path is required.")
 
         self.resolution = int(resolution) if resolution else None
+        self._format = format
         self._log = log or (lambda *_: None)
         self._source_options = {
             "charges": charges, "potcar_dir": potcar_dir, "sigma": sigma,
@@ -394,11 +395,22 @@ class MixedFieldDataset(FieldPairDataset):
         rng = np.random.default_rng(seed)
         order = rng.permutation(len(self.materials))
         cut = int(round(fraction * len(order)))
+        if cut == 0 or cut == len(order):
+            raise ValueError(
+                f"fraction={fraction} splits {len(order)} materials into "
+                f"{cut} and {len(order) - cut}: one side is empty. Adjust the "
+                f"fraction or add materials."
+            )
 
         def subset(indices):
             other = type(self)(
                 self.paths, self.task, resolution=self.resolution,
+                # The *resolved* format, not the "auto" default: a dataset
+                # that needed an explicit format must not have its halves
+                # silently re-detected.
+                format=self._format, log=self._log,
                 spin=self.spin, cache=self.cache,
+                references=self.references,
                 materials=[self.materials[i] for i in indices],
                 input_transform=self.input_transform,
                 target_transform=self.target_transform,

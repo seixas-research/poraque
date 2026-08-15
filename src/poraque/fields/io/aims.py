@@ -307,5 +307,5 @@ def _cube_shape(path):
     """``(N1, N2, N3)`` from a cube header, without reading the payload."""
     with open(path, errors="replace") as handle:
         handle.readline(), handle.readline()          # two comment lines
-        natoms = int(handle.readline().split()[0])
+        handle.readline()                             # atom-count line
         return [int(handle.readline().split()[0]) for _ in range(3)]

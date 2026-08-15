@@ -71,14 +71,17 @@ poraque-train --config configs/train.yaml
 # 2. measure generalisation
 poraque-train --config configs/train.yaml --kfold --k-folds 5
 
-# 3. predict a structure that has never been computed
-poraque-inference new_structure/ --output predictions/new_structure
+# 3. predict a structure that has never been computed. --models points at
+#    the bundle step 1 wrote: models/<task.name>/<task.name>.pfno
+poraque-inference new_structure/ --output predictions/new_structure \
+    --models models/au_w16_m8_l3/au_w16_m8_l3.pfno
 
 # 4. calibrate: does committee disagreement predict error? Run this on
 #    LABELLED data first -- it costs nothing and says whether step 5 means
-#    anything. Read the Spearman coefficient.
+#    anything. Read the Spearman coefficient. --cache is the tagged
+#    directory step 1 built (the tag encodes resolution and potentials).
 poraque-committee --models "models/committee_*" --task ext2chg \
-    --cache data/cache --against models/<name>/log/<name>.json
+    --cache data/cache/res32_potcar --against models/<name>/log/<name>.json
 
 # 5. select: which UNLABELLED structures to compute next. This one spends
 #    the DFT budget, so it is the one that needs step 4 to have passed.
@@ -97,8 +100,8 @@ Every predicted field is written in `CHGCAR` format.
 ### Configuration
 
 **Every key is optional** — a file states only what the run does differently.
-That is why `configs/train.yaml` is 19 lines: of the 78 settings a full config
-carries, it changes 3.
+That is why `configs/train.yaml` fits on half a page: of the ~80 settings a
+full config carries, it changes a handful.
 
 `configs/train_complete_and_commented.yaml` is the reference: it lists the
 settings worth knowing about, each with the reasoning behind it. Read it there

@@ -25,19 +25,6 @@ class Incar(dict):
     named properties for typed access.
     """
 
-    #: Ratio between the density (fine) grid and the wavefunction (coarse)
-    #: grid implied by each ``PREC`` setting. ``"accurate"`` gives a
-    #: wrap-around-free density grid (all ``|G| <= 2 G_cut`` representable),
-    #: ``"normal"`` the cheaper 3/2 rule.
-    PREC_DENSITY_FACTOR = {
-        "accurate": 2.0,
-        "high": 2.0,
-        "normal": 1.5,
-        "single": 1.5,
-        "medium": 1.5,
-        "low": 1.5,
-    }
-
     @classmethod
     def from_string(cls, text):
         """
@@ -99,11 +86,6 @@ class Incar(dict):
     def prec(self):
         """Lower-case ``PREC`` setting; defaults to ``'normal'``."""
         return str(self.get("PREC", "normal")).strip().lower()
-
-    @property
-    def density_factor(self):
-        """Fine/coarse grid ratio implied by :attr:`prec`."""
-        return self.PREC_DENSITY_FACTOR.get(self.prec, 1.5)
 
     @property
     def coarse_shape(self):

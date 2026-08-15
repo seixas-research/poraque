@@ -141,10 +141,19 @@ class Poscar(Structure):
             out.append("  {:>21.16f} {:>21.16f} {:>21.16f}".format(*vector))
         out.append("  " + "  ".join(f"{s:>3s}" for s in self.symbols))
         out.append("  " + "  ".join(f"{c:>3d}" for c in self.counts))
+        flags = self.selective_dynamics
+        if flags is not None:
+            # Parsed on the way in, so it must survive the way out: dropping
+            # the flags here silently unfroze a constrained relaxation.
+            out.append("Selective dynamics")
         out.append("Direct" if direct else "Cartesian")
         coords = self.scaled_positions if direct else self.positions
-        for row in coords:
-            out.append("  {:>19.16f} {:>19.16f} {:>19.16f}".format(*row))
+        for index, row in enumerate(coords):
+            line = "  {:>19.16f} {:>19.16f} {:>19.16f}".format(*row)
+            if flags is not None:
+                line += "   " + " ".join("T" if f else "F"
+                                         for f in flags[index])
+            out.append(line)
         return "\n".join(out) + "\n"
 
     def write(self, path, direct=True):
