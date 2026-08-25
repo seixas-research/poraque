@@ -51,6 +51,8 @@ poraque-train = "poraque_train:main"
 poraque-inference = "poraque_inference:main"
 poraque-committee = "poraque_committee:main"
 poraque-active-learning = "poraque_active_learning:main"
+poraque-atoms = "poraque_atoms:main"
+poraque-bands = "poraque_bands:main"
 poraque-mp = "poraque.data.materials_project:main"
 
 [tool.hatch.build.targets.wheel]
@@ -61,6 +63,8 @@ only-include = [
     "scripts/poraque_inference.py",
     "scripts/poraque_committee.py",
     "scripts/poraque_active_learning.py",
+    "scripts/poraque_atoms.py",
+    "scripts/poraque_bands.py",
 ]
 
 # The C kernel ships as *source* and is compiled on first use into a user

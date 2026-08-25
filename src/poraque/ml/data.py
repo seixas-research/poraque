@@ -6,7 +6,7 @@
 #
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
-"""
+r"""
 Dataset plumbing for field-to-field learning across many materials.
 
 Expected layout — one directory per material, each holding the three fields on
@@ -29,6 +29,25 @@ module groups samples of identical shape into batches with
 :class:`ShapeBucketSampler`. Materials that share a shape train in real
 batches; unusual shapes fall back to smaller batches automatically. Setting
 ``batch_size=1`` also works and needs no sampler at all.
+
+Delta-density mode
+------------------
+With a ``baseline`` supplied, a density target becomes the **residual over a
+superposition of isolated atoms**, :math:`\delta\rho = \rho - \rho_{\rm sup}`.
+Most of a crystal's valence density is its free atoms placed side by side, so
+this removes the part that was never in doubt — including nearly all of the
+dynamic range the ``asinh`` transform exists to absorb — and leaves the bonding
+charge. Measured on this project's own gold cells, the residual is about 4.5 %
+of the density in :math:`L^2`.
+
+Two consequences, and neither is cosmetic. The target is now **signed**, so
+positivity is a statement about :math:`\delta\rho + \rho_{\rm sup}` and not
+about the target. And a relative :math:`L^2` reported on :math:`\delta\rho` is
+**not comparable** with one reported on :math:`\rho`, because the denominator is
+twenty times smaller. Every sample therefore carries its ``baseline``, so the
+training loop can reconstruct the absolute density before any physics term sees
+it, and so evaluation can quote the error where it means something. See
+``DESIGN_PAW.md`` §3.1 and §3.3.
 """
 
 import os
@@ -145,6 +164,14 @@ class FieldPairDataset(Dataset):
            per structure without re-reading the reference directory, and so
            that a future energy-regression head has it to hand.
 
+    baseline : AtomicReferenceLibrary, str or None, optional
+        Isolated-atom database enabling **delta-density mode**: the target
+        becomes :math:`\\rho - \\rho_{\\rm sup}` and every sample carries its
+        ``baseline`` so the absolute density can be reconstructed downstream.
+        Accepts a library, a path to one, or ``None`` (absolute mode, the
+        default). Ignored unless the task's target is a ``CHGCAR`` --- there is
+        no atomic superposition of a kinetic energy density, so ``chg2tau`` is
+        unaffected whatever is passed.
     spin : {"auto", True, False}, optional
         Whether the ``CHGCAR`` fields carry two channels
         (:math:`\\rho`, :math:`m`) from an ``ISPIN = 2`` run. ``"auto"``, the
@@ -174,13 +201,15 @@ class FieldPairDataset(Dataset):
 
     def __init__(self, root, task, input_transform=None, target_transform=None,
                  materials=None, cache=False, dtype=torch.float32,
-                 spin="auto", references=None):
+                 spin="auto", references=None, baseline=None):
         from .tasks import resolve_task
 
         self.root = str(root)
         self.task = resolve_task(task)
         self._requested_spin = spin
         self.references = _resolve_references(references)
+        self.baseline = _resolve_baseline(baseline)
+        self._baselines = {}
         self.materials = (materials if materials is not None
                           else discover_materials(root, self.task.required_files))
         if not self.materials:
@@ -281,6 +310,65 @@ class FieldPairDataset(Dataset):
             self._cache[index] = (source, target)
         return source, target
 
+    def baseline_for(self, index):
+        r"""
+        The atomic-superposition baseline for material ``index``.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            ``(Nx, Ny, Nz)`` in e/Å³, or ``None`` in absolute-density mode or
+            for a task whose target is not a density.
+
+        Notes
+        -----
+        Cached per material regardless of the ``cache`` flag. It is one FFT and
+        a structure factor, the structure never changes, and recomputing it
+        every epoch would be the single most wasteful thing in the loop.
+        """
+        if self.baseline is None or self.task.target_field != "CHGCAR":
+            return None
+        if index in self._baselines:
+            return self._baselines[index]
+
+        from ..fields.atomic import atomic_superposition
+
+        target = self.load_fields(index)[1]
+        values = atomic_superposition(target.structure, target.grid,
+                                      self.baseline).data
+        self._baselines[index] = values
+        return values
+
+    def target_values(self, index):
+        r"""
+        The physical target this dataset actually regresses.
+
+        The reference field in absolute mode; :math:`\rho - \rho_{\rm sup}` in
+        delta-density mode. One method rather than two so that
+        :meth:`fit_transforms` and :meth:`__getitem__` cannot disagree about
+        what is being normalized --- fitting an ``Asinh`` scale to
+        :math:`\rho` and then feeding it :math:`\delta\rho` would be a silent
+        twenty-fold scale error.
+
+        Returns
+        -------
+        numpy.ndarray
+        """
+        values = np.asarray(self.load_fields(index)[1].data, dtype=float)
+        baseline = self.baseline_for(index)
+        if baseline is None:
+            return values
+
+        # A spin-polarised target is (rho, m). Only the total density has an
+        # atomic superposition: the references are ISPIN = 1 free atoms, and
+        # subtracting a zero moment from m would be a no-op dressed up as
+        # physics. The magnetisation channel is left alone.
+        if values.ndim == 4:
+            values = values.copy()
+            values[0] = values[0] - baseline
+            return values
+        return values - baseline
+
     def _read_field(self, name, path, grid):
         """Read one field, as a spin pair when the dataset is spin-polarised."""
         if self.spin and name == "CHGCAR":
@@ -303,16 +391,16 @@ class FieldPairDataset(Dataset):
             are :attr:`channels`, which is ``(1, 1)`` unless the dataset is
             spin-polarised.
         """
-        source, target = self.load_fields(index)
+        source, _ = self.load_fields(index)
 
         source_values = _with_channel_axis(
             torch.as_tensor(np.ascontiguousarray(source.data),
                             dtype=self.dtype))
         target_values = _with_channel_axis(
-            torch.as_tensor(np.ascontiguousarray(target.data),
+            torch.as_tensor(np.ascontiguousarray(self.target_values(index)),
                             dtype=self.dtype))
 
-        return {
+        sample = {
             "input": self.input_transform(source_values),
             "target": self.target_transform(target_values),
             "target_physical": target_values,
@@ -321,6 +409,21 @@ class FieldPairDataset(Dataset):
             "material": self.materials[index].identifier,
             "reference_energy": self.reference_energy(index),
         }
+
+        baseline = self.baseline_for(index)
+        if baseline is not None:
+            # Carried, not recomputed downstream: the loop adds it back before
+            # every physics term, and the loss would otherwise have to rebuild
+            # a structure factor per step. Shaped like the target so the two
+            # add without broadcasting surprises on a spin pair.
+            values = torch.as_tensor(np.ascontiguousarray(baseline),
+                                     dtype=self.dtype).unsqueeze(0)
+            if target_values.shape[0] > 1:
+                values = torch.cat(
+                    [values, torch.zeros_like(values).expand(
+                        target_values.shape[0] - 1, -1, -1, -1)])
+            sample["baseline"] = values
+        return sample
 
     # ------------------------------------------------------------------ #
     def shapes(self):
@@ -369,9 +472,10 @@ class FieldPairDataset(Dataset):
         # per channel rather than a single scale fitted across all of them.
         source_values, target_values = [], []
         for index in indices:
-            source, target = self.load_fields(int(index))
+            source, _ = self.load_fields(int(index))
             for values, sink in ((source.data, source_values),
-                                 (target.data, target_values)):
+                                 (self.target_values(int(index)),
+                                  target_values)):
                 channels = values if values.ndim == 4 else values[None]
                 if not sink:
                     sink.extend([] for _ in range(channels.shape[0]))
@@ -424,8 +528,12 @@ class FieldPairDataset(Dataset):
                 cache=self.cache, dtype=self.dtype,
                 # The resolved settings, not the constructor defaults: a
                 # subset that re-detected spin or dropped the reference
-                # energies would silently differ from its parent.
+                # energies would silently differ from its parent. The baseline
+                # belongs to that list too -- a validation split in absolute
+                # mode against a model trained on residuals would report an
+                # error against the wrong field entirely.
                 spin=self.spin, references=self.references,
+                baseline=self.baseline,
             )
 
         return subset(order[:cut]), subset(order[cut:])
@@ -525,7 +633,7 @@ def collate_fields(samples):
             f"batch_size=1."
         )
 
-    return {
+    batch = {
         "input": torch.stack([s["input"] for s in samples]),
         "target": torch.stack([s["target"] for s in samples]),
         "target_physical": torch.stack([s["target_physical"] for s in samples]),
@@ -538,6 +646,12 @@ def collate_fields(samples):
         # list is the honest container.
         "reference_energy": [s.get("reference_energy") for s in samples],
     }
+    # Present only in delta-density mode, and then for every sample: a batch
+    # mixing the two would mean two datasets were merged, which the shared-grid
+    # invariant already forbids.
+    if "baseline" in samples[0]:
+        batch["baseline"] = torch.stack([s["baseline"] for s in samples])
+    return batch
 
 
 def make_dataloader(dataset, batch_size=1, shuffle=True, num_workers=0, seed=0):
@@ -576,6 +690,24 @@ def _resolve_references(references):
     if isinstance(references, dict):
         return ReferenceEnergies(references)
     return ReferenceEnergies.from_directory(str(references))
+
+
+def _resolve_baseline(baseline):
+    """Accept an :class:`AtomicReferenceLibrary`, a path, or ``None``."""
+    if baseline is None:
+        return None
+
+    from ..fields.atomic import AtomicReferenceLibrary
+
+    if isinstance(baseline, AtomicReferenceLibrary):
+        return baseline if len(baseline) else None
+    library = AtomicReferenceLibrary.load(str(baseline))
+    if not len(library):
+        raise ValueError(
+            f"{baseline!r} holds no isolated-atom references, so delta-density "
+            f"mode has no baseline to subtract. Build one with `poraque-atoms`, "
+            f"or set data.delta_density: false.")
+    return library
 
 
 def _fit_transform(field_name, per_channel):

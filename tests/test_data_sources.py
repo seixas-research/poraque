@@ -35,11 +35,39 @@ from poraque.data import (
     resolve_source,
 )
 from poraque.data.cache import build_paw_reference, load_paw_reference
+from poraque.data.validation import write_tau_provenance
 from poraque.fields import ChargeDensity, ExternalPotential, FieldGrid
 from poraque.fields import KineticEnergyDensity
 from poraque.fields.vasp.poscar import Poscar
 
 CHARGES = {"Si": 4.0, "Au": 11.0}
+
+#: Provenance every synthetic run now carries. The ingestion gate refuses a
+#: TAUCAR whose run cannot say which code wrote it under which tag, so a
+#: fixture that omits this is a fixture of *invalid* data -- which is what the
+#: repository's own gold TAUCARs turned out to be (see DELETIONS.md).
+VALID_TAU_INCAR = "LTAU = .TRUE.\nLCHARG = .TRUE.\n"
+VALID_OUTCAR = (" vasp.6.6.1 18Jan21 (build Jul 30 2026 13:44:49) complex\n")
+
+
+def plausible_tau(density, grid):
+    r"""
+    A kinetic energy density that is physically consistent with ``density``.
+
+    :math:`\tau_{\rm TF} + \tau_{\rm vW}`, in Poraquê's own units. Two
+    properties matter and neither is decoration: it is :math:`\ge \tau_{\rm
+    vW}` everywhere, because both terms are non-negative, and its integral is a
+    small multiple of the Thomas-Fermi one. So it passes the ingestion gate for
+    the same reasons real data does, rather than because the gate was turned
+    off for the tests.
+
+    The literal these fixtures used before -- ``C_TF * rho**(5/3) * 51.42`` --
+    was itself about 6.7x the Thomas-Fermi estimate, an error of exactly the
+    kind the gate now exists to catch.
+    """
+    from poraque.fields.density import thomas_fermi_tau, von_weizsacker_tau
+
+    return thomas_fermi_tau(density) + von_weizsacker_tau(density, grid)
 
 #: The reference POTCAR shipped with the repository's gold dataset. Tests that
 #: need a *complete* local-potential table use it and skip when it is absent —
@@ -119,10 +147,16 @@ def write_calculation(directory, shape=(12, 12, 12), cell=None, seed=0,
                 sink.write(source.read())
     with open(os.path.join(directory, "INCAR"), "w") as handle:
         handle.write(f"ENCUT = {encut}\nPREC = Accurate\n")
+        if tau:
+            handle.write(VALID_TAU_INCAR)
     density.write(os.path.join(directory, "CHGCAR"))
     if tau:
-        values = 2.871234 * density.data ** (5.0 / 3.0) * 51.42 + 0.01
-        KineticEnergyDensity(values, grid, structure).write(
+        # An OUTCAR, for its first line only: the ingestion gate reads the code
+        # version off it, and a run that cannot state one is refused.
+        with open(os.path.join(directory, "OUTCAR"), "w") as handle:
+            handle.write(VALID_OUTCAR)
+        KineticEnergyDensity(plausible_tau(density.data, grid), grid,
+                             structure).write(
             os.path.join(directory, "TAUCAR"))
     return directory
 
@@ -156,9 +190,17 @@ def write_prepared(directory, names=("a", "b"), shape=(12, 12, 12), tau=True):
         potential.write(os.path.join(child, "EXTCAR"))
         density.write(os.path.join(child, "CHGCAR"))
         if tau:
-            values = 2.871234 * density.data ** (5.0 / 3.0) * 51.42 + 0.01
-            KineticEnergyDensity(values, grid, structure).write(
+            KineticEnergyDensity(plausible_tau(density.data, grid), grid,
+                                 structure).write(
                 os.path.join(child, "TAUCAR"))
+            # A prepared cache has no INCAR to re-read, so the provenance of
+            # its tau travels beside it. This is what lets a cache be re-cached
+            # without the chain of custody evaporating at the first hop.
+            write_tau_provenance(child, {
+                "code": "vasp", "version": "6.6.1", "tau_tag": "LTAU",
+                "tau_tag_value": ".TRUE.", "tau_tag_set": True,
+                "incar_sha256": "0" * 64, "incar_path": None,
+                "other_tags": {}, "source": "calculation"})
     return directory
 
 
@@ -675,8 +717,11 @@ class TestBuildFieldCache:
         cache = build_field_cache([calculations, bulk], tmp_path / "out",
                                   resolution=8, charges=CHARGES)
 
+        # `tau_provenance.json` sits beside the fields, not among them: it is
+        # the record of which run wrote this material's TAUCAR, written by the
+        # ingestion gate so a re-cache still knows.
         assert sorted(os.listdir(os.path.join(cache, "struct_000"))) == [
-            "CHGCAR", "EXTCAR", "TAUCAR"]
+            "CHGCAR", "EXTCAR", "TAUCAR", "tau_provenance.json"]
         assert sorted(os.listdir(os.path.join(cache, "mp-1"))) == [
             "CHGCAR", "EXTCAR"]
 

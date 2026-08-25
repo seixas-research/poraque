@@ -1,0 +1,28 @@
+# Controlled comparison: activation: kan_cheby, kan_use_base: false ("pure"
+# KAN -- no w_c*silu(x) base term, only the learned residual) vs. the
+# base-carrying kan_cheby (compare_kan_cheby_ext2chg.yaml) and the shipped
+# gelu model (models/au_w16_m8_l3), ext2chg only. Identical protocol to
+# compare_kan_cheby_ext2chg.yaml except this one flag -- see FUTURE.md's
+# "Run kan_use_base: false" follow-up.
+task:
+  type: ext2chg
+  name: au_w16_m8_l3_kancheby_purekan
+
+data:
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+
+model:
+  width: 16
+  modes: 8
+  projection_channels: 64
+  mode_selection: fixed
+  activation: kan_cheby
+  kan_use_base: false
+  # kan_degree: 6   # default
+
+training:
+  physics:
+    electron_count_weight: 0.1
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

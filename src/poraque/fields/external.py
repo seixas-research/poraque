@@ -535,7 +535,7 @@ class ExternalPotential(ScalarField):
 # ---------------------------------------------------------------------- #
 # Helpers
 # ---------------------------------------------------------------------- #
-def _structure_factor(grid, scaled_positions):
+def structure_factor(grid, scaled_positions):
     r"""
     Structure factor :math:`\sum_a e^{-i\mathbf{G}\cdot\boldsymbol{\tau}_a}`.
 
@@ -568,6 +568,14 @@ def _structure_factor(grid, scaled_positions):
         total += phase1[:, None, None] * phase2[None, :, None] * phase3[None, None, :]
 
     return total
+
+
+#: Historical private name, kept because it is used throughout this module and
+#: renaming every call site is churn. The public spelling is what other modules
+#: import -- :func:`poraque.fields.atomic.atomic_superposition` places atoms
+#: with exactly this sum, and importing it under a leading underscore would be
+#: pretending a shared helper is private.
+_structure_factor = structure_factor
 
 
 def _resolve_poscar(poscar, directory):

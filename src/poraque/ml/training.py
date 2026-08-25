@@ -84,8 +84,34 @@ def clip_gradients(parameters, max_norm):
     return float(total)
 
 
-class FieldOperator:
+def _resolve_operator_baseline(baseline):
     """
+    Accept a library, a path, a serialised payload from a checkpoint, or ``None``.
+
+    The dict form is what :meth:`FieldOperator.state` writes, so a checkpoint
+    round-trips without the caller having to know the library ever existed.
+    """
+    if baseline is None:
+        return None
+
+    from ..fields.atomic import AtomicReference, AtomicReferenceLibrary
+
+    if isinstance(baseline, AtomicReferenceLibrary):
+        return baseline if len(baseline) else None
+    if isinstance(baseline, dict):
+        entries = baseline.get("entries") or {}
+        if not entries:
+            return None
+        return AtomicReferenceLibrary(
+            {key: AtomicReference.from_dict(value)
+             for key, value in entries.items()})
+
+    library = AtomicReferenceLibrary.load(str(baseline))
+    return library if len(library) else None
+
+
+class FieldOperator:
+    r"""
     A trained (or trainable) map between two 3D scalar fields.
 
     Parameters
@@ -105,10 +131,10 @@ class FieldOperator:
     pauli_residual : bool, optional
         Wrap the backbone in a
         :class:`~poraque.ml.heads.PauliResidualOperator`, so the model
-        predicts :math:`\\tau = \\tau_{\\rm vW}[\\rho] + s\\,
-        \\mathrm{softplus}(f_\\theta)` and the Hoffmann-Ostenhof bound holds by
+        predicts :math:`\tau = \tau_{\rm vW}[\rho] + s\,
+        \mathrm{softplus}(f_\theta)` and the Hoffmann-Ostenhof bound holds by
         construction. Only meaningful for ``chg2tau``; requested for any other
-        task it raises, since :math:`\\tau_{\\rm vW}` is a functional of the
+        task it raises, since :math:`\tau_{\rm vW}` is a functional of the
         density and the density is not the input elsewhere.
     pauli_scale : float, optional
         Initial Pauli-term magnitude in eV/Å³; fit it with
@@ -133,6 +159,19 @@ class FieldOperator:
         optimisation outcomes rather than a confounded mixture of that and a
         reshuffled dataset. ``None`` leaves initialisation on the ambient
         stream.
+    baseline : AtomicReferenceLibrary, str, dict or None, optional
+        Isolated-atom database. Its presence puts the operator in
+        **delta-density mode**: the network's output is
+        :math:`\delta\rho = \rho - \rho_{\rm sup}`, and :meth:`predict` adds
+        the superposition back before returning, so a caller sees an absolute
+        density either way and nothing downstream has to know which mode the
+        model was trained in.
+
+        The library **travels inside the checkpoint**, not beside it. A
+        δ-density model whose baseline changed after training is not a model of
+        anything: the residual it learned was defined against one particular
+        superposition. Storing the table with the weights makes that
+        impossible to get wrong.
     **model_kwargs
         Forwarded to :class:`~poraque.ml.fno.FNO3d`.
     """
@@ -140,11 +179,13 @@ class FieldOperator:
     def __init__(self, task, model=None, input_transform=None,
                  target_transform=None, device=None, pauli_residual=False,
                  pauli_scale=1.0, learn_pauli_scale=True,
-                 training_resolution=None, init_seed=None, **model_kwargs):
+                 training_resolution=None, init_seed=None, baseline=None,
+                 **model_kwargs):
         self.task = resolve_task(task)
         self.device = resolve_device(device)
         self.input_transform = input_transform or Identity()
         self.target_transform = target_transform or Identity()
+        self.baseline = _resolve_operator_baseline(baseline)
         self.training_resolution = (None if training_resolution is None
                                     else int(training_resolution))
         self.init_seed = None if init_seed is None else int(init_seed)
@@ -216,6 +257,32 @@ class FieldOperator:
             if parameter.is_floating_point():
                 return parameter.dtype
         return torch.float32
+
+    def baseline_for(self, field):
+        r"""
+        The atomic superposition on ``field``'s grid, or ``None``.
+
+        Parameters
+        ----------
+        field : ScalarField
+            The input field, which supplies both the grid and the structure.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            ``None`` in absolute mode, for a task whose target is not a
+            density, or when the structure has a species the library does not
+            cover --- the last of which raises rather than returning a partial
+            superposition, because a baseline missing whole atoms is wrong in a
+            way that looks plausible.
+        """
+        if self.baseline is None or self.task.target_field != "CHGCAR":
+            return None
+
+        from ..fields.atomic import atomic_superposition
+
+        return atomic_superposition(field.structure, field.grid,
+                                    self.baseline).data
 
     def set_precision(self, precision):
         """
@@ -289,6 +356,21 @@ class FieldOperator:
                     "task": self.task.name,
                     "device": str(self.device)}
 
+        # Delta-density mode: the network predicted rho - rho_sup, so the
+        # superposition goes back on *here*, before the caller can apply
+        # positivity or an electron-count normalization. Both of those are
+        # statements about the absolute density and neither is true of a
+        # signed residual -- see DESIGN_PAW.md 3.3 for the order of operations
+        # and why this one and no other.
+        baseline = self.baseline_for(field)
+        if baseline is not None:
+            # Channel 0 only: a spin-polarised prediction is (rho, m) and the
+            # magnetisation has no free-atom superposition to restore.
+            channels = np.array(channels, copy=True)
+            channels[0] = channels[0] + baseline
+            metadata["delta_density"] = True
+            metadata["baseline"] = "atomic_superposition"
+
         if channels.shape[0] == 1:
             return _OUTPUT_CLASSES[self.task.target_field](
                 channels[0], field.grid, field.structure, metadata=metadata)
@@ -339,7 +421,8 @@ class FieldOperator:
             for key in ("modes", "mode_selection", "g_max", "activation",
                         "cell_conditioning", "embedding_dim",
                         "kan_grid_size", "kan_spline_order", "kan_grid_range",
-                        "kan_degree")
+                        "kan_degree", "kan_rational_num_degree",
+                        "kan_rational_den_degree", "kan_use_base")
             if hasattr(backbone, key)
         }
         return {
@@ -361,6 +444,15 @@ class FieldOperator:
             "learn_pauli_scale": self.learn_pauli_scale,
             "training_resolution": self.training_resolution,
             "init_seed": self.init_seed,
+            # The baseline is part of what the weights *mean*, not a runtime
+            # convenience: the residual was defined against this particular
+            # superposition. Stored as the serialised library so a checkpoint
+            # is self-contained; `None` in absolute-density mode.
+            "baseline": (None if self.baseline is None
+                         else {"version": 1,
+                               "fingerprint": self.baseline.fingerprint,
+                               "entries": {k: v.to_dict() for k, v
+                                           in self.baseline.entries.items()}}),
         }
 
     @classmethod
@@ -413,6 +505,7 @@ class FieldOperator:
             learn_pauli_scale=state.get("learn_pauli_scale", True),
             training_resolution=state.get("training_resolution"),
             init_seed=state.get("init_seed"),
+            baseline=state.get("baseline"),
             **inferred,
         )
         operator.model.load_state_dict(state["model_state"])
@@ -991,9 +1084,22 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             # density -- and its integral is the electron count the
             # charge-conservation term on ext2chg is measured against.
             physical_target = batch["target_physical"].to(operator.device)
+            physical_prediction = operator.target_transform.inverse(prediction)
+
+            # Delta-density mode: the data term above compares residuals, which
+            # is the whole point, but every *physics* term is a statement about
+            # the absolute density -- positivity, the electron count, the
+            # Euler-Lagrange residual. Adding the baseline back here is what
+            # makes them true again, and it means no loss term had to change.
+            baseline = batch.get("baseline")
+            if baseline is not None:
+                baseline = baseline.to(operator.device)
+                physical_prediction = physical_prediction + baseline
+                physical_target = physical_target + baseline
+
             terms = criterion(
                 prediction, targets, cell=cell,
-                physical_prediction=operator.target_transform.inverse(prediction),
+                physical_prediction=physical_prediction,
                 physical_input=operator.input_transform.inverse(inputs),
                 physical_target=physical_target,
             )
@@ -1115,6 +1221,19 @@ def evaluate(operator, loader):
         physical_target = batch["target_physical"].to(operator.device)
 
         prediction = operator.target_transform.inverse(operator.model(inputs, cell))
+
+        # Delta-density mode: the reported error is on the **absolute**
+        # density, not on the residual. A relative L2 on delta_rho has a
+        # denominator some twenty times smaller, so quoting it would make every
+        # delta-mode run look catastrophically worse than an absolute-mode one
+        # while measuring the same physical error. The two numbers have to be
+        # comparable or the ablation this mode exists for cannot be run.
+        baseline = batch.get("baseline")
+        if baseline is not None:
+            baseline = baseline.to(operator.device)
+            prediction = prediction + baseline
+            physical_target = physical_target + baseline
+
         errors.append(relative_error(prediction, physical_target).cpu())
 
     return float(torch.cat(errors).mean()) if errors else float("nan")

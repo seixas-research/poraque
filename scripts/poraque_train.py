@@ -307,6 +307,11 @@ def build_cache(config, log):
     task needs: a cache built for ``ext2chg`` from an archive that also holds
     :math:`\\tau` serves ``chg2tau`` afterwards with no rebuild.
 
+    :math:`\\tau` passes an ingestion gate on the way in (``data.tau_validation``
+    -- scale against Thomas-Fermi, the von Weizsaecker lower bound, and the
+    run's provenance). A material that fails it stops the build rather than
+    being cached, because the alternative is what produced ``DELETIONS.md``.
+
     Returns
     -------
     str
@@ -331,6 +336,10 @@ def build_cache(config, log):
         # "auto" is resolved by the dataset per material; only an explicit
         # `data.spin: true` asks the cache to carry the magnetisation block.
         spin=data.spin is True,
+        # Every TAUCAR is checked against its own density and its run's
+        # provenance on the way in. `null` means the defaults, so the gate is
+        # on for a config that says nothing about it -- which is the point.
+        tau_validation=data.tau_validation,
     )
 
     # The PAW augmentation records travel with the weights, so a prediction can
@@ -667,6 +676,42 @@ def build_loss(config, task_name):
 # ===================================================================== #
 # Leave-one-out driver
 # ===================================================================== #
+def resolve_baseline(task, config, log):
+    """
+    The isolated-atom baseline for delta-density mode, or ``None``.
+
+    Returns ``None`` for ``chg2tau`` whatever the config says: there is no
+    atomic superposition of a kinetic energy density, and silently ignoring the
+    flag there is better than refusing a config that sets it once for a run
+    training both tasks.
+    """
+    if not config.data.delta_density:
+        return None
+    if task.target_field != "CHGCAR":
+        log(f"      NOTE: data.delta_density is ignored for {task.name} -- "
+            f"its target is {task.target_field}, which has no atomic "
+            f"superposition.")
+        return None
+    if not config.data.atomic_reference:
+        raise ValueError(
+            "data.delta_density: true needs data.atomic_reference to point at "
+            "an isolated-atom database. Build one with `poraque-atoms "
+            "<reference dirs> --output atomic_reference.json`.")
+
+    from poraque.fields.atomic import AtomicReferenceLibrary
+
+    library = AtomicReferenceLibrary.load(config.data.atomic_reference)
+    if not len(library):
+        raise ValueError(
+            f"{config.data.atomic_reference} holds no isolated-atom "
+            f"references, so there is no baseline to subtract.")
+    log(f"      delta-density mode: target is rho - rho_sup, baseline from "
+        f"{len(library)} atom(s) {library.elements()}")
+    log(f"      library fingerprint {library.fingerprint[:16]} "
+        f"(recorded in the checkpoint)")
+    return library
+
+
 def build_operator(task, train_set, config, log):
     """Construct the operator, attaching the Pauli head when requested."""
     source_transform = train_set.input_transform
@@ -704,6 +749,10 @@ def build_operator(task, train_set, config, log):
         training_resolution=config.data.resolution,
         init_seed=config.training.init_seed,
         in_channels=in_channels, out_channels=out_channels,
+        # From the *dataset*, not re-resolved from the config: the operator's
+        # baseline has to be bit-for-bit the one the targets were built with,
+        # and reading the file twice is one more chance for them to differ.
+        baseline=getattr(train_set, "baseline", None),
         **config.model_kwargs(), **head,
     )
     if config.model.precision != "float32":
@@ -1391,8 +1440,9 @@ def run_task(task_name, cache, config, log, n_tasks=1):
     log(f"      {task.description}")
     log("=" * 78)
 
+    baseline = resolve_baseline(task, config, log)
     dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
-                               dtype=compute_dtype(config))
+                               dtype=compute_dtype(config), baseline=baseline)
     validation_names, split_origin = resolve_validation_split(dataset, config)
 
     train_records = [m for m in dataset.materials
@@ -1402,13 +1452,14 @@ def run_task(task_name, cache, config, log, n_tasks=1):
 
     train_set = FieldPairDataset(cache, task=task, materials=train_records,
                                  spin=config.data.spin,
-                                 dtype=compute_dtype(config))
+                                 dtype=compute_dtype(config), baseline=baseline)
     source_transform, target_transform = train_set.fit_transforms()
     validation = (FieldPairDataset(cache, task=task, materials=test_records,
                                    input_transform=source_transform,
                                    target_transform=target_transform,
                                    spin=config.data.spin,
-                                   dtype=compute_dtype(config))
+                                   dtype=compute_dtype(config),
+                                   baseline=baseline)
                   if test_records else None)
 
     shapes = train_set.shapes()
@@ -1704,8 +1755,9 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
     ``valid_fraction`` is ignored here — the folds define the splits.
     """
     task = resolve_task(task_name)
+    baseline = resolve_baseline(task, config, log)
     dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
-                               dtype=compute_dtype(config))
+                               dtype=compute_dtype(config), baseline=baseline)
     names = [m.identifier for m in dataset.materials]
     folds = structure_level_folds(names, config.training.k_folds,
                                   config.training.seed)
@@ -1737,7 +1789,8 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
 
         train_set = FieldPairDataset(cache, task=task, materials=train_records,
                                      spin=config.data.spin,
-                                     dtype=compute_dtype(config))
+                                     dtype=compute_dtype(config),
+                                     baseline=baseline)
         source_transform, target_transform = train_set.fit_transforms()
         # dtype was dropped here once, so a float64 run crashed at the first
         # validation pass with a float/double mismatch.
@@ -1745,7 +1798,8 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
                                    input_transform=source_transform,
                                    target_transform=target_transform,
                                    spin=config.data.spin,
-                                   dtype=compute_dtype(config))
+                                   dtype=compute_dtype(config),
+                                   baseline=baseline)
         log(f"      train on {len(train_set)}: {[m.identifier for m in train_records]}")
 
         operator = build_operator(task, train_set, config, log)

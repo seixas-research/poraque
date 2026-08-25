@@ -30,6 +30,14 @@ handling the fields MP does not publish.
 
     data = MPChargeDensityDataset("data/MP/chgcar", resolution=32)
 
+Validating what comes in
+------------------------
+:mod:`poraque.data.validation` gates the kinetic energy density at ingestion —
+its scale against Thomas-Fermi, its pointwise von Weizsaecker bound, and the
+provenance of the run that wrote it. It is wired into
+:func:`~poraque.data.cache.build_field_cache` and is on by default; see
+``DELETIONS.md`` for the dataset that made it necessary.
+
 Nothing here is imported by :mod:`poraque.ml` or :mod:`poraque.fields`, so the
 Materials Project client stays out of the import path of a training run that
 does not use it.
@@ -44,6 +52,15 @@ from .mp_dataset import (
     build_mp_cache,
     discover_mp_chgcars,
     infer_valence_charges,
+)
+from .validation import (
+    TauValidationConfig,
+    TauValidationError,
+    TauValidationManifest,
+    read_tau_provenance,
+    thomas_fermi_scale,
+    validate_tau,
+    von_weizsacker_violations,
 )
 from .sources import (
     BulkDensitySource,
@@ -66,6 +83,9 @@ __all__ = [
     "MaterialSource",
     "MixedFieldDataset",
     "PreparedFieldsSource",
+    "TauValidationConfig",
+    "TauValidationError",
+    "TauValidationManifest",
     "available_formats",
     "available_tasks",
     "build_field_cache",
@@ -77,6 +97,10 @@ __all__ = [
     "infer_valence_charges",
     "load_api_key",
     "load_paw_reference",
+    "read_tau_provenance",
     "register_source",
     "resolve_source",
+    "thomas_fermi_scale",
+    "validate_tau",
+    "von_weizsacker_violations",
 ]

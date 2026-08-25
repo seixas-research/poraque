@@ -33,6 +33,57 @@ data:
   # it a Gaussian pseudo-ion model stands in, which is ~0.1 relative L2 away.
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
 
+  # THE KINETIC-ENERGY-DENSITY INGESTION GATE. Every TAUCAR is checked as it
+  # enters the cache, against the density it is paired with and against the
+  # provenance of the run that wrote it. Omit this block entirely to get the
+  # defaults below -- the gate is ON for a config that says nothing about it,
+  # which is the point of it existing at all.
+  #
+  # It exists because an entire dataset of invalid tau was ingested, cached,
+  # trained on and reported before anyone noticed (see DELETIONS.md). The
+  # files parsed, the grids matched, the values were finite and positive, and
+  # the loss went down. Nothing about a scalar field on a grid says what unit
+  # it is in or which code wrote it, so the checks have to be physical.
+  #
+  #   scale       int(tau) must be 0.2x-5x the Thomas-Fermi estimate
+  #               C_TF int(rho^5/3) formed from the PAIRED density. Loose on
+  #               purpose: TF is the uniform-gas limit and a real system
+  #               departs from it by tens of percent, not by factors. A unit
+  #               error, a missing volume factor or a Ha/eV confusion move it
+  #               by orders of magnitude, and that is what this catches.
+  #
+  #   bound       tau(r) >= tau_vW(r) = |grad rho|^2 / (8 rho), pointwise.
+  #               Unlike the scale check this one is a theorem, so a violation
+  #               does not suggest a problem, it proves rho and tau are not a
+  #               pair from the same calculation. Only points carrying real
+  #               density are tested -- in the vacuum tail tau_vW is a ratio
+  #               of two numerical noises -- and a small violating fraction is
+  #               tolerated because band-limited fields ring.
+  #
+  #   provenance  The run must state its code version and set LTAU = .TRUE.,
+  #               and its INCAR is hashed into the record. This is the only
+  #               one of the three that does not depend on the numbers being
+  #               wrong in a detectable way, and it is the one that would have
+  #               stopped the bad data at the door: those runs asked for tau
+  #               with `TAUCAR = .TRUE.`, which is not a VASP tag at all.
+  #
+  # A failure STOPS the build, naming the material and the numbers. Verdicts
+  # go to <cache>/tau_validation.json; each cached material keeps its own
+  # tau_provenance.json so the record survives being re-cached. Unknown keys
+  # raise rather than being ignored. ext2chg never reads tau, so none of this
+  # touches it.
+  tau_validation:
+    enabled: true               # false is RECORDED in the manifest, not silent
+    tf_ratio_range: [0.2, 5.0]  # int(tau) / C_TF int(rho^5/3)
+    check_von_weizsacker: true
+    density_threshold: 1.0e-3   # fraction of max(rho) below which points are exempt
+    vw_relative_tolerance: 0.05
+    vw_absolute_tolerance: 1.0e-6
+    max_violation_fraction: 0.01
+    require_provenance: true
+    required_tag: LTAU
+    minimum_version: "6.6.1"    # user-specified for this project
+
 model:
   # THE THREE THAT SET THE SIZE. All three are "some number of channels",
   # which is why they are easy to confuse. Written out with every index, the
@@ -166,43 +217,81 @@ model:
   # THE NONLINEARITY INSIDE EVERY FOURIER LAYER, i.e. sigma in the equation
   # at the top of this file: v[l] = v[l-1] + sigma(y[l]).
   #
-  #   gelu    the default, and what every model trained before this option
-  #           existed used. Stateless -- no parameters, nothing to learn.
-  #   relu, silu, tanh   also stateless; swap in for gelu with no other
-  #           consequence.
+  #   silu    the default as of 2026-08-17. Stateless -- no parameters,
+  #           nothing to learn. Measurably beat gelu on this project's own
+  #           ext2chg and chg2tau comparisons (see FUTURE.md), which is why
+  #           it replaced gelu as the default; gelu was the default before
+  #           that, and every model trained before then used it.
+  #   gelu, relu, tanh   also stateless; swap in for silu with no other
+  #           consequence. gelu remains fully supported, just not the
+  #           default any more.
   #
-  #   kan_bspline, kan_cheby   Kolmogorov-Arnold Network style activations:
-  #           instead of one fixed function shared by every channel, EACH
-  #           CHANNEL LEARNS ITS OWN sigma_c, applied elementwise to every
-  #           voxel of that channel. kan_bspline parameterises sigma_c with a
-  #           B-spline on a fixed knot grid (the original KAN paper, Liu et
-  #           al. 2024); kan_cheby with a Chebyshev-polynomial expansion,
-  #           typically cheaper and smoother. Both are per-channel, not
+  #   kan_bspline, kan_cheby, kan_rbf, kan_rational   Kolmogorov-Arnold
+  #           Network style activations: instead of one fixed function
+  #           shared by every channel, EACH CHANNEL LEARNS ITS OWN sigma_c,
+  #           applied elementwise to every voxel of that channel. kan_bspline
+  #           parameterises sigma_c with a B-spline on a fixed knot grid (the
+  #           original KAN paper, Liu et al. 2024); kan_cheby with a
+  #           Chebyshev-polynomial expansion, typically cheaper and smoother;
+  #           kan_rbf with a sum of fixed Gaussian radial basis functions (the
+  #           "FastKAN" simplification, Li 2024 -- a closed-form stand-in for
+  #           the B-spline basis, no Cox-de Boor recursion); kan_rational
+  #           with a learned rational (Pade-style) function of x whose
+  #           denominator is guarded to stay >= 1, so it can never develop a
+  #           pole (Molina et al. 2020). All four are per-channel, not
   #           per-(input,output)-pair -- a real KAN edge-wise layer would
   #           replace the pointwise 1x1x1 convolution itself, which this is
   #           not; see FUTURE.md.
   #
-  #           Both are initialised close to `gelu` (a small learned
-  #           perturbation on top of it), so switching this on does not
-  #           destabilise training at step 0 -- it starts from behaviour
-  #           already tuned against and only departs from it as training
-  #           moves the spline/Chebyshev coefficients.
+  #           Each one is w_c * silu(x) + a learned residual (kan_use_base
+  #           below), the same base-function-plus-spline construction the
+  #           original KAN paper itself uses -- so at initialisation, with
+  #           the residual small, every variant starts close to `silu` and
+  #           only departs from it as training moves the learned
+  #           coefficients. (An earlier version of this option used gelu as
+  #           the base, matching this project's own prior default rather
+  #           than the paper's; corrected 2026-08-17, see FUTURE.md -- the
+  #           four checkpoints trained under the old base need retraining
+  #           to be valid again, also flagged there.)
   #
-  #           Cost: kan_cheby is the cheaper of the two (roughly 1.4x a
-  #           gelu forward+backward pass at width=16); kan_bspline's
-  #           Cox-de Boor recursion is markedly more expensive (roughly 5x).
-  #           Measure on your own hardware before committing to a long run.
-  # activation: gelu
+  #           Cost at width=16, CPU forward+backward, relative to gelu
+  #           (measured 2026-08-17, see FUTURE.md; not yet re-measured
+  #           against the corrected silu-base variants, though the relative
+  #           ranking is expected to hold): kan_cheby 1.36x, kan_rational
+  #           1.54x, kan_rbf 2.00x, kan_bspline 5.50x -- the ranking roughly
+  #           tracks how many basis functions each residual sums (kan_cheby's
+  #           degree+1 term Chebyshev recurrence and kan_rational's two
+  #           length-4 coefficient loops are cheapest; kan_bspline's Cox-de
+  #           Boor recursion over grid_size+spline_order basis functions is
+  #           by far the most expensive). Measure on your own hardware before
+  #           committing to a long run -- the MPS/Apple Silicon gap is
+  #           markedly narrower than the CPU one for kan_cheby (see
+  #           FUTURE.md).
+  # activation: silu
 
-  # Read only when `activation: kan_bspline`.
-  #   kan_grid_size     number of knot-grid intervals. More gives sigma_c
-  #                     finer local structure, at `width` extra coefficients
-  #                     each.
+  # Read only by the four kan_* activations above.
+  #   kan_use_base   true (default) includes each channel's w_c * silu(x)
+  #                  base term, matching the original KAN paper. false gives
+  #                  a "pure" KAN activation -- only the learned residual, no
+  #                  base weight, no fixed nonlinearity mixed in at all. A
+  #                  pure channel's output is then BOUNDED (kan_cheby,
+  #                  kan_bspline) or decays to zero (kan_rbf, kan_rational
+  #                  with the default degrees) for a wide input tail, rather
+  #                  than tracking it -- see poraque.ml.kan for which.
+  # kan_use_base: true
+
+  # Read only when `activation: kan_bspline` or `activation: kan_rbf` (the
+  # two share the same fixed-grid design).
+  #   kan_grid_size     number of grid intervals. More gives sigma_c finer
+  #                     local structure, at `width` extra coefficients each.
   #   kan_spline_order  B-spline degree; 3 (cubic) is the KAN paper's choice.
-  #   kan_grid_range    [low, high] support of the knot grid. A pre-
-  #                     activation outside it is CLAMPED before the spline
-  #                     is evaluated, not extrapolated -- see
-  #                     poraque.ml.kan.BSplineKANActivation for why.
+  #                     Read only by kan_bspline.
+  #   kan_grid_range    [low, high] support of the knot/center grid. A
+  #                     kan_bspline input outside it is CLAMPED before the
+  #                     spline is evaluated, not extrapolated -- see
+  #                     poraque.ml.kan.BSplineKANActivation for why; a
+  #                     kan_rbf input outside it simply decays towards zero
+  #                     on its own.
   # kan_grid_size: 8
   # kan_spline_order: 3
   # kan_grid_range: [-2.0, 2.0]
@@ -210,6 +299,17 @@ model:
   # Read only when `activation: kan_cheby`. Highest Chebyshev order; degree+1
   # coefficients per channel.
   # kan_degree: 6
+
+  # Read only when `activation: kan_rational`.
+  #   kan_rational_num_degree   highest power of the numerator polynomial.
+  #   kan_rational_den_degree   number of even powers (x^2, x^4, ...) in the
+  #                             denominator. With the defaults below the
+  #                             denominator's highest power (x^8) outgrows
+  #                             the numerator's (x^4), so the residual decays
+  #                             to zero for a wide pre-activation tail rather
+  #                             than needing clamping.
+  # kan_rational_num_degree: 4
+  # kan_rational_den_degree: 4
 
 training:
   # Physics-informed terms for the NEURAL OPERATOR, added to the data loss as

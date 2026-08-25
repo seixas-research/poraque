@@ -1,0 +1,38 @@
+# Controlled comparison: activation: kan_rbf vs. the shipped gelu model
+# (models/au_w16_m8_l3), ext2chg only. Identical to configs/train.yaml except
+# `task.type` (ext2chg only, to isolate the comparison and skip symbolic
+# distillation, which is chg2tau-only anyway) and `model.activation` (+ its
+# grid hyperparameters, left at the documented default -- kan_rbf reuses
+# kan_grid_size/kan_grid_range, the same fixed-grid design as kan_bspline).
+# Every other setting -- width, modes, n_layers, resolution, potcar_dir,
+# seed, epochs, early_stopping -- is left at the same default train.yaml
+# itself relies on, so this is the same protocol with exactly one thing
+# changed.
+#
+# task.name is kept as the pre-rename `au_w16_m8_l3_rbf` (not
+# `..._kanrbf`) so this config still points at the already-trained
+# models/au_w16_m8_l3_rbf/ produced before the activation was renamed
+# `rbf` -> `kan_rbf` for consistency with kan_bspline/kan_cheby; the
+# checkpoint's own architecture record was patched to match, see FUTURE.md.
+task:
+  type: ext2chg
+  name: au_w16_m8_l3_rbf
+
+data:
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+
+model:
+  width: 16
+  modes: 8
+  projection_channels: 64
+  mode_selection: fixed
+  activation: kan_rbf
+  # kan_grid_size: 8       # default
+  # kan_grid_range: [-2.0, 2.0]   # default
+
+training:
+  physics:
+    electron_count_weight: 0.1
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

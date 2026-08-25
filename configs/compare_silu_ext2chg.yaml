@@ -2,6 +2,11 @@
 # (see compare_kan_cheby_ext2chg.yaml's header -- same reasoning, same
 # protocol, only the activation differs). silu is stateless, like gelu, so
 # there is no extra hyperparameter to set.
+#
+# `activation` is left unset since silu became the ModelConfig default
+# 2026-08-17 (this comparison's own result was part of why -- see
+# FUTURE.md); restating it would be a redundant key (see
+# tests/test_precision.py::TestShippedConfigs::test_it_states_only_what_it_changes).
 task:
   type: ext2chg
   name: au_w16_m8_l3_silu
@@ -14,7 +19,6 @@ model:
   modes: 8
   projection_channels: 64
   mode_selection: fixed
-  activation: silu
 
 training:
   physics:

@@ -1,0 +1,36 @@
+# Controlled comparison: activation: kan_rational, kan_use_base: false
+# ("pure" KAN -- no w_c*silu(x) base term, only the learned rational
+# residual) vs. the base-carrying kan_rational
+# (compare_kan_rational_ext2chg.yaml) and the shipped gelu model
+# (models/au_w16_m8_l3), ext2chg only. Identical protocol to
+# compare_kan_rational_ext2chg.yaml except this one flag -- see FUTURE.md's
+# "Run kan_use_base: false" follow-up.
+#
+# Without the base term the residual, and so phi_c itself, DECAYS TO ZERO
+# for a wide pre-activation tail rather than tracking it -- with the
+# default degrees the denominator's highest power (x^8) already outgrows
+# the numerator's (x^4), and with no base term left nothing replaces the
+# vanishing residual -- see RationalKANActivation's docstring.
+task:
+  type: ext2chg
+  name: au_w16_m8_l3_kanrational_purekan
+
+data:
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+
+model:
+  width: 16
+  modes: 8
+  projection_channels: 64
+  mode_selection: fixed
+  activation: kan_rational
+  kan_use_base: false
+  # kan_rational_num_degree: 4   # default
+  # kan_rational_den_degree: 4   # default
+
+training:
+  physics:
+    electron_count_weight: 0.1
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

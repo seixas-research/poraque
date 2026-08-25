@@ -75,9 +75,13 @@ _LAZY = {
     "SpectralConv3d": "poraque.ml.fno",
     # activations, incl. KAN-style learnable ones
     "ACTIVATIONS": "poraque.ml.kan",
+    "KAN_ACTIVATIONS": "poraque.ml.kan",
     "BSplineKANActivation": "poraque.ml.kan",
     "ChebyKANActivation": "poraque.ml.kan",
+    "RBFKANActivation": "poraque.ml.kan",
+    "RationalKANActivation": "poraque.ml.kan",
     "build_activation": "poraque.ml.kan",
+    "symbolic_expression": "poraque.ml.kan",
     # constraint-enforcing output heads
     "PauliResidualOperator": "poraque.ml.heads",
     "fit_pauli_scale": "poraque.ml.heads",

@@ -99,7 +99,7 @@ class TaskConfig:
 
 @dataclass
 class DataConfig:
-    """
+    r"""
     Where the fields live and how they are prepared.
 
     Attributes
@@ -244,6 +244,71 @@ class DataConfig:
         library therefore resolves to ``"pbe"`` with nothing to declare. Set it
         explicitly when the data was produced by a code whose settings are not
         recorded beside it.
+    tau_validation : dict or None
+        Settings for the **kinetic-energy-density ingestion gate**, which runs
+        on every ``TAUCAR`` as it enters the cache and refuses the ones that
+        cannot be a :math:`\tau`. ``null`` (the default) means the defaults of
+        :class:`~poraque.data.validation.TauValidationConfig`; nothing has to
+        be written to get the gate.
+
+        It exists because a whole dataset of invalid :math:`\tau` was trained
+        on before anyone noticed (``DELETIONS.md``). Three checks, all cheap:
+
+        .. code-block:: yaml
+
+            data:
+              tau_validation:
+                enabled: true               # recorded in the manifest if false
+                tf_ratio_range: [0.2, 5.0]  # int(tau) / C_TF int(rho^5/3)
+                check_von_weizsacker: true  # tau(r) >= |grad rho|^2 / (8 rho)
+                density_threshold: 1.0e-3   # exempt the vacuum tail
+                max_violation_fraction: 0.01
+                require_provenance: true    # code version + LTAU + INCAR hash
+                minimum_version: "6.6.1"
+
+        A failure **stops the build** naming the material and the numbers. The
+        verdict for every material is written to ``tau_validation.json`` at the
+        cache root, and each cached material keeps a ``tau_provenance.json`` so
+        the record survives being re-cached. Unknown keys raise.
+
+        ``ext2chg`` never reads :math:`\tau`, so nothing here affects it.
+    delta_density : bool
+        Train the density operator on the **residual over a superposition of
+        isolated atoms**, :math:`\delta\rho = \rho - \rho_{\rm sup}`, instead
+        of on :math:`\rho` itself. Off by default; this is an ablation, not a
+        settled improvement.
+
+        Most of a crystal's valence density is its free atoms placed side by
+        side. Measured on this project's own gold cells, the superposition
+        accounts for about 95 % of the field in :math:`L^2`, so the residual
+        left to learn is roughly twenty times smaller and carries almost none
+        of the four-orders-of-magnitude core peak the ``asinh`` transform
+        exists to absorb.
+
+        Two things change, and both are recorded rather than hidden.
+        :math:`\delta\rho` is **signed**, so positivity and the electron count
+        become statements about :math:`\delta\rho + \rho_{\rm sup}`; the
+        training loop adds the baseline back before any physics term sees the
+        field, and inference does the same before returning. And the reported
+        relative :math:`L^2` is always quoted **on the absolute density**, so a
+        delta-mode run is directly comparable with an absolute-mode one -- which
+        is the only way the ablation this flag exists for can be read at all.
+
+        Requires ``atomic_reference``, and requires it to cover every element
+        in the dataset. Ignored by ``chg2tau``: there is no atomic
+        superposition of a kinetic energy density.
+
+        See ``DESIGN_PAW.md`` §3.1 and §3.3.
+    atomic_reference : str or None
+        Path to the isolated-atom database (``atomic_reference.json``, or a
+        directory holding one) built by ``poraque-atoms``. Supplies the
+        superposition baseline for ``delta_density`` and the fallback PAW
+        augmentation records for elements the training set does not cover.
+
+        The library is copied **into the checkpoint**, not referenced from it:
+        a delta-density model's weights only mean anything against the
+        particular superposition they were fitted to, so a database that
+        changed afterwards would silently bias every prediction.
     """
 
     train_paths: list = None
@@ -260,6 +325,9 @@ class DataConfig:
     spin: str = "auto"
     precision: str = "float64"
     xc: str = "auto"
+    tau_validation: dict = None
+    delta_density: bool = False
+    atomic_reference: str = None
 
     def paths(self):
         """
@@ -557,29 +625,54 @@ class ModelConfig:
         Hidden width of the output projection head. Pointwise and cheap; see
         above.
     activation : str
-        ``gelu`` (default), ``relu``, ``silu``, ``tanh`` — stateless,
-        parameter-free — or ``kan_bspline`` / ``kan_cheby``: a Kolmogorov-
-        Arnold Network-style *learnable* activation, one function per channel,
-        applied elementwise. Both KAN variants are initialised close to
-        ``gelu`` (a small learnable perturbation on top of it), so switching
-        to one does not destabilise training at step 0, and every existing
-        config keeps training exactly as before unless this is changed. See
-        ``poraque.ml.kan`` for the two variants' math.
+        ``silu`` (default as of 2026-08-17 — ``silu`` measurably outperformed
+        ``gelu`` on this project's own comparisons, see FUTURE.md), ``gelu``,
+        ``relu``, ``tanh`` — stateless, parameter-free — or ``kan_bspline`` /
+        ``kan_cheby`` / ``kan_rbf`` / ``kan_rational``: a Kolmogorov-Arnold
+        Network-style *learnable* activation, one function per channel,
+        applied elementwise. Every learnable variant is initialised close to
+        ``silu`` (a small learnable perturbation on top of it, matching the
+        base term the original KAN paper itself uses), so switching to one
+        does not destabilise training at step 0. See ``poraque.ml.kan`` for
+        all four variants' math, and ``kan_use_base`` below to drop that
+        base term entirely.
+    kan_use_base : bool
+        Whether each of the four learnable KAN variants includes its
+        ``w_c * silu(x)`` base term (``true``, the default, matching the
+        original KAN paper) or is "pure" — only the learned residual, no
+        base weight and no fixed nonlinearity mixed in at all
+        (``false``). Ignored by the stateless activations. A pure channel's
+        output is bounded or decays to zero for a wide input tail rather
+        than tracking it — see each class's docstring in
+        ``poraque.ml.kan`` for which.
     kan_grid_size : int
-        Number of knot-grid intervals for ``activation: kan_bspline``.
-        Ignored otherwise. More intervals give the learned function finer
-        local structure, at ``channels`` extra spline coefficients each.
+        Number of knot-grid intervals for ``activation: kan_bspline``, and
+        (as the number of RBF centers minus one) for ``activation:
+        kan_rbf``, which reuses the same fixed-grid design. Ignored
+        otherwise. More
+        intervals give the learned function finer local structure, at
+        ``channels`` extra coefficients each.
     kan_spline_order : int
         B-spline degree for ``activation: kan_bspline`` (``3`` = cubic, the
         original KAN paper's choice). Ignored otherwise.
     kan_grid_range : list of float
-        ``[low, high]`` support of the B-spline knot grid, for
-        ``activation: kan_bspline``. An input outside this range is clamped,
-        not extrapolated — see ``poraque.ml.kan.BSplineKANActivation`` for
-        why. Ignored otherwise.
+        ``[low, high]`` support of the knot/center grid, for
+        ``activation: kan_bspline`` or ``activation: kan_rbf``. A B-spline input
+        outside this range is clamped, not extrapolated — see
+        ``poraque.ml.kan.BSplineKANActivation`` for why; an RBF input outside
+        it simply decays towards zero on its own. Ignored otherwise.
     kan_degree : int
         Highest Chebyshev order for ``activation: kan_cheby``. Ignored
         otherwise; ``degree + 1`` coefficients per channel.
+    kan_rational_num_degree : int
+        Highest power of the numerator polynomial for ``activation:
+        kan_rational``. Ignored otherwise; ``num_degree + 1`` coefficients
+        per channel. See ``poraque.ml.kan.RationalKANActivation``.
+    kan_rational_den_degree : int
+        Number of even powers (:math:`x^2, x^4, \ldots`) in the denominator
+        polynomial for ``activation: kan_rational``. Ignored otherwise;
+        ``den_degree`` coefficients per channel. The denominator is guarded
+        to stay :math:`\geq 1`, so this can never introduce a pole.
     use_coordinates : bool
         Append three fractional-coordinate channels to the input, so the
         operator knows *where* in the cell it is. Dimensionless, so they carry
@@ -627,11 +720,14 @@ class ModelConfig:
     modes: int = 8
     n_layers: int = 3
     projection_channels: int = 64
-    activation: str = "gelu"
+    activation: str = "silu"
     kan_grid_size: int = 8
     kan_spline_order: int = 3
     kan_grid_range: list = field(default_factory=lambda: [-2.0, 2.0])
     kan_degree: int = 6
+    kan_rational_num_degree: int = 4
+    kan_rational_den_degree: int = 4
+    kan_use_base: bool = True
     use_coordinates: bool = True
     cell_conditioning: bool = True
     embedding_dim: int = 32

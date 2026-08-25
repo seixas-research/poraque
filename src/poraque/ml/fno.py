@@ -490,9 +490,10 @@ class FNOBlock(nn.Module):
     embedding_dim : int, optional
         Cell-embedding width; ``0`` disables FiLM conditioning.
     activation : str, optional
-        One of :data:`~poraque.ml.kan.ACTIVATIONS`: ``'gelu'`` (default),
-        ``'relu'``, ``'silu'``, ``'tanh'`` (stateless), or ``'kan_bspline'``
-        / ``'kan_cheby'`` (per-channel learnable — see :mod:`poraque.ml.kan`).
+        One of :data:`~poraque.ml.kan.ACTIVATIONS`: ``'silu'`` (default),
+        ``'gelu'``, ``'relu'``, ``'tanh'`` (stateless), or ``'kan_bspline'``
+        / ``'kan_cheby'`` / ``'kan_rbf'`` / ``'kan_rational'`` (per-channel
+        learnable — see :mod:`poraque.ml.kan`).
     activation_kwargs : dict, optional
         Variant-specific hyperparameters, forwarded to
         :func:`~poraque.ml.kan.build_activation`. Ignored by the stateless
@@ -504,7 +505,7 @@ class FNOBlock(nn.Module):
         has a different spatial extent, and group statistics are not.
     """
 
-    def __init__(self, channels, modes, embedding_dim=0, activation="gelu",
+    def __init__(self, channels, modes, embedding_dim=0, activation="silu",
                  activation_kwargs=None, n_groups=8):
         super().__init__()
         self.spectral = SpectralConv3d(channels, channels, modes)
@@ -548,18 +549,35 @@ class FNO3d(nn.Module):
         Width of the cell embedding.
     activation : str, optional
         Nonlinearity used throughout every :class:`FNOBlock`. One of
-        :data:`~poraque.ml.kan.ACTIVATIONS`: the stateless ``'gelu'``
-        (default), ``'relu'``, ``'silu'``, ``'tanh'``, or the per-channel
-        learnable Kolmogorov-Arnold variants ``'kan_bspline'`` /
-        ``'kan_cheby'`` (see :mod:`poraque.ml.kan`). Both KAN variants start
-        at initialisation close to ``gelu`` and are opt-in: every existing
-        config and checkpoint keeps using ``gelu`` unless this is changed.
-    kan_grid_size, kan_spline_order, kan_grid_range : optional
-        Hyperparameters of ``'kan_bspline'``; ignored otherwise. See
-        :class:`~poraque.ml.kan.BSplineKANActivation`.
+        :data:`~poraque.ml.kan.ACTIVATIONS`: the stateless ``'silu'``
+        (default as of 2026-08-17; ``'gelu'`` was the default before then —
+        see FUTURE.md for the measurements that motivated the switch),
+        ``'gelu'``, ``'relu'``, ``'tanh'``, or the per-channel learnable
+        Kolmogorov-Arnold variants ``'kan_bspline'`` / ``'kan_cheby'`` /
+        ``'kan_rbf'`` / ``'kan_rational'`` (see :mod:`poraque.ml.kan`). Every
+        learnable variant starts at initialisation close to ``silu`` (its own
+        base term, matching the original KAN paper) and is opt-in: every
+        existing config and checkpoint keeps using whatever ``activation`` it
+        was trained with — recorded in the checkpoint, never inferred.
+    kan_grid_size, kan_grid_range : optional
+        Hyperparameters of ``'kan_bspline'`` and, since it reuses the same
+        fixed-grid design, ``'kan_rbf'``; ignored otherwise. See
+        :class:`~poraque.ml.kan.BSplineKANActivation` and
+        :class:`~poraque.ml.kan.RBFKANActivation`.
+    kan_spline_order : int, optional
+        Hyperparameter of ``'kan_bspline'``; ignored otherwise.
     kan_degree : int, optional
         Hyperparameter of ``'kan_cheby'``; ignored otherwise. See
         :class:`~poraque.ml.kan.ChebyKANActivation`.
+    kan_rational_num_degree, kan_rational_den_degree : int, optional
+        Hyperparameters of ``'kan_rational'``; ignored otherwise. See
+        :class:`~poraque.ml.kan.RationalKANActivation`.
+    kan_use_base : bool, optional
+        Whether each of the four learnable KAN variants includes its
+        :math:`w_c\,\mathrm{SiLU}(x)` base term (``True``, the default,
+        matching the original KAN paper) or is "pure" — residual only, no
+        base weight, no fixed nonlinearity mixed in (``False``). Ignored by
+        the stateless variants. See :mod:`poraque.ml.kan`.
     mode_selection : {"fixed", "physical"}, optional
         ``"fixed"`` truncates at a constant mode index (standard FNO).
         ``"physical"`` truncates at the constant wavevector :attr:`g_max`, so
@@ -581,9 +599,11 @@ class FNO3d(nn.Module):
 
     def __init__(self, in_channels=1, out_channels=1, width=32, modes=12,
                  n_layers=4, projection_channels=128, use_coordinates=True,
-                 cell_conditioning=True, embedding_dim=32, activation="gelu",
+                 cell_conditioning=True, embedding_dim=32, activation="silu",
                  kan_grid_size=8, kan_spline_order=3, kan_grid_range=(-2.0, 2.0),
-                 kan_degree=6, mode_selection="fixed", g_max=None):
+                 kan_degree=6, kan_rational_num_degree=4,
+                 kan_rational_den_degree=4, kan_use_base=True,
+                 mode_selection="fixed", g_max=None):
         super().__init__()
         if isinstance(modes, int):
             modes = (modes, modes, modes)
@@ -618,6 +638,9 @@ class FNO3d(nn.Module):
         self.kan_spline_order = int(kan_spline_order)
         self.kan_grid_range = tuple(float(v) for v in kan_grid_range)
         self.kan_degree = int(kan_degree)
+        self.kan_rational_num_degree = int(kan_rational_num_degree)
+        self.kan_rational_den_degree = int(kan_rational_den_degree)
+        self.kan_use_base = bool(kan_use_base)
 
         self.cell_encoder = CellEncoder(embedding_dim) if cell_conditioning else None
         conditioning = embedding_dim if cell_conditioning else 0
@@ -627,6 +650,9 @@ class FNO3d(nn.Module):
             kan_spline_order=self.kan_spline_order,
             kan_grid_range=self.kan_grid_range,
             kan_degree=self.kan_degree,
+            kan_rational_num_degree=self.kan_rational_num_degree,
+            kan_rational_den_degree=self.kan_rational_den_degree,
+            kan_use_base=self.kan_use_base,
         )
         lifting_channels = self.in_channels + (3 if use_coordinates else 0)
         self.lift = nn.Conv3d(lifting_channels, self.width, kernel_size=1)

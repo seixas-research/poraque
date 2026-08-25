@@ -54,6 +54,18 @@ needs_dataset = pytest.mark.skipif(
     not (os.path.isdir(CACHE_DIR) and os.path.isdir(VASP_DIR)),
     reason="the shipped VASP dataset is not present in this checkout")
 
+# `method="poraque"` evaluates the isolated atom's energy from its own fields,
+# and the kinetic term needs the reference TAUCAR. Every Au TAUCAR was purged on
+# 2026-08-25 as physically invalid -- see DELETIONS.md -- so these tests have no
+# kinetic labels to work from until the VASP 6.6.1 / LTAU recomputation lands.
+# The condition is the file itself rather than a hard skip, so they revive on
+# their own the moment it does; nothing has to be remembered.
+needs_reference_tau = pytest.mark.skipif(
+    not os.path.exists(os.path.join(REF_DIR, "Au", "TAUCAR")),
+    reason="no reference TAUCAR: the Au kinetic-energy data was purged as "
+           "invalid (see DELETIONS.md) and is pending recomputation with "
+           "VASP 6.6.1 / LTAU = .TRUE.")
+
 
 @pytest.fixture(scope="module")
 def references():
@@ -93,6 +105,7 @@ class TestReadingReferences:
         assert "Au" in references
         assert references["Au"] == pytest.approx(-0.0786091, abs=1e-6)
 
+    @needs_reference_tau
     def test_the_two_methods_disagree_by_the_paw_offset(self):
         """
         Which is the whole point of having both.
@@ -207,6 +220,7 @@ class TestReferencingIsExactlyNeutralWhereItShouldBe:
 # ===================================================================== #
 @needs_dataset
 @needs_references
+@needs_reference_tau
 class TestSelfReferencingRemovesThePawOffset:
     """
     The measurable improvement, and the reason ``method="poraque"`` is default.

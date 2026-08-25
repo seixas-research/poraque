@@ -1,0 +1,34 @@
+# Controlled comparison: activation: kan_rbf, kan_use_base: false ("pure"
+# KAN -- no w_c*silu(x) base term, only the learned RBF residual) vs. the
+# base-carrying kan_rbf (compare_kan_rbf_ext2chg.yaml) and the shipped gelu
+# model (models/au_w16_m8_l3), ext2chg only. Identical protocol to
+# compare_kan_rbf_ext2chg.yaml except this one flag -- see FUTURE.md's
+# "Run kan_use_base: false" follow-up.
+#
+# Without the base term the residual, and so phi_c itself, DECAYS TO ZERO
+# for a wide pre-activation tail rather than tracking it -- every Gaussian
+# in the RBF sum vanishes far from its center, and with no base term left
+# nothing replaces it -- see RBFKANActivation's docstring.
+task:
+  type: ext2chg
+  name: au_w16_m8_l3_kanrbf_purekan
+
+data:
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+
+model:
+  width: 16
+  modes: 8
+  projection_channels: 64
+  mode_selection: fixed
+  activation: kan_rbf
+  kan_use_base: false
+  # kan_grid_size: 8       # default
+  # kan_grid_range: [-2.0, 2.0]   # default
+
+training:
+  physics:
+    electron_count_weight: 0.1
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

@@ -295,20 +295,95 @@ def augmentation_from_bundle(bundle, structure, log):
     return lines
 
 
-def resolve_augmentation(directory, bundle, structure, shape, log):
-    """
-    A reference calculation if there is one, the bundle's table otherwise.
+def augmentation_from_atoms(reference, structure, log):
+    r"""
+    Last resort: the isolated atoms' own one-centre records.
 
-    A real calculation beside the structure always wins: its records are that
-    system's, where the bundle's are an average over other systems.
-    """
-    block = collect_augmentation(directory, structure, shape, log)
-    if block:
-        return block
+    The only source that works for an element the training set has never seen,
+    and **measurably the worst of the three**. On this project's gold data a
+    free Au atom's record sits 86.6 % RMS away from a bulk Au site, against
+    9.9 % for the training-set average — a free atom and an atom in a metal
+    genuinely have different on-site occupations, and the one-centre terms are
+    exactly where that difference lives.
 
-    block = augmentation_from_bundle(bundle, structure, log)
-    if block:
-        return block
+    Never chosen automatically. ``--paw-source atomic`` asks for it explicitly.
+
+    Returns
+    -------
+    list of str or None
+    """
+    from poraque.fields.atomic import (
+        AtomicReferenceLibrary,
+        augmentation_from_atoms as records_from_atoms,
+    )
+
+    library = AtomicReferenceLibrary.load(reference)
+    if not len(library):
+        log(f"        {reference}: no isolated-atom references there")
+        return None
+
+    lines, missing = records_from_atoms(structure, library)
+    if missing:
+        log(f"        !! the isolated-atom database covers "
+            f"{library.elements()} but this structure also contains "
+            f"{missing} — no records were written, because a file with them "
+            f"for some atoms and not others is worse than one with none.")
+        return None
+
+    log(f"        using ISOLATED-ATOM records for {library.elements()}")
+    log("        !! these are FREE-ATOM on-site terms. Measured on this "
+        "project's gold")
+    log("        data they are ~86 % RMS from a bulk site, against ~9 % for "
+        "the")
+    log("        training-set average. Use them only for an element the "
+        "training set")
+    log("        does not cover. See DESIGN_PAW.md 3.2.")
+    return lines
+
+
+def resolve_augmentation(directory, bundle, structure, shape, log,
+                         source="auto", atomic_reference=None):
+    """
+    Where to take the one-centre terms from, best first.
+
+    The order is a ranking by how close each source is to *this* structure's
+    own occupancies, and it is not arbitrary — the gaps between the three were
+    measured (``DESIGN_PAW.md`` §3.2):
+
+    1. **A reference calculation beside the structure.** Exact: these are that
+       system's own records.
+    2. **The bundle's per-element average**, over the training calculations.
+       ~9.9 % RMS from a bulk site on the gold data.
+    3. **The isolated-atom database.** ~86.6 % RMS. Explicit request only, for
+       an element nothing else covers.
+
+    Parameters
+    ----------
+    source : {"auto", "reference", "bundle", "atomic"}, optional
+        ``"auto"`` walks the list above. Anything else pins one source and
+        fails rather than quietly falling through to a worse one — which is
+        the point of naming it.
+    atomic_reference : str, optional
+        Isolated-atom database for ``"atomic"``.
+    """
+    order = {"auto": ("reference", "bundle"),
+             "reference": ("reference",),
+             "bundle": ("bundle",),
+             "atomic": ("atomic",)}[source]
+
+    for choice in order:
+        if choice == "reference":
+            block = collect_augmentation(directory, structure, shape, log)
+        elif choice == "bundle":
+            block = augmentation_from_bundle(bundle, structure, log)
+        else:
+            if not atomic_reference:
+                raise SystemExit(
+                    "--paw-source atomic needs --atomic-reference pointing at "
+                    "a database built by `poraque-atoms`.")
+            block = augmentation_from_atoms(atomic_reference, structure, log)
+        if block:
+            return block
 
     raise SystemExit(
         f"--add-paw found no PAW augmentation records to use.\n"
@@ -318,8 +393,10 @@ def resolve_augmentation(directory, bundle, structure, shape, log):
         f"spheres; they are not representable on the plane-wave grid, so no "
         f"model predicts them. Either run VASP once on this geometry "
         f"(LCHARG=.TRUE.) and point at that directory, or retrain so the "
-        f"bundle carries a reference, or drop --add-paw and use the file for "
-        f"visualisation rather than as an ICHARG=1 restart.")
+        f"bundle carries a reference, or build an isolated-atom database with "
+        f"`poraque-atoms` and pass --paw-source atomic (a much rougher "
+        f"approximation — see DESIGN_PAW.md), or drop --add-paw and use the "
+        f"file for visualisation rather than as an ICHARG=1 restart.")
 
 
 def read_reference(path, field_class, grid):
@@ -633,10 +710,13 @@ def run(args, log):
 
     augmentation = None
     if getattr(args, "add_paw", False):
-        augmentation = resolve_augmentation(args.directory, args.models,
-                                            structure, grid.shape, log)
+        augmentation = resolve_augmentation(
+            args.directory, args.models, structure, grid.shape, log,
+            source=getattr(args, "paw_source", "auto"),
+            atomic_reference=getattr(args, "atomic_reference", None))
         results["paw_augmentation"] = {
             "records": len(augmentation) if augmentation else 0,
+            "source": getattr(args, "paw_source", "auto"),
         }
 
     chgcar = os.path.join(args.output, "CHGCAR")
@@ -867,6 +947,19 @@ def build_parser():
                         help="valence-charge overrides, e.g. Au=11")
 
     parser.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
+    parser.add_argument("--paw-source", default="auto",
+                        choices=("auto", "reference", "bundle", "atomic"),
+                        help="where --add-paw takes the one-centre terms "
+                             "from. 'auto' prefers a reference calculation "
+                             "beside the structure, then the bundle's "
+                             "per-element average. 'atomic' uses the "
+                             "isolated-atom database, which is a much rougher "
+                             "approximation (~86%% vs ~9%% RMS on this "
+                             "project's gold data) and exists for elements "
+                             "nothing else covers")
+    parser.add_argument("--atomic-reference", default=None,
+                        help="isolated-atom database built by poraque-atoms, "
+                             "for --paw-source atomic")
     parser.add_argument("--write-chg", action="store_true",
                         help="also write a CHG-formatted copy of the density")
     parser.add_argument("--write-locpot", action="store_true",

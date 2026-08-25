@@ -1,7 +1,11 @@
 # K-fold comparison: gelu vs. silu (see compare_silu_kfold_chg2tau.yaml),
-# chg2tau only, data/vasp. `activation` is left unset -- gelu is the
-# ModelConfig default, and restating it would be a redundant key (see
-# tests/test_precision.py::TestShippedConfigs::test_it_states_only_what_it_changes).
+# chg2tau only, data/vasp. `activation: gelu` MUST be stated explicitly here
+# -- silu became the ModelConfig default 2026-08-17 (this comparison's own
+# result, run under the old gelu-default regime, was part of why -- see
+# FUTURE.md), so omitting it would now silently retrain this config as
+# silu, defeating its own comparison purpose. (Before that date this key
+# really was the redundant one; the situation inverted, it did not just
+# change which value counts as default.)
 # 5-fold cross-validation covers every one of the 17 structures as a
 # held-out fold at some point, unlike the single 14/3 split used for
 # models/au_w16_m8_l3 -- a proper generalisation estimate with a spread,
@@ -18,10 +22,10 @@ model:
   modes: 8
   projection_channels: 64
   mode_selection: fixed
+  activation: gelu
 
 training:
   enable_kfold: true
-  k_folds: 5
   physics:
     electron_count_weight: 0.1
     positivity_weight: 0.0
