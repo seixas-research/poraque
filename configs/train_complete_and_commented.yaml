@@ -72,6 +72,80 @@ data:
   # tau_provenance.json so the record survives being re-cached. Unknown keys
   # raise rather than being ignored. ext2chg never reads tau, so none of this
   # touches it.
+
+  # WHERE THE ISOLATED ATOMS ARE. One path, feeding the two things the free
+  # atom is the reference for: the delta-density baseline below, and the PAW
+  # augmentation occupancies written into a predicted CHGCAR.
+  #
+  # Three spellings are accepted, because three are what people actually have:
+  #   * an atomic_reference.json built by `poraque-atoms`;
+  #   * a DIRECTORY of isolated-atom calculations -- e.g. the parent holding
+  #     `1.atom/`, or the atom directory itself. Ingested on the spot and
+  #     memoised into the cache, so the reduction happens once;
+  #   * a directory that already holds a database, which then wins.
+  #
+  # Each reference must be ONE ATOM IN A BOX with a CHGCAR. A bulk or slab run
+  # has more than one atom and is skipped with a message rather than averaged
+  # into something that is the form factor of neither.
+  atomic_reference: ~/Simulations/vasp/metals/Pt
+
+  # THE ext2chg TARGET. On by default since 2026-08-26: the operator learns the
+  # charge-density VARIATION
+  #
+  #     delta_rho(r) = rho(r) - rho_sup(r)
+  #
+  # where rho_sup is the superposition of the isolated atoms above, placed at
+  # this sample's own atomic positions on its own grid. Roughly 96% of a
+  # crystal's valence density is just its free atoms side by side, so the
+  # residual left to learn is ~20x smaller and carries almost none of the
+  # four-orders-of-magnitude core peak the asinh transform exists to absorb.
+  #
+  # THE OPERATOR STILL RETURNS THE FULL DENSITY. rho_sup is added back inside
+  # predict(), so inference, the ASE calculator and the CHGCAR writer all see
+  # an absolute density and never learn which mode the model was trained in.
+  #
+  # The baseline is built in reciprocal space from radial form factors, so it
+  # is exactly periodic, translation-covariant and grid-independent, and works
+  # unchanged for bulk, slab and cluster samples -- nothing in it assumes a
+  # filled cell. In a vacuum region it leaves band-limiting ringing of order
+  # 1e-4 of the peak (both signs; it is an artefact of truncating the form
+  # factor, and it shrinks as the reference atom's own grid gets finer).
+  #
+  # delta_rho is SIGNED, so positivity and the electron count are statements
+  # about delta_rho + rho_sup: the loop restores the baseline before every
+  # physics term, and inference does it before clipping or normalising. The
+  # reported relative L2 is always quoted on the ABSOLUTE density, so a
+  # delta-mode run is directly comparable with an absolute-mode one.
+  #
+  # Needs atomic_reference to cover every element in the dataset; a run that
+  # cannot resolve one fails loudly rather than quietly training the old
+  # target. Set false for the absolute-density ablation. Ignored by chg2tau --
+  # there is no atomic superposition of a kinetic energy density.
+  delta_density: true
+
+  # WHERE THE PAW AUGMENTATION OCCUPANCIES COME FROM. These are contractions
+  # over converged wavefunctions living inside the core radius, so no grid
+  # model predicts them and a predicted CHGCAR has to borrow them.
+  #
+  #   atomic    (default) the ISOLATED ATOM's own record, from the database
+  #             above. A fixed, per-element, transferable quantity carrying its
+  #             own provenance -- which is what it has to be once slabs and
+  #             clusters join the set. A training-set average is a property of
+  #             whatever happened to be in the training set, is undefined for
+  #             an element that was not, and means something different again
+  #             when half the set is surface atoms.
+  #
+  #   material  the previous behaviour: average the training calculations'
+  #             records per element. More ACCURATE for an element the training
+  #             set covers -- measured on this project's gold data a free-atom
+  #             record sat 86.6% RMS from a bulk site against 9.9% for the
+  #             average. That gap is the honest cost of the transferability,
+  #             not an argument that either is wrong.
+  #
+  # Switching this rebuilds paw_reference.json rather than reusing the table
+  # built from the other source.
+  paw_source: atomic
+
   tau_validation:
     enabled: true               # false is RECORDED in the manifest, not silent
     tf_ratio_range: [0.2, 5.0]  # int(tau) / C_TF int(rho^5/3)

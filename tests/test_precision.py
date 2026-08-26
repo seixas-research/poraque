@@ -493,9 +493,15 @@ class TestShippedConfigs:
     #:                    being uniform, and silent when it is wrong
     #: ``symbolic.physics`` shown beside ``training.physics`` so the two are
     #:                    visibly separate objectives on separate objects
+    #: ``data.delta_density`` what the operator is trained on at all -- a reader
+    #:                    who does not know this is on cannot interpret a
+    #:                    single reported number, and it is silent when wrong
+    #: ``data.paw_source`` which one-centre occupancies a predicted CHGCAR
+    #:                    carries; the two choices trade transferability
+    #:                    against accuracy and neither is obvious
     DELIBERATE = {"task.type", "model.width", "model.modes",
                   "model.projection_channels", "model.mode_selection",
-                  "symbolic.physics"}
+                  "symbolic.physics", "data.delta_density", "data.paw_source"}
 
     @pytest.mark.parametrize("name", _shipped_configs())
     def test_it_states_only_what_it_changes(self, name):

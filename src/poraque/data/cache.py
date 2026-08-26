@@ -575,35 +575,54 @@ def _describe_cached(destination, wanted, record, remembered):
 # ---------------------------------------------------------------------- #
 # PAW augmentation reference
 # ---------------------------------------------------------------------- #
-def build_paw_reference(records, cache, log=None):
+def build_paw_reference(records, cache, log=None, library=None,
+                        source="atomic"):
     r"""
-    Average the PAW augmentation records of the training data, per element.
+    The per-element PAW augmentation table the model bundle carries.
 
     The one-centre terms are contractions over the converged wavefunctions, so
-    no grid-based model predicts them — but ``ICHARG=1`` needs them. Averaging
-    the training set's per element gives a transferable table the model bundle
-    can carry, so a prediction for a structure with no reference of its own can
-    still be written as a restartable ``CHGCAR``.
+    no grid-based model predicts them — but ``ICHARG=1`` needs them, and a
+    prediction for a structure with no reference calculation of its own has to
+    get them from somewhere. Two somewheres, and which one is right depends on
+    what the dataset is about to become:
 
-    Cached beside the fields, because extracting it means reading the tail of
-    every native-resolution ``CHGCAR``.
+    ``source="atomic"`` (**the default since 2026-08-26**)
+        The **isolated atom's own record**, from the database in ``library``.
+        A fixed, per-element, transferable quantity with its own provenance —
+        which is what makes it the defensible choice once slabs and clusters
+        enter the set. A training-set average is a property of whatever
+        happened to be in the training set, is undefined for an element that
+        was not, and means something different again when half the set is
+        surface atoms.
+
+    ``source="material"``
+        The previous behaviour: average the training calculations' records per
+        element. More accurate *for an element the training set covers* — on
+        this project's gold data a free-atom record sat 86.6 % RMS from a bulk
+        site against 9.9 % for the average — and that gap is the honest cost of
+        the transferability above, not an argument that either is wrong.
+
+    Cached beside the fields either way, because the material route means
+    reading the tail of every native-resolution ``CHGCAR``.
 
     Parameters
     ----------
     records : sequence of MaterialRecord
-        Materials to read, from :func:`~poraque.data.sources.discover_records`.
-        The densities themselves are read, not their directories, so a bulk
-        archive of ``CHGCAR_<id>.gz`` files contributes exactly as a
-        calculation directory does.
+        Materials to read, for ``source="material"``. Ignored otherwise.
     cache : str
         Where to write ``paw_reference.json``.
     log : callable, optional
+    library : AtomicReferenceLibrary, optional
+        The isolated atoms, for ``source="atomic"``. Without one that route has
+        nothing to read and falls back to the material average, saying so.
+    source : {"atomic", "material"}, optional
 
     Returns
     -------
     dict
-        The reference, empty when no source carried any records.
+        ``{element: {...}}``, empty when nothing carried any records.
     """
+    from ..fields.atomic import augmentation_reference
     from ..fields.vasp.augmentation import build_reference
 
     emit = log or (lambda *_: None)
@@ -611,12 +630,40 @@ def build_paw_reference(records, cache, log=None):
     if os.path.exists(path):
         with open(path) as handle:
             reference = json.load(handle)
-        emit(f"  PAW reference: cached, {sorted(reference)}")
-        return reference
+        origin = _reference_origin(reference)
+        # A cached table from the *other* source is not this run's table.
+        # Reusing it would answer a question nobody asked -- the same failure
+        # `cache_tag` exists to prevent one level up -- so the requested source
+        # wins and the file is rebuilt.
+        wanted = "isolated atoms" if source == "atomic" else "training-set average"
+        if origin == wanted or not reference:
+            emit(f"  PAW reference: cached, {sorted(reference)} [{origin}]")
+            return reference
+        emit(f"  PAW reference: cached table is the {origin}, but "
+             f"paw_source={source!r} asks for the {wanted} — rebuilding")
 
-    emit("  PAW reference: reading augmentation records from the sources")
-    reference = build_reference([record.files["CHGCAR"] for record in records],
-                                log=emit)
+    reference = {}
+    if source == "atomic":
+        if library is not None and len(library):
+            reference = augmentation_reference(library)
+            if reference:
+                emit(f"  PAW reference: from the ISOLATED ATOMS "
+                     f"{sorted(reference)} — one record per element, with its "
+                     f"own provenance")
+            else:
+                emit("  PAW reference: the isolated-atom database carries no "
+                     "augmentation records (its CHGCARs are not PAW), falling "
+                     "back to the training-set average")
+        else:
+            emit("  PAW reference: no isolated-atom database available, "
+                 "falling back to the training-set average")
+
+    if not reference:
+        emit("  PAW reference: averaging augmentation records over the "
+             "training calculations")
+        reference = build_reference(
+            [record.files["CHGCAR"] for record in records], log=emit)
+
     if not reference:
         emit("      none found — these calculations carry no PAW records, so "
              "predictions cannot be written as ICHARG=1 restarts")
@@ -626,6 +673,17 @@ def build_paw_reference(records, cache, log=None):
     with open(path, "w") as handle:
         json.dump(reference, handle)
     return reference
+
+
+def _reference_origin(reference):
+    """``isolated atoms`` / ``training-set average`` / ``mixed``, for the log."""
+    kinds = {entry.get("source", "material_average")
+             for entry in reference.values() if isinstance(entry, dict)}
+    if kinds == {"isolated_atom"}:
+        return "isolated atoms"
+    if "isolated_atom" not in kinds:
+        return "training-set average"
+    return "mixed"
 
 
 def load_paw_reference(cache):

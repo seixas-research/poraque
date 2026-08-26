@@ -352,8 +352,22 @@ def build_cache(config, log):
     sources = [resolve_source(path, fmt, pattern=data.pattern, code=data.code,
                               potcar_dir=data.potcar_dir)
                for path, fmt in zip(paths, formats)]
+    # The augmentation records now come from the ISOLATED ATOMS by default
+    # (data.paw_source), not from averaging the training set. They are a
+    # per-element, transferable, provenance-carrying quantity, which is what
+    # they have to be once slabs and clusters join the set: a training-set
+    # average is a property of whatever happened to be in it.
+    library = None
+    if data.paw_source == "atomic" and data.atomic_reference:
+        from poraque.fields.atomic import resolve_library
+
+        try:
+            library = resolve_library(data.atomic_reference, cache=target,
+                                      log=log)
+        except (FileNotFoundError, ValueError) as error:
+            log(f"  PAW reference: {error}")
     build_paw_reference(discover_records(sources, required=("CHGCAR",)),
-                        target, log)
+                        target, log, library=library, source=data.paw_source)
     return target
 
 
@@ -676,7 +690,7 @@ def build_loss(config, task_name):
 # ===================================================================== #
 # Leave-one-out driver
 # ===================================================================== #
-def resolve_baseline(task, config, log):
+def resolve_baseline(task, config, cache, log):
     """
     The isolated-atom baseline for delta-density mode, or ``None``.
 
@@ -694,22 +708,67 @@ def resolve_baseline(task, config, log):
         return None
     if not config.data.atomic_reference:
         raise ValueError(
-            "data.delta_density: true needs data.atomic_reference to point at "
-            "an isolated-atom database. Build one with `poraque-atoms "
-            "<reference dirs> --output atomic_reference.json`.")
+            "data.delta_density is on (the default since 2026-08-26) and needs "
+            "data.atomic_reference to say where the isolated atoms are.\n\n"
+            "Point it at either a directory of single-atom calculations or a "
+            "database built from them:\n\n"
+            "    data:\n"
+            "      atomic_reference: ~/Simulations/vasp/metals/Pt\n\n"
+            "A directory is ingested on the spot and memoised into the cache. "
+            "To build the database ahead of time instead:\n\n"
+            "    poraque-atoms <atom dirs> --output atomic_reference.json\n\n"
+            "Or set `data.delta_density: false` to train on the absolute "
+            "density, which is what runs before this date did.")
 
-    from poraque.fields.atomic import AtomicReferenceLibrary
+    from poraque.fields.atomic import resolve_library
 
-    library = AtomicReferenceLibrary.load(config.data.atomic_reference)
-    if not len(library):
+    library = resolve_library(config.data.atomic_reference,
+                              cache=cache, log=log)
+    missing = _uncovered_elements(cache, library)
+    if missing:
         raise ValueError(
-            f"{config.data.atomic_reference} holds no isolated-atom "
-            f"references, so there is no baseline to subtract.")
+            f"The isolated-atom database covers {library.elements()} but the "
+            f"dataset also contains {missing}. A superposition missing whole "
+            f"atoms is wrong in a way that looks entirely plausible, so it is "
+            f"refused rather than built partially. Add an isolated-atom "
+            f"calculation for {missing}, or set data.delta_density: false.")
+
     log(f"      delta-density mode: target is rho - rho_sup, baseline from "
         f"{len(library)} atom(s) {library.elements()}")
     log(f"      library fingerprint {library.fingerprint[:16]} "
         f"(recorded in the checkpoint)")
     return library
+
+
+def _uncovered_elements(cache, library):
+    """
+    Elements in the cached dataset that the atomic database does not cover.
+
+    Checked here, once, rather than at the first batch: the failure is a
+    property of the pair (dataset, library) and is knowable before a single
+    epoch runs. Discovering it two hours in, from a KeyError inside a
+    DataLoader worker, is the same information delivered uselessly.
+
+    A cache that cannot be read yields no complaint -- the dataset layer raises
+    its own, better-worded error a moment later.
+    """
+    from poraque.fields.atomic import base_element
+    from poraque.fields.vasp.volumetric import read_structure_header
+
+    if not os.path.isdir(cache):
+        return []
+
+    covered, seen = set(library.elements()), set()
+    for entry in sorted(os.listdir(cache)):
+        density = os.path.join(cache, entry, "CHGCAR")
+        if not os.path.exists(density):
+            continue
+        try:
+            structure = read_structure_header(density)
+        except (OSError, ValueError):
+            continue
+        seen.update(base_element(symbol) for symbol in structure.symbols)
+    return sorted(seen - covered)
 
 
 def build_operator(task, train_set, config, log):
@@ -1440,7 +1499,7 @@ def run_task(task_name, cache, config, log, n_tasks=1):
     log(f"      {task.description}")
     log("=" * 78)
 
-    baseline = resolve_baseline(task, config, log)
+    baseline = resolve_baseline(task, config, cache, log)
     dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
                                dtype=compute_dtype(config), baseline=baseline)
     validation_names, split_origin = resolve_validation_split(dataset, config)
@@ -1755,7 +1814,7 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
     ``valid_fraction`` is ignored here — the folds define the splits.
     """
     task = resolve_task(task_name)
-    baseline = resolve_baseline(task, config, log)
+    baseline = resolve_baseline(task, config, cache, log)
     dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
                                dtype=compute_dtype(config), baseline=baseline)
     names = [m.identifier for m in dataset.materials]
@@ -2222,9 +2281,13 @@ def run(argv=None):
             # ICHARG=1 restart without a reference calculation beside it.
             paw = load_paw_reference(cache)
             if paw:
+                from poraque.data.cache import _reference_origin
+
                 metadata["paw_reference"] = paw
+                metadata["paw_source"] = _reference_origin(paw)
                 log(f"  PAW reference   -> stored in the bundle "
-                    f"({', '.join(sorted(paw))})")
+                    f"({', '.join(sorted(paw))}) "
+                    f"[{metadata['paw_source']}]")
             if config.fine_tuning.enable:
                 metadata["fine_tuned_from"] = \
                     config.fine_tuning.pretrained_checkpoint

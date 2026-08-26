@@ -273,42 +273,95 @@ class DataConfig:
 
         ``ext2chg`` never reads :math:`\tau`, so nothing here affects it.
     delta_density : bool
-        Train the density operator on the **residual over a superposition of
-        isolated atoms**, :math:`\delta\rho = \rho - \rho_{\rm sup}`, instead
-        of on :math:`\rho` itself. Off by default; this is an ablation, not a
-        settled improvement.
+        Train the density operator on the **charge-density variation**
 
-        Most of a crystal's valence density is its free atoms placed side by
-        side. Measured on this project's own gold cells, the superposition
-        accounts for about 95 % of the field in :math:`L^2`, so the residual
-        left to learn is roughly twenty times smaller and carries almost none
-        of the four-orders-of-magnitude core peak the ``asinh`` transform
-        exists to absorb.
+        .. math::
 
-        Two things change, and both are recorded rather than hidden.
+            \delta\rho(\mathbf r) = \rho(\mathbf r)
+                                    - \rho_{\rm sup}(\mathbf r),
+
+        the residual over a superposition of isolated atoms placed at the
+        structure's own atomic positions, rather than on :math:`\rho` itself.
+        **On by default as of 2026-08-26.**
+
+        Most of a crystal's valence density is its free atoms side by side —
+        measured at ~96 % of the field in :math:`L^2` on this project's cells —
+        so the residual left to learn is roughly twenty times smaller and
+        carries almost none of the four-orders-of-magnitude core peak the
+        ``asinh`` transform exists to absorb. The baseline is built in
+        reciprocal space from the stored atomic form factors, so it is exactly
+        periodic and grid-independent, and works unchanged for **bulk, slab and
+        cluster** samples: nothing in the construction assumes a filled cell.
+
+        **The operator still returns the full density.** :math:`\rho_{\rm sup}`
+        is added back inside
+        :meth:`~poraque.ml.training.FieldOperator.predict`, so every caller —
+        inference, the ASE calculator, the CHGCAR writer — sees an absolute
+        density and never has to know which mode the model was trained in.
+
+        Two consequences, both handled rather than hidden.
         :math:`\delta\rho` is **signed**, so positivity and the electron count
-        become statements about :math:`\delta\rho + \rho_{\rm sup}`; the
-        training loop adds the baseline back before any physics term sees the
-        field, and inference does the same before returning. And the reported
-        relative :math:`L^2` is always quoted **on the absolute density**, so a
-        delta-mode run is directly comparable with an absolute-mode one -- which
-        is the only way the ablation this flag exists for can be read at all.
+        are statements about :math:`\delta\rho + \rho_{\rm sup}`; the training
+        loop restores the baseline before every physics term, and inference
+        does it before clipping or normalising (order fixed in
+        ``DESIGN_PAW.md`` §3.3). And the reported relative :math:`L^2` is always
+        quoted **on the absolute density**, so a delta-mode run is directly
+        comparable with an absolute-mode one.
 
-        Requires ``atomic_reference``, and requires it to cover every element
-        in the dataset. Ignored by ``chg2tau``: there is no atomic
-        superposition of a kinetic energy density.
+        Requires ``atomic_reference`` covering every element in the dataset;
+        a run that cannot resolve one **fails loudly** rather than quietly
+        training the old target. Set ``false`` for the absolute-density
+        ablation. Ignored by ``chg2tau``: there is no atomic superposition of a
+        kinetic energy density.
 
         See ``DESIGN_PAW.md`` §3.1 and §3.3.
     atomic_reference : str or None
-        Path to the isolated-atom database (``atomic_reference.json``, or a
-        directory holding one) built by ``poraque-atoms``. Supplies the
-        superposition baseline for ``delta_density`` and the fallback PAW
-        augmentation records for elements the training set does not cover.
+        Where the isolated atoms come from. Three spellings are accepted,
+        because three are what people actually have:
+
+        - an ``atomic_reference.json`` built by ``poraque-atoms``;
+        - a **directory of isolated-atom calculations**, e.g.
+          ``~/Simulations/vasp/metals/Pt`` holding ``1.atom/``, or the atom
+          directory itself — ingested on the spot and memoised into the cache
+          as ``atomic_reference.json``, so the reduction happens once;
+        - a directory that already holds a database, which then wins.
+
+        Each reference must be **one atom in a box** with a ``CHGCAR``. A bulk
+        or slab run has more than one atom and is skipped with a message rather
+        than averaged into something that is the form factor of neither.
+
+        This one path feeds **both** things the isolated atoms are the
+        reference for: the ``delta_density`` superposition baseline, and — via
+        ``paw_source`` — the PAW augmentation occupancies written into a
+        predicted ``CHGCAR``.
 
         The library is copied **into the checkpoint**, not referenced from it:
         a delta-density model's weights only mean anything against the
         particular superposition they were fitted to, so a database that
         changed afterwards would silently bias every prediction.
+    paw_source : str
+        Which one-centre PAW augmentation occupancies a predicted ``CHGCAR``
+        carries. ``"atomic"`` (**the default as of 2026-08-26**) takes them
+        from the isolated-atom database named by ``atomic_reference``;
+        ``"material"`` restores the previous behaviour of averaging the
+        *training set's* records per element.
+
+        The occupancies are contractions over converged wavefunctions living
+        inside the core radius, so no grid-based model predicts them and they
+        have to be borrowed from somewhere. The isolated atom is the defensible
+        place to borrow from once slabs and clusters enter the set: it is a
+        fixed, transferable, per-element quantity with its own provenance,
+        whereas a training-set average is a property of whatever happened to be
+        in the training set and is not defined at all for an element that was
+        not.
+
+        It is not the more *accurate* choice for an element the training set
+        does cover — measured on this project's gold data a free-atom record
+        sat 86.6 % RMS from a bulk site against 9.9 % for the training average,
+        because a free atom and an atom in a metal have genuinely different
+        on-site occupations. That gap is the honest cost of the transferability,
+        and closing it with a learned environment-dependent correction is a
+        ``FUTURE.md`` item.
     """
 
     train_paths: list = None
@@ -326,8 +379,9 @@ class DataConfig:
     precision: str = "float64"
     xc: str = "auto"
     tau_validation: dict = None
-    delta_density: bool = False
+    delta_density: bool = True
     atomic_reference: str = None
+    paw_source: str = "atomic"
 
     def paths(self):
         """

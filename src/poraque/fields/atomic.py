@@ -624,6 +624,144 @@ def build_library(directories, filename="CHGCAR", bins=None, library=None,
 # ---------------------------------------------------------------------- #
 # The superposition
 # ---------------------------------------------------------------------- #
+def resolve_library(reference, cache=None, log=None):
+    r"""
+    Turn whatever ``data.atomic_reference`` names into a loaded database.
+
+    Three spellings are accepted, because three are what people actually have:
+
+    ``atomic_reference.json``
+        A database built earlier by ``poraque-atoms``. Loaded as it stands.
+    a directory of isolated-atom runs
+        ``~/Simulations/vasp/metals/Pt`` holding ``1.atom/``, or the atom
+        directory itself. Ingested on the spot, and — when ``cache`` is given —
+        written there as :data:`LIBRARY_FILENAME` so the next run reads the
+        JSON instead of re-reducing a 140³ density.
+    a directory that already holds one
+        The JSON inside it wins over re-ingesting, for the same reason.
+
+    Accepting the raw calculation directory matters more than it looks. The
+    isolated atoms are the reference for *both* the delta-density baseline and
+    the PAW augmentation records, so requiring a separate build step before
+    either works is a step that gets skipped, and skipping it silently changes
+    what the model is trained on.
+
+    Parameters
+    ----------
+    reference : str
+        Path, in any of the three forms above.
+    cache : str, optional
+        Where to memoise an ingested database.
+    log : callable, optional
+
+    Returns
+    -------
+    AtomicReferenceLibrary
+
+    Raises
+    ------
+    FileNotFoundError
+        When the path does not exist.
+    ValueError
+        When it exists but yields no isolated atom — naming what was looked
+        for, since the commonest cause is pointing at a *bulk* run.
+    """
+    emit = log or (lambda *_: None)
+    # `~` and `$VAR` expanded here rather than left to the caller: this value
+    # comes out of a YAML file, where writing `~/Simulations/...` is the
+    # natural thing to type and the only alternative is hard-coding a home
+    # directory into a committed config -- which this repo already does
+    # elsewhere and regrets.
+    reference = os.path.expanduser(os.path.expandvars(str(reference)))
+
+    if not os.path.exists(reference):
+        raise FileNotFoundError(
+            f"{reference}: no such path. data.atomic_reference wants either an "
+            f"atomic_reference.json built by `poraque-atoms`, or a directory "
+            f"of isolated-atom calculations to ingest.")
+
+    # A file, or a directory with a database already in it.
+    direct = reference
+    if os.path.isdir(reference):
+        candidate = os.path.join(reference, LIBRARY_FILENAME)
+        direct = candidate if os.path.exists(candidate) else None
+    if direct and os.path.isfile(direct):
+        library = AtomicReferenceLibrary.load(direct)
+        if len(library):
+            emit(f"      atomic reference: {len(library)} atom(s) "
+                 f"{library.elements()} from {direct}")
+            return library
+
+    # A memoised ingest from an earlier run of this same cache.
+    if cache:
+        memo = os.path.join(cache, LIBRARY_FILENAME)
+        if os.path.exists(memo):
+            library = AtomicReferenceLibrary.load(memo)
+            if len(library):
+                emit(f"      atomic reference: {len(library)} atom(s) "
+                     f"{library.elements()} (cached from {reference})")
+                return library
+
+    emit(f"      atomic reference: ingesting isolated atoms from {reference}")
+    library = build_library(reference, log=emit)
+    if not len(library):
+        raise ValueError(
+            f"{reference} yielded no isolated-atom reference. Each one must be "
+            f"a directory holding the CHGCAR of a **single atom** in a box; a "
+            f"bulk or slab run has more than one atom and is skipped. Looked "
+            f"in {reference} and one level below it.")
+
+    if cache:
+        os.makedirs(cache, exist_ok=True)
+        written = library.save(os.path.join(cache, LIBRARY_FILENAME))
+        emit(f"      atomic reference: memoised to {written}")
+    return library
+
+
+def augmentation_reference(library):
+    """
+    The per-element PAW table, in the shape the model bundle already stores.
+
+    :mod:`poraque.fields.vasp.augmentation`'s ``build_reference`` produces
+    ``{element: {"values": [...], "atoms": n, "structures": n}}`` by averaging
+    over *material* calculations. This produces the same shape from the
+    **isolated atoms** instead, so everything downstream —
+    ``records_for_structure``, the bundle metadata, the inference writer — is
+    unchanged and only the provenance of the numbers differs.
+
+    ``atoms`` and ``structures`` are 1 apiece and honestly so: a free atom is
+    one atom in one calculation, and a reader comparing this against an
+    averaged table should be able to see that immediately.
+
+    Parameters
+    ----------
+    library : AtomicReferenceLibrary
+
+    Returns
+    -------
+    dict
+        ``{element: {...}}``, empty when no stored atom carried a record.
+    """
+    reference = {}
+    for entry in library.entries.values():
+        if not entry.augmentation:
+            continue
+        # Two POTCAR variants of one element would collide here. The first
+        # wins and the second is dropped rather than averaged: they are
+        # different pseudopotentials with different projector counts, and
+        # mixing their occupancies would produce a record of neither.
+        if entry.element in reference:
+            continue
+        reference[entry.element] = {
+            "values": list(entry.augmentation),
+            "atoms": 1,
+            "structures": 1,
+            "source": "isolated_atom",
+            "potcar_title": entry.potcar_title,
+        }
+    return reference
+
+
 def atomic_superposition(structure, grid, library, titles=None,
                          metadata=None):
     r"""
