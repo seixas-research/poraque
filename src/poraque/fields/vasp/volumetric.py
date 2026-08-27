@@ -24,6 +24,12 @@ compatible on the same grid.
 Anything after the first data block (spin channels, PAW augmentation
 occupancies) is skipped by default and can be requested explicitly.
 
+An HDF5 store written by :mod:`poraque.fields.hdf5` is read through this
+same function: it holds the identical values under the identical convention,
+only in binary, and :func:`read_volumetric` hands an ``.h5`` path off to it.
+That keeps one volumetric reader in the codebase instead of two that have to
+agree.
+
 Compression is transparent. Files are opened through
 :func:`poraque.fields.io.compressed.open_text`, so a ``.gz``, ``.bz2``, ``.xz``
 or ``.zip`` path is decompressed as it is read and never needs expanding on
@@ -75,6 +81,19 @@ def read_volumetric(path, read_all=False):
     extra : list of numpy.ndarray
         Additional blocks; empty unless ``read_all`` is true.
     """
+    # An HDF5 store holds the same values under the same convention, so it is
+    # answered here rather than by a second reader. Everything above this
+    # function -- ScalarField.read, FieldGrid.from_file, SpinDensity.read, the
+    # dataset, the calculator -- then reads both formats without knowing there
+    # are two, which is the whole reason the dispatch is at this depth and not
+    # at each of the four call sites.
+    from ..hdf5 import is_hdf5_path
+
+    if is_hdf5_path(path):
+        from ..hdf5 import read_volumetric as read_hdf5
+
+        return read_hdf5(path, read_all=read_all)
+
     with _open_text(path) as handle:
         lines = (line.rstrip("\n") for line in handle)
 

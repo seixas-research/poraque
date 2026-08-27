@@ -216,9 +216,9 @@ class ScalarField(ABC):
     # I/O
     # ------------------------------------------------------------------ #
     def write(self, path=None, comment=None, columns=5, width=17, decimals=11,
-              augmentation=None):
+              augmentation=None, compression=None, level=4):
         """
-        Write the field in ``CHGCAR`` format.
+        Write the field in ``CHGCAR`` format, or into an HDF5 store.
 
         Parameters
         ----------
@@ -238,13 +238,44 @@ class ScalarField(ABC):
             PAW augmentation records to append, from
             :func:`~poraque.fields.vasp.volumetric.read_augmentation`. Needed
             when the file is to seed a VASP run with ``ICHARG=1``.
+        compression : str or None, optional
+            HDF5 only: ``"none"``, ``"gzip"`` or ``"lzf"``. Ignored for a text
+            path, where the format itself fixes the encoding.
+        level : int, optional
+            Gzip level, HDF5 only.
 
         Returns
         -------
         str
-            The path written.
+            The path written. For an HDF5 target this is the
+            ``file.h5::DATASET`` address, which is what a reader needs and
+            what the plain filename would not be.
+
+        Notes
+        -----
+        An ``.h5``/``.hdf5`` path writes the field into an HDF5 store instead
+        (:mod:`poraque.fields.hdf5`), carrying the same values under the same
+        convention. ``augmentation`` has no HDF5 equivalent and is refused
+        rather than dropped: PAW occupancies are what make a density readable
+        by VASP, and losing them silently would produce a file that looks
+        complete and is not.
         """
         path = path if path is not None else self.default_filename
+
+        from .hdf5 import is_hdf5_path
+
+        if is_hdf5_path(path):
+            from .hdf5 import split_target, write_field
+
+            if augmentation:
+                raise ValueError(
+                    "PAW augmentation records cannot be stored in an HDF5 "
+                    "field store: they are text records VASP reads out of a "
+                    "CHGCAR, and nothing reads them back from HDF5. Write the "
+                    "density as a CHGCAR when it has to seed a VASP run.")
+            _, dataset = split_target(path)
+            return write_field(path, dataset or self.default_filename, self,
+                               compression=compression, level=level)
         if comment is None:
             formula = "".join(
                 f"{s}{c}" for s, c in zip(self.structure.symbols, self.structure.counts)

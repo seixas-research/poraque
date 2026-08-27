@@ -499,9 +499,16 @@ class TestShippedConfigs:
     #: ``data.paw_source`` which one-centre occupancies a predicted CHGCAR
     #:                    carries; the two choices trade transferability
     #:                    against accuracy and neither is obvious
+    #: ``data.storage``  and ``data.compression`` / ``data.compression_level``:
+    #:                    the three are one decision and are shown together, so
+    #:                    the measured size table that explains the trade has
+    #:                    somewhere to sit. `compression` also *raises* when set
+    #:                    without `storage: hdf5`, which is a coupling a reader
+    #:                    should meet in the file rather than in a traceback.
     DELIBERATE = {"task.type", "model.width", "model.modes",
                   "model.projection_channels", "model.mode_selection",
-                  "symbolic.physics", "data.delta_density", "data.paw_source"}
+                  "symbolic.physics", "data.delta_density", "data.paw_source",
+                  "data.storage", "data.compression", "data.compression_level"}
 
     @pytest.mark.parametrize("name", _shipped_configs())
     def test_it_states_only_what_it_changes(self, name):

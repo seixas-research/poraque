@@ -13,8 +13,11 @@
 
 [![PyPI](https://img.shields.io/pypi/v/poraque?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/poraque/)
 [![Python](https://img.shields.io/pypi/pyversions/poraque?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/poraque/)
-[![Docs](https://img.shields.io/readthedocs/poraque?style=for-the-badge&logo=readthedocs&logoColor=white)](https://poraque.readthedocs.io/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![ASE](https://img.shields.io/badge/ASE-3.2x-4B8BBE?style=for-the-badge)](https://wiki.fysik.dtu.dk/ase/)
+[![On-line manual](https://img.shields.io/readthedocs/poraque?style=for-the-badge&logo=readthedocs&logoColor=white&label=Manual)](https://poraque.readthedocs.io/)
 [![License: MIT](https://img.shields.io/github/license/seixas-research/poraque?color=green&style=for-the-badge)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-poraque-181717?style=for-the-badge&logo=github)](https://github.com/seixas-research/poraque)
 
 </div>
 

@@ -99,16 +99,72 @@ class MaterialRecord:
     source: object = None
 
 
+def prepared_fields(directory, names):
+    """
+    ``{field: path}`` for one prepared material directory, in either layout.
+
+    A cache stores its fields either as ``CHGCAR``-format text files or as one
+    HDF5 store per material, and this is the only function in the codebase that
+    has to know which::
+
+        cache/mp-124/CHGCAR              -> "cache/mp-124/CHGCAR"
+        cache/mp-124/fields.h5           -> "cache/mp-124/fields.h5::CHGCAR"
+
+    Both spellings are paths every reader accepts, so the difference stops
+    here. A field present in both layouts resolves to the **text** file: a
+    directory holding both was converted by hand, the text file is the one
+    every other tool can read, and picking silently between two disagreeing
+    copies is not this function's call to make.
+
+    Parameters
+    ----------
+    directory : str
+    names : sequence of str
+        Fields to look for.
+
+    Returns
+    -------
+    dict
+        Only the fields actually present.
+    """
+    files = {name: os.path.join(directory, name) for name in names
+             if os.path.exists(os.path.join(directory, name))}
+
+    from ..fields.hdf5 import HDF5_SUFFIXES
+
+    store = next((os.path.join(directory, entry)
+                  for entry in sorted(os.listdir(directory))
+                  if entry.lower().endswith(HDF5_SUFFIXES)), None)
+    if store is None:
+        return files
+
+    from ..fields.hdf5 import field_names, join_target
+
+    try:
+        available = set(field_names(store))
+    except (OSError, ValueError):
+        # An unreadable or half-written store is not a reason to lose the text
+        # files beside it; the material is simply served with what parses.
+        return files
+    for name in names:
+        if name in available and name not in files:
+            files[name] = join_target(store, name)
+    return files
+
+
 def discover_materials(root, required=("EXTCAR", "CHGCAR", "TAUCAR")):
     """
     Find material directories under ``root`` that contain every required field.
+
+    Both cache layouts are found: a directory of ``CHGCAR``-format files, or
+    one holding an HDF5 field store — see :func:`prepared_fields`.
 
     Parameters
     ----------
     root : str or pathlib.Path
         Dataset root.
     required : sequence of str, optional
-        File names that must all be present.
+        Field names that must all be present.
 
     Returns
     -------
@@ -120,8 +176,8 @@ def discover_materials(root, required=("EXTCAR", "CHGCAR", "TAUCAR")):
         directory = os.path.join(root, entry)
         if not os.path.isdir(directory):
             continue
-        files = {name: os.path.join(directory, name) for name in required}
-        if all(os.path.exists(path) for path in files.values()):
+        files = prepared_fields(directory, required)
+        if all(name in files for name in required):
             records.append(MaterialRecord(entry, directory, files))
     return records
 
@@ -738,7 +794,21 @@ def _with_channel_axis(values):
 
 
 def _peek_shape(path):
-    """Read only the grid-dimension line of a volumetric file."""
+    """
+    The grid shape of a volumetric file, read from its header alone.
+
+    Cheap by construction in both formats, which is what lets
+    :class:`ShapeBucketSampler` bucket a dataset without decoding it: the text
+    reader stops at the dimension line, and HDF5 keeps the shape in the object
+    header.
+    """
+    from ..fields.hdf5 import is_hdf5_path
+
+    if is_hdf5_path(path):
+        from ..fields.hdf5 import peek_shape
+
+        return peek_shape(path)
+
     from ..fields.io.compressed import open_text
 
     with open_text(path) as handle:

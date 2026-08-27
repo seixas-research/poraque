@@ -146,6 +146,54 @@ data:
   # built from the other source.
   paw_source: atomic
 
+  # ---------------------------------------------------------------------
+  # How the prepared cache stores its fields
+  # ---------------------------------------------------------------------
+  # `files` writes one CHGCAR-format text file per field per material -- the
+  # default, and what every cache built before 2026-08-28 is. `hdf5` writes one
+  # chunked fields.h5 per material instead.
+  #
+  # The stored numbers are identical: an HDF5 store holds exactly what a CHGCAR
+  # holds (rho*Omega), in exactly the same convention, so this is a storage
+  # decision and not a scientific one. Nothing above the reader knows which
+  # layout it is looking at -- a field inside a store is addressed as
+  # `fields.h5::CHGCAR` and every Poraque reader takes that spelling, so
+  # training, inference and the ASE calculator are unchanged.
+  #
+  # What changes is what it costs. A CHGCAR spends ~18 bytes of ASCII on each
+  # 8-byte double and is *parsed* on every read; an HDF5 dataset is binary and
+  # read by the library. Measured on the shipped 140^3 platinum density:
+  #
+  #     VASP CHGCAR (text)        99.9 MB
+  #     HDF5, no compression      21.9 MB
+  #     HDF5, lzf                 18.1 MB   (1.21x)
+  #     HDF5, gzip-4              15.9 MB   (1.38x)
+  #     HDF5, gzip-9              15.8 MB   (1.39x)
+  #
+  # and the round trip is exact to a float64 ulp rather than to the text
+  # format's eleven significant digits.
+  #
+  # Switching this REBUILDS the cache rather than mixing layouts: storage and
+  # compression are both part of the cache fingerprint.
+  storage: files                # files | hdf5
+
+  # HDF5 dataset filter. Requires storage: hdf5 -- setting it on a text cache
+  # RAISES rather than being ignored, because a compression flag that quietly
+  # does nothing reports a saving that never happened.
+  #
+  # Both codecs ship with h5py, so a compressed cache opens on any machine that
+  # can open an uncompressed one; there is no filter plugin to install. HDF5's
+  # byte-shuffle filter is applied with either, which is worth more than several
+  # gzip levels on real densities and costs nothing -- gzip goes from 1.19x to
+  # 1.38x with it, and writes and reads *faster*.
+  #
+  # lzf when build time matters (0.06 s vs 0.31 s on that density); gzip when
+  # the archive is written once and read for months. Ratios are larger on the
+  # downsampled fields a cache actually holds -- 2.1x at 32^3, where
+  # neighbouring points are more strongly correlated.
+  compression: null             # null | gzip | lzf
+  compression_level: 4          # gzip only; ignored by lzf rather than refused
+
   tau_validation:
     enabled: true               # false is RECORDED in the manifest, not silent
     tf_ratio_range: [0.2, 5.0]  # int(tau) / C_TF int(rho^5/3)

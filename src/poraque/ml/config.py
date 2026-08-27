@@ -362,6 +362,54 @@ class DataConfig:
         on-site occupations. That gap is the honest cost of the transferability,
         and closing it with a learned environment-dependent correction is a
         ``FUTURE.md`` item.
+
+    storage : str
+        How the prepared cache stores its fields. ``"files"`` (the default, and
+        what every cache built before 2026-08-28 is) writes one
+        ``CHGCAR``-format text file per field; ``"hdf5"`` writes one chunked
+        ``fields.h5`` per material.
+
+        The numbers are identical — the HDF5 store holds exactly what a
+        ``CHGCAR`` holds, in exactly the same convention — so this is a storage
+        decision and not a scientific one. What changes is the cost of holding
+        and reading them. A ``CHGCAR`` spends about 18 bytes of ASCII on each
+        8-byte double and has to be *parsed* on every read; an HDF5 dataset is
+        binary, chunked, and read by the library. On the shipped 140³ platinum
+        density the text file is 99.9 MB and the same field as HDF5 with
+        ``gzip`` is 15.8 MB, and the round trip is exact to a float64 ulp
+        rather than to the text format's eleven significant digits.
+
+        Nothing above the reader knows which layout it is looking at: a field
+        inside a store is addressed as ``fields.h5::CHGCAR`` and every Poraquê
+        reader takes that spelling, so training, inference and the ASE
+        calculator are unchanged. Switching the value **rebuilds** the cache
+        rather than mixing layouts — it is part of the cache fingerprint.
+
+    compression : str
+        HDF5 dataset filter: ``"gzip"``, ``"lzf"``, or ``null`` for none.
+        Requires ``storage: hdf5``; setting it on a text cache raises rather
+        than being ignored, since a compression flag that quietly does nothing
+        reports a saving that never happened.
+
+        Both codecs ship with h5py, so a compressed cache opens on any machine
+        that can open an uncompressed one — no filter plugin to install. HDF5's
+        byte-shuffle filter is applied with either, which on real densities is
+        worth more than several gzip levels and costs nothing:
+        ``gzip`` goes from 1.19x to 1.38x on the platinum density with it, and
+        writes and reads *faster*.
+
+        Measured on that density (21.95 MB of float64 values):
+        ``lzf`` 1.21x at 0.06 s, ``gzip-1`` 1.36x at 0.24 s, ``gzip-4`` 1.38x
+        at 0.31 s, ``gzip-9`` 1.39x at 0.39 s. The ratios are larger on the
+        downsampled fields a cache actually holds (2.1x at 32³), where
+        neighbouring points are more strongly correlated. ``lzf`` is the choice
+        when build time matters, ``gzip`` when the archive is written once and
+        read for months.
+
+    compression_level : int
+        Gzip level, 0-9. Ignored by ``lzf``, which has no levels, rather than
+        raising — a run that changes codec should not also have to remember to
+        remove the level.
     """
 
     train_paths: list = None
@@ -382,6 +430,9 @@ class DataConfig:
     delta_density: bool = True
     atomic_reference: str = None
     paw_source: str = "atomic"
+    storage: str = "files"
+    compression: str = None
+    compression_level: int = 4
 
     def paths(self):
         """

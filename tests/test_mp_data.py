@@ -471,10 +471,22 @@ class TestMPDataFetcher:
         # Crystal system lives under a sub-document, so it is applied locally.
         assert fetcher.crystal_system == {"Cubic"}
 
-    def test_empty_element_list_is_refused(self, monkeypatch):
+    def test_no_elements_means_the_whole_database(self, monkeypatch):
+        """
+        This used to raise. It now selects every material the index says has a
+        charge density, which is what ``--all`` asks for — the element list
+        stops being a requirement and becomes one more filter.
+
+        The *command line* still refuses a bare invocation
+        (:func:`~poraque.data.materials_project.main`): omitting a flag by
+        accident should not silently become a multi-terabyte question.
+        """
         monkeypatch.setenv("MP_API_KEY", "not-a-real-key")
-        with pytest.raises(ValueError, match="at least one element"):
-            MPDataFetcher([])
+        fetcher = MPDataFetcher([])
+
+        assert fetcher.elements == []
+        assert fetcher.label == "all elements"
+        assert fetcher.chemical_systems == []
 
     def test_api_key_precedence(self, monkeypatch):
         monkeypatch.setenv("MP_API_KEY", "from-env")

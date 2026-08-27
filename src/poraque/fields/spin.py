@@ -67,6 +67,15 @@ def is_spin_polarized(path):
     -------
     bool
     """
+    from .hdf5 import is_hdf5_path
+
+    if is_hdf5_path(path):
+        # The store answers this from its own key list, without reading a
+        # value: a magnetisation channel is a `<name>_extra0` dataset.
+        from .hdf5 import is_spin_polarized as hdf5_is_spin_polarized
+
+        return hdf5_is_spin_polarized(path)
+
     _, _, extra = read_volumetric(path, read_all=True)
     return len(extra) >= 1
 

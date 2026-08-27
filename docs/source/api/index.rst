@@ -51,6 +51,12 @@ Ingestion
 .. automodule:: poraque.fields.io.compressed
    :members:
 
+Storage
+-------
+
+.. automodule:: poraque.fields.hdf5
+   :members:
+
 Data sources
 ------------
 

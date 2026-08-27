@@ -340,6 +340,11 @@ def build_cache(config, log):
         # provenance on the way in. `null` means the defaults, so the gate is
         # on for a config that says nothing about it -- which is the point.
         tau_validation=data.tau_validation,
+        # One chunked fields.h5 per material instead of three text files, when
+        # asked for. Both are in the cache fingerprint, so changing either
+        # rebuilds rather than mixing layouts in one directory.
+        storage=data.storage, compression=data.compression,
+        compression_level=data.compression_level,
     )
 
     # The PAW augmentation records travel with the weights, so a prediction can

@@ -101,10 +101,50 @@ TAU_MANIFEST_FILENAME = MANIFEST_FILENAME
 CACHE_FINGERPRINT_FILENAME = "cache_fingerprint.json"
 
 
+#: Filename of a material's HDF5 field store inside a cache directory.
+HDF5_FILENAME = "fields.h5"
+
+
+def cached_paths(destination, fields, storage="files"):
+    """
+    Where one material's fields live inside its cache directory.
+
+    Two storage layouts, one function, so nothing downstream has to branch on
+    the format: ``files`` puts each field in its own ``CHGCAR``-format text
+    file, ``hdf5`` puts all of them in one ``fields.h5`` addressed as
+    ``fields.h5::CHGCAR``. Both spellings are paths every Poraquê reader
+    accepts — see :mod:`poraque.fields.hdf5` for why the dispatch lives that
+    deep.
+
+    Parameters
+    ----------
+    destination : str
+        The material's directory inside the cache.
+    fields : sequence of str
+    storage : str, optional
+        ``"files"`` or ``"hdf5"``.
+
+    Returns
+    -------
+    dict
+        ``{field: path}``.
+    """
+    if storage == "hdf5":
+        from ..fields.hdf5 import join_target
+
+        store = os.path.join(destination, HDF5_FILENAME)
+        return {name: join_target(store, name) for name in fields}
+    if storage != "files":
+        raise ValueError(
+            f"Unknown storage {storage!r}; expected 'files' or 'hdf5'.")
+    return {name: os.path.join(destination, name) for name in fields}
+
+
 def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
                       charges=None, potcar_dir=None, sigma=None,
                       gaussian_blur=None, blur_method="spectral", pattern=None,
                       code="auto", spin=False, limit=None, tau_validation=None,
+                      storage="files", compression=None, compression_level=4,
                       log=None):
     r"""
     Downsample every material under ``paths`` into one prepared cache.
@@ -149,6 +189,19 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
     limit : int, optional
         Build at most this many materials, smallest source file first. Useful
         for an end-to-end check against a large archive.
+    storage : str, optional
+        ``"files"`` (a ``CHGCAR``-format text file per field, the default and
+        what every existing cache is) or ``"hdf5"`` (one chunked ``fields.h5``
+        per material). The stored numbers are identical either way; HDF5 is
+        binary, so it is smaller, exact to a float64 ulp rather than to the
+        text format's eleven digits, and loads without parsing millions of
+        strings.
+    compression : str, optional
+        ``"gzip"``, ``"lzf"`` or ``None``. HDF5 storage only — a text cache's
+        encoding is the format. See
+        :func:`poraque.fields.hdf5.compression_options`.
+    compression_level : int, optional
+        Gzip level 0-9.
     tau_validation : TauValidationConfig or dict, optional
         Settings for the kinetic-energy-density gate; the defaults when
         omitted. Pass ``{"enabled": False}`` to build without it — which is
@@ -199,10 +252,22 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
         emit(f"  limited to the {len(records)} smallest of the available "
              f"materials")
 
+    if storage not in ("files", "hdf5"):
+        raise ValueError(
+            f"Unknown data.storage {storage!r}; expected 'files' or 'hdf5'.")
+    if compression and storage != "hdf5":
+        raise ValueError(
+            f"compression={compression!r} was requested with storage="
+            f"{storage!r}. Compression is an HDF5 dataset filter; a text cache "
+            f"has no equivalent, and honouring the flag silently by ignoring "
+            f"it would report a saving that never happened. Set "
+            f"data.storage: hdf5, or drop the compression setting.")
+
     cache = str(cache)
     os.makedirs(cache, exist_ok=True)
     _check_fingerprint(cache, _fingerprint(paths, resolution, formats, fields,
-                                           options, spin))
+                                           options, spin, storage, compression,
+                                           compression_level))
 
     validation = TauValidationConfig.from_mapping(tau_validation)
     manifest = TauValidationManifest.load(cache)
@@ -214,7 +279,8 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
         for record in records:
             entry = _build_one(record, cache, resolution, fields, spin, emit,
                                summary.get(record.identifier), validation,
-                               manifest)
+                               manifest, storage, compression,
+                               compression_level)
             summary[record.identifier] = entry
             table.row(record.identifier, entry)
     finally:
@@ -315,7 +381,8 @@ def _range_text(bounds):
     return f"{low:.3g} .. {high:.3g}"
 
 
-def _fingerprint(paths, resolution, formats, fields, options, spin):
+def _fingerprint(paths, resolution, formats, fields, options, spin,
+                 storage="files", compression=None, compression_level=4):
     """Everything that decides what a cache directory's files contain."""
     potcar_dir = options.get("potcar_dir")
     return {
@@ -331,6 +398,15 @@ def _fingerprint(paths, resolution, formats, fields, options, spin):
         "blur_method": options.get("blur_method"),
         "pattern": options.get("pattern"),
         "code": options.get("code"),
+        # Storage is in the fingerprint because the two layouts are not
+        # interchangeable on disk: half a cache as text and half as HDF5 would
+        # load, and every reuse check would then be answering about the wrong
+        # files. The codec is here for the same reason a `cache_tag` exists --
+        # so a cache built at gzip-9 is not silently extended at lzf.
+        "storage": storage,
+        "compression": (compression or None) and str(compression),
+        "compression_level": (int(compression_level)
+                              if compression else None),
     }
 
 
@@ -406,7 +482,8 @@ def _write_summary(cache, summary):
 
 
 def _build_one(record, cache, resolution, fields, spin, emit, remembered=None,
-               validation=None, manifest=None):
+               validation=None, manifest=None, storage="files",
+               compression=None, compression_level=4):
     """
     Downsample and write one material, unless it is already there.
 
@@ -420,10 +497,11 @@ def _build_one(record, cache, resolution, fields, spin, emit, remembered=None,
     source = record.source
     wanted = [name for name in fields if name in source.provides(record)]
     destination = os.path.join(cache, record.identifier)
-    expected = [os.path.join(destination, name) for name in wanted]
+    targets = cached_paths(destination, wanted, storage)
 
-    if expected and all(os.path.exists(path) for path in expected):
-        return _describe_cached(destination, wanted, record, remembered)
+    if targets and _all_present(targets, storage):
+        return _describe_cached(destination, wanted, record, remembered,
+                                storage)
 
     started = time.time()
     native = source.grid(record)
@@ -461,7 +539,15 @@ def _build_one(record, cache, resolution, fields, spin, emit, remembered=None,
             reduced_field = _resample(field, reduced.shape, reduced)
         else:
             reduced_field = field
-        reduced_field.write(os.path.join(destination, name))
+
+        if storage == "hdf5":
+            from ..fields.hdf5 import write_fields
+
+            write_fields(os.path.join(destination, HDF5_FILENAME),
+                         {name: reduced_field}, compression=compression,
+                         level=compression_level)
+        else:
+            reduced_field.write(targets[name])
 
         data = reduced_field.data
         ranges[name] = [float(data.min()), float(data.max())]
@@ -535,7 +621,33 @@ def _validate_tau_field(record, tau, native_fields, grid, source, spin,
     return entry
 
 
-def _describe_cached(destination, wanted, record, remembered):
+def _all_present(targets, storage):
+    """
+    Whether every field this material needs is already stored.
+
+    For a text cache that is one ``os.path.exists`` per field. For HDF5 the
+    fields share a file, so existence of the file says nothing about which
+    datasets are in it — an interrupted build leaves a store with a ``CHGCAR``
+    and no ``TAUCAR``, and treating that as complete would skip the material
+    forever.
+    """
+    if storage != "hdf5":
+        return all(os.path.exists(path) for path in targets.values())
+
+    from ..fields.hdf5 import field_names, split_target
+
+    store = split_target(next(iter(targets.values())))[0]
+    if not os.path.exists(store):
+        return False
+    try:
+        present = set(field_names(store))
+    except (OSError, ValueError):
+        return False
+    return all(split_target(path)[1] in present for path in targets.values())
+
+
+def _describe_cached(destination, wanted, record, remembered,
+                     storage="files"):
     """
     Fill a table row for a material that is already cached.
 
@@ -550,9 +662,10 @@ def _describe_cached(destination, wanted, record, remembered):
 
     from .sources import FIELD_CLASSES
 
+    paths = cached_paths(destination, wanted, storage)
     ranges, shape = {}, None
     for name in wanted:
-        path = os.path.join(destination, name)
+        path = paths[name]
         grid = FieldGrid.from_file(path)
         shape = shape or list(grid.shape)
         data = FIELD_CLASSES[name].read(path, grid=grid).data

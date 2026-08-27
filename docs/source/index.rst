@@ -1,3 +1,46 @@
+.. raw:: html
+
+   <div style="text-align: center; margin-bottom: 24px;">
+
+     <!-- BADGES
+          The same set, the same order and the same for-the-badge style as
+          README.md's own row. Two files, one row, kept in step by hand --
+          which is exactly the pair that drifts, so
+          tests/test_badges.py asserts they have not.
+
+          No logo here: furo already puts one in the sidebar
+          (conf.py's light_logo/dark_logo), and a second copy in the body
+          would be the same image twice on the same screen.
+
+          Skipped deliberately, rather than invented: a CI badge (this
+          repository has no .github/workflows and no CI service) and a
+          coverage badge (no coverage service is configured). -->
+     <p>
+       <a href="https://pypi.org/project/poraque/">
+         <img src="https://img.shields.io/pypi/v/poraque?style=for-the-badge&amp;logo=pypi&amp;logoColor=white" alt="pypi">
+       </a>
+       <a href="https://pypi.org/project/poraque/">
+         <img src="https://img.shields.io/pypi/pyversions/poraque?style=for-the-badge&amp;logo=python&amp;logoColor=white" alt="python">
+       </a>
+       <a href="https://pytorch.org/">
+         <img src="https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C?style=for-the-badge&amp;logo=pytorch&amp;logoColor=white" alt="pytorch">
+       </a>
+       <a href="https://wiki.fysik.dtu.dk/ase/">
+         <img src="https://img.shields.io/badge/ASE-3.2x-4B8BBE?style=for-the-badge" alt="ase">
+       </a>
+       <a href="https://poraque.readthedocs.io/">
+         <img src="https://img.shields.io/readthedocs/poraque?style=for-the-badge&amp;logo=readthedocs&amp;logoColor=white&amp;label=Manual" alt="on-line manual">
+       </a>
+       <a href="https://github.com/seixas-research/poraque/blob/main/LICENSE">
+         <img src="https://img.shields.io/github/license/seixas-research/poraque?color=green&amp;style=for-the-badge" alt="license: mit">
+       </a>
+       <a href="https://github.com/seixas-research/poraque">
+         <img src="https://img.shields.io/badge/GitHub-poraque-181717?style=for-the-badge&amp;logo=github" alt="github">
+       </a>
+     </p>
+
+   </div>
+
 Poraquê
 =======
 

@@ -127,6 +127,26 @@ def _is_density_file(entry, prefixes=BULK_PREFIXES):
     return not os.path.splitext(stem)[1]
 
 
+def _hdf5_store(directory):
+    """
+    The path of a material's HDF5 field store, or ``None``.
+
+    Any ``.h5``/``.hdf5`` in the directory counts, not only ``fields.h5``: a
+    cache is often produced once and renamed, and refusing to read
+    ``mp-124.h5`` because of its name would be a rule with no reason behind it.
+    A directory with several is served by the first in sorted order, which is
+    deterministic and is the only property that matters when it happens.
+    """
+    from ..fields.hdf5 import HDF5_SUFFIXES
+
+    if not os.path.isdir(directory):
+        return None
+    for entry in sorted(os.listdir(directory)):
+        if entry.lower().endswith(HDF5_SUFFIXES):
+            return os.path.join(directory, entry)
+    return None
+
+
 def _is_calculation_directory(path):
     """Whether ``path`` holds the input files of a DFT run, in any code."""
     return any(os.path.exists(os.path.join(path, name))
@@ -809,6 +829,20 @@ class PreparedFieldsSource(MaterialSource):
     absence of a ``POSCAR``: a directory with one is a calculation whose
     potential must be rebuilt, a directory without one is a prepared field set
     to be read as it stands.
+
+    **Either storage layout.** The same cache can keep its fields as
+    ``CHGCAR``-format text files or as one chunked, optionally compressed
+    ``fields.h5`` per material::
+
+        cache/res32/mp-124/{EXTCAR,CHGCAR}          # storage: files
+        cache/res32/mp-124/fields.h5                # storage: hdf5
+
+    Only :meth:`discover` knows the difference, and only far enough to write
+    ``…/fields.h5::CHGCAR`` into the record instead of ``…/CHGCAR``. Every
+    reader below that point takes both spellings
+    (:mod:`poraque.fields.hdf5`), so :meth:`read` is one method and not two,
+    and a cache holding some materials in each layout works without anyone
+    having intended it to.
     """
 
     name = "prepared"
@@ -830,17 +864,25 @@ class PreparedFieldsSource(MaterialSource):
             if any(os.path.exists(os.path.join(child, name))
                    for name in FIELD_CLASSES):
                 return True
+            if _hdf5_store(child):
+                return True
         return False
 
     def discover(self):
         records = []
         for child in _subdirectories(self.root):
-            files = {name: os.path.join(child, name) for name in FIELD_CLASSES
-                     if os.path.exists(os.path.join(child, name))}
+            files = self._fields_in(child)
             if "CHGCAR" in files:
                 records.append(self._record(os.path.basename(child), child,
                                             files))
         return records
+
+    @staticmethod
+    def _fields_in(directory):
+        """``{field: path}`` for one material, in whichever layout it uses."""
+        from ..ml.data import prepared_fields
+
+        return prepared_fields(directory, FIELD_CLASSES)
 
     def provides(self, record):
         return tuple(name for name in FIELD_CLASSES if name in record.files)
