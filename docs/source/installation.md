@@ -15,7 +15,7 @@ This pulls in NumPy, SciPy, ASE, pandas, Matplotlib and PyTorch.
 
 ## Console commands
 
-Installing also registers three commands, which run from **any** directory once
+Installing also registers the console commands, which run from **any** directory once
 the environment is active — no path to a script, no `cd` into the repository:
 
 | Command | Does | Equivalent |
@@ -23,6 +23,7 @@ the environment is active — no path to a script, no `cd` into the repository:
 | `poraque-train` | trains the operators | `python scripts/poraque_train.py` |
 | `poraque-inference` | predicts a new structure | `python scripts/poraque_inference.py` |
 | `poraque-committee` | ranks structures by ensemble disagreement | `python scripts/poraque_committee.py` |
+| `poraque-vasp` | writes VASP inputs that read a prediction back — `bands`, `dos`, `energy` | `python scripts/poraque_vasp.py` |
 
 Each is the `main()` of the corresponding script, so the two forms take
 identical arguments and behave identically. Relative paths in a configuration
@@ -33,6 +34,7 @@ directory**, so run these from the project root, or give absolute paths.
 poraque-train --help
 poraque-inference --help
 poraque-committee --help
+poraque-vasp --help
 ```
 
 If the commands are not found after an upgrade, re-run `pip install -e .`:

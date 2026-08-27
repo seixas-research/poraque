@@ -39,12 +39,13 @@ pip install -e .
 ```
 
 Python 3.11 or newer. Symbolic distillation is an optional extra:
-`pip install "poraque[symbolic]"`. Installing registers five console commands —
-`poraque-train`, `poraque-inference`, `poraque-committee`,
-`poraque-active-learning` and `poraque-mp` — which run from any directory once
-the environment is active. The first four are the `main()` of the script of the
-same name under `scripts/`, so `python scripts/poraque_train.py` is equivalent
-to `poraque-train` and needs nothing installed.
+`pip install "poraque[symbolic]"`. Installing registers seven console commands
+— `poraque-train`, `poraque-inference`, `poraque-committee`,
+`poraque-active-learning`, `poraque-atoms`, `poraque-vasp` and `poraque-mp` —
+which run from any directory once the environment is active. All but the last
+are the `main()` of the script of the same name under `scripts/`, so
+`python scripts/poraque_train.py` is equivalent to `poraque-train` and needs
+nothing installed.
 
 ### Faster CPU inference (optional)
 

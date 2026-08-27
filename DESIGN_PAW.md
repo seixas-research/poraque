@@ -352,9 +352,15 @@ Fortran runtime.
 
 ### 3.5 (e) Band-structure decks
 
-`poraque-bands` writes `INCAR` (`ICHARG = 11`) and a line-mode `KPOINTS` beside
-a predicted `CHGCAR`, plus the `POSCAR` taken from the density's own header. It
-does not write a `POTCAR` (cannot be redistributed) and does not run VASP.
+`poraque-vasp bands` writes `INCAR` (`ICHARG = 11`) and a line-mode `KPOINTS`
+beside a predicted `CHGCAR`, plus the `POSCAR` taken from the density's own
+header. It does not write a `POTCAR` (cannot be redistributed) and does not run
+VASP. Since 2026-08-27 the same command also writes the two other decks that
+read a prediction back — `poraque-vasp dos` (the same `ICHARG = 11`
+diagonalization on an automatic Γ-centred mesh with `ISMEAR = -5`) and
+`poraque-vasp energy` (that mesh's total energy, which for `ICHARG = 11` is the
+Harris–Foulkes functional at the predicted density rather than a variational SCF
+energy, and the deck says so).
 
 ---
 
@@ -408,7 +414,8 @@ only one variant is present, which is the normal case.
    measures a different coordination, phase or element.
 5. **Whether `ICHARG = 11` on a predicted density gives a usable band
    structure at all** — the actual question. Runs happen outside this session;
-   `poraque-bands` produces the inputs.
+   `poraque-vasp bands` produces the inputs, and `poraque-vasp dos` / `energy`
+   ask the same question of the two other observables.
 6. **Whether δ-mode helps.** Argued from the literature and from dynamic-range
    reasoning, not measured here. The ablation is specified in `FUTURE.md`.
 

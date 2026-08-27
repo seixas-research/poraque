@@ -9,8 +9,8 @@
 r"""
 The VASP input decks Poraquê asks for, as text rather than as folklore.
 
-Two decks matter to this project, and both had been living in a shell history
-rather than in the repository:
+Two kinds of deck matter to this project, and both had been living in a shell
+history rather than in the repository:
 
 **Generating training data** (:func:`tau_incar`). A ``CHGCAR`` comes out of any
 run; a ``TAUCAR`` does not. It needs ``LTAU = .TRUE.`` — whose default is
@@ -21,11 +21,24 @@ every kinetic energy density it produced had to be thrown away. See
 ``DELETIONS.md``. Having the correct deck in the source tree, next to the gate
 that enforces it, is the cheapest possible guard against a repeat.
 
-**Consuming a prediction** (:func:`band_structure_incar`). A predicted density
-is only useful to VASP if VASP will read it, and the way to make it read one
-without re-converging it is ``ICHARG = 11``: one non-self-consistent
-diagonalization at fixed density, which is exactly the band structure a
-predicted ``CHGCAR`` is wanted for.
+**Consuming a prediction** (:func:`band_structure_incar`, :func:`dos_incar`,
+:func:`total_energy_incar`). A predicted density is only useful to VASP if VASP
+will read it, and the way to make it read one without re-converging it is
+``ICHARG = 11``: one non-self-consistent diagonalization at fixed density.
+Three things are worth asking of that single diagonalization, and they differ
+by remarkably little — the eigenvalues along a **path** are a band structure,
+the same eigenvalues integrated over a **mesh** are a density of states, and
+the energy that falls out of the same mesh is a **total energy**. The
+band/DOS distinction is therefore mostly a ``KPOINTS`` distinction
+(:func:`line_mode_kpoints` versus :func:`automatic_kpoints`), which is exactly
+why the two files are built by two functions rather than by one with a flag.
+
+The total energy is the one case where the honest answer needs a caveat rather
+than a tag: what ``ICHARG = 11`` prints is the Harris–Foulkes functional
+evaluated at the predicted density, not a variational SCF energy.
+:func:`total_energy_incar` says so in the deck itself, and offers
+``ICHARG = 1`` — converge *from* the prediction — as the other question worth
+asking.
 
 Nothing here runs VASP. These are files to be written next to a structure and
 handed to a queue.
@@ -244,7 +257,7 @@ def line_mode_kpoints(path, points_per_segment=40, labels=None,
 def write_band_structure_deck(directory, chgcar=None, structure=None,
                               kpath=None, labels=None, encut=450,
                               points_per_segment=40, system="poraque",
-                              nbands=None, extra=None):
+                              ispin=1, nbands=None, extra=None):
     """
     Write ``INCAR`` and ``KPOINTS`` for an ``ICHARG = 11`` run.
 
@@ -273,6 +286,7 @@ def write_band_structure_deck(directory, chgcar=None, structure=None,
         Must match the density's run.
     points_per_segment : int, optional
     system : str, optional
+    ispin : int, optional
     nbands : int, optional
     extra : dict, optional
 
@@ -281,44 +295,392 @@ def write_band_structure_deck(directory, chgcar=None, structure=None,
     dict
         ``{name: path}`` of what was written.
     """
-    import shutil
-
-    os.makedirs(directory, exist_ok=True)
-    written = {}
-
     if kpath is None:
         kpath, labels = fcc_band_path()
 
-    incar = os.path.join(directory, "INCAR")
-    with open(incar, "w") as handle:
-        handle.write(band_structure_incar(system=system, encut=encut,
-                                          nbands=nbands, extra=extra))
-    written["INCAR"] = incar
+    structure = _resolve_structure(structure, chgcar)
+    incar = band_structure_incar(system=system, encut=encut, ispin=ispin,
+                                 nbands=nbands, extra=extra)
+    kpoints = line_mode_kpoints(kpath, points_per_segment, labels=labels,
+                                comment=f"{system} band structure")
+    return _write_deck(directory, incar, kpoints, chgcar, structure)
 
-    kpoints = os.path.join(directory, "KPOINTS")
-    with open(kpoints, "w") as handle:
-        handle.write(line_mode_kpoints(kpath, points_per_segment,
-                                       labels=labels,
-                                       comment=f"{system} band structure"))
-    written["KPOINTS"] = kpoints
 
-    if structure is None and chgcar is not None:
-        from .volumetric import read_structure_header
+def dos_incar(system="poraque", encut=450, ispin=1, nedos=3001, lorbit=11,
+              ismear=-5, sigma=0.05, emin=None, emax=None, prec="Accurate",
+              extra=None):
+    r"""
+    An ``INCAR`` for a density of states at fixed density.
 
-        structure = read_structure_header(chgcar)
-    if structure is not None:
-        poscar = os.path.join(directory, "POSCAR")
-        with open(poscar, "w") as handle:
-            handle.write(structure.to_string(direct=True))
-        written["POSCAR"] = poscar
+    The same ``ICHARG = 11`` trick the band structure uses — read ``CHGCAR``,
+    hold it fixed, diagonalize once — asking for a different projection of the
+    same eigenvalues. Only three tags separate this deck from
+    :func:`band_structure_incar`, and each earns its place:
 
-    if chgcar is not None:
-        destination = os.path.join(directory, "CHGCAR")
-        if os.path.abspath(chgcar) != os.path.abspath(destination):
-            shutil.copyfile(chgcar, destination)
-        written["CHGCAR"] = destination
+    ``ISMEAR = -5`` is the tetrahedron method with Blöchl corrections, which is
+    what makes a DOS smooth without smearing structure away. It needs a
+    **mesh**, not a line: at least four k-points, and in practice a dense
+    Γ-centred grid. This is why the DOS mode writes
+    :func:`automatic_kpoints` and the band mode writes
+    :func:`line_mode_kpoints` — the two are not interchangeable.
 
-    return written
+    ``NEDOS`` is the number of energy points written to ``DOSCAR``. VASP's
+    default of 301 is coarse enough to hide the features a DOS is being
+    computed to look at.
+
+    ``LORBIT = 11`` adds the site- and l-projected weights, which is the part
+    that lets a d-band centre be read off a transition metal.
+
+    Parameters
+    ----------
+    system : str, optional
+    encut : float, optional
+        **Must match the density's own run**, exactly as for the band deck.
+    ispin : int, optional
+    nedos : int, optional
+        Energy points in ``DOSCAR``.
+    lorbit : int, optional
+        ``LORBIT``; 11 gives the projected DOS.
+    ismear : int, optional
+        ``ISMEAR``. ``-5`` (tetrahedron) is the default and the right one for a
+        DOS on a mesh; pass ``0`` for Gaussian smearing when the mesh is too
+        small for tetrahedra.
+    sigma : float, optional
+        ``SIGMA``. Ignored by VASP when ``ISMEAR = -5``, and written anyway so
+        that switching ``ISMEAR`` does not need a second edit.
+    emin, emax : float, optional
+        ``EMIN`` / ``EMAX``, the DOS window. Left to VASP when not given.
+    prec : str, optional
+    extra : dict, optional
+        Additional tags, appended verbatim and overriding defaults.
+
+    Returns
+    -------
+    str
+    """
+    tags = [
+        ("SYSTEM", system),
+        ("PREC", prec),
+        ("ENCUT", encut),
+        ("ISPIN", ispin),
+        ("ICHARG", 11),
+        ("ISTART", 0),
+        ("ALGO", "Normal"),
+        ("EDIFF", "1E-6"),
+        ("NELM", 200),
+        ("ISMEAR", ismear),
+        ("SIGMA", sigma),
+        ("NEDOS", int(nedos)),
+        ("NSW", 0),
+        ("IBRION", -1),
+        ("LORBIT", lorbit),
+        ("LMAXMIX", 4),
+        ("LCHARG", ".FALSE."),
+        ("LWAVE", ".FALSE."),
+    ]
+    if emin is not None:
+        tags.append(("EMIN", emin))
+    if emax is not None:
+        tags.append(("EMAX", emax))
+
+    comments = {
+        "ICHARG": "read CHGCAR and keep it fixed: one non-self-consistent "
+                  "diagonalization",
+        "ISTART": "do not read a WAVECAR -- there is none for a predicted "
+                  "density",
+        "ENCUT": "MUST match the run the density's FFT grid came from",
+        "NEDOS": "energy points in DOSCAR; VASP's default 301 hides structure",
+        "LORBIT": "site- and l-projected DOS",
+        "LMAXMIX": "must match the CHGCAR's own one-centre occupancies",
+        "LCHARG": "the density is an input here, not an output",
+    }
+    comments.update(_smearing_comments(ismear))
+    body = _render(tags, comments, extra)
+    return _BANNER.format(purpose="ICHARG = 11 density of states",
+                          version=REQUIRED_VASP_VERSION) + "\n" + body
+
+
+def total_energy_incar(system="poraque", encut=450, ispin=1,
+                       selfconsistent=False, ismear=-5, sigma=0.05,
+                       ediff=1e-6, prec="Accurate", extra=None):
+    r"""
+    An ``INCAR`` for a total energy from a predicted density.
+
+    Two things can be meant by "the energy of this density", and they are not
+    the same number, so the deck says which one it is asking for.
+
+    **Non-self-consistent** (the default, ``ICHARG = 11``): the density is held
+    fixed and the Hamiltonian is diagonalized once, exactly as for the bands.
+    The ``TOTEN`` VASP then prints is the Harris–Foulkes functional evaluated
+    at *that* density — a first-order estimate, correct to second order in the
+    density error, and **not** a variational SCF energy. It is the cheapest
+    honest way to ask "what does VASP make of the predicted density", and it is
+    the number to quote when the point is that no SCF cycle ran.
+
+    **Self-consistent restart** (``selfconsistent=True``, ``ICHARG = 1``): the
+    prediction is read as the *starting* density and converged from there. The
+    result is an ordinary variational total energy; what the prediction buys is
+    the iteration count, which is its own measurement and arguably the more
+    interesting one.
+
+    Parameters
+    ----------
+    system : str, optional
+    encut : float, optional
+        **Must match the density's own run.**
+    ispin : int, optional
+    selfconsistent : bool, optional
+        ``ICHARG = 1`` and a converged energy instead of ``ICHARG = 11`` and a
+        single diagonalization.
+    ismear : int, optional
+        ``ISMEAR``. ``-5`` (tetrahedron) is the accurate choice for a total
+        energy on a mesh; use ``1`` with a larger ``SIGMA`` for a metal being
+        relaxed, which is not what this deck is for (``NSW = 0``).
+    sigma : float, optional
+    ediff : float, optional
+        Electronic convergence.
+    prec : str, optional
+    extra : dict, optional
+
+    Returns
+    -------
+    str
+    """
+    tags = [
+        ("SYSTEM", system),
+        ("PREC", prec),
+        ("ENCUT", encut),
+        ("ISPIN", ispin),
+        ("ICHARG", 1 if selfconsistent else 11),
+        ("ISTART", 0),
+        ("ALGO", "Normal"),
+        ("EDIFF", f"{ediff:g}"),
+        ("NELM", 500 if selfconsistent else 200),
+        ("NELMIN", 4),
+        ("ISMEAR", ismear),
+        ("SIGMA", sigma),
+        ("NSW", 0),
+        ("IBRION", -1),
+        ("LASPH", ".TRUE."),
+        ("LMAXMIX", 4),
+        ("LCHARG", ".TRUE." if selfconsistent else ".FALSE."),
+        ("LWAVE", ".FALSE."),
+    ]
+    if selfconsistent:
+        charge = ("read CHGCAR as the *starting* density and converge it: a "
+                  "variational total energy, reached in fewer steps if the "
+                  "prediction is good")
+        density_out = ("write the converged density, so it can be compared "
+                       "with the prediction that seeded it")
+    else:
+        charge = ("read CHGCAR and keep it fixed: TOTEN is then the "
+                  "Harris-Foulkes functional at this density, NOT a "
+                  "variational SCF energy")
+        density_out = "the density is an input here, not an output"
+
+    comments = {
+        "ICHARG": charge,
+        "ISTART": "do not read a WAVECAR -- there is none for a predicted "
+                  "density",
+        "ENCUT": "MUST match the run the density's FFT grid came from",
+        "LASPH": "aspherical gradient corrections -- on for d/f elements",
+        "LMAXMIX": "must match the CHGCAR's own one-centre occupancies",
+        "LCHARG": density_out,
+    }
+    comments.update(_smearing_comments(ismear))
+    body = _render(tags, comments, extra)
+    purpose = ("ICHARG = 1 total energy" if selfconsistent
+               else "ICHARG = 11 total energy")
+    return _BANNER.format(purpose=purpose,
+                          version=REQUIRED_VASP_VERSION) + "\n" + body
+
+
+def automatic_kpoints(mesh, shift=(0.0, 0.0, 0.0), gamma=True,
+                      comment="automatic mesh"):
+    r"""
+    A ``KPOINTS`` file holding an automatic Γ-centred (or Monkhorst-Pack) mesh.
+
+    This is the counterpart of :func:`line_mode_kpoints`: a *mesh* samples the
+    Brillouin zone for a quantity that integrates over it — a DOS, a total
+    energy — where a *line* traces a path for a quantity that is plotted along
+    one. Handing a line-mode file to a tetrahedron integration, or a mesh to a
+    band-structure plot, is wrong in both directions.
+
+    Parameters
+    ----------
+    mesh : sequence of int
+        Subdivisions along each reciprocal axis; three positive integers.
+    shift : sequence of float, optional
+        Mesh shift. ``(0, 0, 0)`` with ``gamma=True`` is the Γ-centred grid.
+    gamma : bool, optional
+        Γ-centred when true, Monkhorst-Pack when false. Γ-centred is the safe
+        default: it respects the lattice symmetry for hexagonal cells, where a
+        Monkhorst-Pack grid does not.
+    comment : str, optional
+
+    Returns
+    -------
+    str
+
+    Examples
+    --------
+    >>> print(automatic_kpoints((8, 8, 8), comment="Pt dos"), end="")
+    Pt dos
+    0
+    Gamma
+      8  8  8
+      0  0  0
+    """
+    values = [int(n) for n in mesh]
+    if len(values) != 3:
+        raise ValueError(f"A k-mesh needs three subdivisions, got {mesh!r}.")
+    if any(n < 1 for n in values):
+        raise ValueError(f"Every k-mesh subdivision must be >= 1, got {mesh!r}.")
+
+    lines = [comment, "0", "Gamma" if gamma else "Monkhorst-Pack",
+             "  {:d}  {:d}  {:d}".format(*values),
+             "  {:g}  {:g}  {:g}".format(*[float(s) for s in shift])]
+    return "\n".join(lines) + "\n"
+
+
+def kpoint_mesh_from_spacing(cell, spacing=0.25):
+    r"""
+    VASP's own ``KSPACING`` rule, applied here rather than left to VASP.
+
+    .. math::
+
+        N_i = \max\left(1,\ \left\lceil
+              \frac{|\mathbf b_i|}{\text{spacing}} \right\rceil\right)
+
+    with :math:`\mathbf b_i` the reciprocal lattice vectors in the
+    :math:`2\pi`-included convention, so ``spacing`` is in Å⁻¹ and means the
+    same thing VASP's ``KSPACING`` tag means (whose default is 0.5).
+
+    Writing an explicit ``KPOINTS`` rather than setting ``KSPACING`` is
+    deliberate: the mesh then appears in the deck, where it can be read, and
+    does not change silently with the cell.
+
+    A vacuum direction takes care of itself — a 20 Å slab axis has a short
+    :math:`\mathbf b`, so the rule returns 1 there without being told the cell
+    is a slab.
+
+    Parameters
+    ----------
+    cell : array_like or Poscar
+        A 3×3 lattice in Å, or anything carrying one as ``.cell``.
+    spacing : float, optional
+        Target k-point spacing in Å⁻¹. Smaller is denser.
+
+    Returns
+    -------
+    tuple of int
+        ``(n1, n2, n3)``.
+    """
+    import numpy as np
+
+    lattice = np.asarray(getattr(cell, "cell", cell), dtype=float)
+    if lattice.shape != (3, 3):
+        raise ValueError(f"Expected a 3x3 cell, got shape {lattice.shape}.")
+    if spacing <= 0:
+        raise ValueError(f"k-point spacing must be positive, got {spacing!r}.")
+
+    reciprocal = 2.0 * np.pi * np.linalg.inv(lattice).T
+    lengths = np.linalg.norm(reciprocal, axis=1)
+    return tuple(int(max(1, np.ceil(length / spacing - 1e-9)))
+                 for length in lengths)
+
+
+def write_dos_deck(directory, chgcar=None, structure=None, mesh=None,
+                   kspacing=0.25, shift=(0.0, 0.0, 0.0), gamma=True,
+                   encut=450, ispin=1, nedos=3001, lorbit=11, ismear=-5,
+                   sigma=0.05, emin=None, emax=None, system="poraque",
+                   extra=None):
+    """
+    Write ``INCAR`` and ``KPOINTS`` for an ``ICHARG = 11`` density of states.
+
+    Same contract as :func:`write_band_structure_deck` — no ``POTCAR``, no VASP
+    run — with a k-point *mesh* in place of a path.
+
+    Parameters
+    ----------
+    directory : str
+        Destination; created if absent.
+    chgcar : str, optional
+        Copied in as ``CHGCAR`` when given.
+    structure : Poscar, optional
+        Written as ``POSCAR``; taken from the density's own header when omitted
+        and ``chgcar`` is given.
+    mesh : sequence of int, optional
+        Explicit subdivisions. Derived from ``kspacing`` and the cell when not
+        given, which needs a structure from one source or the other.
+    kspacing : float, optional
+        Target spacing in Å⁻¹ when ``mesh`` is not given.
+    shift : sequence of float, optional
+    gamma : bool, optional
+    encut : float, optional
+        Must match the density's run.
+    ispin, nedos, lorbit, ismear, sigma, emin, emax : optional
+        Passed to :func:`dos_incar`.
+    system : str, optional
+    extra : dict, optional
+
+    Returns
+    -------
+    dict
+        ``{name: path}`` of what was written.
+    """
+    structure = _resolve_structure(structure, chgcar)
+    mesh = _resolve_mesh(mesh, structure, kspacing)
+    incar = dos_incar(system=system, encut=encut, ispin=ispin, nedos=nedos,
+                      lorbit=lorbit, ismear=ismear, sigma=sigma, emin=emin,
+                      emax=emax, extra=extra)
+    kpoints = automatic_kpoints(mesh, shift=shift, gamma=gamma,
+                                comment=f"{system} density of states")
+    return _write_deck(directory, incar, kpoints, chgcar, structure)
+
+
+def write_total_energy_deck(directory, chgcar=None, structure=None, mesh=None,
+                            kspacing=0.30, shift=(0.0, 0.0, 0.0), gamma=True,
+                            encut=450, ispin=1, selfconsistent=False,
+                            ismear=-5, sigma=0.05, ediff=1e-6,
+                            system="poraque", extra=None):
+    """
+    Write ``INCAR`` and ``KPOINTS`` for a total energy from a predicted density.
+
+    Parameters
+    ----------
+    directory : str
+        Destination; created if absent.
+    chgcar : str, optional
+    structure : Poscar, optional
+    mesh : sequence of int, optional
+        Explicit subdivisions; derived from ``kspacing`` when absent.
+    kspacing : float, optional
+        Target spacing in Å⁻¹. Looser than the DOS default: an integrated
+        energy converges on a coarser mesh than a resolved DOS does.
+    shift : sequence of float, optional
+    gamma : bool, optional
+    encut : float, optional
+    ispin : int, optional
+    selfconsistent : bool, optional
+        See :func:`total_energy_incar` for what the two modes actually compute.
+    ismear, sigma, ediff : optional
+    system : str, optional
+    extra : dict, optional
+
+    Returns
+    -------
+    dict
+        ``{name: path}`` of what was written.
+    """
+    structure = _resolve_structure(structure, chgcar)
+    mesh = _resolve_mesh(mesh, structure, kspacing)
+    incar = total_energy_incar(system=system, encut=encut, ispin=ispin,
+                               selfconsistent=selfconsistent, ismear=ismear,
+                               sigma=sigma, ediff=ediff, extra=extra)
+    kpoints = automatic_kpoints(mesh, shift=shift, gamma=gamma,
+                                comment=f"{system} total energy")
+    return _write_deck(directory, incar, kpoints, chgcar, structure)
 
 
 def fcc_band_path():
@@ -344,6 +706,97 @@ def fcc_band_path():
 # ---------------------------------------------------------------------- #
 # Helpers
 # ---------------------------------------------------------------------- #
+def _smearing_comments(ismear):
+    """
+    ``ISMEAR``/``SIGMA`` comments that describe the value actually written.
+
+    A deck asked for ``--ismear 0`` used to be annotated with an explanation of
+    the tetrahedron method it is not using, which is worse than no comment: the
+    file then argues with itself.
+    """
+    if ismear == -5:
+        return {
+            "ISMEAR": "-5 = tetrahedron with Blochl corrections; needs a mesh "
+                      "of at least four k-points",
+            "SIGMA": "ignored when ISMEAR = -5; kept so switching ISMEAR is "
+                     "one edit",
+        }
+    if ismear == 0:
+        return {
+            "ISMEAR": "0 = Gaussian smearing; -5 (tetrahedron) is more "
+                      "accurate when the mesh allows it",
+            "SIGMA": "the Gaussian width in eV",
+        }
+    if ismear == -1:
+        return {"ISMEAR": "-1 = Fermi smearing",
+                "SIGMA": "the electronic temperature in eV"}
+    return {
+        "ISMEAR": f"{ismear} = Methfessel-Paxton of order {ismear}; check the "
+                  f"entropy term is small",
+        "SIGMA": "the smearing width in eV",
+    }
+
+
+def _resolve_structure(structure, chgcar):
+    """The structure to write, taken from the density's header when absent."""
+    if structure is not None or chgcar is None:
+        return structure
+    from .volumetric import read_structure_header
+
+    return read_structure_header(chgcar)
+
+
+def _resolve_mesh(mesh, structure, spacing):
+    """An explicit mesh, or one derived from the cell and a target spacing."""
+    if mesh is not None:
+        return tuple(int(n) for n in mesh)
+    if structure is None:
+        raise ValueError(
+            "A k-point mesh needs either an explicit `mesh` or a structure to "
+            "derive one from -- pass `structure=`, or a `chgcar=` whose header "
+            "carries one.")
+    return kpoint_mesh_from_spacing(structure, spacing)
+
+
+def _write_deck(directory, incar, kpoints, chgcar, structure):
+    """
+    Lay one deck down on disk: ``INCAR``, ``KPOINTS``, and what is available.
+
+    The three modes differ only in the text of the first two files; everything
+    about *where* the deck goes, which structure it carries and whether the
+    density is copied in is shared, and lived in three copies before it lived
+    here.
+    """
+    import shutil
+
+    os.makedirs(directory, exist_ok=True)
+    written = {}
+
+    path = os.path.join(directory, "INCAR")
+    with open(path, "w") as handle:
+        handle.write(incar)
+    written["INCAR"] = path
+
+    path = os.path.join(directory, "KPOINTS")
+    with open(path, "w") as handle:
+        handle.write(kpoints)
+    written["KPOINTS"] = path
+
+    if structure is not None:
+        path = os.path.join(directory, "POSCAR")
+        with open(path, "w") as handle:
+            handle.write(structure.to_string(direct=True))
+        written["POSCAR"] = path
+
+    if chgcar is not None:
+        destination = os.path.join(directory, "CHGCAR")
+        if os.path.abspath(chgcar) != os.path.abspath(destination):
+            shutil.copyfile(chgcar, destination)
+        written["CHGCAR"] = destination
+
+    return written
+
+
 def _render(tags, comments, extra):
     """Lay out ``TAG = VALUE  # comment`` lines, aligned."""
     values = dict(tags)
