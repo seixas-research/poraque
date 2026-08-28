@@ -1193,3 +1193,36 @@ class TestPauliFactorFromELF:
             return abs(moved - base) / max(base, 1e-12) / (delta / elf)
 
         assert amplification(0.9999) > amplification(0.5) * 10
+
+
+class TestTheGeometryAVolumetricFileCarries:
+    """
+    `read_field_structure` is the reader contract that lets a source prefer a
+    density's own geometry over the directory's structure file. It is optional
+    rather than abstract, because whether a volumetric format embeds a
+    structure is a property of the format, not of the code.
+    """
+
+    def test_a_chgcar_header_is_the_geometry_it_was_written_at(self, vasp_dir):
+        from poraque.fields import ChargeDensity, FieldGrid
+        from poraque.fields.io.vasp import VaspReader
+
+        reader = VaspReader()
+        poscar = reader.read_structure(str(vasp_dir))
+        grid = FieldGrid((8, 8, 8), poscar.cell)
+        path = str(vasp_dir / "CHGCAR")
+        ChargeDensity(np.full(grid.shape, 0.1), grid, poscar).write(path)
+
+        carried = reader.read_field_structure(path)
+
+        assert carried is not None
+        assert carried.elements == poscar.elements
+        assert carried.scaled_positions == pytest.approx(
+            poscar.scaled_positions, abs=1e-6)
+
+    def test_a_format_that_carries_none_says_so(self):
+        """The default answer is None, which means "use read_structure"."""
+        from poraque.fields.io.base import CalculationReader
+
+        assert CalculationReader.read_field_structure(
+            object(), "anything.dat") is None

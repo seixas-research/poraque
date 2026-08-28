@@ -687,8 +687,8 @@ class Poraque(Calculator):
         plane-wave grid the reciprocal-space solution
         :math:`v_{\rm H}(\mathbf G) = 4\pi e^2\rho(\mathbf G)/G^2` is exact for
         any band-limited density at the cost of two FFTs. So this field
-        inherits the density's error and adds none of its own — there is no
-        third operator, and none would be an improvement.
+        inherits the density's error and adds none of its own: nothing is
+        learned here, and nothing needs to be.
 
         Parameters
         ----------

@@ -92,6 +92,18 @@ class VaspReader(CalculationReader):
         """Read a ``CHGCAR``-format volumetric file."""
         return field_class.read(path, grid=grid)
 
+    def read_field_structure(self, path):
+        """
+        The ``POSCAR`` block a ``CHGCAR``-format file carries in its own header.
+
+        Costs a few hundred bytes whatever the grid, because reading stops at
+        the blank line ending the header — so this is cheap enough to do for
+        every material on every build.
+        """
+        from ..vasp.volumetric import read_structure_header
+
+        return read_structure_header(path)
+
     def write_field(self, field, path, comment=None):
         """Write a field in ``CHGCAR`` format."""
         return field.write(path, comment=comment)

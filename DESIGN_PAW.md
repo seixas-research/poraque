@@ -110,9 +110,16 @@ at the second grid header, so it extracts the total-density records only.
 > "The format is the same as the `CHGCAR` file except for the lack of
 > augmentation occupancies."
 
-This settles the τ·Ω scaling Poraquê assumed and could not previously cite —
-and, read together with `the post-mortem`, confirms that the ambiguity which
-destroyed the τ dataset was an artefact of the patched build, not of VASP.
+The quoted sentence settles only the *layout*: a `TAUCAR` carries the grid and
+no augmentation records. It does **not** settle the scaling, and Poraquê's
+assumption that τ was written as τ·Ω to match `CHGCAR` turned out to be wrong —
+measured against real output on 2026-08-27, `TAUCAR` holds τ itself, with no
+volume factor, and under `ISPIN = 2` its two blocks are (τ_up, τ_down) whose
+sum is the total. See `KineticEnergyDensity` and
+`tests/test_platinum_dataset.py`, which pin both.
+
+A `TAUCAR` exists at all only because the `INCAR` set `LTAU = .TRUE.`; that tag
+is what calculates τ, and there is no other route to one.
 
 ---
 

@@ -35,6 +35,7 @@ where it does not.
 import json
 import os
 import sys
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -569,3 +570,100 @@ class TestTheShippedPlatinumAtom:
 
         with pytest.raises(ValueError, match="single atom"):
             resolve_library(str(tmp_path / "atoms"))
+
+
+class TestTheGeometryComesFromTheDensityNotTheStructureFile:
+    """
+    Regression: `V_ext` was built at the geometry a run *started* from.
+
+    ``VaspReader.structure_files`` is ``("POSCAR", "CONTCAR")`` and the first
+    wins, which is right for a static run and wrong for a relaxation: there the
+    ``POSCAR`` is the input geometry while the ``CHGCAR`` holds the density at
+    the output geometry. Pairing them trains the operator on a potential and a
+    density from two different systems.
+
+    Found on the platinum set. ``structure_0042`` relaxed by 0.12 Ang rms, which
+    put a 2.5 % relative L2 error into its external potential and made it the
+    worst structure in the training set by a factor of 23 -- while its
+    ``chg2tau`` error, which never reads a ``POSCAR``, stayed unremarkable.
+    """
+
+    @staticmethod
+    def _run(directory, drift=0.0):
+        """A run whose POSCAR is `drift` (fractional) away from its density."""
+        from poraque.data.sources import CalculationSource
+
+        os.makedirs(directory, exist_ok=True)
+        cell = np.eye(3) * 6.0
+        grid = FieldGrid((16, 16, 16), cell)
+        relaxed = np.array([[0.10, 0.20, 0.30], [0.60, 0.70, 0.80]])
+
+        # The density carries the geometry it was computed at.
+        ChargeDensity(np.ones(grid.shape) * 0.1, grid,
+                      Poscar(cell, ["Si"], [2], relaxed)).write(
+            os.path.join(directory, "CHGCAR"))
+        # The structure file is left wherever the run started.
+        Poscar(cell, ["Si"], [2], relaxed + drift).write(
+            os.path.join(directory, "POSCAR"))
+        with open(os.path.join(directory, "INCAR"), "w") as handle:
+            handle.write("ENCUT = 300\nPREC = Accurate\nIBRION = 2\nNSW = 100\n")
+
+        lines = []
+        source = CalculationSource(os.path.dirname(directory),
+                                   charges={"Si": 4.0}, log=lines.append)
+        return source, source.discover()[0], grid, lines
+
+    def test_the_resolved_geometry_is_the_densitys_own(self, tmp_path):
+        source, record, _, _ = self._run(str(tmp_path / "runs" / "s0"),
+                                         drift=0.02)
+        density = ChargeDensity.read(record.files["CHGCAR"])
+
+        assert source.geometry(record).scaled_positions == pytest.approx(
+            density.structure.scaled_positions)
+
+    def test_a_stale_structure_file_no_longer_changes_the_potential(self,
+                                                                    tmp_path):
+        """The whole point: the same density must give the same input field
+        however far behind its POSCAR has been left."""
+        clean, record_a, grid, _ = self._run(str(tmp_path / "a" / "s0"))
+        stale, record_b, _, _ = self._run(str(tmp_path / "b" / "s0"), drift=0.02)
+
+        a = clean.read(record_a, "EXTCAR", grid).data
+        b = stale.read(record_b, "EXTCAR", grid).data
+        assert np.allclose(a, b)
+
+    def test_the_disagreement_is_reported(self, tmp_path):
+        source, record, grid, lines = self._run(str(tmp_path / "runs" / "s0"),
+                                                drift=0.02)
+        source.read(record, "EXTCAR", grid)
+        message = " ".join(lines)
+
+        assert "geometry differs" in message
+        assert record.identifier in message
+        # 0.02 fractional on a 6 Ang cell is 0.12 Ang, which the line quotes so
+        # a reader can judge whether it matters.
+        assert "0.120" in message
+
+    def test_a_static_run_is_silent(self, tmp_path):
+        """Text precision alone must never trip the warning."""
+        source, record, grid, lines = self._run(str(tmp_path / "runs" / "s0"))
+        source.read(record, "EXTCAR", grid)
+
+        assert not [line for line in lines if "geometry differs" in line]
+
+    def test_it_falls_back_when_the_format_carries_no_geometry(self, tmp_path):
+        """
+        A reader whose volumetric format embeds no structure answers ``None``
+        from ``read_field_structure``, and the directory's structure file is
+        then the only geometry there is.
+        """
+        from poraque.fields.io.vasp import VaspReader
+
+        source, record, _, _ = self._run(str(tmp_path / "runs" / "s0"),
+                                         drift=0.02)
+        poscar = Poscar.from_file(os.path.join(record.directory, "POSCAR"))
+
+        with mock.patch.object(VaspReader, "read_field_structure",
+                               return_value=None):
+            assert source.geometry(record).scaled_positions == pytest.approx(
+                poscar.scaled_positions)

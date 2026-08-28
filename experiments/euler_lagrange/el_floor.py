@@ -2,8 +2,8 @@
 How badly is the orbital-free Euler-Lagrange equation violated on data that is,
 by construction, the ground state?
 
-This is the measurement that decides whether a third operator has anything
-learnable to learn. The residual
+This is the measurement that says how far the standard orbital-free forms
+are from satisfying it, and what the shortfall is made of. The residual
 
     r = dTs/drho + v_ext + v_H[rho] + v_xc[rho] - mean
 

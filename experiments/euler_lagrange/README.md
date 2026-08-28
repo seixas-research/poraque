@@ -1,4 +1,4 @@
-# Is the Euler-Lagrange equation satisfied, and does a third operator earn its place?
+# Is the Euler-Lagrange equation satisfied, and what does the violation look like?
 
 Measured on the 31-structure platinum set (`data/cache/res32_potcar_spin`, built
 from `data/vasp/structures` at `resolution: 32`). Reproduce with:
@@ -8,7 +8,6 @@ python experiments/euler_lagrange/el_resolution.py  # is the number the grid?
 python experiments/euler_lagrange/el_floor.py       # how badly is EL violated?
 python experiments/euler_lagrange/el_xc.py          # does the right xc help?
 python experiments/euler_lagrange/lps_check.py      # is LPS a better route?
-python experiments/euler_lagrange/el_operator.py    # can an operator fix it?
 ```
 
 `PORAQUE_EL_CACHE` overrides the cache path; `PORAQUE_POTCAR_DIR` overrides the
@@ -123,14 +122,13 @@ variance that one-dimensional curve accounts for.
 | `v_ext` | 0.9695 | 3.1 % |
 
 **98.7 % of the violation is a pointwise function of tau alone.** That is the
-central result, and it is the one that bears on architecture: a Fourier neural
-*operator* exists to capture what a pointwise function cannot, and on this data
-that is at most 1.3 % of the residual's variance.
+central result: on this data the Euler-Lagrange violation is *local*, and at
+most 1.3 % of its variance is anything else.
 
 The caveat is not decoration. These are 31 fcc-like platinum cells at similar
 densities, and non-locality is a real property of the exact functional that
-such a set never exercises. The number bounds what an operator could add *here*,
-not what it could add.
+such a set never exercises. The number bounds what is true *here*, not what is
+true in general.
 
 ## 1b. Does the right functional help? (`el_xc.py`)
 
@@ -201,19 +199,26 @@ importing is the constraint, not the change of variable, and it can be imposed
 inside the EL formulation by parameterising the learned correction so that
 `v_kin - dT_vW/drho >= 0`.
 
-## 3. The operator (`el_operator.py`) — not yet re-measured
+## 3. What is left, and what it would take to model it
 
-Learns `dv[rho] = v_kin_exact - (TF + lam*vW)` as a functional of **rho alone**.
-Not of `v_ext`: `T_s[rho]` is universal, and a functional that consumed the
-external potential would not be one. Everything is zero-mean, so a perfect
-prediction annihilates the residual and predicting zero is "apply no
-correction" — which makes the baseline unarguable.
+The pointwise result above settles the shape of the answer: on this data 98.7 %
+of the violation is a function of `tau` at the same point, and a nine-parameter
+local fit would already reach R² ≈ 0.98. So the useful next measurement is not
+"can the residual be learned" — it plainly can — but **what remains after a
+pointwise function of `tau` is subtracted**, and whether that remainder has any
+length scale at all or is just the noise floor of the construction.
 
-This one has not been re-run on the platinum set, and the pointwise result above
-changes what it should be asked. The question is no longer "can an operator
-learn the residual" — a nine-parameter local fit would already reach R² ≈ 0.98 —
-but whether anything is left for a non-local model once a pointwise function of
-`tau` has been subtracted. Run it against that baseline, not against zero.
+That is a measurement on the existing fields: fit the pointwise function by
+bin-and-average, subtract it, and look at the autocorrelation of what is left.
+If the remainder is structureless, the Euler-Lagrange violation on this data is
+a local correction to `TF + lam*vW` and belongs in a closed form —
+`poraque.ml.symbolic` already searches exactly that space, and the target here
+is one variable rather than two.
+
+The caveat stated throughout applies with full force: 31 fcc-like cells of one
+element at similar densities is precisely the setting in which a non-local
+effect would not appear even if it dominated elsewhere. The number bounds this
+dataset, not the physics.
 
 ## What `v_xc` required
 

@@ -159,7 +159,7 @@ class ExternalPotential(ScalarField):
     def from_calculation(cls, directory=".", code="auto", grid=None, shape=None,
                          encut=None, prec=None, model="auto", sigma=None,
                          rcore_factor=0.5, zval=None, gaussian_blur=None,
-                         blur_method="spectral"):
+                         blur_method="spectral", structure=None):
         """
         Build the external potential from *any* supported DFT calculation.
 
@@ -175,6 +175,18 @@ class ExternalPotential(ScalarField):
         code : str, optional
             Registered code name (``"vasp"``, ...) or ``"auto"`` to detect it
             from the files present.
+        structure : Structure, optional
+            Geometry to build the potential at, overriding the one the
+            directory's structure file holds. Everything else — the cutoff, the
+            pseudopotentials — still comes from the directory, because those
+            are settings rather than positions.
+
+            Pass it when a more authoritative geometry is already in hand: for
+            a **relaxation** the structure file is the geometry the run started
+            from, while the volumetric files hold the density at the geometry
+            it ended at, and a potential built from the former does not pair
+            with a density from the latter. See
+            :meth:`~poraque.fields.io.base.CalculationReader.read_field_structure`.
         grid : FieldGrid, optional
             Pre-built shared grid. **Pass this when the material's density and
             kinetic-energy files already exist**, so all fields share one mesh.
@@ -217,7 +229,8 @@ class ExternalPotential(ScalarField):
         from .io import resolve_reader
 
         reader = resolve_reader(directory, code)
-        structure = reader.read_structure(directory)
+        if structure is None:
+            structure = reader.read_structure(directory)
         parameters = reader.read_parameters(directory)
         pseudopotentials = reader.read_pseudopotentials(directory)
 

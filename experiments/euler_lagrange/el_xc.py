@@ -9,8 +9,8 @@ valence region, sitting in a total of 1.7 eV.
 
 This re-runs the same measurement with each functional so the mislabelled part
 can be separated out. If PBE lowers the floor, the earlier number was
-pessimistic and part of what the third operator was being asked to learn was
-our own bookkeeping error.
+pessimistic and part of the measured shortfall was our own bookkeeping
+error.
 """
 import os
 

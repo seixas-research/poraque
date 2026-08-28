@@ -536,33 +536,126 @@ class CalculationSource(MaterialSource):
             return "tabulated"
         return "gaussian"
 
-    def _external_potential(self, record, grid):
+    def geometry(self, record):
+        r"""
+        The geometry :math:`V_{\rm ext}` must be built at.
+
+        **The density's own header wins.** A volumetric file embeds the
+        structure it was computed at, so for the purpose of pairing an input
+        potential with a target density there is no more authoritative answer,
+        and it is the same geometry :meth:`grid` already adopts. The
+        directory's structure file is the fallback, used when the format
+        carries no geometry (see
+        :meth:`~poraque.fields.io.base.CalculationReader.read_field_structure`)
+        or when the record has no density.
+
+        Regression this exists for: ``structure_files`` is
+        ``("POSCAR", "CONTCAR")`` and the first wins, which is correct for a
+        static run and wrong for a **relaxation** -- there the ``POSCAR`` is the
+        geometry the run started from while the ``CHGCAR`` holds the density at
+        the geometry it ended at. One platinum slab differed by 0.12 Ang rms,
+        which put a 2.5 % relative :math:`L^2` error into its external
+        potential and made it the worst structure in the training set by a
+        factor of 23, with nothing anywhere reporting a problem.
+
+        Parameters
+        ----------
+        record : MaterialRecord
+
+        Returns
+        -------
+        Structure
         """
-        Build :math:`V_{\\rm ext}` from the calculation's own inputs.
+        reader = self._reader(record.directory)
+        density = record.files.get("CHGCAR")
+        if density is not None:
+            structure = reader.read_field_structure(density)
+            if structure is not None:
+                self._warn_on_geometry_drift(record, reader, structure)
+                return structure
+
+        # `reader.read_structure`, not `Poscar.from_file`: the reader is
+        # already resolved for this directory and the neutral contract is what
+        # makes a non-VASP run readable here at all. Parsing the structure file
+        # with VASP's parser regardless of which code wrote it defeats the
+        # abstraction one line after resolving it.
+        return reader.read_structure(record.directory)
+
+    #: Largest per-atom displacement, in Angstrom, between a density's own
+    #: geometry and the directory's structure file that is written off as
+    #: formatting. A ``CHGCAR`` header prints six decimals of a fractional
+    #: coordinate, ~1e-5 Ang on a 10 Ang cell; anything at 1e-3 is real.
+    GEOMETRY_TOLERANCE = 1e-3
+
+    def _warn_on_geometry_drift(self, record, reader, structure):
+        """
+        Say so when the density and the structure file describe different
+        geometries.
+
+        The potential is built correctly either way -- that is what
+        :meth:`geometry` decides -- but a directory whose input and output
+        geometries disagree is not self-consistent, and the reason is usually
+        that a relaxation moved the atoms and left the ``POSCAR`` behind. That
+        is worth one line, because everything else about such a run looks
+        entirely normal.
+        """
+        try:
+            reference = reader.read_structure(record.directory)
+        except (FileNotFoundError, NotImplementedError, OSError, ValueError):
+            return
+
+        try:
+            cell = np.asarray(structure.cell, dtype=float)
+            delta = (np.asarray(structure.scaled_positions, dtype=float)
+                     - np.asarray(reference.scaled_positions, dtype=float))
+        except (AttributeError, TypeError, ValueError):
+            return
+        if delta.size == 0 or delta.shape != (structure.natoms, 3):
+            # Different atom counts are a different problem, and not one a
+            # drift measurement can describe.
+            return
+
+        # Minimum image, so an atom reported at 0.0 in one file and 1.0 in the
+        # other is not mistaken for a displacement of a whole lattice vector.
+        drift = float(np.abs((delta - np.round(delta)) @ cell).max())
+        if drift <= self.GEOMETRY_TOLERANCE:
+            return
+
+        log = self.options.get("log")
+        if log:
+            log(f"      {record.identifier}: the density's geometry differs "
+                f"from "
+                f"{os.path.basename(reader.structure_path(record.directory))} "
+                f"by up to {drift:.3f} Ang -- a relaxation whose structure "
+                f"file was left at the starting geometry. Building V_ext at "
+                f"the density's geometry, which is the one it was computed "
+                f"at.")
+
+    def _external_potential(self, record, grid):
+        r"""
+        Build :math:`V_{\rm ext}` from the calculation's own inputs.
 
         A ``POTCAR`` in the directory is used as it stands, which is the exact
-        tabulated route and the normal case. When the run has none — routinely
-        stripped from archived calculations for licensing — the ``potcar_dir``
+        tabulated route and the normal case. When the run has none -- routinely
+        stripped from archived calculations for licensing -- the ``potcar_dir``
         library stands in for it, which keeps the *same* construction rather
         than silently dropping to a model form factor.
+
+        Both routes are handed the geometry :meth:`geometry` resolves, so the
+        potential is built at the positions the density was computed at.
         """
         reader = self._reader(record.directory)
         has_own = os.path.exists(os.path.join(record.directory, "POTCAR"))
+        structure = self.geometry(record)
 
         if not has_own:
-            # `reader.read_structure`, not `Poscar.from_file`: the reader is
-            # already resolved for this directory and the neutral contract is
-            # what makes a non-VASP run readable here at all. Parsing the
-            # structure file with VASP's parser regardless of which code wrote
-            # it defeats the abstraction one line after resolving it.
-            structure = reader.read_structure(record.directory)
             potcar = self.library_potcar(structure)
             if potcar is not None:
                 return ExternalPotential.from_potcar_tables(
                     structure, grid, potcar,
                     metadata={"code": reader.code,
                               "source": str(record.directory),
-                              "derived_from": "POSCAR + POTCAR library",
+                              "derived_from": "density geometry + POTCAR library",
                               "potcar_dir": str(self.options["potcar_dir"])},
                 )
 
@@ -570,6 +663,7 @@ class CalculationSource(MaterialSource):
             record.directory, code=reader.code, grid=grid,
             sigma=self.options.get("sigma"),
             zval=self.options.get("charges"),
+            structure=structure,
         )
 
     def read(self, record, name, grid, spin=False):

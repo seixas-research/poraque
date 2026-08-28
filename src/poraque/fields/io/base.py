@@ -194,6 +194,37 @@ class CalculationReader(ABC):
         """Write a :class:`~poraque.fields.base.ScalarField` in this code's format."""
 
     # ------------------------------------------------------------------ #
+    # Optional interface
+    # ------------------------------------------------------------------ #
+    def read_field_structure(self, path):
+        """
+        The geometry a volumetric file carries in its own header, if any.
+
+        Not abstract, because it is a property of the *format* rather than of
+        the code: a ``CHGCAR`` and a Gaussian cube both embed the structure
+        they were computed at, while a bare binary grid does not. The default
+        answers ``None``, which means "this format carries no geometry, use
+        :meth:`read_structure`".
+
+        It exists because those two geometries can disagree. In a **relaxation**
+        the structure file is what the run started from and the volumetric file
+        is what it ended at, so a caller pairing a density with a potential
+        built from the structure file would be pairing two different systems.
+        The density's own header is the geometry the density was computed at,
+        always, so it is the authority wherever it exists.
+
+        Parameters
+        ----------
+        path : str
+            A volumetric file written by this code.
+
+        Returns
+        -------
+        Structure or None
+        """
+        return None
+
+    # ------------------------------------------------------------------ #
     # Provided helpers
     # ------------------------------------------------------------------ #
     @classmethod

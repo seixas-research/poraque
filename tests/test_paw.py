@@ -518,27 +518,29 @@ class TestTheOrderOfOperationsAtInference:
 # The VASP decks
 # ===================================================================== #
 class TestTheTauDeck:
-    def test_it_asks_for_tau_the_documented_way(self):
+    def test_it_asks_for_tau_the_only_way_there_is(self):
+        """
+        ``LTAU = .TRUE.`` is what calculates the kinetic energy density, and a
+        deck that omits it produces no ``TAUCAR`` however it is run. ``LCHARG``
+        then writes the result; setting ``LTAU`` alone calculates tau and
+        throws it away, which is why the order is pinned too.
+        """
         deck = tau_incar()
         assert "LTAU" in deck and ".TRUE." in deck
         assert "LCHARG" in deck
-        # LTAU evaluates tau; LCHARG is what writes it. Setting the first
-        # alone computes tau and throws it away.
         assert deck.index("LTAU") < deck.index("LCHARG")
 
-    def test_it_does_not_use_the_tag_that_broke_the_dataset(self):
+    def test_every_assignment_in_the_deck_is_a_real_vasp_tag(self):
         """
-        ``TAUCAR = .TRUE.`` is not a VASP tag. It is what the purged platinum data
-        was generated with, and it must never reappear in a
-        template.
+        A generated deck must not invent tags. Filenames appear in the banner
+        as prose, which is fine; what must never appear is an assignment whose
+        left-hand side is a filename rather than a tag, because VASP ignores
+        one silently and the run then produces nothing the name promises.
         """
         deck = tau_incar()
-        # The banner mentions TAUCAR as a *filename*, which is fine; what must
-        # never appear is an assignment to it.
-        assignments = [line.split("=")[0].strip() for line in deck.splitlines()
-                       if "=" in line and not line.startswith("#")]
-        assert "TAUCAR" not in assignments
-        assert "EXTCAR" not in assignments
+        assignments = {line.split("=")[0].strip() for line in deck.splitlines()
+                       if "=" in line and not line.startswith("#")}
+        assert not assignments & {"TAUCAR", "CHGCAR", "EXTCAR", "WAVECAR"}
 
     def test_it_names_the_required_version(self):
         assert "6.6.1" in tau_incar()

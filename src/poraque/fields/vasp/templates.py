@@ -13,13 +13,13 @@ Two kinds of deck matter to this project, and both had been living in a shell
 history rather than in the repository:
 
 **Generating training data** (:func:`tau_incar`). A ``CHGCAR`` comes out of any
-run; a ``TAUCAR`` does not. It needs ``LTAU = .TRUE.`` — whose default is
-``.FALSE.`` outside meta-GGA — together with ``LCHARG = .TRUE.``, which is what
-actually writes both files. The platinum dataset was generated instead with a
-``TAUCAR = .TRUE.`` line that is not a VASP tag at all, by a patched build, and
-every kinetic energy density it produced had to be thrown away. See
-the post-mortem. Having the correct deck in the source tree, next to the gate
-that enforces it, is the cheapest possible guard against a repeat.
+run; a ``TAUCAR`` does not. **The kinetic energy density is calculated if and
+only if the ``INCAR`` sets ``LTAU = .TRUE.``** — that tag is what evaluates τ,
+and it is the only thing that does — together with ``LCHARG = .TRUE.``, which
+is what writes the result to disk. A run whose ``INCAR`` does not set ``LTAU``
+has no τ to write, whatever files are found beside it. Having the correct deck
+in the source tree is the cheapest possible guard against a dataset that cannot
+say what asked for its τ.
 
 **Consuming a prediction** (:func:`band_structure_incar`, :func:`dos_incar`,
 :func:`total_energy_incar`). A predicted density is only useful to VASP if VASP
@@ -44,11 +44,9 @@ Nothing here runs VASP. These are files to be written next to a structure and
 handed to a queue.
 
 .. note::
-   The **VASP 6.6.1 minimum** and the ``LTAU`` requirement are *user-specified*
-   for this project, not statements about VASP in general: VASP has written
-   ``TAUCAR`` for meta-GGA runs far longer than that. 6.6.1 is the version this
-   project's τ data will be regenerated with and therefore the only one its
-   conventions have been checked against.
+   The **VASP 6.6.1 minimum** is *user-specified* for this project: it is the
+   version this project's τ data was generated with and therefore the only one
+   whose conventions have been checked here.
 """
 
 import os
@@ -73,10 +71,10 @@ def tau_incar(system="poraque", encut=450, ediff=1e-8, ispin=1, prec="Accurate",
     The three lines that matter are ``LTAU``, ``LCHARG`` and ``LASPH``; the rest
     is an ordinary well-converged static run and can be overridden freely.
 
-    ``LTAU = .TRUE.`` requests evaluation of :math:`\tau(\mathbf r)`;
-    ``LCHARG = .TRUE.`` is what writes the density *and* the kinetic energy
-    density to disk. Setting the first without the second evaluates τ and
-    discards it.
+    ``LTAU = .TRUE.`` is what calculates :math:`\tau(\mathbf r)`, and the only
+    thing that does; ``LCHARG = .TRUE.`` is what writes the density *and* the
+    kinetic energy density to disk. Setting the first without the second
+    calculates τ and discards it.
 
     Parameters
     ----------
@@ -127,8 +125,8 @@ def tau_incar(system="poraque", encut=450, ediff=1e-8, ispin=1, prec="Accurate",
         ("LWAVE", ".FALSE."),
     ]
     comments = {
-        "LTAU": "evaluate the kinetic energy density (default .FALSE. "
-                "outside meta-GGA)",
+        "LTAU": "calculate the kinetic energy density -- required, and the "
+                "only thing that produces a TAUCAR",
         "LCHARG": "write CHGCAR *and* TAUCAR; LTAU alone only evaluates tau",
         "LASPH": "aspherical gradient corrections -- on for d/f elements",
         "LMAXMIX": "one-centre occupancies written to CHGCAR up to this l "
