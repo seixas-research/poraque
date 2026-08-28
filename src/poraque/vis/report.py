@@ -204,11 +204,9 @@ class TrainingReport:
             ``{"train_loss": [...], "val_error": [...]}`` as returned by
             :func:`~poraque.ml.training.train`. ``val_error`` may be empty.
 
-            When ``data_loss`` and ``physics_loss`` are present and the physics
-            contribution is non-zero, the objective panel also carries them as
-            a dashed and a dotted line. A falling total is not evidence that a
-            constraint is being satisfied — it can equally be outweighed — so
-            the split is what makes a physics-informed run readable.
+            ``train_loss`` is the **total** objective — data fidelity plus
+            every weighted physics term — because that is the quantity the
+            optimiser stepped on and the only one comparable between runs.
         name : str, optional
             Filename stem.
         title : str, optional
@@ -283,28 +281,6 @@ class TrainingReport:
                 # One series per panel: the axis label names it, so a legend
                 # box would only repeat the same words.
                 axis.set_ylabel(label, fontsize=9)
-
-            # The objective is a sum when a physics constraint is switched on,
-            # and the split is the whole point of a physics-informed run: a
-            # falling total says nothing about whether the constraint is being
-            # satisfied or merely outweighed. Overlaid on the same panel, since
-            # the three share a scale and the comparison is the message.
-            data = np.asarray(history.get("data_loss", []), dtype=float)
-            physics = np.asarray(history.get("physics_loss", []), dtype=float)
-            breakdown = (data.size == train.size and physics.size == train.size
-                         and np.any(physics > 0))
-            if breakdown:
-                epochs = np.arange(1, train.size + 1, dtype=float)
-                axes[0].plot(epochs, data, color=series_color(2),
-                             linestyle="--", linewidth=1.4, label="data term")
-                axes[0].plot(epochs, physics, color=series_color(1),
-                             linestyle=":", linewidth=1.6,
-                             label="physics term (weighted)")
-                # The solid line was drawn unlabelled above; name it now that
-                # it has company, and let the legend carry all three.
-                axes[0].get_lines()[0].set_label("total objective")
-                axes[0].legend(loc="upper right", fontsize=8)
-                axes[0].set_ylabel("Training objective", fontsize=9)
 
             axes[-1].set_xlabel("Epoch")
             figure.suptitle(title or "Training history", x=0.01, ha="left",

@@ -1,29 +1,32 @@
-# Controlled comparison: activation: kan_cheby vs. the shipped gelu model
-# (models/pt_w16_m8_l3), ext2chg only. Identical to configs/train.yaml except
-# `task.type` (ext2chg only, to isolate the comparison and skip symbolic
-# distillation, which is chg2tau-only anyway) and `model.activation` (+ its
-# kan_cheby hyperparameter, left at the documented default). Every other
-# setting -- width, modes, n_layers, resolution, potcar_dir, seed, epochs,
-# early_stopping -- is left at the same default train.yaml itself relies on,
-# so this is the same protocol with exactly one thing changed.
+# Controlled comparison: activation: kan, variant cheby.
+# a Chebyshev-polynomial expansion -- typically cheaper and smoother.
+#
+# Against the shipped silu model (models/pt_w16_m8_l3), ext2chg only.
+# Identical to configs/train.yaml except `task.type` -- ext2chg isolates the
+# comparison and skips symbolic distillation, which is chg2tau-only anyway --
+# and the activation. Everything else is left at the same defaults train.yaml
+# itself relies on, so this is one protocol with exactly one thing changed.
 task:
-  type: ext2chg
+  type: ext2chg               # the density operator alone
   name: pt_w16_m8_l3_kancheby
 
 data:
-  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # as in configs/train.yaml
 
 model:
-  width: 16
-  modes: 8
-  projection_channels: 64
-  mode_selection: fixed
-  activation: kan_cheby
-  # kan_degree: 6   # default
+  width: 16                   # channels carried through the Fourier layers
+  modes: 8                    # retained Fourier modes per axis
+  n_layers: 3                 # Fourier layers
+  projection_channels: 64     # hidden width of the read-out head
+  mode_selection: fixed       # as in configs/train.yaml
+  activation: kan             # the learnable family; kan_setup says which and how
+  kan_setup:
+    variant: cheby            # bspline | cheby | rbf | rational
+    degree: 6                 # highest Chebyshev order; degree+1 coefficients (the default)
 
 training:
   physics:
-    electron_count_weight: 0.1
+    electron_count_weight: 0.1  # int(rho) = the known valence count
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0

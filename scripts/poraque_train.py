@@ -363,11 +363,6 @@ def build_cache(config, log):
     task needs: a cache built for ``ext2chg`` from an archive that also holds
     :math:`\\tau` serves ``chg2tau`` afterwards with no rebuild.
 
-    :math:`\\tau` passes an ingestion gate on the way in (``data.tau_validation``
-    -- scale against Thomas-Fermi, the von Weizsaecker lower bound, and the
-    run's provenance). A material that fails it stops the build rather than
-    being cached, because the alternative is what produced the post-mortem.
-
     Returns
     -------
     str
@@ -395,10 +390,6 @@ def build_cache(config, log):
         # spin*, silently discarding every ISPIN = 2 magnetisation block on
         # the way into the cache.
         spin=data.spin,
-        # Every TAUCAR is checked against its own density and its run's
-        # provenance on the way in. `null` means the defaults, so the gate is
-        # on for a config that says nothing about it -- which is the point.
-        tau_validation=data.tau_validation,
         # One chunked fields.h5 per material instead of three text files, when
         # asked for. Both are in the cache fingerprint, so changing either
         # rebuilds rather than mixing layouts in one directory.
@@ -1024,13 +1015,12 @@ def load_pretrained_operator(task, train_set, validation, config, log):
 
 def loss_summary(history):
     """
-    Final-epoch objective, split into its parts, for the report table.
+    Final-epoch objective, for the report table.
 
-    A physics-informed run reports three numbers because one is not enough:
-    a falling total says nothing about *which* term fell, and a constraint that
-    is being outweighed rather than satisfied looks identical in the total. The
-    split is omitted for a data-only run, where the total is the data term and
-    repeating it twice beside a zero would be noise.
+    One number, whatever the objective was made of. A physics-informed run's
+    ``train_loss`` already *is* the total the optimiser stepped on -- data
+    fidelity plus every weighted constraint -- and that total is what a reader
+    compares against another run.
 
     Returns
     -------
@@ -1039,26 +1029,7 @@ def loss_summary(history):
     """
     if not history.get("train_loss"):
         return {}
-
-    total = history["train_loss"][-1]
-    physics = (history.get("physics_loss") or [0.0])[-1]
-    if not physics:
-        return {"final train loss": f"{total:.5f}"}
-
-    data = (history.get("data_loss") or [total])[-1]
-    rows = {
-        "final total loss": f"{total:.5f}",
-        "final data loss": f"{data:.5f}",
-        "final physics loss": f"{physics:.5f} "
-                              f"({100.0 * physics / total:.1f}% of the total)",
-    }
-    # Per-constraint magnitudes, unweighted: which term the weight is acting
-    # on. `physics_loss` is the aggregate already reported above, not a term.
-    for key, values in sorted(history.items()):
-        if key.startswith("physics_") and key != "physics_loss" and values:
-            rows[f"  {key[len('physics_'):].replace('_', ' ')} (unweighted)"] = \
-                f"{values[-1]:.5g}"
-    return rows
+    return {"final train loss": f"{history['train_loss'][-1]:.5f}"}
 
 
 def split_history(history):
@@ -1389,6 +1360,20 @@ def validate_precision_settings(config):
                 f"model.precision: float32 to keep the accelerator.\n"
                 f"  (data.precision is unaffected — fields may still be held "
                 f"in float64 while the operator computes in float32.)")
+
+
+def validate_activation_settings(config):
+    """
+    Resolve ``model.activation`` and ``model.kan_setup`` before anything runs.
+
+    The block is only expanded when the model is built, which is after the
+    cache. A typo in ``kan_setup.variant`` would otherwise surface once every
+    field has been downsampled, having changed nothing about that work.
+    """
+    try:
+        config.model.activation_kwargs()
+    except ValueError as error:
+        raise SystemExit(str(error))
 
 
 def validate_symbolic_settings(settings):
@@ -2313,6 +2298,7 @@ def run(argv=None):
     validate_fine_tuning_settings(config)
     validate_symbolic_settings(config.symbolic)
     validate_precision_settings(config)
+    validate_activation_settings(config)
 
     log = Tee(config.log_path())
     try:

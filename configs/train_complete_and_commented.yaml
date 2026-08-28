@@ -1,515 +1,157 @@
 # =====================================================================
-# Poraque - Fourier Neural Operator training configuration
+# Poraque - the annotated reference configuration
 #
 #   poraque-train --config configs/train_complete_and_commented.yaml
 #   poraque-train --config configs/train_complete_and_commented.yaml --epochs 800
-#   python scripts/poraque_train.py --config configs/train_complete_and_commented.yaml
 #
-# EVERY KEY IS OPTIONAL. Anything omitted takes its default, so a config
-# lists only what its run does *differently* -- which is what makes it
-# readable as the description of one experiment rather than a dump of every
-# knob.
-#
-# This is the REFERENCE copy: the settings worth knowing about, each with the
-# reasoning behind it. Read it here and copy only what you need.
-# configs/train.yaml is the same run, stated in nineteen lines.
+# EVERY KEY IS OPTIONAL and every key is listed here at its default, so this
+# file is the map: copy the two or three lines a run actually changes.
+# configs/train.yaml is that short form and is the reference run.
 #
 # Command-line flags override these values, so one committed config can be
 # swept from the shell without editing it.
 # =====================================================================
+
 task:
-  # all | ext2chg | chg2tau.
-  #   ext2chg : V_ext -> rho     the Hohenberg-Kohn map
-  #   chg2tau : rho  -> tau      the kinetic energy density
-  #   all     : both, saved into one bundle. Only `all` gives a model that
-  #             can reach a total energy, since the ASE calculator needs the
-  #             whole chain.
-  type: all
-  name: pt_w16_m8_l3_complete
+  type: all                     # all | ext2chg | chg2tau; only `all` reaches a total energy
+  name: pt_w16_m8_l3            # names models/<name>/ and everything inside it
 
 data:
-  # A POTCAR *library* (one subdirectory per pseudopotential). With it the
-  # external potential comes from VASP's tabulated local potential; without
-  # it a Gaussian pseudo-ion model stands in, which is ~0.1 relative L2 away.
-  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
-
-  # THE KINETIC-ENERGY-DENSITY INGESTION GATE. Every TAUCAR is checked as it
-  # enters the cache, against the density it is paired with and against the
-  # provenance of the run that wrote it. Omit this block entirely to get the
-  # defaults below -- the gate is ON for a config that says nothing about it,
-  # which is the point of it existing at all.
-  #
-  # It exists because an entire dataset of invalid tau was ingested, cached,
-  # trained on and reported before anyone noticed. The
-  # files parsed, the grids matched, the values were finite and positive, and
-  # the loss went down. Nothing about a scalar field on a grid says what unit
-  # it is in or which code wrote it, so the checks have to be physical.
-  #
-  #   scale       int(tau) must be 0.2x-5x the Thomas-Fermi estimate
-  #               C_TF int(rho^5/3) formed from the PAIRED density. Loose on
-  #               purpose: TF is the uniform-gas limit and a real system
-  #               departs from it by tens of percent, not by factors. A unit
-  #               error, a missing volume factor or a Ha/eV confusion move it
-  #               by orders of magnitude, and that is what this catches.
-  #
-  #   bound       tau(r) >= tau_vW(r) = |grad rho|^2 / (8 rho), pointwise.
-  #               Unlike the scale check this one is a theorem, so a violation
-  #               does not suggest a problem, it proves rho and tau are not a
-  #               pair from the same calculation. Only points carrying real
-  #               density are tested -- in the vacuum tail tau_vW is a ratio
-  #               of two numerical noises -- and a small violating fraction is
-  #               tolerated because band-limited fields ring.
-  #
-  #   provenance  The run's INCAR must set LTAU = .TRUE., and is hashed into
-  #               the record. This is the only one of the three that does not
-  #               depend on the numbers being wrong in a detectable way, and
-  #               it is the one that would have stopped the bad data at the
-  #               door: those runs asked for tau with `TAUCAR = .TRUE.`,
-  #               which is not a VASP tag at all.
-  #
-  #               Both facts come from the INCAR, which is an INPUT and is
-  #               therefore wherever the calculation is. The code version is
-  #               not -- it lives in OUTCAR/vasprun.xml, which are outputs a
-  #               dataset need not ship -- so a missing version is NOTED and
-  #               let through rather than refused. A version that IS recorded
-  #               is still checked against minimum_version.
-  #
-  # A failure STOPS the build, naming the material and the numbers. Verdicts
-  # go to <cache>/tau_validation.json; each cached material keeps its own
-  # tau_provenance.json so the record survives being re-cached. Unknown keys
-  # raise rather than being ignored. ext2chg never reads tau, so none of this
-  # touches it.
-
-  # WHERE THE ISOLATED ATOMS ARE. One path, feeding the two things the free
-  # atom is the reference for: the delta-density baseline below, and the PAW
-  # augmentation occupancies written into a predicted CHGCAR.
-  #
-  # Three spellings are accepted, because three are what people actually have:
-  #   * an atomic_reference.json built by `poraque-atoms`;
-  #   * a DIRECTORY of isolated-atom calculations -- e.g. the parent holding
-  #     `1.atom/`, or the atom directory itself. Ingested on the spot and
-  #     memoised into the cache, so the reduction happens once;
-  #   * a directory that already holds a database, which then wins.
-  #
-  # Each reference must be ONE ATOM IN A BOX with a CHGCAR. A bulk or slab run
-  # has more than one atom and is skipped with a message rather than averaged
-  # into something that is the form factor of neither.
-  atomic_reference: ~/Simulations/vasp/metals/Pt
-
-  # THE ext2chg TARGET. On by default since 2026-08-26: the operator learns the
-  # charge-density VARIATION
-  #
-  #     delta_rho(r) = rho(r) - rho_sup(r)
-  #
-  # where rho_sup is the superposition of the isolated atoms above, placed at
-  # this sample's own atomic positions on its own grid. Roughly 96% of a
-  # crystal's valence density is just its free atoms side by side, so the
-  # residual left to learn is ~20x smaller and carries almost none of the
-  # four-orders-of-magnitude core peak the asinh transform exists to absorb.
-  #
-  # THE OPERATOR STILL RETURNS THE FULL DENSITY. rho_sup is added back inside
-  # predict(), so inference, the ASE calculator and the CHGCAR writer all see
-  # an absolute density and never learn which mode the model was trained in.
-  #
-  # The baseline is built in reciprocal space from radial form factors, so it
-  # is exactly periodic, translation-covariant and grid-independent, and works
-  # unchanged for bulk, slab and cluster samples -- nothing in it assumes a
-  # filled cell. In a vacuum region it leaves band-limiting ringing of order
-  # 1e-4 of the peak (both signs; it is an artefact of truncating the form
-  # factor, and it shrinks as the reference atom's own grid gets finer).
-  #
-  # delta_rho is SIGNED, so positivity and the electron count are statements
-  # about delta_rho + rho_sup: the loop restores the baseline before every
-  # physics term, and inference does it before clipping or normalising. The
-  # reported relative L2 is always quoted on the ABSOLUTE density, so a
-  # delta-mode run is directly comparable with an absolute-mode one.
-  #
-  # Needs atomic_reference to cover every element in the dataset; a run that
-  # cannot resolve one fails loudly rather than quietly training the old
-  # target. Set false for the absolute-density ablation. Ignored by chg2tau --
-  # there is no atomic superposition of a kinetic energy density.
-  delta_density: true
-
-  # WHERE THE PAW AUGMENTATION OCCUPANCIES COME FROM. These are contractions
-  # over converged wavefunctions living inside the core radius, so no grid
-  # model predicts them and a predicted CHGCAR has to borrow them.
-  #
-  #   atomic    (default) the ISOLATED ATOM's own record, from the database
-  #             above. A fixed, per-element, transferable quantity carrying its
-  #             own provenance -- which is what it has to be once slabs and
-  #             clusters join the set. A training-set average is a property of
-  #             whatever happened to be in the training set, is undefined for
-  #             an element that was not, and means something different again
-  #             when half the set is surface atoms.
-  #
-  #   material  average the training calculations'
-  #             records per element. More ACCURATE for an element the training
-  #             set covers -- measured on this project's platinum data a free-atom
-  #             record sat 86.6% RMS from a bulk site against 9.9% for the
-  #             average. That gap is the honest cost of the transferability,
-  #             not an argument that either is wrong.
-  #
-  # Switching this rebuilds paw_reference.json rather than reusing the table
-  # built from the other source.
-  paw_source: atomic
-
-  # ---------------------------------------------------------------------
-  # How the prepared cache stores its fields
-  # ---------------------------------------------------------------------
-  # `files` writes one CHGCAR-format text file per field per material -- the
-  # default, and what every cache built before 2026-08-28 is. `hdf5` writes one
-  # chunked fields.h5 per material instead.
-  #
-  # The stored numbers are identical: an HDF5 store holds exactly what a CHGCAR
-  # holds (rho*Omega), in exactly the same convention, so this is a storage
-  # decision and not a scientific one. Nothing above the reader knows which
-  # layout it is looking at -- a field inside a store is addressed as
-  # `fields.h5::CHGCAR` and every Poraque reader takes that spelling, so
-  # training, inference and the ASE calculator are unchanged.
-  #
-  # What changes is what it costs. A CHGCAR spends ~18 bytes of ASCII on each
-  # 8-byte double and is *parsed* on every read; an HDF5 dataset is binary and
-  # read by the library. Measured on the shipped 140^3 platinum density:
-  #
-  #     VASP CHGCAR (text)        99.9 MB
-  #     HDF5, no compression      21.9 MB
-  #     HDF5, lzf                 18.1 MB   (1.21x)
-  #     HDF5, gzip-4              15.9 MB   (1.38x)
-  #     HDF5, gzip-9              15.8 MB   (1.39x)
-  #
-  # and the round trip is exact to a float64 ulp rather than to the text
-  # format's eleven significant digits.
-  #
-  # Switching this REBUILDS the cache rather than mixing layouts: storage and
-  # compression are both part of the cache fingerprint.
-  storage: files                # files | hdf5
-
-  # HDF5 dataset filter. Requires storage: hdf5 -- setting it on a text cache
-  # RAISES rather than being ignored, because a compression flag that quietly
-  # does nothing reports a saving that never happened.
-  #
-  # Both codecs ship with h5py, so a compressed cache opens on any machine that
-  # can open an uncompressed one; there is no filter plugin to install. HDF5's
-  # byte-shuffle filter is applied with either, which is worth more than several
-  # gzip levels on real densities and costs nothing -- gzip goes from 1.19x to
-  # 1.38x with it, and writes and reads *faster*.
-  #
-  # lzf when build time matters (0.06 s vs 0.31 s on that density); gzip when
-  # the archive is written once and read for months. Ratios are larger on the
-  # downsampled fields a cache actually holds -- 2.1x at 32^3, where
-  # neighbouring points are more strongly correlated.
-  compression: null             # null | gzip | lzf
-  compression_level: 4          # gzip only; ignored by lzf rather than refused
-
-  tau_validation:
-    enabled: true               # false is RECORDED in the manifest, not silent
-    tf_ratio_range: [0.2, 5.0]  # int(tau) / C_TF int(rho^5/3)
-    check_von_weizsacker: true
-    density_threshold: 1.0e-3   # fraction of max(rho) below which points are exempt
-    vw_relative_tolerance: 0.05
-    vw_absolute_tolerance: 1.0e-6
-    max_violation_fraction: 0.01
-    require_provenance: true    # LTAU + INCAR hash; both come from the INCAR
-    require_code_version: false # OUTCAR/vasprun.xml are outputs, not required
-    required_tag: LTAU
-    minimum_version: "6.6.1"    # user-specified; applied to a version if given
+  train_paths: null             # list of dataset dirs, layouts may be mixed; null uses `root`
+  root: data/vasp/structures    # single dataset dir; runs are found here or one level below
+  source: auto                  # auto | vasp | bulk | prepared (one name, or one per path)
+  cache: data/cache             # where the downsampled copies are written
+  pattern: structure            # prefix of run folders inside a `vasp` path
+  code: auto                    # DFT code name, or auto
+  resolution: 32                # longest grid axis after spectral downsampling
+  potcar_dir: null              # POTCAR library; without one V_ext falls back to the Gaussian model
+  sigma: null                   # Gaussian pseudo-ion width in Ang; null derives it per species
+  gaussian_blur: null           # blur width in Ang for the computed potential
+  blur_method: spectral         # spectral | ndimage
+  spin: auto                    # auto reads the sources; true demands ISPIN=2, false discards it
+  precision: float64            # how the fields are held in memory (not what the model computes in)
+  xc: auto                      # pbe | lda | pw91 | auto; read by the EL analysis, not by training
+  delta_density: true           # ext2chg learns rho - rho_sup; predict() still returns the full rho
+  atomic_reference: data/vasp/isolated_atoms   # atomic_reference.json, or a dir of one-atom runs
+  paw_source: atomic            # atomic (free atom, transferable) | material (training-set average)
+  storage: files                # files (a CHGCAR-format text file per field) | hdf5 (one fields.h5)
+  compression: null             # null | gzip | lzf; hdf5 only, and raises on a text cache
+  compression_level: 4          # gzip only; ignored by lzf
 
 model:
-  # THE THREE THAT SET THE SIZE. All three are "some number of channels",
-  # which is why they are easy to confuse. Written out with every index, the
-  # operator is:
-  #
-  #   lift        v[0]_o(r) = sum_{i=1..Cin+3} Wlift_{o,i} x_i(r) + blift_o
-  #
-  #   layer l     vh[l-1]_i(k) = F_{r->k}[ v[l-1]_i ](k)
-  #
-  #               zh[l]_o(k) = sum_{i=1..C} R[l,c(k)]_{o,i,k1,k2,k3} vh[l-1]_i(k)
-  #                              for |k1|<m1, |k2|<m2, 0 <= k3 < m3
-  #                          = 0  otherwise
-  #
-  #               z[l]_o(r)  = F^-1_{k->r}[ zh[l]_o ](r)
-  #
-  #               y[l]_o(r)  = GroupNorm( z[l]_o(r)
-  #                              + sum_{i=1..C} W[l]_{o,i} v[l-1]_i(r) + b[l]_o )
-  #
-  #               y[l]_o(r) <- gamma_o(cell) y[l]_o(r) + beta_o(cell)    (FiLM)
-  #
-  #               v[l]_o(r)  = v[l-1]_o(r) + sigma( y[l]_o(r) )      (residual)
-  #
-  #   read-out    u_p(r)   = sigma( sum_{o=1..C} P1_{p,o} v[L]_o(r) + b1_p )
-  #               out_q(r) =        sum_{p=1..P} P2_{q,p} u_p(r)    + b2_q
-  #
-  # with
-  #
-  #   o, i = 1..C      C = width                  channels through the stack
-  #   l    = 1..L      L = n_layers               how many times the cycle runs
-  #   p    = 1..P      P = projection_channels    hidden width of the read-out
-  #   q    = 1..Cout                              physical output channels
-  #   c    = 1..4      the four (+-k1, +-k2) corners
-  #   m1 = min(modes, Nx/2), m2 = min(modes, Ny/2), m3 = min(modes, Nz/2 + 1)
-  #
-  # Four corners and not eight because v is real, so vh(-k) = conj(vh(k)) and
-  # only k3 >= 0 is stored. That 4 is the leading axis of R, whose shape is
-  # (4, C, C, m1, m2, m3).
-  #
-  # Parameter count -- this is where the three settings separate:
-  #
-  #   spectral   L * 4 * C^2 * m1*m2*m3   complex    <- dominates: C^2 and m^3
-  #   pointwise  L * (C^2 + C)
-  #   lift       C * (Cin + 3) + C
-  #   read-out   C*P + P + P*Cout + Cout             <- linear in P, once
-  #
-  # width  -- how many CHANNELS carry the field through the layers. The
-  #   operator's representational capacity: how many distinct features of the
-  #   density it can hold at once. Spectral weights go as width^2, so
-  #   doubling it roughly quadruples parameters and time.
-  #
-  # modes  -- how many FOURIER COEFFICIENTS PER AXIS the spectral multiplier
-  #   acts on, counted from the lowest. The operator's spatial reach: mode m
-  #   in a cell of length L is a wavelength L/m, so this fixes the finest
-  #   feature the learned convolution resolves and the longest range it can
-  #   correlate. A capacity limit, not a requirement -- on a coarser grid
-  #   fewer are used automatically, which is what lets one model serve
-  #   materials on different grids. Parameters go as modes^3: the most
-  #   expensive knob here, 8 -> 12 is 3.4x.
-  #
-  # projection_channels -- the hidden width of the final read-out head that
-  #   maps width channels back to the physical output. Appears once, at the
-  #   end, never inside a Fourier layer, and is purely pointwise, so it is
-  #   cheap. Usually worth more than the same budget spent on width.
-  #
-  # In short: width is how much information travels through, modes is how far
-  # it travels in space, projection_channels is only how it is read out.
-  #
-  # n_layers stacks the whole cycle, which composes the learned convolutions
-  # and buys effective range at linear cost -- unlike modes.
-  width: 16
-  modes: 8
-  projection_channels: 64
+  # width is how much information travels through, modes is how far it travels
+  # in space, projection_channels is only how it is read out. Spectral weights
+  # go as width^2 * modes^3 and are ~99.8% of the parameters.
+  width: 16                     # channels carried through the Fourier layers
+  modes: 8                      # retained Fourier modes per axis, counted from the lowest
+  n_layers: 3                   # how many times the lift/spectral/project cycle runs
+  projection_channels: 64       # hidden width of the read-out head; pointwise, so cheap
 
-  # HOW `modes` IS TRUNCATED, and the one setting to revisit when the dataset
-  # stops being uniform.
-  #
-  #   fixed     keep the lowest `modes` coefficients per axis, whatever the
-  #             cell. Mode k on an axis of length L is |G| = 2*pi*k/L, so a
-  #             fixed index keeps a DIFFERENT PHYSICAL BAND in every material.
-  #             Fine only while the cells are alike.
-  #
-  #   physical  keep floor(g_max * L_i / 2*pi) modes on axis i, so every
-  #             material contributes the same band of physics. Needs `g_max`
-  #             in 1/Ang. This is the right choice for a dataset spanning a
-  #             range of cell sizes -- see configs/train_materialsproject.yaml.
-  #
-  # `fixed` here because this dataset was built with similar cells to exercise
-  # the training pipeline, not to span chemistry. Switch to `physical` when
-  # that stops being true.
-  #
-  # `modes` AND `g_max` DO NOT CONFLICT -- they compose, as
-  #
-  #   retained = min( modes, floor(g_max * L_i / 2*pi), N_i/2 )
-  #
-  # but they are not symmetric, and that asymmetry is the thing to watch:
-  #
-  #   modes  ALLOCATES. It sizes the weight tensor R = (4, C, C, m, m, m),
-  #          whatever g_max later does.
-  #   g_max  only MASKS at run time. It can take modes away, never add them.
-  #
-  # So a g_max tighter than `modes` leaves the unreached weights with exactly
-  # zero gradient: allocated, saved into the .pfno, never trained. At modes=8
-  # and g_max=6 a 4.08 Ang fcc Pt cell keeps 3 modes -- 5.3% of R -- and the
-  # other 94.7% is dead.
-  #
-  # And the sharper trap: dead is not harmless, because it is dead *at random
-  # initialisation*. Predict a larger cell later and floor(g_max*L/2pi) grows,
-  # switching those untrained weights on:
-  #
-  #   L = 4.08 Ang -> 3 modes ->   5.3% of R engaged   (what was trained)
-  #   L = 6.00 Ang -> 5 modes ->  24.4%
-  #   L = 8.40 Ang -> 8 modes -> 100.0%                (94.7% of it random)
-  #
-  # A model trained only on small cells with `physical` is therefore not
-  # merely less accurate on a large one -- it is actively wrong, in exactly
-  # the regime `physical` was chosen to serve.
-  #
-  # The rule: pick g_max for the physics, then set
-  #
-  #   modes = floor(g_max * L_max / 2*pi)
-  #
-  # for the LARGEST cell in the dataset, so nothing is allocated that no
-  # structure can reach. Smaller cells legitimately use fewer -- that is what
-  # "the same physical band everywhere" means.
-  #
-  # The run prints the retained range and says so when it truncates. Read
-  # that line before trusting a `physical` run.
-  mode_selection: fixed
-  # g_max: 6
+  mode_selection: fixed         # fixed keeps `modes` per axis; physical keeps a fixed band
+  g_max: null                   # cutoff in 1/Ang, required by mode_selection: physical
+  # `physical` is right for a dataset spanning cell sizes; then set
+  # modes = floor(g_max * L_max / 2pi) for the LARGEST cell, or the modes no
+  # small cell ever reached stay at their random initialisation and go live
+  # on a large one.
 
-  # THE NONLINEARITY INSIDE EVERY FOURIER LAYER, i.e. sigma in the equation
-  # at the top of this file: v[l] = v[l-1] + sigma(y[l]).
-  #
-  #   silu    the default as of 2026-08-17. Stateless -- no parameters,
-  #           nothing to learn. Measurably beat gelu on this project's own
-  #           ext2chg and chg2tau comparisons (see FUTURE.md), which is why
-  #           it replaced gelu as the default; gelu was the default before
-  #           that, and every model trained before then used it.
-  #   gelu, relu, tanh   also stateless; swap in for silu with no other
-  #           consequence. gelu remains fully supported, just not the
-  #           default any more.
-  #
-  #   kan_bspline, kan_cheby, kan_rbf, kan_rational   Kolmogorov-Arnold
-  #           Network style activations: instead of one fixed function
-  #           shared by every channel, EACH CHANNEL LEARNS ITS OWN sigma_c,
-  #           applied elementwise to every voxel of that channel. kan_bspline
-  #           parameterises sigma_c with a B-spline on a fixed knot grid (the
-  #           original KAN paper, Liu et al. 2024); kan_cheby with a
-  #           Chebyshev-polynomial expansion, typically cheaper and smoother;
-  #           kan_rbf with a sum of fixed Gaussian radial basis functions (the
-  #           "FastKAN" simplification, Li 2024 -- a closed-form stand-in for
-  #           the B-spline basis, no Cox-de Boor recursion); kan_rational
-  #           with a learned rational (Pade-style) function of x whose
-  #           denominator is guarded to stay >= 1, so it can never develop a
-  #           pole (Molina et al. 2020). All four are per-channel, not
-  #           per-(input,output)-pair -- a real KAN edge-wise layer would
-  #           replace the pointwise 1x1x1 convolution itself, which this is
-  #           not; see FUTURE.md.
-  #
-  #           Each one is w_c * silu(x) + a learned residual (kan_use_base
-  #           below), the same base-function-plus-spline construction the
-  #           original KAN paper itself uses -- so at initialisation, with
-  #           the residual small, every variant starts close to `silu` and
-  #           only departs from it as training moves the learned
-  #           coefficients. (An earlier version of this option used gelu as
-  #           the base, matching this project's own prior default rather
-  #           than the paper's; corrected 2026-08-17, see FUTURE.md -- the
-  #           four checkpoints trained under the old base need retraining
-  #           to be valid again, also flagged there.)
-  #
-  #           Cost at width=16, CPU forward+backward, relative to gelu
-  #           (measured 2026-08-17, see FUTURE.md; not yet re-measured
-  #           against the corrected silu-base variants, though the relative
-  #           ranking is expected to hold): kan_cheby 1.36x, kan_rational
-  #           1.54x, kan_rbf 2.00x, kan_bspline 5.50x -- the ranking roughly
-  #           tracks how many basis functions each residual sums (kan_cheby's
-  #           degree+1 term Chebyshev recurrence and kan_rational's two
-  #           length-4 coefficient loops are cheapest; kan_bspline's Cox-de
-  #           Boor recursion over grid_size+spline_order basis functions is
-  #           by far the most expensive). Measure on your own hardware before
-  #           committing to a long run -- the MPS/Apple Silicon gap is
-  #           markedly narrower than the CPU one for kan_cheby (see
-  #           FUTURE.md).
-  # activation: silu
+  activation: silu              # silu | gelu | relu | tanh (stateless) | kan (learned per channel)
+  kan_setup: null               # read ONLY when activation: kan; null means the defaults below
+  # kan_setup:
+  #   variant: bspline          # bspline (the KAN paper) | cheby | rbf | rational
+  #   use_base: true            # keep the w_c*silu(x) base term; false is a "pure" KAN
+  #   grid_size: 8              # knot intervals (bspline) / RBF centers - 1 (rbf)
+  #   spline_order: 3           # B-spline degree; bspline only
+  #   grid_range: [-2.0, 2.0]   # support of that grid; bspline clamps outside it, rbf decays
+  #   degree: 6                 # highest Chebyshev order; cheby only
+  #   rational_num_degree: 4    # numerator power; rational only
+  #   rational_den_degree: 4    # even denominator powers; rational only
+  # Cost relative to gelu at width=16 on CPU: cheby 1.36x, rational 1.54x,
+  # rbf 2.00x, bspline 5.50x. Every variant starts close to silu.
 
-  # Read only by the four kan_* activations above.
-  #   kan_use_base   true (default) includes each channel's w_c * silu(x)
-  #                  base term, matching the original KAN paper. false gives
-  #                  a "pure" KAN activation -- only the learned residual, no
-  #                  base weight, no fixed nonlinearity mixed in at all. A
-  #                  pure channel's output is then BOUNDED (kan_cheby,
-  #                  kan_bspline) or decays to zero (kan_rbf, kan_rational
-  #                  with the default degrees) for a wide input tail, rather
-  #                  than tracking it -- see poraque.ml.kan for which.
-  # kan_use_base: true
+  use_coordinates: true         # append three fractional-coordinate channels to the input
+  cell_conditioning: true       # condition every layer on the lattice through FiLM
+  embedding_dim: 32             # width of the cell embedding FiLM reads
+  precision: float32            # float32 | float64; what the operator computes in
 
-  # Read only when `activation: kan_bspline` or `activation: kan_rbf` (the
-  # two share the same fixed-grid design).
-  #   kan_grid_size     number of grid intervals. More gives sigma_c finer
-  #                     local structure, at `width` extra coefficients each.
-  #   kan_spline_order  B-spline degree; 3 (cubic) is the KAN paper's choice.
-  #                     Read only by kan_bspline.
-  #   kan_grid_range    [low, high] support of the knot/center grid. A
-  #                     kan_bspline input outside it is CLAMPED before the
-  #                     spline is evaluated, not extrapolated -- see
-  #                     poraque.ml.kan.BSplineKANActivation for why; a
-  #                     kan_rbf input outside it simply decays towards zero
-  #                     on its own.
-  # kan_grid_size: 8
-  # kan_spline_order: 3
-  # kan_grid_range: [-2.0, 2.0]
-
-  # Read only when `activation: kan_cheby`. Highest Chebyshev order; degree+1
-  # coefficients per channel.
-  # kan_degree: 6
-
-  # Read only when `activation: kan_rational`.
-  #   kan_rational_num_degree   highest power of the numerator polynomial.
-  #   kan_rational_den_degree   number of even powers (x^2, x^4, ...) in the
-  #                             denominator. With the defaults below the
-  #                             denominator's highest power (x^8) outgrows
-  #                             the numerator's (x^4), so the residual decays
-  #                             to zero for a wide pre-activation tail rather
-  #                             than needing clamping.
-  # kan_rational_num_degree: 4
-  # kan_rational_den_degree: 4
+  pauli_residual: false         # chg2tau: predict tau = tau_vW + s*softplus(f), bound by construction
+  pauli_scale: null             # initial Pauli scale in eV/Ang^3; null fits it from the training split
+  learn_pauli_scale: true       # optimise that scale alongside the backbone
 
 training:
-  # Physics-informed terms for the NEURAL OPERATOR, added to the data loss as
-  #
-  #   total = data + sum_i weight_i * term_i
-  #
-  # and reported as separate data/physics/total columns, because a falling
-  # total says nothing about which half fell. Introduce them one at a time
-  # against a measured baseline: a badly scaled constraint degrades accuracy
-  # while looking principled.
-  #
-  # NOT to be confused with `symbolic.physics` below. These constrain the
-  # network over voxels; those constrain an algebraic expression over probe
-  # points. Two of the names appear in both blocks and mean different things,
-  # which is why they are nested separately.
+  epochs: 500                   # passes over the training set
+  batch_size: 4                 # samples per batch within one grid-shape bucket
+  learning_rate: 0.002
+  weight_decay: 0.0001
+  optimizer: adamw              # adamw | adam | sgd; identical to adam at weight_decay 0
+  scheduler: cosine             # cosine | null
+  grad_clip: 1.0                # global gradient-norm clip; 0 disables
+  loss: relative_l2             # relative_l2 | sobolev
+  sobolev_weight: 0.1           # weight of the gradient term when loss: sobolev
+  valid_fraction: 0.2           # held out at the STRUCTURE level; 0 trains on everything
+  eval_epoch: 10                # evaluate and log every this many epochs
+  early_stopping: 300           # epochs without improvement before stopping; 0 disables
+  enable_kfold: false           # cross-validate instead of fitting once; produces K models, not one
+  k_folds: 5                    # folds, capped at the number of structures
+  seed: 42                      # the validation draw, the fold partition, the batch order
+  init_seed: null               # seeds the WEIGHTS only; null reuses `seed`
+  device: auto                  # auto (CUDA, then MPS, then CPU) or an explicit backend
+
+  # Physics-informed terms for the NEURAL OPERATOR: total = data + sum_i w_i * term_i.
+  # Only the total is reported. Introduce one at a time against a measured
+  # baseline -- a badly scaled constraint degrades accuracy while looking
+  # principled. Not to be confused with symbolic.physics below.
   physics:
-    electron_count_weight: 0.1
-    positivity_weight: 0.0
-    von_weizsacker_weight: 0.0
-    euler_lagrange_weight: 0.0
+    electron_count_weight: 0.0  # ext2chg: int(rho) must equal the known valence count
+    positivity_weight: 0.0      # rho, tau >= 0 (a Log head is the better fix)
+    von_weizsacker_weight: 0.0  # chg2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
+    euler_lagrange_weight: 0.0  # ext2chg: dTs/drho + v_ext + v_H + v_xc = const, on a surrogate Ts
+
+output:
+  root: models                  # parent of every run folder; null writes NOTHING at all
+  write_log: true               # log/<name>.log, .json, and the resolved config
+  plot_figures: true            # render the figures into plots/
+  write_pdf_report: true        # typeset the PDF into report/; needs a LaTeX toolchain
+  checkpoint: true              # write the .pfno
+  log: null                     # explicit log path; null uses the run folder
+  json: null                    # explicit metrics path; null uses the run folder
+  plot_format: png
+  dpi: 200
 
 symbolic:
-  enable_symbolic_distillation: true
+  enable_symbolic_distillation: false   # minutes to hours of CPU after the fit, and needs PySR
+  target: model                 # model distils what the operator learned; reference fits the DFT data
+  features: gga                 # gga (rho, p, q) | reduced (p, q) | raw | enhancement (alias)
+  template: none                # none fits tau directly; pauli fits F = (tau - tau_vW)/tau_TF
+  # `features: reduced` with `template: pauli` is the orbital-free pairing:
+  # every constant to be found is then order unity.
+  epsilon: 1.0e-08              # vacuum threshold; p and q there are ratios of two noises
+  constraints: {"^": [-1, 1]}   # per-operator argument complexity; the exponent is held to 1
+  data_loss: mse                # mse | mae; mae is more robust on a density with wide tails
+  unary_operations: [exp, log, sqrt, abs]
+  binary_operations: ['+', '-', '*', /, '^']
+  iterations: 40                # the single biggest quality/time knob
+  population_size: 33
+  populations: 15
+  max_depth: 10                 # ceilings that keep the result readable rather than
+  max_size: 30                  #   a fitted polynomial in disguise
+  parsimony: 0.0032             # penalty per node in the fitness
+  n_samples: 4000               # voxels sampled across the dataset; cost is linear in them
+  seed: 0                       # seeds the sampling always, the search only under `deterministic`
+  deterministic: false          # reproducible, at the cost of the parallelism across populations
 
-  # THE PAULI ENHANCEMENT FACTOR, on the two reduced variables and nothing
-  # else. `features` picks the inputs and `template` picks how the target is
-  # factorised; together they define the search as
-  #
-  #   F(p, q) = (tau - tau_vW) / tau_TF,   tau = tau_vW + tau_TF * F(p, q)
-  #
-  # so the formula found *is* the kinetic energy density, rebuilt from two
-  # terms already known in closed form:
-  #
-  #   tau_vW = |grad rho|^2 / (8 rho)      tau_TF = C_TF rho^(5/3)
-  #
-  # p = |grad rho| / (2 k_F rho) and q = lap rho / (4 k_F^2 rho) are
-  # dimensionless and invariant under the coordinate scaling that fixes T_s,
-  # so a functional written in them holds at every density scale. That
-  # invariance is also why rho itself is dropped: F cannot depend on it, and
-  # offering it only gives the search a way to fit this dataset's densities.
-  #
-  # `pauli` rather than `thomas_fermi` because tau - tau_vW >= 0 by
-  # Hoffmann-Ostenhof and is exactly the part a kinetic functional must model.
-  features: reduced
-  template: pauli
-
-  # PHYSICS CONSTRAINTS ON THE SEARCH -- as fitness, not as a filter applied
-  # afterwards. Checking the front once the run is over only measures how few
-  # candidates were physical; by then the populations have spent their budget
-  # on forms that must be discarded. With `enable: true` the objective is
-  #
-  #   L = MSE + w+   * mean(min(F,0)^2)        [positivity]
-  #           + w_TF * |F(0,0) - 1|            [uniform gas, Thomas-Fermi]
-  #           + w_vW * |F(p_infinity,0) - 0|   [one orbital, von Weizsacker]
-  #
-  # The first term is evaluated on the batch, the other two on synthetic
-  # probe points -- which is why this needs PySR's *full objective* rather
-  # than an elementwise loss, since an elementwise loss only sees
-  # (prediction, target) pairs and can never evaluate a candidate where the
-  # data does not sit.
-  #
-  # NOTE: the `loss` column of the reported front is then this *constrained*
-  # objective and is not comparable with an unconstrained run's. R2 and the
-  # relative L2 are computed from the expression itself and are unaffected.
+  # Physics constraints on the SYMBOLIC SEARCH, as fitness rather than as a
+  # filter applied afterwards. Note the `loss` column of the reported front is
+  # then this constrained objective; R2 and the relative L2 are unaffected.
   physics:
     enable: true
-    positivity_weight: 100.0
-    thomas_fermi_weight: 100.0
-    von_weizsacker_weight: 100.0
-    # Large enough that no smooth interpolating form is still in its crossover
-    # region, small enough that p^(8/3) stays inside the 32-bit float the
-    # engine searches in.
-    p_infinity: 1.0e+06
+    positivity_weight: 100.0       # F >= 0 on the batch
+    thomas_fermi_weight: 100.0     # F(0, 0) = 1, the uniform gas
+    von_weizsacker_weight: 100.0   # F(p_inf, 0) = 0, one orbital
+    p_infinity: 1.0e+06            # stands in for p -> infinity; keeps p^(8/3) inside float32
+
+fine_tuning:
+  enable: false                 # continue a trained fit on a narrower set; normalizations come
+                                #   from the checkpoint, never refitted on the new data
+  pretrained_checkpoint: models/poraque_models.pfno
+  learning_rate: 1.0e-05        # much lower than a fresh fit, which is the point
+  freeze_lifting_layers: false  # keep the input embedding fixed and adapt only the operator

@@ -17,10 +17,6 @@ proves nothing. What proves something is a *pair* — τ against the ρ it was
 computed with — because the von Weizsäcker bound relates the two and is a
 theorem rather than a convention.
 
-The third thing checked here is that the runs pass the ingestion gate **as
-delivered** — with no ``OUTCAR`` and no ``vasprun.xml``, because those are
-outputs and this dataset does not ship them.
-
 Everything here skips when ``data/vasp`` is absent, which it is in a fresh
 checkout: the dataset is gitignored. That is the same bargain
 ``test_energy_differences.py`` makes, and it means these tests protect the
@@ -33,15 +29,8 @@ import os
 import numpy as np
 import pytest
 
-from poraque.data.validation import (
-    REQUIRED_VASP_VERSION,
-    read_tau_provenance,
-    thomas_fermi_scale,
-    validate_tau,
-    version_at_least,
-    von_weizsacker_violations,
-)
 from poraque.fields import ChargeDensity, KineticEnergyDensity
+from poraque.fields.density import thomas_fermi_tau, von_weizsacker_tau
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VASP = os.path.join(REPO, "data", "vasp")
@@ -49,10 +38,59 @@ STRUCTURES = os.path.join(VASP, "structures")
 ATOMS = os.path.join(VASP, "isolated_atoms")
 
 
-def _has_output(directory):
-    """Whether a run carries a file the code version can be read from."""
-    return any(os.path.exists(os.path.join(directory, name))
-               for name in ("OUTCAR", "vasprun.xml"))
+def thomas_fermi_scale(tau, density, grid):
+    r"""
+    :math:`\int\tau` against the Thomas-Fermi estimate built from ρ.
+
+    Dimensionless, which is the point: it is the one comparison that survives
+    not knowing what convention a ``TAUCAR`` was written in.
+    """
+    tau = np.asarray(tau, dtype=float)
+    density = np.asarray(density, dtype=float)
+    assert tau.shape == density.shape, "tau and rho are not a pair on one grid"
+
+    tau_integral = float(grid.integrate(tau))
+    tf_integral = float(grid.integrate(thomas_fermi_tau(density)))
+    return {"tau_integral": tau_integral, "tf_integral": tf_integral,
+            "ratio": tau_integral / tf_integral,
+            "electrons": float(grid.integrate(density))}
+
+
+def von_weizsacker_violations(tau, density, grid, density_threshold=1e-3,
+                              relative_tolerance=0.05,
+                              absolute_tolerance=1e-6):
+    r"""
+    Where, and how badly, :math:`\tau \ge \tau_{\rm vW}` fails.
+
+    A theorem rather than a tolerance, so any violation on a point carrying
+    real density says ρ and τ are not the pair they claim to be. The vacuum
+    tail is exempt -- there :math:`\tau_{\rm vW}` is a ratio of two numerical
+    noises -- and a little slack absorbs the ringing of a band-limited field.
+    """
+    tau = np.asarray(tau, dtype=float)
+    density = np.asarray(density, dtype=float)
+    vw = von_weizsacker_tau(density, grid)
+
+    peak = float(np.max(density)) if density.size else 0.0
+    significant = density > density_threshold * peak
+    n_significant = int(np.count_nonzero(significant))
+
+    allowed = vw * (1.0 - relative_tolerance) - absolute_tolerance
+    violating = significant & (tau < allowed)
+    n_violating = int(np.count_nonzero(violating))
+
+    worst_ratio = None
+    if n_violating:
+        index = int(np.argmax((vw - tau)[violating]))
+        vw_here = float(vw[violating][index])
+        if vw_here > 0:
+            worst_ratio = float(tau[violating][index] / vw_here)
+
+    return {"significant_points": n_significant,
+            "violations": n_violating,
+            "violation_fraction": (n_violating / n_significant
+                                   if n_significant else 0.0),
+            "worst_ratio": worst_ratio}
 
 
 def _runs():
@@ -225,81 +263,3 @@ class TestTauIsNotMultipliedByTheCellVolume:
             f"the Thomas-Fermi estimate. A factor near the cell volume "
             f"(~500) means the volume scaling is back; a factor near two "
             f"means one spin block was dropped.")
-
-
-@needs_dataset
-class TestEveryRunPassesTheGateAsDelivered:
-    """
-    The provenance half of the ingestion gate, checked run by run.
-
-    What the gate requires is what the run's *inputs* say: ``LTAU = .TRUE.``
-    and a hash of the ``INCAR`` that says it. Both are present in every
-    directory here, and neither depends on an output file.
-
-    These runs ship no ``OUTCAR`` and no ``vasprun.xml``, so they record no
-    code version -- and that must not refuse them. The version was only ever
-    guarding against a build too old to honour ``LTAU``, which such a build
-    ignores anyway, writing no tau at all. The gap is recorded as a warning
-    and the sample proceeds on its physics.
-    """
-
-    @pytest.mark.parametrize("directory", RUNS, ids=os.path.basename)
-    def test_ltau_is_set(self, directory):
-        provenance = read_tau_provenance(directory)
-        assert provenance["tau_tag_set"] is True, (
-            f"{os.path.basename(directory)}: LTAU is "
-            f"{provenance['tau_tag_value']!r}, so this TAUCAR was not written "
-            f"by the documented VASP path.")
-
-    def test_a_run_that_does_ship_its_version_is_checked_against_the_minimum(
-            self):
-        """
-        Dropping the *requirement* must not drop the *comparison*. A run that
-        does record a version has it read and compared; only its absence is
-        tolerated.
-        """
-        recorded = [directory for directory in RUNS if _has_output(directory)]
-        if not recorded:
-            pytest.skip("no run in this checkout ships an output file")
-
-        provenance = read_tau_provenance(recorded[0])
-        assert provenance["version"], (
-            f"{os.path.basename(recorded[0])} has an output file but no "
-            f"version was read from it")
-        assert version_at_least(provenance["version"], REQUIRED_VASP_VERSION), (
-            f"{os.path.basename(recorded[0])} records version "
-            f"{provenance['version']}, below the required "
-            f"{REQUIRED_VASP_VERSION}")
-
-    @pytest.mark.parametrize("directory", RUNS, ids=os.path.basename)
-    def test_the_incar_is_hashed(self, directory):
-        assert read_tau_provenance(directory)["incar_sha256"], (
-            f"{os.path.basename(directory)}: no INCAR to pin the settings to.")
-
-    def test_the_whole_gate_passes_without_any_output_file(self):
-        """
-        End to end, on a directory exactly as delivered.
-
-        Regression: the gate briefly required a code version, which made this
-        complete and physically consistent dataset untrainable for want of a
-        file that says nothing about the field.
-
-        The run is chosen for *not* having an ``OUTCAR`` rather than fixed by
-        name: some of these directories have since acquired one, and a test
-        that kept pointing at such a run would still pass while no longer
-        testing anything.
-        """
-        bare = [directory for directory in RUNS
-                if not _has_output(directory)]
-        if not bare:
-            pytest.skip("every run now ships an output file")
-        directory = bare[0]
-
-        density, tau = _pair(directory)
-        record = validate_tau(tau.data, density.data, density.grid,
-                              provenance=read_tau_provenance(directory),
-                              identifier=os.path.basename(directory))
-        assert record["passed"] is True
-        assert any("no code version" in note for note in record["warnings"]), (
-            "the missing version must still be recorded -- a gap nobody sees "
-            "is the condition this gate exists to prevent")

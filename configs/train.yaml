@@ -1,19 +1,30 @@
+# =====================================================================
+# Poraque - the reference run.
+#
+#   poraque-train --config configs/train.yaml
+#
+# Every key is optional, so this file states only what it changes. See
+# configs/train_complete_and_commented.yaml for all of them, annotated.
+# =====================================================================
+
 task:
-  type: all
-  name: platinum_model_std 
+  type: all                     # all | ext2chg | chg2tau; only `all` reaches a total energy
+  name: platinum_model_std      # names models/<name>/ and everything inside it
 
 data:
-  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # without a library V_ext is the Gaussian model
 
 model:
-  width: 16
-  modes: 8
-  projection_channels: 64
-  mode_selection: fixed
+  width: 16                     # channels carried through the Fourier layers
+  modes: 8                      # retained Fourier modes per axis
+  n_layers: 3                   # Fourier layers
+  projection_channels: 64       # hidden width of the read-out head
+  mode_selection: fixed         # these cells are alike; use `physical` + g_max when they are not
+  activation: silu              # stateless; `kan` moves the hyperparameters into kan_setup
 
 training:
   physics:
-    electron_count_weight: 0.1
+    electron_count_weight: 0.1  # int(rho) = the known valence count
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0

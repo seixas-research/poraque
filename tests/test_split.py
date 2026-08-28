@@ -345,13 +345,17 @@ class TestEarlyStopping:
 
 
 # ===================================================================== #
-# Loss components
+# The reported objective
 # ===================================================================== #
-class TestLossBreakdown:
+class TestTheObjectiveIsReportedAsOneNumber:
     """
-    A composite objective that reports only its total is unreadable: a falling
-    total says nothing about *which* term fell, and a constraint that is being
-    outweighed rather than satisfied looks exactly like one that is working.
+    The log and the report carry the **total** objective and nothing else.
+
+    A physics-informed run's total is what the optimiser stepped on: data
+    fidelity plus every weighted constraint. The per-term split used to be
+    logged beside it, in unweighted units that do not sum to the total, which
+    made the table three columns wide and two of them incomparable with any
+    other run's.
     """
 
     def _physics(self, **weights):
@@ -359,46 +363,25 @@ class TestLossBreakdown:
 
         return PhysicsInformedLoss(task="chg2tau", **weights)
 
-    def test_total_is_data_plus_physics(self, toy):
+    def test_history_carries_only_the_total(self, toy):
         history = _train_toy(toy, epochs=2, eval_every=1, verbose=False,
                              loss=self._physics(positivity_weight=0.5,
                                                 von_weizsacker_weight=0.25))
-        for total, data, physics in zip(history["train_loss"],
-                                        history["data_loss"],
-                                        history["physics_loss"]):
-            assert total == pytest.approx(data + physics, abs=1e-9)
+        assert len(history["train_loss"]) == 2
+        assert not [key for key in history
+                    if key.startswith(("data_loss", "physics"))]
 
-    def test_physics_is_zero_without_constraints(self, toy):
-        """The default objective is data-only; the series must say so."""
-        history = _train_toy(toy, epochs=2, eval_every=1, verbose=False)
-        assert history["physics_loss"] == [0.0, 0.0]
-        assert history["data_loss"] == pytest.approx(history["train_loss"])
-
-    def test_per_term_magnitudes_are_recorded(self, toy):
-        """Unweighted, because that is what you need to choose the weight."""
-        history = _train_toy(toy, epochs=2, eval_every=1, verbose=False,
-                             loss=self._physics(positivity_weight=0.5,
-                                                von_weizsacker_weight=0.25))
-        assert len(history["physics_positivity"]) == 2
-        assert len(history["physics_von_weizsacker"]) == 2
-
-    def test_columns_appear_only_when_physics_is_active(self, toy):
-        """
-        With every weight at zero the three columns would be two identical
-        numbers and a column of zeros -- less readable than one column.
-        """
-        lines = []
-        _train_toy(toy, epochs=2, eval_every=1, log=lines.append,
+    def test_the_header_is_the_same_with_and_without_constraints(self, toy):
+        constrained = []
+        _train_toy(toy, epochs=2, eval_every=1, log=constrained.append,
                    loss=self._physics(positivity_weight=0.5))
-        header = next(line for line in lines if "epoch" in line)
-        assert "total loss" in header
-        assert "data loss" in header and "physics loss" in header
-
         plain = []
         _train_toy(toy, epochs=2, eval_every=1, log=plain.append)
-        plain_header = next(line for line in plain if "epoch" in line)
-        assert "train loss" in plain_header
-        assert "physics loss" not in plain_header
+
+        header = next(line for line in constrained if "epoch" in line)
+        assert header == next(line for line in plain if "epoch" in line)
+        assert "train loss" in header
+        assert "physics" not in header and "data loss" not in header
 
     def test_rows_line_up_under_the_header(self, toy):
         lines = []
@@ -408,37 +391,16 @@ class TestLossBreakdown:
         for row in _rows(lines):
             assert len(row) == len(header)
 
-    def test_detects_active_physics_from_the_weights(self):
-        from poraque.ml.training import physics_terms_active
-
-        assert physics_terms_active(self._physics(positivity_weight=0.1))
-        assert not physics_terms_active(self._physics())
-        assert not physics_terms_active(object())     # a plain data loss
-
 
 class TestLossSummaryRows:
-    def test_data_only_reports_one_number(self):
-        rows = poraque_train.loss_summary({"train_loss": [0.5],
-                                           "data_loss": [0.5],
-                                           "physics_loss": [0.0]})
+    def test_reports_one_number(self):
+        rows = poraque_train.loss_summary({"train_loss": [0.5]})
         assert rows == {"final train loss": "0.50000"}
 
-    def test_physics_run_reports_the_split_and_its_share(self):
-        rows = poraque_train.loss_summary({"train_loss": [1.0],
-                                           "data_loss": [0.75],
-                                           "physics_loss": [0.25],
-                                           "physics_positivity": [0.5]})
-        assert rows["final total loss"] == "1.00000"
-        assert rows["final data loss"] == "0.75000"
-        assert "25.0%" in rows["final physics loss"]
-        assert any("positivity" in key for key in rows)
-
-    def test_the_aggregate_is_not_listed_as_a_term(self):
-        """`physics_loss` is the sum already reported, not a constraint."""
-        rows = poraque_train.loss_summary({"train_loss": [1.0],
-                                           "data_loss": [0.75],
-                                           "physics_loss": [0.25]})
-        assert not any(key.strip().startswith("loss") for key in rows)
+    def test_a_constrained_run_reports_the_total_and_nothing_else(self):
+        """The total already includes every weighted physics term."""
+        rows = poraque_train.loss_summary({"train_loss": [1.0]})
+        assert rows == {"final train loss": "1.00000"}
 
     def test_an_empty_history_yields_nothing(self):
         assert poraque_train.loss_summary({}) == {}
@@ -460,8 +422,7 @@ class TestHistorySerialisation:
                              early_stopping=2)
         curves, stopping = poraque_train.split_history(history)
 
-        assert set(curves) == {"train_loss", "data_loss", "physics_loss",
-                               "val_error", "val_epoch"}
+        assert set(curves) == {"train_loss", "val_error", "val_epoch"}
         assert all(isinstance(value, list) for value in curves.values())
         assert set(stopping) == {"best_epoch", "best_error", "stopped_early"}
 

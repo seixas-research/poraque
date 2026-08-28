@@ -198,9 +198,10 @@ changing them cannot silently reuse a cache built with different settings.
 | --- | --- | --- |
 | `width` | `16` | channel width of the Fourier layers |
 | `modes` | `8` | retained Fourier modes per axis |
-| `n_layers` | `4` | number of Fourier layers |
-| `projection_channels` | `48` | hidden width of the output projection |
-| `activation` | `gelu` | `gelu`, `relu`, `silu` or `tanh` |
+| `n_layers` | `3` | number of Fourier layers |
+| `projection_channels` | `64` | hidden width of the output projection |
+| `activation` | `silu` | `silu`, `gelu`, `relu`, `tanh`, or `kan` |
+| `kan_setup` | `null` | the KAN variant and its hyperparameters; read only when `activation: kan` |
 | `use_coordinates` | `true` | append three fractional-coordinate input channels |
 | `cell_conditioning` | `true` | condition every layer on lattice descriptors (FiLM) |
 | `embedding_dim` | `32` | width of that cell embedding |
@@ -220,6 +221,39 @@ parameters by eight.
 `modes` is a *capacity limit*, not a requirement. On a grid too coarse to
 supply that many modes, fewer are used automatically, so one configuration
 serves materials whose grids differ in size.
+
+### `activation` and `kan_setup`
+
+`silu`, `gelu`, `relu` and `tanh` are stateless: one fixed function, no
+parameters, nothing to learn. `kan` is the Kolmogorov-Arnold family, where
+**each channel learns its own** function, applied elementwise to every voxel of
+that channel. Which one, and how it is parameterised, comes from `kan_setup`:
+
+```yaml
+model:
+  activation: kan
+  kan_setup:
+    variant: cheby            # bspline | cheby | rbf | rational
+    degree: 6                 # cheby only
+```
+
+The block is read **only** when `activation: kan`; given beside a stateless
+activation it warns rather than being silently ignored, and an unknown key
+inside it raises. Omitting `variant` gives `bspline`, the original KAN paper's
+own parameterisation.
+
+Six of the seven hyperparameters are read by one variant each — `grid_size`,
+`spline_order` and `grid_range` by `bspline` (and the first and third by `rbf`,
+which reuses the same fixed-grid design), `degree` by `cheby`,
+`rational_num_degree` and `rational_den_degree` by `rational`. The seventh,
+`use_base`, applies to all four: `true` keeps each channel's $w_c\,\mathrm{silu}(x)$
+base term, so every variant starts close to `silu` and only departs from it as
+training moves the learned coefficients; `false` gives a "pure" KAN with no
+fixed nonlinearity mixed in at all.
+
+Cost at `width: 16` on CPU, relative to a stateless activation: `cheby` 1.36×,
+`rational` 1.54×, `rbf` 2.00×, `bspline` 5.50×. Measure on your own hardware
+before committing to a long run.
 
 ### `use_coordinates` and `cell_conditioning`
 
@@ -430,10 +464,10 @@ electrons per cell, nothing else pins the scale per material.
 
 At `0.1` the constraint sits an order of magnitude below the data term, which
 is the intended balance: the physics guides, the data decides. The training log
-separates `data loss`, `physics loss` and `total loss` into their own columns
-whenever any weight is non-zero — a falling total says nothing about which half
-fell, and a constraint being outweighed rather than satisfied looks identical
-in the total.
+reports one number, `train loss`: the **total** objective the optimiser stepped
+on, data fidelity plus every weighted constraint. That total is the only
+quantity comparable between two runs — the individual terms are reported by the
+loss unweighted, so they do not sum to it.
 
 ```{warning}
 Introduce them one at a time against a measured baseline, and only once the

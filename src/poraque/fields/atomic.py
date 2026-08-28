@@ -931,8 +931,8 @@ def _potcar_identity(directory):
 
 
 def _run_identity(directory):
-    """``(vasp_version, incar_sha256)``, reusing the tau gate's readers."""
-    from ..data.validation import code_version, file_hash
+    """``(vasp_version, incar_sha256)`` of the calculation that produced this."""
+    from ..data.provenance import code_version, file_hash
 
     return (code_version(directory),
             file_hash(os.path.join(directory, "INCAR")))

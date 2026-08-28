@@ -802,3 +802,97 @@ class TestPureKANMode:
         assert activation_params
         assert all(p.grad is not None and p.grad.abs().sum() > 0
                   for p in activation_params)
+
+
+# ===================================================================== #
+# The config layer: `activation: kan` + `kan_setup`
+# ===================================================================== #
+class TestTheKanBlockInAConfig:
+    """
+    Six of the seven KAN hyperparameters are read by *one* variant each, so as
+    flat keys under `model:` they sat beside `width` and `modes` -- which apply
+    always -- and looked like settings any run should think about. They now
+    live in one `kan_setup` block, read only when `activation: kan`, which also
+    makes "ignored otherwise" a statement about one key rather than seven.
+    """
+
+    def _config(self, **model):
+        from poraque.ml.config import TrainingConfig
+
+        return TrainingConfig.from_dict({"model": model})
+
+    @pytest.mark.parametrize("variant", ["bspline", "cheby", "rbf", "rational"])
+    def test_the_variant_becomes_the_backbones_flat_activation_name(self, variant):
+        """The grouping is a property of the file, not of the model: the
+        checkpoint's `architecture` record keeps the one flat name it has
+        always carried, so an existing bundle still loads."""
+        kwargs = self._config(activation="kan",
+                              kan_setup={"variant": variant}).model_kwargs()
+
+        assert kwargs["activation"] == f"kan_{variant}"
+        model = FNO3d(width=4, modes=2, n_layers=1, projection_channels=8,
+                      **{k: v for k, v in kwargs.items()
+                         if k in ("activation",)})
+        assert model.activation == f"kan_{variant}"
+
+    def test_the_settings_are_expanded_into_the_constructors_kan_keywords(self):
+        kwargs = self._config(
+            activation="kan",
+            kan_setup={"variant": "cheby", "degree": 9, "use_base": False},
+        ).model_kwargs()
+
+        assert kwargs["kan_degree"] == 9
+        assert kwargs["kan_use_base"] is False
+        assert "kan_setup" not in kwargs
+
+    def test_a_bare_kan_is_the_papers_own_parameterisation(self):
+        """`activation: kan` with nothing else means the B-spline KAN, so the
+        unqualified word means what the literature means by it rather than
+        whichever variant happens to be cheapest."""
+        assert self._config(activation="kan").model_kwargs()["activation"] \
+            == "kan_bspline"
+
+    def test_a_stateless_activation_carries_no_kan_keywords_at_all(self):
+        kwargs = self._config(activation="silu").model_kwargs()
+
+        assert kwargs["activation"] == "silu"
+        assert not [key for key in kwargs if key.startswith("kan")]
+
+    def test_a_kan_setup_without_a_kan_warns_rather_than_being_ignored(self):
+        """A block that quietly does nothing describes a run that never
+        happened."""
+        config = self._config(activation="silu", kan_setup={"degree": 9})
+
+        with pytest.warns(RuntimeWarning, match="not a KAN"):
+            name, kan = config.model.activation_kwargs()
+        assert (name, kan) == ("silu", {})
+
+    def test_the_old_flat_spelling_names_its_replacement(self):
+        with pytest.raises(ValueError, match="old flat spelling"):
+            self._config(activation="kan_cheby").model_kwargs()
+
+    def test_an_unknown_variant_raises(self):
+        with pytest.raises(ValueError, match="Unknown model.kan_setup.variant"):
+            self._config(activation="kan",
+                         kan_setup={"variant": "spline"}).model_kwargs()
+
+    def test_an_unknown_setting_raises(self):
+        """A typo here changes the architecture and nothing else says so."""
+        with pytest.raises(ValueError, match=r"Unknown key\(s\) in model.kan_setup"):
+            self._config(activation="kan",
+                         kan_setup={"variant": "cheby",
+                                    "kan_degree": 9}).model_kwargs()
+
+    def test_a_kan_config_builds_the_model_it_describes(self):
+        config = self._config(
+            activation="kan", width=4, modes=2, n_layers=1,
+            projection_channels=8,
+            kan_setup={"variant": "rbf", "grid_size": 5,
+                       "grid_range": [-1.0, 1.0], "use_base": False},
+        )
+        model = FNO3d(**config.model_kwargs())
+
+        assert model.activation == "kan_rbf"
+        assert model.kan_grid_size == 5
+        assert model.kan_grid_range == (-1.0, 1.0)
+        assert model.blocks[0].activation.base_weight is None

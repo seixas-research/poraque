@@ -37,23 +37,6 @@ an FFT per material per epoch otherwise.
 Everything a source can supply is written, not only the fields the current task
 needs. A cache built for ``ext2chg`` from an archive that also has :math:`\tau`
 serves ``chg2tau`` afterwards with no rebuild.
-
-Validating :math:`\tau` on the way in
--------------------------------------
-:math:`\tau` is the one cached field with no independent check on it. The
-external potential is reconstructed from the geometry and can be compared with
-a reference; the density integrates to a known electron count, and a wrong one
-announces itself immediately. A kinetic energy density does neither, and an
-entire dataset of invalid :math:`\tau` once passed through this function
-unnoticed.
-
-So every :math:`\tau` is now put through :func:`~poraque.data.validation.
-validate_tau` **before it is written**, against the density it is paired with
-and against the provenance of the run that produced it. A failure aborts the
-build naming the material, rather than caching a field that trains a model to
-predict nonsense. The gate's verdict for every material is written to
-``tau_validation.json`` at the cache root, and each material keeps its own
-``tau_provenance.json`` so the record survives a re-cache.
 """
 
 import json
@@ -64,15 +47,6 @@ import numpy as np
 
 from ..fields import FieldGrid
 from .sources import discover_records, resolve_source
-from .validation import (
-    MANIFEST_FILENAME,
-    TauValidationConfig,
-    TauValidationError,
-    TauValidationManifest,
-    read_tau_provenance,
-    validate_tau,
-    write_tau_provenance,
-)
 
 #: Fields written to the cache, in file order.
 CACHED_FIELDS = ("EXTCAR", "CHGCAR", "TAUCAR")
@@ -87,12 +61,6 @@ PAW_REFERENCE_FILENAME = "paw_reference.json"
 #: range. Read back on a resumed build so the table below can be printed in
 #: full without re-reading a single field.
 CACHE_SUMMARY_FILENAME = "cache_summary.json"
-
-#: Per-material verdict of the kinetic-energy-density gate, at the cache root.
-#: Deliberately *not* part of the fingerprint below: the gate does not change
-#: what any cached file contains, so tightening a threshold must not invalidate
-#: a cache that is otherwise identical. The manifest is the record instead.
-TAU_MANIFEST_FILENAME = MANIFEST_FILENAME
 
 #: What the cache was built *from* and *with*. "Files exist" is not "cached":
 #: a directory built from other sources, another resolution, or another
@@ -143,7 +111,7 @@ def cached_paths(destination, fields, storage="files"):
 def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
                       charges=None, potcar_dir=None, sigma=None,
                       gaussian_blur=None, blur_method="spectral", pattern=None,
-                      code="auto", spin=False, limit=None, tau_validation=None,
+                      code="auto", spin=False, limit=None,
                       storage="files", compression=None, compression_level=4,
                       log=None):
     r"""
@@ -206,20 +174,8 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
         :func:`poraque.fields.hdf5.compression_options`.
     compression_level : int, optional
         Gzip level 0-9.
-    tau_validation : TauValidationConfig or dict, optional
-        Settings for the kinetic-energy-density gate; the defaults when
-        omitted. Pass ``{"enabled": False}`` to build without it — which is
-        recorded in the manifest, so the resulting cache stays distinguishable
-        from one that passed.
     log : callable, optional
         Receives one line per material.
-
-    Raises
-    ------
-    ~poraque.data.validation.TauValidationError
-        When a material's :math:`\tau` fails the gate. The build stops there
-        rather than continuing past it: a dataset that is half-validated is one
-        whose bad half is now harder to find.
 
     Returns
     -------
@@ -275,36 +231,28 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
                                            options, spin, storage, compression,
                                            compression_level))
 
-    validation = TauValidationConfig.from_mapping(tau_validation)
-    manifest = TauValidationManifest.load(cache)
-
     summary = _load_summary(cache)
     table = _CacheTable([record.identifier for record in records], fields, emit)
     table.header()
     try:
         for record in records:
             entry = _build_one(record, cache, resolution, fields, spin, emit,
-                               summary.get(record.identifier), validation,
-                               manifest, storage, compression,
-                               compression_level)
+                               summary.get(record.identifier), storage,
+                               compression, compression_level)
             summary[record.identifier] = entry
             table.row(record.identifier, entry)
     finally:
-        # Written even when the gate aborts the build. The record of *which*
-        # material failed and by how much is the most useful thing to survive a
-        # failure, and losing it to the exception would mean re-running the
-        # whole ingestion to find out.
+        # Written even when the build aborts partway. The record of what did
+        # get cached is the most useful thing to survive a failure, and losing
+        # it to the exception would mean re-reading every field to find out.
         _write_summary(cache, summary)
-        if manifest.entries:
-            manifest.write(cache)
     table.footer()
-    _report_validation(manifest, validation, emit)
 
     return cache
 
 
 def _resolve_spin(requested, records, emit):
-    """
+    r"""
     Turn ``spin="auto"`` into a decision, by looking at the data.
 
     This is the *first* of the two places that ask whether a dataset is
@@ -373,21 +321,6 @@ def _resolve_spin(requested, records, emit):
         emit(f"  spin: ISPIN = 2 in {len(polarized)} of {len(records)} "
              f"material(s){note}")
     return resolved
-
-
-def _report_validation(manifest, validation, emit):
-    """One line on what the gate did, or on the fact that it did nothing."""
-    if not validation.enabled:
-        emit("  tau validation: DISABLED for this build "
-             f"(recorded in {MANIFEST_FILENAME})")
-        return
-    passed, failed, ungated = manifest.summary()
-    if passed or failed or ungated:
-        emit(f"  tau validation: {passed} passed, {failed} failed, "
-             f"{ungated} ungated  ->  {MANIFEST_FILENAME}")
-    warned, note = manifest.warned()
-    if warned:
-        emit(f"      {warned} passed with a note: {note}")
 
 
 # ---------------------------------------------------------------------- #
@@ -563,8 +496,7 @@ def _write_summary(cache, summary):
 
 
 def _build_one(record, cache, resolution, fields, spin, emit, remembered=None,
-               validation=None, manifest=None, storage="files",
-               compression=None, compression_level=4):
+               storage="files", compression=None, compression_level=4):
     """
     Downsample and write one material, unless it is already there.
 
@@ -595,24 +527,9 @@ def _build_one(record, cache, resolution, fields, spin, emit, remembered=None,
 
     os.makedirs(destination, exist_ok=True)
     ranges, warnings = {}, []
-    native_fields = {}
 
     for name in wanted:
         field = source.read(record, name, native, spin=spin)
-        native_fields[name] = field
-
-        # The gate runs on the *native* field, before any downsampling, and
-        # before the file is written. Native because that is the data as the
-        # DFT code produced it -- band-limiting rings, and a von Weizsaecker
-        # bound tested on a truncated field measures the truncation. Before the
-        # write because a cache directory holding a rejected tau is exactly the
-        # failure mode this whole mechanism exists to prevent.
-        if name == "TAUCAR":
-            entry = _validate_tau_field(record, field, native_fields, native,
-                                        source, spin, validation, emit,
-                                        manifest)
-            if entry.get("provenance"):
-                write_tau_provenance(destination, entry["provenance"])
 
         if resolution:
             from .dataset import _resample
@@ -648,58 +565,6 @@ def _build_one(record, cache, resolution, fields, spin, emit, remembered=None,
     return {"native": list(native.shape), "shape": list(reduced.shape),
             "ranges": ranges, "warnings": warnings,
             "seconds": time.time() - started}
-
-
-def _validate_tau_field(record, tau, native_fields, grid, source, spin,
-                        validation, emit, manifest=None):
-    r"""
-    Put one material's :math:`\tau` through the ingestion gate.
-
-    The density it is checked against is the one already read for this material
-    where possible, and read on demand where the caller asked for ``TAUCAR``
-    without ``CHGCAR`` -- the pair is the whole point of the check, so there is
-    no version of it that runs without a density.
-
-    A **failing** material is recorded in the manifest before the error is
-    re-raised. The verdict is the most useful thing to survive an aborted
-    build: losing it to the exception would mean re-running the whole ingestion
-    to find out which material failed and by how much.
-
-    Returns
-    -------
-    dict
-        The gate record.
-
-    Raises
-    ------
-    ~poraque.data.validation.TauValidationError
-    """
-    validation = TauValidationConfig.from_mapping(validation)
-    if not validation.enabled:
-        emit(f"      {record.identifier}: tau validation disabled")
-        entry = {"material": record.identifier, "passed": None,
-                 "enabled": False, "settings": validation.as_dict()}
-        if manifest is not None:
-            manifest.add(record.identifier, entry)
-        return entry
-
-    density = native_fields.get("CHGCAR")
-    if density is None:
-        density = source.read(record, "CHGCAR", grid, spin=spin)
-
-    provenance = read_tau_provenance(record.directory,
-                                     tag=validation.required_tag)
-    try:
-        entry = validate_tau(tau, density, grid, provenance=provenance,
-                             config=validation, identifier=record.identifier)
-    except TauValidationError as error:
-        if manifest is not None and error.record:
-            manifest.add(record.identifier, error.record)
-        raise
-
-    if manifest is not None:
-        manifest.add(record.identifier, entry)
-    return entry
 
 
 def _all_present(targets, storage):

@@ -1,28 +1,34 @@
-# Controlled comparison: activation: kan_cheby, kan_use_base: false ("pure"
-# KAN -- no w_c*silu(x) base term, only the learned residual) vs. the
-# base-carrying kan_cheby (compare_kan_cheby_ext2chg.yaml) and the shipped
-# gelu model (models/pt_w16_m8_l3), ext2chg only. Identical protocol to
-# compare_kan_cheby_ext2chg.yaml except this one flag -- see FUTURE.md's
-# "Run kan_use_base: false" follow-up.
+# Controlled comparison: activation: kan, variant cheby, use_base: false.
+# a Chebyshev-polynomial expansion -- typically cheaper and smoother.
+#
+# Against its base-carrying twin (compare_kan_cheby_ext2chg.yaml) and the
+# shipped silu model, ext2chg only. One setting differs -- see FUTURE.md's
+# "Run use_base: false" follow-up.
+#
+# Without the base term phi_c is BOUNDED for a wide pre-activation tail
+# rather than tracking it.
 task:
-  type: ext2chg
+  type: ext2chg               # the density operator alone
   name: pt_w16_m8_l3_kancheby_purekan
 
 data:
-  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # as in configs/train.yaml
 
 model:
-  width: 16
-  modes: 8
-  projection_channels: 64
-  mode_selection: fixed
-  activation: kan_cheby
-  kan_use_base: false
-  # kan_degree: 6   # default
+  width: 16                   # channels carried through the Fourier layers
+  modes: 8                    # retained Fourier modes per axis
+  n_layers: 3                 # Fourier layers
+  projection_channels: 64     # hidden width of the read-out head
+  mode_selection: fixed       # as in configs/train.yaml
+  activation: kan             # the learnable family; kan_setup says which and how
+  kan_setup:
+    variant: cheby            # bspline | cheby | rbf | rational
+    use_base: false           # "pure" KAN: only the learned residual
+    degree: 6                 # highest Chebyshev order; degree+1 coefficients (the default)
 
 training:
   physics:
-    electron_count_weight: 0.1
+    electron_count_weight: 0.1  # int(rho) = the known valence count
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0

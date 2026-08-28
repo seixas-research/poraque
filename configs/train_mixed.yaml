@@ -3,37 +3,37 @@
 #
 #   poraque-train --config configs/train_mixed.yaml
 #
-# Every key is optional; only the differences from the defaults are listed.
-# See configs/train_complete_and_commented.yaml for the model settings explained in full.
+# configs/train.yaml is the reference run; this file states only what pooling
+# two layouts changes. See configs/train_complete_and_commented.yaml for every
+# key, annotated.
 # =====================================================================
+
 task:
-  # ext2chg only: a bulk CHGCAR archive carries no kinetic energy density, so
-  # mixing one in leaves chg2tau with targets for part of the set and none
-  # for the rest.
-  type: ext2chg
-  # Everything this run writes goes in models/mixed_ext2chg/ -- weights, log,
-  # plots and report together. There is nothing else to name.
-  name: mixed_ext2chg
+  type: ext2chg                 # a bulk CHGCAR archive carries no tau, so chg2tau has half a set
+  name: mixed_ext2chg           # names models/<name>/ and everything inside it
 
 data:
-  # Several roots, pooled into one training set. Each is auto-detected, so a
-  # directory of local VASP runs and an archive of standalone CHGCARs can be
-  # listed side by side.
-  #
-  # CAVEAT, and it is a real one: these two supply *different definitions* of
-  # the external potential. A calculation directory carries its POTCAR, so
-  # V_ext comes from the tabulated local pseudopotential; a bulk CHGCAR
-  # archive has none, so unless `potcar_dir` covers it the Gaussian pseudo-ion
-  # model stands in -- roughly 0.1 relative L2 away. The run warns when it
-  # happens. It is a legitimate trade (far more data, a fuzzier input) but
-  # never a good accident.
-  train_paths:
-    - data/vasp
-    - data/MP/chgcar
-  cache: data/cache/mixed
+  train_paths:                  # each root is auto-detected and all of them are pooled
+    - data/vasp                 # local VASP runs: V_ext from their own POTCARs
+    - data/MP/chgcar            # standalone densities: V_ext from `potcar_dir`, or Gaussian
+                                # CAVEAT: those are two DEFINITIONS of V_ext, ~0.1 relative L2
+                                #   apart. A legitimate trade, never a good accident; the run
+                                #   warns when it happens.
+  cache: data/cache/mixed       # its own cache: the fingerprint would refuse to share one
+
+model:
+  width: 16                     # channels carried through the Fourier layers
+  modes: 8                      # retained Fourier modes per axis
+  n_layers: 3                   # Fourier layers
+  projection_channels: 64       # hidden width of the read-out head
+  mode_selection: fixed         # switch to `physical` + g_max if the pooled cells spread widely
+  activation: silu              # stateless; `kan` moves the hyperparameters into kan_setup
 
 training:
-  # Shorter than the default: this set is large, so an epoch is expensive and
-  # the early-stopping window can be tighter.
-  epochs: 200
-  early_stopping: 50
+  epochs: 200                   # this set is large, so an epoch is expensive
+  early_stopping: 50            # and the patience can be tighter
+  physics:
+    electron_count_weight: 0.1  # int(rho) = the known valence count
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

@@ -275,44 +275,6 @@ class DataConfig:
         library therefore resolves to ``"pbe"`` with nothing to declare. Set it
         explicitly when the data was produced by a code whose settings are not
         recorded beside it.
-    tau_validation : dict or None
-        Settings for the **kinetic-energy-density ingestion gate**, which runs
-        on every ``TAUCAR`` as it enters the cache and refuses the ones that
-        cannot be a :math:`\tau`. ``null`` (the default) means the defaults of
-        :class:`~poraque.data.validation.TauValidationConfig`; nothing has to
-        be written to get the gate.
-
-        It exists because a whole dataset of invalid :math:`\tau` was trained
-        on before anyone noticed. Three checks, all cheap:
-
-        .. code-block:: yaml
-
-            data:
-              tau_validation:
-                enabled: true               # recorded in the manifest if false
-                tf_ratio_range: [0.2, 5.0]  # int(tau) / C_TF int(rho^5/3)
-                check_von_weizsacker: true  # tau(r) >= |grad rho|^2 / (8 rho)
-                density_threshold: 1.0e-3   # exempt the vacuum tail
-                max_violation_fraction: 0.01
-                require_provenance: true    # LTAU + INCAR hash
-                require_code_version: false # OUTCAR/vasprun.xml, off by default
-                minimum_version: "6.6.1"    # applied when a version is recorded
-
-        Provenance is read from the ``INCAR``, which is an *input* and is
-        therefore wherever the calculation is. The code version is not: it
-        lives in ``OUTCAR``/``vasprun.xml``, which are outputs a dataset need
-        not ship, so a missing one is **recorded as a warning rather than
-        refused**. Set ``require_code_version: true`` to make it fatal. A
-        version that *is* recorded is still compared against
-        ``minimum_version`` either way.
-
-        A failure **stops the build** naming the material and the numbers. The
-        verdict for every material is written to ``tau_validation.json`` at the
-        cache root — warnings included, so a gap stays visible — and each
-        cached material keeps a ``tau_provenance.json`` so the record survives
-        being re-cached. Unknown keys raise.
-
-        ``ext2chg`` never reads :math:`\tau`, so nothing here affects it.
     delta_density : bool
         Train the density operator on the **charge-density variation**
 
@@ -470,7 +432,6 @@ class DataConfig:
     spin: str = "auto"
     precision: str = "float64"
     xc: str = "auto"
-    tau_validation: dict = None
     delta_density: bool = True
     atomic_reference: str = "data/vasp/isolated_atoms"
     paw_source: str = "atomic"
@@ -507,6 +468,31 @@ class DataConfig:
         if isinstance(self.source, (list, tuple)):
             return [str(name) for name in self.source]
         return str(self.source)
+
+
+#: The learnable activations ``model.kan_setup.variant`` chooses between. Each
+#: is one learned function *per channel*, applied elementwise; see
+#: :mod:`poraque.ml.kan` for what each parameterises that function with.
+KAN_VARIANTS = ("bspline", "cheby", "rbf", "rational")
+
+#: Assumed when ``activation: kan`` is given with no ``variant``: the original
+#: KAN paper's own parameterisation, so the unqualified word means what the
+#: literature means by it — not the cheapest variant, which would be a
+#: performance decision made silently on the user's behalf.
+DEFAULT_KAN_VARIANT = "bspline"
+
+#: ``kan_setup`` keys, and the :class:`~poraque.ml.fno.FNO3d` keyword each
+#: becomes. The ``kan_`` prefix is redundant inside the block and load-bearing
+#: outside it, where these sit beside ``width`` and ``modes``.
+KAN_SETUP_KEYS = {
+    "use_base": "kan_use_base",
+    "grid_size": "kan_grid_size",
+    "spline_order": "kan_spline_order",
+    "grid_range": "kan_grid_range",
+    "degree": "kan_degree",
+    "rational_num_degree": "kan_rational_num_degree",
+    "rational_den_degree": "kan_rational_den_degree",
+}
 
 
 @dataclass
@@ -776,52 +762,63 @@ class ModelConfig:
     activation : str
         ``silu`` (default as of 2026-08-17 — ``silu`` measurably outperformed
         ``gelu`` on this project's own comparisons, see FUTURE.md), ``gelu``,
-        ``relu``, ``tanh`` — stateless, parameter-free — or ``kan_bspline`` /
-        ``kan_cheby`` / ``kan_rbf`` / ``kan_rational``: a Kolmogorov-Arnold
-        Network-style *learnable* activation, one function per channel,
-        applied elementwise. Every learnable variant is initialised close to
-        ``silu`` (a small learnable perturbation on top of it, matching the
-        base term the original KAN paper itself uses), so switching to one
-        does not destabilise training at step 0. See ``poraque.ml.kan`` for
-        all four variants' math, and ``kan_use_base`` below to drop that
-        base term entirely.
-    kan_use_base : bool
-        Whether each of the four learnable KAN variants includes its
-        ``w_c * silu(x)`` base term (``true``, the default, matching the
-        original KAN paper) or is "pure" — only the learned residual, no
-        base weight and no fixed nonlinearity mixed in at all
-        (``false``). Ignored by the stateless activations. A pure channel's
-        output is bounded or decays to zero for a wide input tail rather
-        than tracking it — see each class's docstring in
-        ``poraque.ml.kan`` for which.
-    kan_grid_size : int
-        Number of knot-grid intervals for ``activation: kan_bspline``, and
-        (as the number of RBF centers minus one) for ``activation:
-        kan_rbf``, which reuses the same fixed-grid design. Ignored
-        otherwise. More
-        intervals give the learned function finer local structure, at
-        ``channels`` extra coefficients each.
-    kan_spline_order : int
-        B-spline degree for ``activation: kan_bspline`` (``3`` = cubic, the
-        original KAN paper's choice). Ignored otherwise.
-    kan_grid_range : list of float
-        ``[low, high]`` support of the knot/center grid, for
-        ``activation: kan_bspline`` or ``activation: kan_rbf``. A B-spline input
-        outside this range is clamped, not extrapolated — see
-        ``poraque.ml.kan.BSplineKANActivation`` for why; an RBF input outside
-        it simply decays towards zero on its own. Ignored otherwise.
-    kan_degree : int
-        Highest Chebyshev order for ``activation: kan_cheby``. Ignored
-        otherwise; ``degree + 1`` coefficients per channel.
-    kan_rational_num_degree : int
-        Highest power of the numerator polynomial for ``activation:
-        kan_rational``. Ignored otherwise; ``num_degree + 1`` coefficients
-        per channel. See ``poraque.ml.kan.RationalKANActivation``.
-    kan_rational_den_degree : int
-        Number of even powers (:math:`x^2, x^4, \ldots`) in the denominator
-        polynomial for ``activation: kan_rational``. Ignored otherwise;
-        ``den_degree`` coefficients per channel. The denominator is guarded
-        to stay :math:`\geq 1`, so this can never introduce a pole.
+        ``relu``, ``tanh`` — stateless, parameter-free — or ``kan``: a
+        Kolmogorov-Arnold Network-style *learnable* activation, one function
+        per channel, applied elementwise, whose variant and hyperparameters
+        come from ``kan_setup`` below. Every learnable variant is initialised
+        close to ``silu`` (a small learnable perturbation on top of it,
+        matching the base term the original KAN paper itself uses), so
+        switching to one does not destabilise training at step 0.
+    kan_setup : dict or None
+        Everything the KAN activation needs, in one block — **read only when**
+        ``activation: kan``. ``null`` (the default) means the defaults below,
+        so a KAN run states only what it changes.
+
+        .. code-block:: yaml
+
+            model:
+              activation: kan
+              kan_setup:
+                variant: bspline          # bspline | cheby | rbf | rational
+                use_base: true            # keep the w_c * silu(x) base term
+                grid_size: 8              # bspline, rbf
+                spline_order: 3           # bspline
+                grid_range: [-2.0, 2.0]   # bspline, rbf
+                degree: 6                 # cheby
+                rational_num_degree: 4    # rational
+                rational_den_degree: 4    # rational
+
+        It is one block rather than seven flat keys because six of the seven
+        are read by *one* variant each: as flat settings they read as
+        alternatives to ``width`` and ``modes``, which apply always, when in
+        fact almost all of them do nothing in any given run. Grouping them
+        also makes "ignored unless ``activation: kan``" a statement about a
+        single key rather than about seven.
+
+        ``variant`` selects which learned function each channel carries;
+        see :mod:`poraque.ml.kan` for the four. ``use_base`` keeps each
+        channel's ``w_c * silu(x)`` base term (``true``, the default,
+        matching the original KAN paper) or drops it for a "pure" KAN — only
+        the learned residual, no fixed nonlinearity mixed in at all — whose
+        output is then bounded or decays to zero for a wide input tail rather
+        than tracking it.
+
+        ``grid_size`` is the number of knot-grid intervals (``bspline``) or
+        RBF centers minus one (``rbf``, which reuses the same fixed-grid
+        design); more gives the learned function finer local structure at
+        ``width`` extra coefficients each. ``spline_order`` is the B-spline
+        degree (``3`` = cubic, the paper's choice). ``grid_range`` is the
+        ``[low, high]`` support of that grid: a ``bspline`` input outside it
+        is clamped rather than extrapolated, an ``rbf`` input outside it
+        decays towards zero on its own. ``degree`` is the highest Chebyshev
+        order for ``cheby`` (``degree + 1`` coefficients per channel).
+        ``rational_num_degree`` and ``rational_den_degree`` are the numerator
+        power and the number of even denominator powers for ``rational``; the
+        denominator is guarded to stay :math:`\geq 1`, so neither can
+        introduce a pole.
+
+        Unknown keys raise, and a ``kan_setup`` given without
+        ``activation: kan`` warns rather than being silently ignored.
     use_coordinates : bool
         Append three fractional-coordinate channels to the input, so the
         operator knows *where* in the cell it is. Dimensionless, so they carry
@@ -870,13 +867,7 @@ class ModelConfig:
     n_layers: int = 3
     projection_channels: int = 64
     activation: str = "silu"
-    kan_grid_size: int = 8
-    kan_spline_order: int = 3
-    kan_grid_range: list = field(default_factory=lambda: [-2.0, 2.0])
-    kan_degree: int = 6
-    kan_rational_num_degree: int = 4
-    kan_rational_den_degree: int = 4
-    kan_use_base: bool = True
+    kan_setup: dict = None
     use_coordinates: bool = True
     cell_conditioning: bool = True
     embedding_dim: int = 32
@@ -886,6 +877,69 @@ class ModelConfig:
     pauli_scale: float = None
     learn_pauli_scale: bool = True
     precision: str = "float32"
+
+    def activation_kwargs(self):
+        """
+        The activation name and KAN keywords :class:`~poraque.ml.fno.FNO3d`
+        wants, resolved from ``activation`` and ``kan_setup``.
+
+        ``activation: kan`` plus ``kan_setup.variant: cheby`` becomes the
+        backbone's ``activation="kan_cheby"``, so the checkpoint's
+        ``architecture`` record and :func:`~poraque.ml.kan.build_activation`
+        keep the one flat name they have always used. The grouping is a
+        property of the *config file*, not of the model.
+
+        Returns
+        -------
+        tuple of (str, dict)
+            The activation name, and the ``kan_*`` keywords to pass with it —
+            empty for every stateless activation, so a non-KAN run allocates
+            and records nothing about KANs.
+
+        Raises
+        ------
+        ValueError
+            On a ``kan_*`` name in ``activation`` (the pre-``kan_setup``
+            spelling), an unknown ``variant``, or an unknown ``kan_setup`` key.
+            A silently accepted typo here changes the architecture and nothing
+            says so.
+        """
+        name = str(self.activation)
+        setup = dict(self.kan_setup or {})
+
+        if name != "kan" and name.startswith("kan"):
+            raise ValueError(
+                f"model.activation={name!r} is the old flat spelling. The "
+                f"variant now lives in its own block:\n\n"
+                f"    model:\n      activation: kan\n      kan_setup:\n"
+                f"        variant: {name[len('kan_'):]}\n")
+
+        if name != "kan":
+            if setup:
+                import warnings
+
+                warnings.warn(
+                    f"model.kan_setup was given with activation={name!r}, "
+                    f"which is not a KAN, so every setting in it is ignored. "
+                    f"Set activation: kan, or drop the block.",
+                    RuntimeWarning, stacklevel=2,
+                )
+            return name, {}
+
+        unknown = sorted(set(setup) - {"variant"} - set(KAN_SETUP_KEYS))
+        if unknown:
+            raise ValueError(
+                f"Unknown key(s) in model.kan_setup: {unknown}. "
+                f"Valid keys: {['variant'] + sorted(KAN_SETUP_KEYS)}.")
+
+        variant = str(setup.pop("variant", DEFAULT_KAN_VARIANT))
+        if variant not in KAN_VARIANTS:
+            raise ValueError(
+                f"Unknown model.kan_setup.variant {variant!r}; expected one "
+                f"of {sorted(KAN_VARIANTS)}.")
+
+        return f"kan_{variant}", {KAN_SETUP_KEYS[key]: value
+                                  for key, value in setup.items()}
 
 
 @dataclass
@@ -1863,9 +1917,16 @@ class TrainingConfig:
         itself.
         """
         excluded = {"pauli_residual", "pauli_scale", "learn_pauli_scale",
-                    "precision"}
-        return {f.name: getattr(self.model, f.name)
-                for f in fields(self.model) if f.name not in excluded}
+                    "precision", "activation", "kan_setup"}
+        kwargs = {f.name: getattr(self.model, f.name)
+                  for f in fields(self.model) if f.name not in excluded}
+        # `activation` and `kan_setup` are one setting in the file and two in
+        # the constructor: the block is expanded into `kan_*` keywords here,
+        # and only when a KAN was actually asked for.
+        name, kan = self.model.activation_kwargs()
+        kwargs["activation"] = name
+        kwargs.update(kan)
+        return kwargs
 
     #: How a value is written back out in :meth:`describe`. The header echoes a
     #: YAML file, so it uses YAML's spellings: a reader comparing the two

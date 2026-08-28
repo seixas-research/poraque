@@ -3,54 +3,38 @@
 #
 #   poraque-train --config configs/train_materialsproject.yaml
 #
-# Every key is optional; only the differences from the defaults are listed.
-# See configs/train_complete_and_commented.yaml for every setting explained
-# in full.
-#
-# This file differs from train_complete_and_commented.yaml only where the *data* forces it:
-# the task, the mode selection and the resolution. Everything the two runs
-# agree on -- width, layers, read-out width, epochs, seed, the physics
-# weights -- is the shared default and is not restated here.
+# configs/train.yaml is the reference run; this file differs from it only
+# where the *data* forces it. See configs/train_complete_and_commented.yaml
+# for every key, annotated.
 # =====================================================================
+
 task:
-  # ext2chg, not `all`: MP publishes densities but no kinetic energy density,
-  # so chg2tau has no target to train against on this dataset. A model from
-  # here predicts rho and stops there; it cannot reach a total energy on its
-  # own.
-  type: ext2chg
-  name: mp_ag_au_pt
+  type: ext2chg                 # MP publishes densities but no tau, so chg2tau has no target
+  name: mp_ag_au_pt             # names models/<name>/ and everything inside it
 
 data:
   train_paths:
-    - data/MP/Pt-Pd-Ni
-  # Coarser than the raw grids but finer than the default, because this set
-  # spans large cells and the spectral downsample is exact for band-limited
-  # fields -- there is no interpolation error to trade against.
-  resolution: 40
-  # Essential for this dataset, not optional. An MP download is a structure
-  # and a density and no pseudopotentials, so without a library the external
-  # potential falls back to the Gaussian pseudo-ion model. Point it at the set
-  # the data was computed with -- MP uses VASP PBE (PAW_PBE); PAW_LDA would
-  # build a potential these densities were never computed from, which is worse
-  # than the Gaussian fallback because it looks exact.
-  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+    - data/MP/Pt-Pd-Ni          # a bulk CHGCAR archive, auto-detected
+  resolution: 40                # coarser than the raw grids, finer than the default; the
+                                #   downsample is exact for band-limited fields
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # essential here: an MP download ships
+                                #   no pseudopotentials. Use the set the data was computed with
+                                #   (MP is PAW_PBE); PAW_LDA would look exact and be wrong
 
 model:
-  # Truncate at a fixed physical wavevector rather than a fixed mode index.
-  # This is the one architectural difference from train_complete_and_commented.yaml, and the
-  # dataset is the reason: it spans a wide range of cell sizes, and a fixed
-  # index keeps a different physical band for every one of them. A fixed
-  # G_max makes the operator act on the same physics in every material.
-  #
-  # `modes` is still the ceiling -- G_max only ever selects fewer.
-  mode_selection: physical
-  g_max: 6
+  width: 16                     # channels carried through the Fourier layers
+  modes: 8                      # the CEILING on retained modes; g_max only ever selects fewer
+  n_layers: 3                   # Fourier layers
+  projection_channels: 64       # hidden width of the read-out head
+  mode_selection: physical      # this set spans cell sizes, so truncate at a fixed wavevector
+                                #   rather than a fixed index: the same physics in every material
+  g_max: 6                      # 1/Ang. Keep modes = floor(g_max * L_max / 2pi) for the LARGEST
+                                #   cell, or modes no small cell reached stay randomly initialised
+  activation: silu              # stateless; `kan` moves the hyperparameters into kan_setup
 
 training:
-  # See train_complete_and_commented.yaml: these constrain the NEURAL OPERATOR, not the
-  # symbolic search.
-  physics:
-    electron_count_weight: 0.1
+  physics:                      # these constrain the NEURAL OPERATOR, not the symbolic search
+    electron_count_weight: 0.1  # int(rho) = the known valence count
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0

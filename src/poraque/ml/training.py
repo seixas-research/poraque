@@ -821,34 +821,6 @@ def freeze_lifting_layers(model, freeze=True):
     }
 
 
-#: Weights on :class:`~poraque.ml.losses.PhysicsInformedLoss` that, when any is
-#: positive, make the objective more than plain data fidelity.
-PHYSICS_WEIGHTS = ("positivity_weight", "electron_count_weight",
-                   "von_weizsacker_weight", "euler_lagrange_weight")
-
-
-def physics_terms_active(criterion):
-    """
-    Whether ``criterion`` adds anything to the data term.
-
-    Read from the configured weights rather than from the first batch's
-    returned components, because the console header is written before any
-    batch has run and the header and the rows must agree.
-
-    Parameters
-    ----------
-    criterion : nn.Module
-        Typically a :class:`~poraque.ml.losses.PhysicsInformedLoss`. Anything
-        without the weight attributes counts as data-only.
-
-    Returns
-    -------
-    bool
-    """
-    return any(float(getattr(criterion, name, 0.0) or 0.0) > 0.0
-               for name in PHYSICS_WEIGHTS)
-
-
 #: Optimisers selectable through ``training.optimizer``.
 #:
 #: ``adamw`` is the default and was the only one for most of this project's
@@ -975,7 +947,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     Returns
     -------
     dict
-        ``train_loss`` (one entry per epoch) and, when validating,
+        ``train_loss`` (one entry per epoch) — the **total** objective, data
+        fidelity plus every weighted physics term, which is what the optimiser
+        stepped on — and, when validating,
         ``val_error`` together with ``val_epoch`` — the 1-based epochs those
         errors were measured on. The two validation lists are the same length
         and shorter than ``train_loss`` whenever ``eval_every > 1``, so
@@ -1007,9 +981,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         if validation is not None else None
     )
 
-    history = {"train_loss": [], "val_error": [], "val_epoch": [],
-               "data_loss": [], "physics_loss": []}
-    physics_active = physics_terms_active(criterion)
+    history = {"train_loss": [], "val_error": [], "val_epoch": []}
     best_error = float("inf")
     best_epoch, best_state, stopped_early = 0, None, False
     emit = log if log is not None else print
@@ -1033,23 +1005,15 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     # units -- and reading the second as if it were the first is an easy and
     # expensive mistake.
     validating = validation_loader is not None
-    # With every physics weight at zero -- the shipped default -- `total` and
-    # `data` are the same number and the physics column is a column of zeros.
-    # Three columns saying that is less readable than one, so the breakdown
-    # appears only when a constraint is actually switched on. It is recorded in
-    # `history` either way.
-    loss_column = "total loss" if physics_active else "train loss"
-    header = f"    {'epoch':>11s}  {loss_column:>13s}"
-    if physics_active:
-        header += f"  {'data loss':>13s}  {'physics loss':>13s}"
+    # One number for the objective, whatever it is made of. A physics-informed
+    # run's `train loss` is the total the optimiser actually stepped on --
+    # data plus every weighted constraint -- and that total is the only
+    # quantity a reader can compare against another run's.
+    header = f"    {'epoch':>11s}  {'train loss':>13s}"
     if validating:
         header += f"  {'val rel L2':>13s}"
     if verbose:
-        if physics_active:
-            legend = ("    total loss = data + physics, mean per batch; "
-                      "physics is the weighted contribution")
-        else:
-            legend = f"    train loss: mean {type(criterion).__name__} per batch"
+        legend = f"    train loss: mean {type(criterion).__name__} per batch"
         if validating:
             legend += "   |   val rel L2: held-out error, physical units"
         else:
@@ -1069,8 +1033,6 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
         operator.model.train()
         running, batches = 0.0, 0
-        running_data, running_physics = 0.0, 0.0
-        components = {}
         for batch in loader:
             inputs = batch["input"].to(operator.device)
             targets = batch["target"].to(operator.device)
@@ -1109,21 +1071,11 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
                 clip_gradients(operator.model.parameters(), grad_clip)
             optimizer.step()
 
-            # The composite loss reports its parts; only `total` is
-            # differentiated. `data` is the fidelity term as the objective saw
-            # it, and the physics contribution is taken as total - data rather
-            # than by summing the components, because the components are
-            # reported *unweighted* -- summing them would give a number that
-            # is not what the optimiser stepped on.
-            total_value = float(terms["total"].detach())
-            data_value = float(terms.get("data", terms["total"]))
-            running += total_value
-            running_data += data_value
-            running_physics += total_value - data_value
-            for name, value in terms.items():
-                if name in ("total", "data"):
-                    continue
-                components[name] = components.get(name, 0.0) + float(value)
+            # The composite loss reports its parts, but only `total` is
+            # differentiated and only `total` is recorded: it is the objective
+            # the optimiser stepped on, and the parts are reported *unweighted*
+            # so they do not sum to it.
+            running += float(terms["total"].detach())
             batches += 1
 
         if lr_schedule is not None:
@@ -1132,12 +1084,6 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         divisor = max(batches, 1)
         mean_loss = running / divisor
         history["train_loss"].append(mean_loss)
-        history["data_loss"].append(running_data / divisor)
-        history["physics_loss"].append(running_physics / divisor)
-        # Per-term magnitudes, unweighted: what each constraint is worth before
-        # its weight scales it, which is what you need to choose that weight.
-        for name, accumulated in components.items():
-            history.setdefault(f"physics_{name}", []).append(accumulated / divisor)
 
         # The last epoch always reports, so a run never finishes without a
         # current number just because `epochs` is not a multiple of the
@@ -1148,9 +1094,6 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
         # Columns line up under `header` above; widths are shared with it.
         message = f"    {f'{epoch + 1}/{epochs}':>11s}  {mean_loss:>13.5f}"
-        if physics_active:
-            message += (f"  {history['data_loss'][-1]:>13.5f}"
-                        f"  {history['physics_loss'][-1]:>13.5f}")
         exhausted = False
         if validating:
             error = evaluate(operator, validation_loader)

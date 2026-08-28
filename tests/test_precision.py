@@ -399,8 +399,8 @@ class TestMinimalConfig:
     """
     Every key is optional, and a config that says so is far shorter.
 
-    Of the 78 keys a full config carries, ``configs/train.yaml`` changes
-    three. The round trip below is what makes dropping the other 75 safe
+    Of the 87 keys a full config carries, ``configs/train.yaml`` changes
+    three. The round trip below is what makes dropping the other 84 safe
     rather than merely shorter.
     """
 
@@ -446,17 +446,25 @@ class TestMinimalConfig:
 
 def _shipped_configs():
     """
-    Every config in ``configs/``, discovered rather than listed.
+    Every config under ``configs/``, discovered rather than listed.
 
     A hard-coded list silently stops covering a file the moment one is renamed
-    or added, which is exactly when the coverage is wanted.
+    or added, which is exactly when the coverage is wanted. The walk is
+    recursive so ``configs/kan/`` -- eight variants of one comparison -- is
+    covered by the same rules as the rest.
+
+    Returns
+    -------
+    list of str
+        Paths relative to ``configs/``, without the ``.yaml``.
     """
     import glob
     import os
 
     root = os.path.join(os.path.dirname(__file__), "..", "configs")
-    return sorted(os.path.basename(p)[:-5]
-                  for p in glob.glob(os.path.join(root, "*.yaml")))
+    return sorted(os.path.relpath(path, root)[:-5]
+                  for path in glob.glob(os.path.join(root, "**", "*.yaml"),
+                                        recursive=True))
 
 
 class TestShippedConfigs:
@@ -505,10 +513,25 @@ class TestShippedConfigs:
     #:                    somewhere to sit. `compression` also *raises* when set
     #:                    without `storage: hdf5`, which is a coupling a reader
     #:                    should meet in the file rather than in a traceback.
+    #: ``model.n_layers`` the fourth member of the group above; three of the
+    #:                    four were already spelled out and leaving the depth
+    #:                    implicit made the architecture look like three numbers
+    #: ``model.activation`` decides whether the `kan_setup` block below it is
+    #:                    read at all, so it is written even when it is `silu`
+    #: ``training.epochs`` written wherever `early_stopping` is, since a
+    #:                    patience means nothing without the budget it runs in
     DELIBERATE = {"task.type", "model.width", "model.modes",
-                  "model.projection_channels", "model.mode_selection",
+                  "model.n_layers", "model.projection_channels",
+                  "model.mode_selection", "model.activation",
                   "symbolic.physics", "data.delta_density", "data.paw_source",
-                  "data.storage", "data.compression", "data.compression_level"}
+                  "data.storage", "data.compression", "data.compression_level",
+                  "training.epochs"}
+
+    #: The annotated reference, which lists **every** key at its default on
+    #: purpose: it is the map a short config is copied from, not a description
+    #: of an experiment. Holding it to the rule below would delete the thing
+    #: it exists to be.
+    REFERENCE = "train_complete_and_commented"
 
     @pytest.mark.parametrize("name", _shipped_configs())
     def test_it_states_only_what_it_changes(self, name):
@@ -519,6 +542,9 @@ class TestShippedConfigs:
         import os
 
         import yaml
+
+        if name == self.REFERENCE:
+            pytest.skip("the annotated reference lists every key by design")
 
         with open(os.path.join(self.ROOT, f"{name}.yaml")) as handle:
             raw = yaml.safe_load(handle)

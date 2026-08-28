@@ -1,0 +1,36 @@
+# =====================================================================
+# Poraque - the platinum run, stated explicitly.
+#
+#   poraque-train --config configs/train_Pt.yaml
+#
+# configs/train.yaml with the delta-density settings and the schedule spelled
+# out rather than left at their defaults. See
+# configs/train_complete_and_commented.yaml for every key, annotated.
+# =====================================================================
+
+task:
+  type: all                     # all | ext2chg | chg2tau; only `all` reaches a total energy
+  name: platinum_W16-M8-L3      # names models/<name>/ and everything inside it
+
+data:
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # without a library V_ext is the Gaussian model
+  atomic_reference: ./data/vasp/isolated_atoms   # the Pt atom: the baseline and the PAW records
+  delta_density: true           # ext2chg learns rho - rho_sup; predict() still returns the full rho
+  paw_source: atomic            # the free atom's own record, per element and transferable
+
+model:
+  width: 16                     # channels carried through the Fourier layers
+  modes: 8                      # retained Fourier modes per axis
+  n_layers: 3                   # Fourier layers
+  projection_channels: 64       # hidden width of the read-out head
+  mode_selection: fixed         # these cells are alike; use `physical` + g_max when they are not
+  activation: silu              # stateless; `kan` moves the hyperparameters into kan_setup
+
+training:
+  epochs: 500
+  early_stopping: 100           # tighter than the default 300; this set is small
+  physics:
+    electron_count_weight: 0.1  # int(rho) = the known valence count
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

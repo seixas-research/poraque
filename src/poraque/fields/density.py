@@ -129,10 +129,9 @@ class KineticEnergyDensity(ScalarField):
     -----
     A ``TAUCAR`` written by VASP 6.6.1 with ``LTAU = .TRUE.`` differs from a
     ``CHGCAR`` in **both** of the ways a volumetric file can, and Poraquê once
-    guessed wrong about each. Neither guess was detectable by inspection —
-    which is the whole reason :mod:`poraque.data.validation` exists — so both
-    are recorded here with the measurement that settled them, on the Pt data of
-    2026-08-27 (31 bulk cells of 32 atoms, plus the isolated atom).
+    guessed wrong about each. Neither guess was detectable by inspection, so
+    both are recorded here with the measurement that settled them, on the Pt
+    data of 2026-08-27 (31 bulk cells of 32 atoms, plus the isolated atom).
 
     **The values are not multiplied by the cell volume.** ``CHGCAR`` stores
     :math:`\rho\Omega`; ``TAUCAR`` stores :math:`\tau`. Read as though it
