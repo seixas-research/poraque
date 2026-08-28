@@ -1,7 +1,7 @@
 """
 Does using the RIGHT exchange-correlation functional shrink the residual?
 
-The Au reference data was computed with PBE (PAW_PBE potentials, LEXCH = PE).
+The Pt reference data was computed with PBE (PAW_PBE potentials, LEXCH = PE).
 The first pass through `el_floor.py` used an LDA v_xc, so part of the residual
 it reported was not the error of the kinetic functional at all: it was the
 difference between two exchange-correlation potentials, of order 1 eV in a
@@ -17,9 +17,11 @@ import os
 import numpy as np
 import torch
 
-REPO = ("/Users/leseixas/Library/CloudStorage/Dropbox/Repositories/"
-        "seixas-research/poraque")
-CACHE = os.path.join(REPO, "data", "cache", "res32_potcar")
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+#: Prepared cache to read. Override with PORAQUE_EL_CACHE to point at another
+#: resolution or another dataset without editing this file.
+CACHE = os.environ.get("PORAQUE_EL_CACHE",
+                       os.path.join(REPO, "data", "cache", "res32_potcar_spin"))
 
 from poraque.fields import ChargeDensity, ExternalPotential
 from poraque.fields.io import resolve_xc
@@ -46,7 +48,7 @@ def load(record):
 if __name__ == "__main__":
     records = discover_materials(CACHE)
 
-    detected = resolve_xc(os.path.join(REPO, "data", "vasp", "struct_000"),
+    detected = resolve_xc(os.path.join(REPO, "data", "vasp", "structures", "structure_0000"),
                           declared="auto")
     print(f"detected from the calculation: xc = {detected!r}")
     print(f"({len(records)} structures)\n")
@@ -79,8 +81,10 @@ if __name__ == "__main__":
             row += f"{value:>12.3f}"
         print(row)
 
-    lda_best = min(v for (l, f), v in best.items() if f == "lda")
-    pbe_best = min(v for (l, f), v in best.items() if f == "pbe")
+    lda_best = min(v for (_, functional), v in best.items()
+                   if functional == "lda")
+    pbe_best = min(v for (_, functional), v in best.items()
+                   if functional == "pbe")
     print(f"\n  best with LDA : {lda_best:.3f} eV")
     print(f"  best with PBE : {pbe_best:.3f} eV")
     change = 100 * (pbe_best - lda_best) / lda_best

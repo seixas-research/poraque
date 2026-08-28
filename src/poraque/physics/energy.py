@@ -439,7 +439,7 @@ def xc_energy(density, grid, functional="pbe"):
     :math:`E_{\rm xc}` on a PBE density is not a PBE energy and not an LDA one
     either. Change this only to match a differently generated dataset.
 
-    On the reference Au supercells the two differ by :math:`-0.92` eV/atom
+    On the reference Pt supercells the two differ by :math:`-0.92` eV/atom
     (0.65 % of :math:`E_{\rm xc}`), so the choice is not cosmetic.
 
     .. warning::
@@ -494,7 +494,7 @@ def ewald_energy(structure, charges, accuracy=1e-12):
     charges : dict or array_like
         ``{element: Z_val}`` pseudo-ion charges in units of ``+e``, or one
         charge per atom. Element keys are matched against the *bare* element
-        name, so ``Au`` covers a ``Au_pv`` POTCAR.
+        name, so ``Pt`` covers a ``Pt_pv`` POTCAR.
     accuracy : float, optional
         Target relative truncation error; sets both cutoffs.
 
@@ -614,6 +614,43 @@ def alpha_z_energy(structure, pscore, n_electrons):
 # ===================================================================== #
 # Assembled result
 # ===================================================================== #
+def total_density(density):
+    r"""
+    The total electron density, whether or not the field carries spin.
+
+    Every energy term in this module is a functional of :math:`\rho` alone, so
+    a two-channel :math:`(\rho, m)` field has to be reduced before any of them
+    can integrate it. Doing that here rather than at each call site is what
+    lets a spin-polarised prediction reach an energy at all: the adapter
+    existed on :class:`~poraque.fields.SpinDensity` but nothing called it, so
+    ``EnergyCalculator.compute`` -- and therefore the ASE calculator's
+    ``get_potential_energy`` -- raised ``TypeError`` on any model trained with
+    ``data.spin`` resolved on.
+
+    .. warning::
+
+       This makes the *electrostatic* and kinetic terms exact for a
+       spin-polarised field, because they depend only on the total. It does
+       **not** make :math:`E_{\rm xc}` exact: a spin-polarised
+       exchange-correlation energy is a functional of
+       :math:`(\rho_\uparrow, \rho_\downarrow)` separately, and evaluating
+       the unpolarised form on :math:`\rho` is the local-spin-density
+       approximation thrown away. For a nearly unpolarised cell the error is
+       small and second order in :math:`m/\rho`; for a magnetic one it is not.
+
+    Parameters
+    ----------
+    density : ScalarField, SpinDensity or array_like
+
+    Returns
+    -------
+    numpy.ndarray or ScalarField
+        Unchanged unless the input carried two channels.
+    """
+    total = getattr(density, "total", None)
+    return density if total is None else total
+
+
 @dataclass
 class EnergyComponents:
     """
@@ -980,7 +1017,7 @@ class EnergyCalculator:
         :attr:`EnergyComponents.n_electrons`, where it belongs: as a
         diagnostic of the prediction, not as a factor inside it.
         """
-        rho = np.asarray(density, dtype=float)
+        rho = np.asarray(total_density(density), dtype=float)
         n_electrons = self.grid.integrate(rho)
         nominal = self.nominal_electrons
 

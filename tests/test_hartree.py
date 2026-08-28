@@ -53,7 +53,7 @@ def grid():
 
 @pytest.fixture
 def poscar():
-    return Poscar(cell=np.eye(3) * LENGTH, symbols=["Au"], counts=[1],
+    return Poscar(cell=np.eye(3) * LENGTH, symbols=["Pt"], counts=[1],
                   scaled_positions=[[0.5, 0.5, 0.5]])
 
 
@@ -246,13 +246,13 @@ class TestCalculatorAccessors:
                                  projection_channels=8, device="cpu",
                                  training_resolution=16)
              for task in ("ext2chg", "chg2tau")})
-        return Poraque(bundle, charges={"Au": 11.0}, device="cpu")
+        return Poraque(bundle, charges={"Pt": 11.0}, device="cpu")
 
     @pytest.fixture
     def atoms(self):
         ase = pytest.importorskip("ase")
 
-        return ase.Atoms("Au2", cell=np.eye(3) * 4.08, pbc=True,
+        return ase.Atoms("Pt2", cell=np.eye(3) * 4.08, pbc=True,
                          scaled_positions=[[0, 0, 0], [0.5, 0.5, 0.5]])
 
     def test_hartree_potential_is_a_field_like_the_others(self, calculator,

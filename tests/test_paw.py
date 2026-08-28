@@ -61,12 +61,12 @@ from poraque.ml.data import FieldPairDataset, make_dataloader
 from poraque.ml.training import FieldOperator, train
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REF_AU = os.path.join(_ROOT, "data", "vasp", "ref", "Au")
+REF_AU = os.path.join(_ROOT, "data", "vasp", "ref", "Pt")
 STRUCT_015 = os.path.join(_ROOT, "data", "vasp", "struct_015", "CHGCAR")
 
 needs_paw_chgcar = pytest.mark.skipif(
     not os.path.exists(STRUCT_015),
-    reason="the shipped gold dataset is not in this checkout")
+    reason="the shipped platinum dataset is not in this checkout")
 
 
 # ---------------------------------------------------------------------- #
@@ -105,7 +105,7 @@ def gaussian_atom(grid, position, n_electrons=4.0, sigma=0.7):
 
 @pytest.fixture(scope="module")
 def original():
-    """The shipped gold reference density, read once for the whole module."""
+    """The shipped platinum reference density, read once for the whole module."""
     grid = FieldGrid.from_file(STRUCT_015)
     return ChargeDensity.read(STRUCT_015, grid=grid), grid
 
@@ -528,8 +528,8 @@ class TestTheTauDeck:
 
     def test_it_does_not_use_the_tag_that_broke_the_dataset(self):
         """
-        ``TAUCAR = .TRUE.`` is not a VASP tag. It is what the purged gold data
-        was generated with (see DELETIONS.md), and it must never reappear in a
+        ``TAUCAR = .TRUE.`` is not a VASP tag. It is what the purged platinum data
+        was generated with, and it must never reappear in a
         template.
         """
         deck = tau_incar()

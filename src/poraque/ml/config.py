@@ -126,6 +126,16 @@ class DataConfig:
            good accident.
     root : str
         Single dataset directory, used when ``train_paths`` is ``null``.
+
+        The default points at the *structures* subdirectory rather than at
+        ``data/vasp`` itself, because a calculation source recognises run
+        directories in a path or one level below it and no further. The Pt
+        dataset keeps its bulk cells in ``data/vasp/structures`` and its
+        isolated atoms in ``data/vasp/isolated_atoms``, one directory per
+        element, and that separation is the point: a single atom in a 10 Å box
+        is the *reference* for the baseline and the PAW records, never a
+        training sample. Pointing ``root`` at the parent would either find
+        nothing or, if the walk were deepened, quietly train on the atom.
     source : str
         Layout of each path, or ``"auto"`` (the default) to detect it.
 
@@ -196,14 +206,35 @@ class DataConfig:
         (:func:`scipy.ndimage.gaussian_filter` with ``mode="wrap"``, which
         blurs along grid axes and is therefore anisotropic in Cartesian space
         unless the cell is orthogonal).
-    spin : str or bool
+    spin : {"auto", true, false}
         Whether the densities are spin-polarised (``ISPIN = 2``), in which case
         a ``CHGCAR`` carries two channels — the total density and the
         magnetisation density — and the operator is built with two channels to
         match. ``"auto"`` (the default) reads the answer off the data, since a
         spin-polarised ``CHGCAR`` has a second grid block and a collinear one
-        does not. Set ``true`` or ``false`` to require one, turning a
-        mislabelled dataset into an error rather than a silent reinterpretation.
+        does not.
+
+        ``"auto"`` is resolved against the **sources**, before anything is
+        written, and for the dataset as a whole — one operator has one channel
+        count, so a cache with two blocks for some materials and one for others
+        could not be trained from. A mixture therefore resolves to spin and its
+        unpolarised members carry ``m = 0``, which is a true statement about a
+        non-magnetic calculation and is what makes an ``ISPIN = 2`` operator a
+        strict generalisation of an ``ISPIN = 1`` one.
+
+        ``false`` is a deliberate opt-out that discards the magnetisation, and
+        says so in the build log; ``true`` demands it and **raises** on data
+        that has none, rather than fitting a channel to zeros. The resolved
+        value names the cache directory, so the two layouts never share one.
+
+        .. note::
+
+           Until 2026-08-27 this key was flattened to ``spin is True`` before
+           it reached the cache builder, so the default ``"auto"`` meant *no
+           spin*: every ``ISPIN = 2`` magnetisation block was discarded on the
+           way in, and the dataset's own auto-detection then reported the cache
+           as unpolarised — which it was, by then. A cache built before that
+           date holds one channel whatever its config said.
     precision : str
         Dtype the volumetric fields are **held in**: ``float64`` (the default,
         and what every field used before this was selectable), ``float32`` or
@@ -252,7 +283,7 @@ class DataConfig:
         be written to get the gate.
 
         It exists because a whole dataset of invalid :math:`\tau` was trained
-        on before anyone noticed (``DELETIONS.md``). Three checks, all cheap:
+        on before anyone noticed. Three checks, all cheap:
 
         .. code-block:: yaml
 
@@ -263,13 +294,23 @@ class DataConfig:
                 check_von_weizsacker: true  # tau(r) >= |grad rho|^2 / (8 rho)
                 density_threshold: 1.0e-3   # exempt the vacuum tail
                 max_violation_fraction: 0.01
-                require_provenance: true    # code version + LTAU + INCAR hash
-                minimum_version: "6.6.1"
+                require_provenance: true    # LTAU + INCAR hash
+                require_code_version: false # OUTCAR/vasprun.xml, off by default
+                minimum_version: "6.6.1"    # applied when a version is recorded
+
+        Provenance is read from the ``INCAR``, which is an *input* and is
+        therefore wherever the calculation is. The code version is not: it
+        lives in ``OUTCAR``/``vasprun.xml``, which are outputs a dataset need
+        not ship, so a missing one is **recorded as a warning rather than
+        refused**. Set ``require_code_version: true`` to make it fatal. A
+        version that *is* recorded is still compared against
+        ``minimum_version`` either way.
 
         A failure **stops the build** naming the material and the numbers. The
         verdict for every material is written to ``tau_validation.json`` at the
-        cache root, and each cached material keeps a ``tau_provenance.json`` so
-        the record survives being re-cached. Unknown keys raise.
+        cache root — warnings included, so a gap stays visible — and each
+        cached material keeps a ``tau_provenance.json`` so the record survives
+        being re-cached. Unknown keys raise.
 
         ``ext2chg`` never reads :math:`\tau`, so nothing here affects it.
     delta_density : bool
@@ -320,10 +361,13 @@ class DataConfig:
         because three are what people actually have:
 
         - an ``atomic_reference.json`` built by ``poraque-atoms``;
-        - a **directory of isolated-atom calculations**, e.g.
-          ``~/Simulations/vasp/metals/Pt`` holding ``1.atom/``, or the atom
-          directory itself — ingested on the spot and memoised into the cache
-          as ``atomic_reference.json``, so the reduction happens once;
+        - a **directory holding one subdirectory per element**, each an
+          isolated-atom calculation — ``data/vasp/isolated_atoms`` with
+          ``Pt/`` inside it, which is the default and the layout to write new
+          references in. A single atom directory is also accepted, but only
+          the parent form grows to a second element without editing a config.
+          Either is ingested on the spot and memoised into the cache as
+          ``atomic_reference.json``, so the reduction happens once;
         - a directory that already holds a database, which then wins.
 
         Each reference must be **one atom in a box** with a ``CHGCAR``. A bulk
@@ -356,7 +400,7 @@ class DataConfig:
         not.
 
         It is not the more *accurate* choice for an element the training set
-        does cover — measured on this project's gold data a free-atom record
+        does cover — measured on this project's platinum data a free-atom record
         sat 86.6 % RMS from a bulk site against 9.9 % for the training average,
         because a free atom and an atom in a metal have genuinely different
         on-site occupations. That gap is the honest cost of the transferability,
@@ -413,7 +457,7 @@ class DataConfig:
     """
 
     train_paths: list = None
-    root: str = "data/vasp"
+    root: str = "data/vasp/structures"
     source: str = "auto"
     cache: str = "data/cache"
     pattern: str = "struct"
@@ -428,7 +472,7 @@ class DataConfig:
     xc: str = "auto"
     tau_validation: dict = None
     delta_density: bool = True
-    atomic_reference: str = None
+    atomic_reference: str = "data/vasp/isolated_atoms"
     paw_source: str = "atomic"
     storage: str = "files"
     compression: str = None
@@ -1131,8 +1175,8 @@ class OutputConfig:
     -----------------------
     Everything a run writes lives under ``<root>/<name>/``::
 
-        models/au_w16_m8_l3/
-            au_w16_m8_l3.pfno        the weights
+        models/pt_w16_m8_l3/
+            pt_w16_m8_l3.pfno        the weights
             log/                     the training log, the metrics JSON,
                                      and the resolved config
             plots/                   loss curves, parity, slices, histograms

@@ -45,7 +45,7 @@ external potential is reconstructed from the geometry and can be compared with
 a reference; the density integrates to a known electron count, and a wrong one
 announces itself immediately. A kinetic energy density does neither, and an
 entire dataset of invalid :math:`\tau` once passed through this function
-unnoticed (``DELETIONS.md``).
+unnoticed.
 
 So every :math:`\tau` is now put through :func:`~poraque.data.validation.
 validate_tau` **before it is written**, against the density it is paired with
@@ -184,8 +184,12 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
         Subdirectory prefix filter for calculation archives.
     code : str, optional
         DFT code name, or ``"auto"``.
-    spin : bool, optional
-        Cache the magnetisation channel alongside the total density.
+    spin : {"auto", True, False}, optional
+        Whether to cache the magnetisation channel alongside the total density.
+        ``"auto"`` — the default everywhere above this function — **reads the
+        sources** and carries it whenever any of them is ``ISPIN = 2``. ``True``
+        demands it and raises if the data has none; ``False`` is a deliberate
+        opt-out that discards it.
     limit : int, optional
         Build at most this many materials, smallest source file first. Useful
         for an end-to-end check against a large archive.
@@ -252,6 +256,8 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
         emit(f"  limited to the {len(records)} smallest of the available "
              f"materials")
 
+    spin = _resolve_spin(spin, records, emit)
+
     if storage not in ("files", "hdf5"):
         raise ValueError(
             f"Unknown data.storage {storage!r}; expected 'files' or 'hdf5'.")
@@ -297,6 +303,78 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
     return cache
 
 
+def _resolve_spin(requested, records, emit):
+    """
+    Turn ``spin="auto"`` into a decision, by looking at the data.
+
+    This is the *first* of the two places that ask whether a dataset is
+    spin-polarised, and it is the one that matters: the second
+    (:meth:`~poraque.ml.data.FieldPairDataset._resolve_spin`) inspects the
+    **cache**, so whatever is dropped here is invisible to it. The two agreeing
+    is not evidence of anything if the first one threw the answer away.
+
+    Regression: this function did not exist, and the caller passed
+    ``spin=data.spin is True``. With the default ``"auto"`` that is ``False``,
+    so every ``ISPIN = 2`` magnetisation block was discarded on the way into
+    the cache and the dataset then reported, truthfully, that the cache held
+    no spin. Two layers of auto-detection, and the first was an identity test
+    against ``True``.
+
+    The decision is taken **once for the whole dataset**, not per material: the
+    ML layer sizes one operator for one channel count, so a cache with two
+    blocks for some materials and one for others could not be trained from. A
+    mixed set therefore resolves to spin, and the unpolarised members get
+    :math:`m \equiv 0` — which :class:`~poraque.fields.SpinDensity` documents
+    as meaningful rather than wasted, since it makes an ``ISPIN = 2`` operator
+    a strict generalisation of an ``ISPIN = 1`` one.
+
+    Parameters
+    ----------
+    requested : {"auto", True, False}
+    records : list of MaterialRecord
+    emit : callable
+
+    Returns
+    -------
+    bool
+
+    Raises
+    ------
+    ValueError
+        When ``spin=True`` is asked of a dataset that carries no magnetisation
+        anywhere -- a channel the data has no values for cannot be trained.
+    """
+    polarized = [record for record in records
+                 if record.source.is_spin_polarized(record)]
+
+    if requested is True:
+        if not polarized:
+            raise ValueError(
+                "data.spin: true was requested, but none of the "
+                f"{len(records)} material(s) has a magnetisation block. "
+                "Training a channel the data has no values for would fit "
+                "noise to zero. Use data.spin: auto, or check ISPIN in the "
+                "INCARs that produced these densities.")
+        resolved = True
+    elif requested is False:
+        resolved = False
+        if polarized:
+            emit(f"  spin: DISCARDING the magnetisation block of "
+                 f"{len(polarized)} of {len(records)} material(s) "
+                 f"(data.spin: false). The cache will hold the total density "
+                 f"only.")
+    else:
+        resolved = bool(polarized)
+
+    if resolved:
+        extra = len(records) - len(polarized)
+        note = (f"; {extra} unpolarised material(s) get m = 0"
+                if extra else "")
+        emit(f"  spin: ISPIN = 2 in {len(polarized)} of {len(records)} "
+             f"material(s){note}")
+    return resolved
+
+
 def _report_validation(manifest, validation, emit):
     """One line on what the gate did, or on the fact that it did nothing."""
     if not validation.enabled:
@@ -307,6 +385,9 @@ def _report_validation(manifest, validation, emit):
     if passed or failed or ungated:
         emit(f"  tau validation: {passed} passed, {failed} failed, "
              f"{ungated} ungated  ->  {MANIFEST_FILENAME}")
+    warned, note = manifest.warned()
+    if warned:
+        emit(f"      {warned} passed with a note: {note}")
 
 
 # ---------------------------------------------------------------------- #
@@ -711,7 +792,7 @@ def build_paw_reference(records, cache, log=None, library=None,
     ``source="material"``
         The previous behaviour: average the training calculations' records per
         element. More accurate *for an element the training set covers* — on
-        this project's gold data a free-atom record sat 86.6 % RMS from a bulk
+        this project's platinum data a free-atom record sat 86.6 % RMS from a bulk
         site against 9.9 % for the average — and that gap is the honest cost of
         the transferability above, not an argument that either is wrong.
 

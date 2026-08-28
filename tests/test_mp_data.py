@@ -101,15 +101,15 @@ def mp_download(tmp_path):
     A miniature Materials Project download: gzipped densities, nothing else.
 
     Compositions are chosen so the electron counts determine all three valence
-    charges — Ag 11, Au 11, Pt 10, the values the POTCARs state.
+    charges — Ag 11, Pd 10, Pt 10, the values the POTCARs state.
     """
     root = tmp_path / "MP" / "chgcar"
     root.mkdir(parents=True)
     entries = [
         ("mp-124", ["Ag"], [1], 11),
-        ("mp-81", ["Au"], [1], 11),
+        ("mp-81", ["Pd"], [1], 10),
         ("mp-126", ["Pt"], [1], 10),
-        ("mp-1183137", ["Ag", "Au"], [3, 1], 44),
+        ("mp-1183137", ["Ag", "Pd"], [3, 1], 43),
         ("mp-30353", ["Ag", "Pt"], [1, 3], 41),
     ]
     for identifier, symbols, counts, electrons in entries:
@@ -154,12 +154,12 @@ class TestCompressedIO:
 
     def test_header_read_is_cheap_and_correct(self, tmp_path):
         plain = tmp_path / "CHGCAR"
-        make_chgcar(plain, ["Ag", "Au"], [3, 1], 44)
+        make_chgcar(plain, ["Ag", "Pt"], [3, 1], 44)
         path = compress(plain, ".gz")
 
         structure = read_structure_header(path)
 
-        assert structure.symbols == ["Ag", "Au"]
+        assert structure.symbols == ["Ag", "Pt"]
         assert structure.counts == [3, 1]
 
     def test_poscar_reads_compressed(self, tmp_path):
@@ -233,7 +233,7 @@ class TestValenceCharges:
     def test_recovers_the_potcar_values(self, mp_download):
         charges = infer_valence_charges(discover_mp_chgcars(mp_download))
 
-        assert charges == {"Ag": 11.0, "Au": 11.0, "Pt": 10.0}
+        assert charges == {"Ag": 11.0, "Pd": 10.0, "Pt": 10.0}
 
     def test_reads_only_as_many_densities_as_it_needs(self, mp_download,
                                                       monkeypatch):
@@ -255,7 +255,7 @@ class TestValenceCharges:
         charges = infer_valence_charges(discover_mp_chgcars(mp_download))
 
         assert len(opened) == 3, "five materials, three elements"
-        assert charges == {"Ag": 11.0, "Au": 11.0, "Pt": 10.0}
+        assert charges == {"Ag": 11.0, "Pd": 10.0, "Pt": 10.0}
 
     def test_overrides_win_and_reduce_the_system(self, mp_download):
         charges = infer_valence_charges(discover_mp_chgcars(mp_download),
@@ -268,7 +268,7 @@ class TestValenceCharges:
         """One binary cannot split its electrons between its two elements."""
         root = tmp_path / "chgcar"
         root.mkdir()
-        make_chgcar(root / "CHGCAR_mp-1", ["Ag", "Au"], [1, 1], 22)
+        make_chgcar(root / "CHGCAR_mp-1", ["Ag", "Pt"], [1, 1], 22)
 
         with pytest.raises(ValueError, match="independent directions"):
             infer_valence_charges(discover_mp_chgcars(root))
@@ -276,12 +276,12 @@ class TestValenceCharges:
     def test_that_same_system_is_solvable_with_one_override(self, tmp_path):
         root = tmp_path / "chgcar"
         root.mkdir()
-        make_chgcar(root / "CHGCAR_mp-1", ["Ag", "Au"], [1, 1], 22)
+        make_chgcar(root / "CHGCAR_mp-1", ["Ag", "Pt"], [1, 1], 22)
 
         charges = infer_valence_charges(discover_mp_chgcars(root),
                                         overrides={"Ag": 11.0})
 
-        assert charges == {"Ag": 11.0, "Au": 11.0}
+        assert charges == {"Ag": 11.0, "Pt": 11.0}
 
 
 # ---------------------------------------------------------------------- #
@@ -329,7 +329,7 @@ class TestMPChargeDensityDataset:
 
     def test_split_carries_the_settings_to_both_halves(self, mp_download):
         data = MPChargeDensityDataset(mp_download, resolution=4,
-                                      charges={"Ag": 11, "Au": 11, "Pt": 10})
+                                      charges={"Ag": 11, "Pd": 10, "Pt": 10})
 
         train, held_out = data.split(fraction=0.6, seed=0)
 
@@ -424,9 +424,9 @@ class TestOperatorOnMPData:
         root.mkdir()
         make_chgcar(root / "CHGCAR_mp-1", ["Ag"], [1], 11, shape=(8, 8, 8))
         make_chgcar(root / "CHGCAR_mp-2", ["Ag"], [2], 22, shape=(8, 8, 12))
-        make_chgcar(root / "CHGCAR_mp-3", ["Au"], [1], 11, shape=(8, 8, 8))
+        make_chgcar(root / "CHGCAR_mp-3", ["Pt"], [1], 11, shape=(8, 8, 8))
 
-        data = MPChargeDensityDataset(root, charges={"Ag": 11, "Au": 11})
+        data = MPChargeDensityDataset(root, charges={"Ag": 11, "Pt": 11})
         sampler = ShapeBucketSampler(data, batch_size=4, shuffle=False)
 
         assert sorted(len(batch) for batch in sampler) == [1, 2]
@@ -454,11 +454,11 @@ class TestOperatorOnMPData:
 class TestMPDataFetcher:
     def test_chemical_space_spans_every_subsystem(self, monkeypatch):
         monkeypatch.setenv("MP_API_KEY", "not-a-real-key")
-        fetcher = MPDataFetcher("Ag-Au-Pt")
+        fetcher = MPDataFetcher("Pt-Pd-Ni")
 
-        assert fetcher.elements == ["Ag", "Au", "Pt"]
+        assert fetcher.elements == sorted(["Pt", "Pd", "Ni"])
         assert sorted(fetcher.chemical_systems) == sorted([
-            "Ag", "Au", "Pt", "Ag-Au", "Ag-Pt", "Au-Pt", "Ag-Au-Pt"])
+            "Ni", "Pd", "Pt", "Ni-Pd", "Ni-Pt", "Pd-Pt", "Ni-Pd-Pt"])
 
     def test_filters_are_pushed_into_the_query_where_they_can_be(self, monkeypatch):
         monkeypatch.setenv("MP_API_KEY", "not-a-real-key")

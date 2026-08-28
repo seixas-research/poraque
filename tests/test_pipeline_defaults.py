@@ -183,7 +183,9 @@ class TestDeltaDensityIsTheDefaultTarget:
         path.write_text("data:\n  delta_density: false\n")
         assert TrainingConfig.from_yaml(path).data.delta_density is False
 
-    def test_without_an_atomic_reference_the_run_fails_loudly(self, tmp_path):
+    @pytest.mark.parametrize("reference", [None, "no/such/directory"])
+    def test_without_a_resolvable_atomic_reference_the_run_fails_loudly(
+            self, tmp_path, reference):
         """
         Not silently back to the absolute density.
 
@@ -191,11 +193,18 @@ class TestDeltaDensityIsTheDefaultTarget:
         run which quietly does the old thing looks identical to one that did
         the new thing. The error names the key, the CLI that builds a database,
         and the way to opt out.
+
+        Both spellings of the same failure are checked. ``atomic_reference``
+        carries a default path, so on any machine but the one holding the data
+        the realistic case is not an unset key but a key pointing somewhere
+        that does not exist -- and a bare ``FileNotFoundError`` there would
+        name the path without naming the opt-out.
         """
         from poraque_train import resolve_baseline
         from poraque.ml.tasks import resolve_task
 
-        config = TrainingConfig.from_dict({"task": "ext2chg"})
+        settings = {"task": "ext2chg", "data": {"atomic_reference": reference}}
+        config = TrainingConfig.from_dict(settings)
         with pytest.raises(ValueError) as excinfo:
             resolve_baseline(resolve_task("ext2chg"), config, str(tmp_path),
                              lambda *_: None)
@@ -225,17 +234,19 @@ class TestDeltaDensityIsTheDefaultTarget:
         from poraque.ml.tasks import resolve_task
 
         reference = synthetic_atom_run(tmp_path / "atoms" / "Pt")
-        cache = tmp_path / "cache" / "AuPt"
+        cache = tmp_path / "cache" / "PtSi"
         cache.mkdir(parents=True)
         grid = FieldGrid((12, 12, 12), np.eye(3) * 6.0)
-        structure = Poscar(np.eye(3) * 6.0, ["Pt", "Au"], [1, 1],
+        # Two DIFFERENT elements, only one of which the library covers -- the
+        # whole point is the uncovered one.
+        structure = Poscar(np.eye(3) * 6.0, ["Pt", "Si"], [1, 1],
                            [[0.2, 0.2, 0.2], [0.7, 0.7, 0.7]])
         ChargeDensity(np.ones(grid.shape) * 0.1, grid, structure).write(
             cache / "CHGCAR")
 
         config = TrainingConfig.from_dict(
             {"data": {"atomic_reference": os.path.dirname(reference)}})
-        with pytest.raises(ValueError, match="Au"):
+        with pytest.raises(ValueError, match="Si"):
             resolve_baseline(resolve_task("ext2chg"), config,
                              str(tmp_path / "cache"), lambda *_: None)
 

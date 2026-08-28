@@ -28,8 +28,8 @@ this brings with it, of which the sign change is the one that matters.
 **A source of one-centre terms.** The isolated atom's own PAW augmentation
 record travels with it, which is the only thing available for an element the
 training set has never seen. It is *not* the best available source when the
-element **is** in the training set — measured on this project's gold data, the
-free-atom record is 86.6 % RMS away from a bulk Au site while the training-set
+element **is** in the training set — measured on this project's platinum data, the
+free-atom record is 86.6 % RMS away from a bulk Pt site while the training-set
 average is 9.9 % away. ``DESIGN_PAW.md`` §3.2 has the numbers and the reasoning;
 :mod:`poraque.fields.vasp.augmentation` remains the default source.
 
@@ -56,7 +56,7 @@ rather than as a real-space array. Three reasons, and the last is decisive:
    That is what keeps the interaction with the electron-count constraint
    tractable at inference.
 
-Is an atom radial enough for this? Measured on ``data/vasp/ref/Au`` — one gold
+Is an atom radial enough for this? Measured on ``data/vasp/ref/Pt`` — one platinum
 atom in a 10 Å cube on a 108³ grid — the recentred :math:`f(\mathbf G)` is real
 to :math:`7\times10^{-16}` relative, and the worst within-bin scatter is
 **0.48 %** of :math:`f(0)` (recorded per entry as ``radial_scatter``).
@@ -98,7 +98,7 @@ DEFAULT_BINS = 512
 
 def base_element(symbol):
     """
-    ``"Au_pv"``, ``"Au.pbe"``, ``"Au1"`` all to ``"Au"``.
+    ``"Pt_pv"``, ``"Pt.pbe"``, ``"Pt1"`` all to ``"Pt"``.
 
     One more copy of an idiom this tree already spells five ways; ``FUTURE.md``
     tracks unifying them. Kept local rather than importing one of the five,
@@ -162,8 +162,8 @@ class AtomicReference:
         """
         ``element|potcar_title|hash16`` — the identity of one reference.
 
-        Keyed on the pseudopotential as well as the element because ``Au`` and
-        ``Au_pv`` have different valence counts and different pseudo-densities;
+        Keyed on the pseudopotential as well as the element because ``Pt`` and
+        ``Pt_pv`` have different valence counts and different pseudo-densities;
         merging them would produce a baseline that is wrong for both.
         """
         title = self.potcar_title or "unknown"
@@ -189,7 +189,7 @@ class AtomicReference:
 
         Meanwhile the reference cell's own reciprocal lattice has nothing
         between :math:`G = 0` and its first shell at :math:`2\pi/L` — a gap of
-        0.63 Å⁻¹ for the shipped 10 Å gold atom — so any target grid with
+        0.63 Å⁻¹ for the shipped 10 Å platinum atom — so any target grid with
         points inside that gap is served by interpolation alone. A chord drawn
         in :math:`|G|` cuts straight across the curvature and gets the slope at
         the origin wrong by construction. Measured against a Gaussian atom,
@@ -287,7 +287,7 @@ class AtomicReferenceLibrary:
         Parameters
         ----------
         symbol : str
-            Chemical symbol, decorated (``"Au_pv"``) or not.
+            Chemical symbol, decorated (``"Pt_pv"``) or not.
         potcar_title : str, optional
             Pin the pseudopotential variant. Without it, and with exactly one
             variant stored for the element, that one is returned — the normal
@@ -847,7 +847,7 @@ def augmentation_from_atoms(structure, library, titles=None):
     Per-atom augmentation records taken from the isolated-atom database.
 
     The **fallback** source, not the preferred one. Measured on this project's
-    gold data, a free Au atom's record is 86.6 % RMS away from a bulk Au site
+    platinum data, a free Pt atom's record is 86.6 % RMS away from a bulk Pt site
     while the training-set average is 9.9 % away, so
     :func:`~poraque.fields.vasp.augmentation.records_for_structure` is what a
     prediction should normally use. This exists for the case that one cannot

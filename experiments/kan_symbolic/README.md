@@ -33,9 +33,9 @@ features it is given.
 ## What the demo does
 
 For each of the eight checkpoints trained in this repo -- the four
-base-carrying variants (`models/au_w16_m8_l3_kancheby`, `_kanbspline`,
+base-carrying variants (`models/pt_w16_m8_l3_kancheby`, `_kanbspline`,
 `_rbf`, `_rational`) and their four `kan_use_base: false` ("pure") twins
-(`models/au_w16_m8_l3_<variant>_purekan`; see `FUTURE.md` for how all eight
+(`models/pt_w16_m8_l3_<variant>_purekan`; see `FUTURE.md` for how all eight
 compare on accuracy), it:
 
 1. reads channel 0 of Fourier layer 0's activation straight off the real

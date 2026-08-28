@@ -36,12 +36,12 @@ reads and writes exactly this (`data.ravel(order="F")`).
 `ρ(r)·Ω`. The wiki's own phrasing ("charge times FFT-grid volume", with a
 formula that also divides by `V_grid`) describes a *sum* convention rather than
 an integral one and is easy to misread, so this was settled **empirically
-instead**: reading the three shipped gold `CHGCAR`s with Poraquê's
+instead**: reading the three shipped platinum `CHGCAR`s with Poraquê's
 `volume_scaled = True` (divide by Ω on read) and integrating gives
 
 | material | ∫ρ d³r |
 |---|---|
-| `ref/Au` (1 atom, ZVAL 11) | 11.000001 |
+| `ref/Pt` (1 atom, ZVAL 11) | 11.000001 |
 | `struct_000` (27 atoms) | 297.0000006 |
 | `struct_015` (32 atoms) | 352.0000000 |
 
@@ -67,7 +67,7 @@ augmentation occupancies   1 138
 
 Header is `("augmentation occupancies",2I4)` — record index and value count —
 then `(5E15.7)` for the values. **Measured** on `struct_015/CHGCAR`: 32 records
-of 138 values each, matching its 32 Au atoms. `augmentation.py` already parses
+of 138 values each, matching its 32 Pt atoms. `augmentation.py` already parses
 and re-emits this byte-compatibly.
 
 These are the PAW **one-centre** terms,
@@ -91,7 +91,7 @@ highest `l` written:
 > "The `CHGCAR` file will contain the one-center PAW occupancy matrices up to
 > `LMAXMIX`."
 
-**TO-VERIFY:** the exact index ordering of the 138 values for `PAW_PBE Au` —
+**TO-VERIFY:** the exact index ordering of the 138 values for `PAW_PBE Pt` —
 i.e. the map from position in the record to `(l, l', L, M)`. It is set by
 `TRANS_RHOLM` and is not documented on the wiki. Poraquê never interprets the
 values individually (it copies, averages and re-emits them as an opaque
@@ -111,7 +111,7 @@ at the second grid header, so it extracts the total-density records only.
 > augmentation occupancies."
 
 This settles the τ·Ω scaling Poraquê assumed and could not previously cite —
-and, read together with `DELETIONS.md`, confirms that the ambiguity which
+and, read together with `the post-mortem`, confirms that the ambiguity which
 destroyed the τ dataset was an artefact of the patched build, not of VASP.
 
 ---
@@ -182,7 +182,7 @@ one that decides it:
    interaction with the electron-count constraint tractable (§3.3).
 
 **Is the atomic density radial enough for this?** **Measured** on
-`data/vasp/ref/Au` (one Au atom, 10 Å cube, 108³): after recentring on the
+`data/vasp/ref/Pt` (one Pt atom, 10 Å cube, 108³): after recentring on the
 atom, `f(G)` is real to `6.8e-16` relative, and the worst within-bin scatter is
 **0.48 % of `f(0)`** (512 bins to the Nyquist radius, which is what the builder
 records as `radial_scatter`; a coarser probe over `|G| < 8 Å⁻¹` in 80 bins gives
@@ -214,7 +214,7 @@ found by testing against a Gaussian atom whose `f` is known in closed form.**
   density has an `f` that is even in **G**, so it is analytic in `G²` and has
   *zero slope at the origin*: `f(G) = Z − ⟨r²⟩G²/6 + O(G⁴)`. The reference
   cell has nothing between `G = 0` and its first shell at `2π/L` (0.63 Å⁻¹ for
-  the 10 Å gold atom), and any target grid with points inside that gap is
+  the 10 Å platinum atom), and any target grid with points inside that gap is
   served by interpolation alone. A chord drawn in `|G|` cuts across the
   curvature and gets the origin slope wrong by construction: 3.3 % of `f(0)` in
   that first gap, against 0.2 % in `G²`.
@@ -259,7 +259,7 @@ The plan was: take the occupancies from the isolated-atom reference per element
 (nearest-atom assignment), as a zeroth-order approximation.
 
 **This was implemented, and it is measurably the worse of the two options.**
-Comparing the isolated Au atom's record against the 32 per-site records of
+Comparing the isolated Pt atom's record against the 32 per-site records of
 `struct_015` (same POTCAR, same `LMAXMIX`, same 138 values):
 
 | reference for a bulk site | RMS error, relative to the bulk mean |
@@ -268,7 +268,7 @@ Comparing the isolated Au atom's record against the 32 per-site records of
 | isolated-atom record | **86.6 %** |
 
 The leading component alone is `2.841` for the isolated atom against a bulk mean
-of `6.795` — **58 % off**. The reason is not subtle: a free Au atom and an Au
+of `6.795` — **58 % off**. The reason is not subtle: a free Pt atom and an Pt
 atom in a metal have genuinely different on-site occupations, and the
 one-centre terms are exactly where that difference lives.
 
@@ -284,7 +284,7 @@ they are the right object and the measurement supports them.
 
 **Limitations, stated plainly.** Both sources ignore environment-induced changes
 in the on-site density matrix. The 9.9 % figure is the site-to-site scatter
-within one rattled 32-atom gold cell; it is **not** a transferability estimate
+within one rattled 32-atom platinum cell; it is **not** a transferability estimate
 across coordination numbers, phases or elements, and nothing here measures that.
 `struct_000`, a pristine supercell, has **0.00 %** scatter — every site is
 symmetry-equivalent — which shows how easily this number can look better than it
@@ -371,9 +371,9 @@ atomic_reference.json
 {
   "version": 1,
   "entries": {
-    "Au|PAW_PBE Au 06Sep2000|<potcar_sha16>": {
-        "element": "Au",
-        "potcar_title": "PAW_PBE Au 06Sep2000",
+    "Pt|PAW_PBE Pt 06Sep2000|<potcar_sha16>": {
+        "element": "Pt",
+        "potcar_title": "PAW_PBE Pt 06Sep2000",
         "potcar_sha256": "...",
         "valence_charge": 11.0,
         "g_grid":       [...],      # |G| in 1/Ang, ascending from 0
@@ -381,7 +381,7 @@ atomic_reference.json
         "g_max": 8.0,               # table range; f = 0 beyond it
         "radial_scatter": 0.0074,   # measured anisotropy, see 3.1
         "augmentation": [...],      # the atom's own one-centre record
-        "source": "data/vasp/ref/Au",
+        "source": "data/vasp/ref/Pt",
         "vasp_version": "6.2.0",
         "incar_sha256": "...",
         "cell_volume": 1000.0,
@@ -392,7 +392,7 @@ atomic_reference.json
 ```
 
 Keyed by `element|potcar_title|potcar_hash` so two POTCAR variants of the same
-element (`Au` vs `Au_pv`) never collide; lookup falls back to element alone when
+element (`Pt` vs `Pt_pv`) never collide; lookup falls back to element alone when
 only one variant is present, which is the normal case.
 
 ---
@@ -410,7 +410,7 @@ only one variant is present, which is the normal case.
    does not isolate it; a `LAECHG = .TRUE.` run writing `AECCAR0`/`AECCAR2`
    would separate the terms and settle it.
 4. **Transferability of averaged occupancies across environments.** The 9.9 %
-   figure is within-cell scatter for one rattled gold supercell. Nothing here
+   figure is within-cell scatter for one rattled platinum supercell. Nothing here
    measures a different coordination, phase or element.
 5. **Whether `ICHARG = 11` on a predicted density gives a usable band
    structure at all** — the actual question. Runs happen outside this session;
@@ -428,5 +428,5 @@ only one variant is present, which is the normal case.
 - [LMAXMIX — VASP Wiki](https://www.vasp.at/wiki/index.php/LMAXMIX)
 - [TAUCAR — VASP Wiki](https://vasp.at/wiki/TAUCAR)
 - [LTAU — VASP Wiki](https://www.vasp.at/wiki/index.php/LTAU)
-- Measurements: this repository's `data/vasp/ref/Au`, `struct_000`,
+- Measurements: this repository's `data/vasp/ref/Pt`, `struct_000`,
   `struct_015`.

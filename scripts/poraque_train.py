@@ -263,6 +263,58 @@ class Tee:
 # ===================================================================== #
 # Cache construction
 # ===================================================================== #
+def resolved_spin(data):
+    """
+    Whether this dataset's cache carries a magnetisation channel.
+
+    ``data.spin`` may be ``"auto"``, which is a question rather than an answer,
+    and the question can only be settled by reading the sources. Answered here
+    so that :func:`cache_tag` and :func:`build_cache` cannot disagree — a tag
+    that said one thing while the build did another would silently reuse a
+    one-channel cache for a two-channel run.
+
+    Errors while probing are swallowed and reported as "no spin": this runs
+    only to name a directory, and the real read a moment later raises a far
+    better message than a half-built path can.
+
+    Parameters
+    ----------
+    data : DataConfig
+
+    Returns
+    -------
+    bool
+    """
+    if data.spin is True:
+        return True
+    if data.spin is False:
+        return False
+
+    from poraque.data import discover_records, resolve_source
+
+    options = {"potcar_dir": data.potcar_dir, "sigma": data.sigma,
+               "gaussian_blur": data.gaussian_blur,
+               "blur_method": data.blur_method, "pattern": data.pattern,
+               "code": data.code}
+    try:
+        sources = [resolve_source(path, fmt, **options)
+                   for path, fmt in zip(data.paths(),
+                                        _formats_for(data))]
+        records = discover_records(sources, required=("CHGCAR",))
+        return any(record.source.is_spin_polarized(record)
+                   for record in records)
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
+def _formats_for(data):
+    """``data.formats()`` broadcast to one entry per path."""
+    formats = data.formats()
+    if isinstance(formats, (str, type(None))):
+        return [formats] * len(data.paths())
+    return list(formats)
+
+
 def cache_tag(data):
     """
     Directory name encoding everything that changes the stored fields.
@@ -282,8 +334,12 @@ def cache_tag(data):
         # A tabulated potential and a Gaussian one are different fields, not
         # different roundings of one, so they must never share a cache.
         tag += "_potcar"
-    if data.spin is True:
-        # An explicit spin request caches the magnetisation channel too.
+    if resolved_spin(data):
+        # A cache carrying the magnetisation channel is a different dataset
+        # from one that does not, so it gets its own directory. Resolved from
+        # the data, not from the literal setting: `spin: auto` on ISPIN = 2
+        # sources caches two channels and must not share a directory with a
+        # `spin: false` build of the same sources.
         tag += "_spin"
 
     paths = data.paths()
@@ -310,7 +366,7 @@ def build_cache(config, log):
     :math:`\\tau` passes an ingestion gate on the way in (``data.tau_validation``
     -- scale against Thomas-Fermi, the von Weizsaecker lower bound, and the
     run's provenance). A material that fails it stops the build rather than
-    being cached, because the alternative is what produced ``DELETIONS.md``.
+    being cached, because the alternative is what produced the post-mortem.
 
     Returns
     -------
@@ -333,9 +389,12 @@ def build_cache(config, log):
         potcar_dir=data.potcar_dir, sigma=data.sigma,
         gaussian_blur=data.gaussian_blur, blur_method=data.blur_method,
         pattern=data.pattern, code=data.code, log=log,
-        # "auto" is resolved by the dataset per material; only an explicit
-        # `data.spin: true` asks the cache to carry the magnetisation block.
-        spin=data.spin is True,
+        # Passed through as given, INCLUDING "auto", which build_field_cache
+        # resolves against the sources. It used to be flattened here with
+        # `data.spin is True`, which made "auto" -- the default -- mean *no
+        # spin*, silently discarding every ISPIN = 2 magnetisation block on
+        # the way into the cache.
+        spin=data.spin,
         # Every TAUCAR is checked against its own density and its run's
         # provenance on the way in. `null` means the defaults, so the gate is
         # on for a config that says nothing about it -- which is the point.
@@ -711,24 +770,41 @@ def resolve_baseline(task, config, cache, log):
             f"its target is {task.target_field}, which has no atomic "
             f"superposition.")
         return None
-    if not config.data.atomic_reference:
+    reference = config.data.atomic_reference
+    from poraque.fields.atomic import resolve_library
+
+    # Unset and set-but-absent are the same failure to a run: neither can name
+    # the atoms the target is defined against. They are raised as one message
+    # for that reason -- `atomic_reference` has a default, and a default that
+    # resolves on the machine the data lives on resolves nowhere else, so the
+    # path being wrong is the likelier of the two cases rather than the rarer.
+    try:
+        library = (resolve_library(reference, cache=cache, log=log)
+                   if reference else None)
+    except FileNotFoundError as exc:
+        library, why = None, str(exc)
+    else:
+        why = None
+
+    if library is None:
+        where = (f"data.atomic_reference is {reference!r}, and {why}"
+                 if why else
+                 "data.atomic_reference is unset, so nothing says where the "
+                 "isolated atoms are")
         raise ValueError(
-            "data.delta_density is on (the default since 2026-08-26) and needs "
-            "data.atomic_reference to say where the isolated atoms are.\n\n"
-            "Point it at either a directory of single-atom calculations or a "
-            "database built from them:\n\n"
+            f"data.delta_density is on (the default since 2026-08-26) and the "
+            f"target is rho - rho_sup, but {where}.\n\n"
+            "Point it at a directory holding one subdirectory per element, "
+            "each a single-atom calculation, or at a database built from "
+            "them:\n\n"
             "    data:\n"
-            "      atomic_reference: ~/Simulations/vasp/metals/Pt\n\n"
+            "      atomic_reference: data/vasp/isolated_atoms\n\n"
             "A directory is ingested on the spot and memoised into the cache. "
             "To build the database ahead of time instead:\n\n"
             "    poraque-atoms <atom dirs> --output atomic_reference.json\n\n"
             "Or set `data.delta_density: false` to train on the absolute "
             "density, which is what runs before this date did.")
 
-    from poraque.fields.atomic import resolve_library
-
-    library = resolve_library(config.data.atomic_reference,
-                              cache=cache, log=log)
     missing = _uncovered_elements(cache, library)
     if missing:
         raise ValueError(
@@ -1122,6 +1198,57 @@ def format_shapes(buckets, indent="                        "):
         lines.append(f"{text:<14s} {count:>3d} "
                      f"structure{'s' if count != 1 else ''}")
     return [lines[0]] + [indent + line for line in lines[1:]] if lines else []
+
+
+def field_integral(field):
+    """
+    The one number that summarises a predicted field, for either channel count.
+
+    A single-channel field integrates. A :class:`~poraque.fields.SpinDensity`
+    does not: it is two fields, and the integral of the pair is not a scalar.
+    The quantity meant here is the one the density's *first* channel carries —
+    the electron count — so that is what a spin-polarised prediction reports,
+    and the magnetisation is left to the metrics table where it has a column
+    of its own.
+
+    Without this, a run with ``data.spin: true`` trained to completion and then
+    died in the reporting pass with ``AttributeError``, discarding the epochs.
+
+    Parameters
+    ----------
+    field : ScalarField or SpinDensity
+
+    Returns
+    -------
+    float
+    """
+    if hasattr(field, "integrate"):
+        return field.integrate()
+    return field.electron_count()
+
+
+def plot_channel(field):
+    """
+    The single channel a cross-section or parity figure should draw.
+
+    A :class:`~poraque.fields.SpinDensity` stacks its two channels into
+    ``data``, and a figure handed that stack silently becomes nonsense — or,
+    as it happened, hands Matplotlib a three-axis "image" and dies after the
+    training has already run. The density channel is the one these figures are
+    about; the magnetisation has its own column in the metrics table.
+
+    Parameters
+    ----------
+    field : ScalarField or SpinDensity
+
+    Returns
+    -------
+    ScalarField or numpy.ndarray
+        Unchanged for a single-channel field, so the figure keeps the grid and
+        structure it would otherwise have.
+    """
+    total = getattr(field, "total", None)
+    return field if total is None else total
 
 
 def dataset_metric_probe(operator, dataset):
@@ -1628,13 +1755,13 @@ def run_task(task_name, cache, config, log, n_tasks=1):
             operator, train_set, index, log, name,
             width=label_width, split="train", columns=columns)
         per_material[name] = {"split": "train", "metrics": values,
-                              "predicted_integral": prediction.integrate(),
-                              "reference_integral": target.integrate()}
+                              "predicted_integral": field_integral(prediction),
+                              "reference_integral": field_integral(target)}
         if report is not None and index == 0:
             report.prefix = f"{task.name}_{name}"
-            showcase = (target, prediction)
+            showcase = (plot_channel(target), plot_channel(prediction))
             figures.append(report.field_comparison(
-                target, prediction, label=label_text, unit=unit,
+                *showcase, label=label_text, unit=unit,
                 log=(task.target_field in ("CHGCAR", "TAUCAR")),
                 title=f"{task.name} · {name}"))
 
@@ -1646,10 +1773,10 @@ def run_task(task_name, cache, config, log, n_tasks=1):
                 operator, validation, index, log, name,
                 width=label_width, split="validation", columns=columns)
             per_material[name] = {"split": "validation", "metrics": values,
-                                  "predicted_integral": prediction.integrate(),
-                                  "reference_integral": target.integrate()}
+                                  "predicted_integral": field_integral(prediction),
+                                  "reference_integral": field_integral(target)}
             if index == 0:
-                held_out = (target, prediction)
+                held_out = (plot_channel(target), plot_channel(prediction))
 
     # The parity plot is drawn after both loops so it can carry the held-out
     # structure beside the training one. Two clouds on shared axes show the
@@ -1899,8 +2026,8 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
                 columns=fold_columns)
             records.append({"fold": index, "material": name,
                             "split": f"fold {index}", "metrics": values,
-                            "predicted_integral": prediction.integrate(),
-                            "reference_integral": target.integrate()})
+                            "predicted_integral": field_integral(prediction),
+                            "reference_integral": field_integral(target)})
             if plot_directory(config) and position == 0:
                 from poraque.vis import TrainingReport
 

@@ -12,7 +12,7 @@ Build the isolated-atom database from single-atom calculations.
 
 .. code-block:: text
 
-    data/vasp/ref/Au/CHGCAR  ---->  f_Au(|G|)  +  its augmentation record
+    data/vasp/ref/Pt/CHGCAR  ---->  f_Pt(|G|)  +  its augmentation record
     data/vasp/ref/Ag/CHGCAR  ---->  f_Ag(|G|)  +  its augmentation record
                                         |
                                         v
@@ -21,7 +21,7 @@ Build the isolated-atom database from single-atom calculations.
 What the database is for
 ------------------------
 **The superposition baseline.** Most of a crystal's valence density is its free
-atoms placed side by side. Measured on this project's own gold cells, the
+atoms placed side by side. Measured on this project's own platinum cells, the
 superposition accounts for about 95 % of the field in :math:`L^2`. Training on
 the residual :math:`\delta\rho = \rho - \rho_{\rm sup}` therefore removes the
 part that was never in doubt --- including nearly all of the dynamic range the
@@ -32,22 +32,22 @@ part that was never in doubt --- including nearly all of the dynamic range the
 **A last-resort source of PAW one-centre terms.** Each atom's own augmentation
 record travels with it, which is the only thing available for an element the
 training set has never seen. It is *not* the better source when the element
-**is** in the training set: measured here, a free Au atom's record is 86.6 % RMS
-away from a bulk Au site while the training-set average is 9.9 % away. See
+**is** in the training set: measured here, a free Pt atom's record is 86.6 % RMS
+away from a bulk Pt site while the training-set average is 9.9 % away. See
 ``DESIGN_PAW.md`` §3.2.
 
 What a reference calculation has to be
 --------------------------------------
 **One atom in a box**, converged, with ``LCHARG = .TRUE.`` so it writes a
 ``CHGCAR``. The box wants to be large enough that the atom does not see its own
-images --- 10 Å is what this project's Au reference uses. A cell with more than
+images --- 10 Å is what this project's Pt reference uses. A cell with more than
 one atom is refused rather than averaged: the form factor of a pair is not the
 form factor of an atom.
 
 The density is reduced to a **radial** table :math:`f(|G|)`, so how spherical
 the reference atom actually was is a real question. It is measured and reported
 per entry (``anisotropy`` in the output below, ``radial_scatter`` in the file)
-rather than assumed away; the shipped gold atom comes out at 0.48 %.
+rather than assumed away; the shipped platinum atom comes out at 0.48 %.
 
 Usage
 -----

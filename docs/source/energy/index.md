@@ -63,7 +63,7 @@ non-empty. A total that is missing a term says so.
 PBE is the default because it matches the reference data: the calculations
 Poraquê ingests use `PAW_PBE` pseudopotentials with `LEXCH = PE`, so $\rho$ and
 $\tau$ are PBE quantities. Evaluating an LDA $E_\mathrm{xc}$ on a PBE density
-is neither a PBE energy nor an LDA one. On the reference Au supercells the two
+is neither a PBE energy nor an LDA one. On the reference Pt supercells the two
 differ by **−0.92 eV/atom** (0.65 % of $E_\mathrm{xc}$), so the choice is not
 cosmetic.
 
@@ -125,7 +125,7 @@ print(calc.compute(rho, tau, vext))
 
 ```{tip}
 `electrons` is the cheapest available diagnostic. It should equal the sum of
-the `ZVAL`s — 297 for 27 Au atoms above — to a few parts in $10^4$. A predicted
+the `ZVAL`s — 297 for 27 Pt atoms above — to a few parts in $10^4$. A predicted
 density that has drifted off it invalidates every electrostatic term, since
 they are all linear or quadratic in $\rho$.
 ```
@@ -142,7 +142,7 @@ interface:
 from ase.build import bulk
 from poraque.calculator import Poraque
 
-atoms = bulk("Au", "fcc", a=4.08, cubic=True)
+atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
 atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
 
 energy = atoms.get_potential_energy()
@@ -181,10 +181,10 @@ atoms.calc = Poraque("models/poraque_models.pfno",
 Recognised layouts, in preference order — each accepting a `.gz` or `.Z`
 suffix:
 
-1. `<dir>/Au/POTCAR` — what VASP ships;
-2. `<dir>/Au_pv/POTCAR` — a variant, used only if it is the *only* candidate,
+1. `<dir>/Pt/POTCAR` — what VASP ships;
+2. `<dir>/Pt_pv/POTCAR` — a variant, used only if it is the *only* candidate,
    with a warning;
-3. `<dir>/POTCAR.Au` or `<dir>/Au.POTCAR` — flat.
+3. `<dir>/POTCAR.Pt` or `<dir>/Pt.POTCAR` — flat.
 
 ```{note}
 If several variants match — `Fe_pv` and `Fe_sv`, say — the lookup **raises**
@@ -217,7 +217,7 @@ of the energy it differentiates to $10^{-7}$ eV/Å.
 The **physics** is incomplete for PAW datasets. Hellmann-Feynman is the whole
 force only for a *local* pseudopotential; a PAW calculation adds a projector
 force and a one-centre force, and neither is recoverable from $\rho$, $\tau$
-and $V_\mathrm{loc}$ on a grid. Measured against VASP on gold, using VASP's own
+and $V_\mathrm{loc}$ on a grid. Measured against VASP on platinum, using VASP's own
 density: MAE 0.83 eV/Å against forces of 1.66 eV/Å. The magnitude is right, the
 direction is not. **Geometry optimisation and molecular dynamics remain
 unavailable.**
@@ -254,7 +254,7 @@ an ordinary single-point calculation of one atom in a large box:
 
 ```text
 data/vasp/ref/
-    Au/     POSCAR POTCAR OSZICAR OUTCAR CHGCAR TAUCAR
+    Pt/     POSCAR POTCAR OSZICAR OUTCAR CHGCAR TAUCAR
     N/      ...
 ```
 
@@ -273,7 +273,7 @@ atoms.calc.get_cohesive_energy(per_atom=True) # eV/atom
 `ReferenceEnergies.from_directory` takes a `method`, and the choice matters
 more than anything else in this section.
 
-| `method` | $E_\mathrm{iso}$ from | Au cohesive energy |
+| `method` | $E_\mathrm{iso}$ from | Pt cohesive energy |
 | --- | --- | --- |
 | `"poraque"` (default) | Poraquê's own energy expression on the reference fields | **−1.9 eV/atom** |
 | `"code"` | VASP's `OUTCAR`/`OSZICAR` | −1157 eV/atom |
@@ -349,12 +349,12 @@ The field accessors are symmetric — `get_external_potential()`,
 
 **It is not a DFT total energy.** `CHGCAR` holds the valence *pseudo* density
 and `TAUCAR` the valence pseudo kinetic energy density, so the PAW one-centre
-terms are absent entirely. For the 27-atom Au cell above the result is
+terms are absent entirely. For the 27-atom Pt cell above the result is
 $\approx -31215$ eV against a VASP `TOTEN` of order $-100$ eV. Nothing in this
 module can close that gap.
 
 **Energy differences are not yet usable either.** Measured on the current
-seventeen-structure Au dataset, comparing within each composition group:
+seventeen-structure Pt dataset, comparing within each composition group:
 
 | Source of the fields | MAE on $\Delta E$ | vs. signal |
 | --- | --- | --- |

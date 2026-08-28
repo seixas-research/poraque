@@ -51,6 +51,8 @@ import os
 import warnings
 from abc import ABC, abstractmethod
 
+import numpy as np
+
 from ..fields import (
     ChargeDensity,
     ExternalPotential,
@@ -292,12 +294,34 @@ class MaterialSource(ABC):
 
     # -- shared helpers ------------------------------------------------- #
     def _read_density(self, path, grid, spin):
-        """Read a density file as one channel or as a spin pair."""
-        if spin:
-            from ..fields import SpinDensity
+        r"""
+        Read a density file as one channel or as a spin pair.
 
+        A dataset resolves to spin as a whole (see
+        :func:`~poraque.data.cache._resolve_spin`), because one operator has
+        one channel count. So a mixture is legal, and an ``ISPIN = 1`` member
+        of a spin dataset is read as :math:`(\rho, m = 0)` rather than
+        refused: that is a true statement about a non-magnetic calculation, and
+        it is what makes a two-channel operator a strict generalisation of a
+        one-channel one.
+
+        :meth:`~poraque.fields.SpinDensity.read` still refuses a single-block
+        file on its own, which is right for a *direct* call — there the zero
+        magnetisation would be a claim the caller had not checked. Here it has
+        been checked, one level up, against every material in the set.
+        """
+        if not spin:
+            return ChargeDensity.read(path, grid=grid)
+
+        from ..fields import SpinDensity, is_spin_polarized
+
+        if is_spin_polarized(path):
             return SpinDensity.read(path, grid=grid)
-        return ChargeDensity.read(path, grid=grid)
+
+        density = ChargeDensity.read(path, grid=grid)
+        return SpinDensity(density.data, np.zeros_like(density.data),
+                           density.grid, density.structure,
+                           metadata={**density.metadata, "ispin": 1})
 
     def _blur(self, field):
         """Apply the configured Gaussian blur to a computed potential."""

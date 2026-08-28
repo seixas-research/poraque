@@ -125,7 +125,7 @@ distributes them:
 
 ```yaml
 data:
-  potcar_dir: /opt/vasp/potpaw_PBE       # <dir>/Ag/POTCAR, <dir>/Au/POTCAR, …
+  potcar_dir: /opt/vasp/potpaw_PBE       # <dir>/Ag/POTCAR, <dir>/Pt/POTCAR, …
 ```
 
 `.gz` and `.Z` entries are read directly, and a flat `POTCAR.Ag` / `Ag.POTCAR`
@@ -141,7 +141,7 @@ different approximations to one:
 | pseudopotentials available | tabulated local pseudopotential (VASP's `POTION`) | $2\times10^{-5}$ relative $L_2$ |
 | none available | Gaussian pseudo-ion model, $f_s(G)=e^{-G^2\sigma^2/2}$ | order $10^{-1}$ |
 
-Measured on the Ag–Au–Pt Materials Project set, the two constructions differ
+Measured on the Ag–Pt–Pt Materials Project set, the two constructions differ
 from each other by **0.38 relative $L_2$**.
 
 Without the library the map learned is *model potential* $\to$ *DFT density*.

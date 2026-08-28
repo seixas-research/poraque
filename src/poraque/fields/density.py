@@ -127,17 +127,67 @@ class KineticEnergyDensity(ScalarField):
 
     Notes
     -----
-    Unlike ``CHGCAR``, no single ``TAUCAR`` convention is fixed by VASP itself.
-    Poraquê adopts the ``CHGCAR`` one — values multiplied by the cell volume —
-    so that ``EXTCAR``, ``CHGCAR`` and ``TAUCAR`` differ only in *what* they
-    store, never in *how*. Subclass and flip :attr:`volume_scaled` if your
-    generator writes raw values.
+    A ``TAUCAR`` written by VASP 6.6.1 with ``LTAU = .TRUE.`` differs from a
+    ``CHGCAR`` in **both** of the ways a volumetric file can, and Poraquê once
+    guessed wrong about each. Neither guess was detectable by inspection —
+    which is the whole reason :mod:`poraque.data.validation` exists — so both
+    are recorded here with the measurement that settled them, on the Pt data of
+    2026-08-27 (31 bulk cells of 32 atoms, plus the isolated atom).
+
+    **The values are not multiplied by the cell volume.** ``CHGCAR`` stores
+    :math:`\rho\Omega`; ``TAUCAR`` stores :math:`\tau`. Read as though it
+    were volume-scaled, :math:`\int\tau` came out :math:`9.2\times10^{-4}`
+    of the Thomas-Fermi estimate in a 499.7 Å³ cell and
+    :math:`5.5\times10^{-4}` in a 1000 Å³ one — the error tracking
+    :math:`\Omega` exactly, which a unit confusion could not do.
+
+    **The two blocks of a spin-polarised file are the two spin channels**,
+    :math:`\tau_\uparrow` and :math:`\tau_\downarrow`, *not* the
+    total/magnetisation pair a ``CHGCAR`` uses. So the total is their sum, and
+    reading the first block alone loses half of :math:`\tau`. In the nearly
+    unpolarised bulk cells the second block equals the first to
+    :math:`3\times10^{-5}`, which no magnetisation is; in the isolated atom,
+    genuinely polarised at 2 μ_B, it is 0.774 of it and still everywhere
+    positive.
+
+    Together the two corrections move :math:`\int\tau / \int\tau_{\rm TF}`
+    from 0.46 to 0.92 in bulk and from 0.55 to 0.97 in the atom, and take the
+    von Weizsäcker violation rate — a *theorem*, so the decisive test — from
+    71 % of the atom's significant points to exactly zero in every system.
     """
 
     name = "kinetic energy density"
     default_filename = "TAUCAR"
     unit = "eV/Ang^3"
-    volume_scaled = True
+    volume_scaled = False
+    reads_all_blocks = True
+
+    @classmethod
+    def combine_blocks(cls, raw, extra):
+        r"""
+        Sum the spin channels of a ``TAUCAR`` into the total :math:`\tau`.
+
+        A one-block file is already the total: that is both an ``ISPIN = 1``
+        run and every ``TAUCAR`` Poraquê writes itself, so a cache round trip
+        does not double anything.
+
+        Parameters
+        ----------
+        raw : numpy.ndarray
+            First grid block — :math:`\tau_\uparrow` when there is a second.
+        extra : sequence of numpy.ndarray
+            The remaining blocks; one of them for ``ISPIN = 2``.
+
+        Returns
+        -------
+        numpy.ndarray
+        """
+        if not extra:
+            return raw
+        total = np.array(raw, dtype=float, copy=True)
+        for block in extra:
+            total += block
+        return total
 
     def kinetic_energy(self):
         """Total kinetic energy in eV."""

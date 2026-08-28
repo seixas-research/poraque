@@ -203,14 +203,14 @@ class TestSelectingEveryMaterialWithADensity:
                                                        monkeypatch):
         monkeypatch.setenv("MP_API_KEY", "not-a-real-key")
         seen = {}
-        fetcher = MPDataFetcher(["Ag", "Au"], outdir=str(tmp_path))
+        fetcher = MPDataFetcher(["Ag", "Pt"], outdir=str(tmp_path))
         fetcher._rester = SimpleNamespace(
             materials=SimpleNamespace(summary=SimpleNamespace(
                 search=lambda **kw: (seen.update(kw), [document("mp-1")])[1])),
             session=SimpleNamespace(close=lambda: None))
         fetcher.search()
 
-        assert sorted(seen["chemsys"]) == ["Ag", "Ag-Au", "Au"]
+        assert sorted(seen["chemsys"]) == ["Ag", "Ag-Pt", "Pt"]
         assert "has_props" not in seen
 
     def test_the_label_names_what_was_selected(self, tmp_path, monkeypatch):

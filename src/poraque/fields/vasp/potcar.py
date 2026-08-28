@@ -404,7 +404,7 @@ def find_potcar(directory, element):
     Recognised layouts, in preference order:
 
     1. ``<dir>/<element>/POTCAR`` --- what VASP ships;
-    2. ``<dir>/<element>_<variant>/POTCAR`` --- ``Au_pv``, ``Fe_sv``, ...;
+    2. ``<dir>/<element>_<variant>/POTCAR`` --- ``Pt_pv``, ``Fe_sv``, ...;
     3. ``<dir>/POTCAR.<element>`` or ``<dir>/<element>.POTCAR`` --- flat.
 
     Each accepts a ``.gz`` or ``.Z`` suffix.

@@ -177,7 +177,7 @@ depends on every part of the sum being individually right.
 valence pseudo kinetic energy density. The PAW one-centre terms --- the
 difference between the pseudo and all-electron descriptions inside the
 augmentation spheres --- never appear in any file Poraqu\^e reads, so they are
-absent from Equation~\ref{eq:total-energy} entirely. For the 27-atom Au
+absent from Equation~\ref{eq:total-energy} entirely. For the 27-atom Pt
 supercell the result is $\approx -31215$ eV against a VASP \opt{TOTEN} of order
 $-100$ eV. No adjustment of the terms above closes that gap; the missing
 physics is simply not in the inputs.
@@ -288,7 +288,7 @@ variational object rather than a fitted one.
 from ase.build import bulk
 from poraque.calculator import Poraque
 
-atoms = bulk("Au", "fcc", a=4.08, cubic=True)
+atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
 atoms.calc = Poraque("models/poraque_models.pfno",
                      potcar_dir="POTCARs")
 energy = atoms.get_potential_energy()

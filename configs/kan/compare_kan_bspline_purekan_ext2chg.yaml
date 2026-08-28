@@ -1,7 +1,7 @@
 # Controlled comparison: activation: kan_bspline, kan_use_base: false
 # ("pure" KAN -- no w_c*silu(x) base term, only the learned B-spline
 # residual) vs. the base-carrying kan_bspline (compare_kan_bspline_ext2chg.yaml)
-# and the shipped gelu model (models/au_w16_m8_l3), ext2chg only. Identical
+# and the shipped gelu model (models/pt_w16_m8_l3), ext2chg only. Identical
 # protocol to compare_kan_bspline_ext2chg.yaml except this one flag -- see
 # FUTURE.md's "Run kan_use_base: false" follow-up.
 #
@@ -11,7 +11,7 @@
 # -- see BSplineKANActivation's docstring.
 task:
   type: ext2chg
-  name: au_w16_m8_l3_kanbspline_purekan
+  name: pt_w16_m8_l3_kanbspline_purekan
 
 data:
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs

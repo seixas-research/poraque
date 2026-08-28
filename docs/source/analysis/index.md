@@ -105,7 +105,7 @@ which promolecule or Bader backend was used — is left on `charge_analysis`.
 ```python
 from poraque.analysis import partial_charges
 
-result = partial_charges(rho, method="bader", valence={"Au": 11.0})
+result = partial_charges(rho, method="bader", valence={"Pt": 11.0})
 result.charges          # net charge per atom
 result.populations      # electrons per atom
 result.total_charge     # ~0 for a neutral cell
@@ -137,7 +137,7 @@ charges with no other symptom.
 Supply real isolated-atom densities wherever possible:
 
 ```python
-partial_charges(rho, method="hirshfeld", valence={"Au": 11.0},
+partial_charges(rho, method="hirshfeld", valence={"Pt": 11.0},
                 references="data/vasp/ref")
 ```
 

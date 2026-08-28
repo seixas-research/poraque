@@ -11,11 +11,11 @@ A physical gate on the kinetic energy density, applied where τ enters the cache
 
 Why this module exists
 ----------------------
-Every ``TAUCAR`` in the gold dataset was wrong, and nothing noticed. The files
+Every ``TAUCAR`` in the platinum dataset was wrong, and nothing noticed. The files
 parsed, the grids matched, the arrays were finite and positive, the training
 loop converged and reported a small relative :math:`L^2`. The only symptom was
 that integrated kinetic energies came out absurdly large — a number nobody
-looks at while a loss is going down. See ``DELETIONS.md`` for the post-mortem.
+looks at while a loss is going down.
 
 The lesson is not "check the data more carefully". It is that a scalar field on
 a grid carries no unit, no convention and no provenance, so **a wrong τ is
@@ -54,10 +54,26 @@ is ``.FALSE.`` outside meta-GGA — from a build of ``vasp.6.2.0`` that must hav
 been locally patched to honour it. There is no way to know what convention that
 patch used, and no test on the numbers alone would have said so.
 
-So τ is refused unless the run states who computed it: the code version, the
-tag that requested τ, and a hash of the complete input file. This is the check
-that would have stopped the bad data at the door, and it is the only one of the
-three that does not depend on the values being wrong in a detectable way.
+So τ is refused unless the run states who *asked* for it: the tag that
+requested τ, set to ``.TRUE.``, and a hash of the complete input file. Both
+come from the ``INCAR``, which is an input to the calculation and is therefore
+present wherever the calculation is. This is the check that would have stopped
+the bad data at the door — the deleted runs' ``INCAR``\ s say
+``TAUCAR = .TRUE.`` and do not say ``LTAU``, and no amount of looking at the
+numbers says that — and it is the only one of the three that does not depend on
+the values being wrong in a detectable way.
+
+The **code version is recorded when the run says it and required only on
+request** (``require_code_version``, off by default). It is read from ``OUTCAR``
+or ``vasprun.xml``, which are *outputs*: large, routinely dropped when a run is
+archived, and not something a dataset can be expected to carry in order to be
+trainable. What the version was ever guarding against is a build old enough to
+predate ``LTAU``, and such a build does not honour ``LTAU`` — it ignores it and
+writes no τ at all, so the tag check already excludes it. When a version *is*
+recorded it is still compared against :data:`REQUIRED_VASP_VERSION` and a run
+older than that is still refused, because that check costs nothing and has
+teeth; when none is recorded the gate notes it in the verdict's ``warnings``
+and proceeds on the physics.
 
 The provenance record travels with the data. It is written to each material's
 cache directory as ``tau_provenance.json``, so a cache rebuilt from a cache
@@ -84,7 +100,7 @@ MANIFEST_FILENAME = "tau_validation.json"
 
 #: The VASP tag that legitimately requests a kinetic energy density, and the
 #: first release whose behaviour this project has verified against. Both are
-#: **user-specified** for this project (see ``DELETIONS.md``); VASP itself has
+#: **user-specified** for this project; VASP itself has
 #: written ``TAUCAR`` for meta-GGA runs for much longer.
 REQUIRED_TAU_TAG = "LTAU"
 REQUIRED_VASP_VERSION = "6.6.1"
@@ -141,12 +157,19 @@ class TauValidationConfig:
         points near a core is an artefact of the grid, while a percent of the
         cell is a different field.
     require_provenance : bool
-        Refuse τ that cannot say which code wrote it, under which tag.
+        Refuse τ that cannot say which tag requested it, from which ``INCAR``.
+    require_code_version : bool
+        Also refuse τ whose run does not state a code version. **Off by
+        default**: the version lives in ``OUTCAR``/``vasprun.xml``, which are
+        outputs a dataset need not ship, and requiring them would make a
+        complete and physically valid set untrainable for want of a file that
+        says nothing about the field. A version that *is* present is checked
+        against :attr:`minimum_version` either way.
     required_tag : str
         The input tag that must be set. ``LTAU`` for VASP.
     minimum_version : str or None
-        Lowest acceptable code version, compared component-wise. ``None``
-        accepts any version that is at least *recorded*.
+        Lowest acceptable code version, compared component-wise, applied to
+        whatever version the run *did* record. ``None`` accepts any.
     """
 
     enabled: bool = True
@@ -157,6 +180,7 @@ class TauValidationConfig:
     vw_absolute_tolerance: float = 1e-6
     max_violation_fraction: float = 0.01
     require_provenance: bool = True
+    require_code_version: bool = False
     required_tag: str = REQUIRED_TAU_TAG
     minimum_version: str = REQUIRED_VASP_VERSION
 
@@ -507,9 +531,10 @@ def validate_tau(tau, density, grid, provenance=None, config=None,
     Returns
     -------
     dict
-        The gate record: ``passed``, the ``failures`` list, the ``scale`` and
-        ``bound`` measurements, the ``provenance``, and the ``settings`` used.
-        Written to the manifest whether or not it passed.
+        The gate record: ``passed``, the ``failures`` list, the ``warnings``
+        list, the ``scale`` and ``bound`` measurements, the ``provenance``, and
+        the ``settings`` used. Written to the manifest whether or not it
+        passed, so a sample that passed *with* a warning stays visible.
 
     Raises
     ------
@@ -536,6 +561,9 @@ def validate_tau(tau, density, grid, provenance=None, config=None,
         "settings": config.as_dict(),
         "provenance": provenance,
         "failures": [],
+        # Recorded, not raised. A sample that passes with a gap in its record
+        # has to stay distinguishable afterwards from one that had none.
+        "warnings": [],
         "passed": True,
     }
 
@@ -584,7 +612,9 @@ def validate_tau(tau, density, grid, provenance=None, config=None,
                 f"the pair they claim to be.")
 
     if config.require_provenance:
-        record["failures"].extend(_provenance_failures(provenance, config))
+        failures, warnings = _provenance_failures(provenance, config)
+        record["failures"].extend(failures)
+        record["warnings"].extend(warnings)
 
     record["passed"] = not record["failures"]
     if not record["passed"]:
@@ -593,7 +623,7 @@ def validate_tau(tau, density, grid, provenance=None, config=None,
             head + "the kinetic energy density failed the ingestion gate.\n  - "
             + "\n  - ".join(record["failures"])
             + "\n\nThis gate exists because an entire dataset of invalid tau "
-              "once passed unnoticed (see DELETIONS.md). Fix the data, or "
+              "once passed unnoticed. Fix the data, or "
               "relax data.tau_validation in the config deliberately and "
               "record why.",
             record=record)
@@ -601,21 +631,36 @@ def validate_tau(tau, density, grid, provenance=None, config=None,
 
 
 def _provenance_failures(provenance, config):
-    """The provenance half of the gate, as a list of failure messages."""
+    """
+    The provenance half of the gate.
+
+    Returns
+    -------
+    (list of str, list of str)
+        Failures, which refuse the sample, and warnings, which are recorded in
+        the verdict and let it through. A missing code version is a warning by
+        default -- see :attr:`TauValidationConfig.require_code_version`.
+    """
     tag = config.required_tag.upper()
     if not provenance:
-        return [
+        return ([
             f"provenance: nothing recorded. tau is only accepted from a run "
-            f"that states its code version and sets {tag}; a bare field on a "
-            f"grid carries no unit and no convention, and that is precisely "
-            f"how the invalid data got in."]
+            f"whose INCAR sets {tag}; a bare field on a grid carries no unit "
+            f"and no convention, and that is precisely how the invalid data "
+            f"got in."], [])
 
-    failures = []
+    failures, warnings = [], []
     version = provenance.get("version")
     if not version:
-        failures.append(
-            "provenance: no code version recorded (no OUTCAR or vasprun.xml "
-            "in the calculation directory, and no cached tau_provenance.json).")
+        message = (
+            "provenance: no code version recorded. The version is read from "
+            "OUTCAR or vasprun.xml, which are outputs a dataset need not "
+            "carry; LTAU and the INCAR hash come from the INCAR and are "
+            "checked regardless.")
+        if config.require_code_version:
+            failures.append(message + " require_code_version is on.")
+        else:
+            warnings.append(message)
     elif config.minimum_version:
         newer = version_at_least(version, config.minimum_version)
         if newer is False:
@@ -624,7 +669,7 @@ def _provenance_failures(provenance, config):
                 f"required {config.minimum_version}. This project's tau data "
                 f"must come from VASP {config.minimum_version} or newer with "
                 f"{tag} = .TRUE. (user-specified requirement; see "
-                f"DELETIONS.md for what the older, patched build produced).")
+                f"the post-mortem for what the older, patched build produced).")
 
     if provenance.get("tau_tag_set") is not True:
         other = provenance.get("other_tags") or {}
@@ -643,7 +688,7 @@ def _provenance_failures(provenance, config):
         failures.append(
             "provenance: no INCAR hash recorded, so the settings that produced "
             "this tau cannot be pinned to the file they came from.")
-    return failures
+    return failures, warnings
 
 
 # ---------------------------------------------------------------------- #
@@ -687,3 +732,23 @@ class TauValidationManifest:
         failed = sum(1 for r in self.entries.values() if r.get("passed") is False)
         ungated = sum(1 for r in self.entries.values() if r.get("passed") is None)
         return passed, failed, ungated
+
+    def warned(self):
+        """
+        Materials that passed with something noted against them.
+
+        A warning that reaches only the JSON is a gap nobody sees, which is the
+        condition this whole module exists to prevent. The build log names the
+        count and the first note so the omission is at least legible at the
+        moment it is made.
+
+        Returns
+        -------
+        (int, str or None)
+            How many materials carry a warning, and one representative note.
+        """
+        notes = [note for record in self.entries.values()
+                 for note in (record.get("warnings") or [])]
+        return len(set(
+            identifier for identifier, record in self.entries.items()
+            if record.get("warnings"))), (notes[0] if notes else None)

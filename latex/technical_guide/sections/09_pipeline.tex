@@ -61,7 +61,7 @@ the training input must be exactly what the pipeline produces at inference
 time, when no such file exists.
 
 This costs essentially nothing in fidelity. Against reference potentials on
-five gold structures:
+five platinum structures:
 
 \begin{center}
 \begin{tabular}{@{}lrrr@{}}
@@ -95,7 +95,7 @@ where the data itself has nothing; a run with its own \file{POTCAR} ignores it.
 
 Without a library the Gaussian pseudo-ion model is used instead, at a relative
 $L^2$ of order $10^{-1}$ rather than $10^{-5}$, and the two constructions differ
-from each other by $0.38$ on the Ag--Au--Pt set.
+from each other by $0.38$ on the Ag--Pt--Pt set.
 Section~\ref{sec:vext-without-potcar} works through what that does and does not
 license; the short version is that it remains a well-posed learning problem but
 stops being the Hohenberg--Kohn map of VASP's $\vext$.
@@ -207,7 +207,7 @@ metrics are \textbf{training fit}. They show the model can represent the data;
 they are not a generalisation estimate. Raise \opt{valid\_fraction}, or use the
 cross-validation of Section~\ref{sec:kfold}, for that.
 
-Measured on seventeen gold structures: the all-structure training fit gives
+Measured on seventeen platinum structures: the all-structure training fit gives
 relative $L^2$ of $0.0209$ (\opt{ext2chg}) and $0.0140$ (\opt{chg2tau}),
 against held-out values of $0.0379$ and $0.0511$ --- roughly two to four times
 larger. That gap is the memorisation margin, and quoting the training-fit

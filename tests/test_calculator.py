@@ -34,8 +34,8 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 @pytest.fixture
 def atoms():
-    """Two-atom Au cell, small enough to run in a fraction of a second."""
-    return Atoms("Au2", cell=np.eye(3) * 4.08, pbc=True,
+    """Two-atom Pt cell, small enough to run in a fraction of a second."""
+    return Atoms("Pt2", cell=np.eye(3) * 4.08, pbc=True,
                  scaled_positions=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]])
 
 
@@ -53,7 +53,7 @@ def operators(tmp_path):
 
 @pytest.fixture
 def calculator(operators):
-    return Poraque(operators, charges={"Au": 11.0}, device="cpu")
+    return Poraque(operators, charges={"Pt": 11.0}, device="cpu")
 
 
 # ===================================================================== #
@@ -137,12 +137,12 @@ class TestPipeline:
 
     def test_resolution_comes_from_the_checkpoint(self, operators):
         calculator = Poraque(operators,
-                             charges={"Au": 11.0}, device="cpu")
+                             charges={"Pt": 11.0}, device="cpu")
         assert calculator.resolution == 16
 
     def test_explicit_resolution_wins(self, operators):
         calculator = Poraque(operators,
-                             charges={"Au": 11.0}, resolution=20, device="cpu")
+                             charges={"Pt": 11.0}, resolution=20, device="cpu")
         assert calculator.resolution == 20
 
     def test_external_potential_has_zero_mean(self, atoms, calculator):
@@ -157,7 +157,7 @@ class TestPipeline:
 # ===================================================================== #
 class TestGuardRails:
     def test_rejects_a_non_periodic_cell(self, calculator):
-        molecule = Atoms("Au2", positions=[[0, 0, 0], [0, 0, 2.5]],
+        molecule = Atoms("Pt2", positions=[[0, 0, 0], [0, 0, 2.5]],
                          cell=np.eye(3) * 10.0, pbc=False)
         with pytest.raises(ValueError, match="periodic"):
             calculator.build_external_potential(molecule)
@@ -176,7 +176,7 @@ class TestGuardRails:
             "ext2chg": FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
                                      device="cpu")})
         with pytest.raises(KeyError, match="chg2tau"):
-            Poraque(partial, charges={"Au": 11.0}, device="cpu")
+            Poraque(partial, charges={"Pt": 11.0}, device="cpu")
 
     def test_rejects_a_single_operator_checkpoint(self, tmp_path):
         """A bare FieldOperator file is not a bundle, and says so."""
@@ -184,13 +184,13 @@ class TestGuardRails:
         FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
                       device="cpu").save(path)
         with pytest.raises(ValueError, match="not a Poraque model bundle"):
-            Poraque(path, charges={"Au": 11.0}, device="cpu")
+            Poraque(path, charges={"Pt": 11.0}, device="cpu")
 
     def test_rejects_a_live_operator_for_the_wrong_task(self, operators):
         wrong = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
                               device="cpu")
         with pytest.raises(ValueError, match="ext2chg"):
-            Poraque(operators, ext2chg=wrong, charges={"Au": 11.0},
+            Poraque(operators, ext2chg=wrong, charges={"Pt": 11.0},
                     device="cpu")
 
     def test_accepts_live_operators(self, atoms):
@@ -198,7 +198,7 @@ class TestGuardRails:
                                     projection_channels=8, device="cpu")
                 for task in ("ext2chg", "chg2tau")}
         calculator = Poraque(ext2chg=pair["ext2chg"], chg2tau=pair["chg2tau"],
-                             charges={"Au": 11.0}, resolution=12, device="cpu")
+                             charges={"Pt": 11.0}, resolution=12, device="cpu")
         atoms.calc = calculator
         with pytest.warns(RuntimeWarning):
             assert np.isfinite(atoms.get_potential_energy())
@@ -231,7 +231,7 @@ def potcar_text():
         return handle.read()
 
 
-def _library(tmp_path, layout, text, element="Au"):
+def _library(tmp_path, layout, text, element="Pt"):
     """Write a one-element POTCAR library in the requested layout."""
     root = tmp_path / f"lib_{layout}"
     if layout == "nested":
@@ -261,63 +261,63 @@ def _library(tmp_path, layout, text, element="Au"):
 
 class TestPotcarDir:
     @pytest.fixture
-    def gold(self):
-        return Atoms("Au", cell=np.eye(3) * 4.08, pbc=True,
+    def platinum(self):
+        return Atoms("Pt", cell=np.eye(3) * 4.08, pbc=True,
                      scaled_positions=[[0.0, 0.0, 0.0]])
 
     @pytest.mark.parametrize("layout", ["nested", "gzip", "flat",
                                         "flat-suffix"])
     def test_every_layout_is_found(self, tmp_path, potcar_text, operators,
-                                   gold, layout):
+                                   platinum, layout):
         calculator = Poraque(operators,
                              potcar_dir=_library(tmp_path, layout, potcar_text),
                              resolution=12, device="cpu")
-        gold.calc = calculator
-        assert np.isfinite(gold.get_potential_energy())
+        platinum.calc = calculator
+        assert np.isfinite(platinum.get_potential_energy())
         # A real POTCAR carries the tables, so the G=0 term is available.
         assert calculator.components.alpha_z is not None
         assert calculator.components.missing == ()
 
-    def test_all_layouts_agree(self, tmp_path, potcar_text, operators, gold):
+    def test_all_layouts_agree(self, tmp_path, potcar_text, operators, platinum):
         energies = []
         for layout in ("nested", "gzip", "flat"):
             calculator = Poraque(
                 operators, resolution=12,
                 potcar_dir=_library(tmp_path, layout, potcar_text),
                 device="cpu")
-            atoms = gold.copy()
+            atoms = platinum.copy()
             atoms.calc = calculator
             energies.append(atoms.get_potential_energy())
         assert energies[0] == pytest.approx(energies[1])
         assert energies[0] == pytest.approx(energies[2])
 
     def test_entries_are_cached_per_composition(self, tmp_path, potcar_text,
-                                                operators, gold):
+                                                operators, platinum):
         """Parsing the tables is the expensive part of a scan over geometries."""
         calculator = Poraque(operators,
                              potcar_dir=_library(tmp_path, "nested",
                                                  potcar_text),
                              resolution=12, device="cpu")
-        gold.calc = calculator
-        gold.get_potential_energy()
-        first = calculator._potcar_cache[("Au",)]
-        gold.set_cell(np.eye(3) * 4.2, scale_atoms=True)
-        gold.get_potential_energy()
-        assert calculator._potcar_cache[("Au",)] is first
+        platinum.calc = calculator
+        platinum.get_potential_energy()
+        first = calculator._potcar_cache[("Pt",)]
+        platinum.set_cell(np.eye(3) * 4.2, scale_atoms=True)
+        platinum.get_potential_energy()
+        assert calculator._potcar_cache[("Pt",)] is first
 
     def test_single_variant_is_used_with_a_warning(self, tmp_path, potcar_text,
-                                                   operators, gold):
+                                                   operators, platinum):
         calculator = Poraque(operators,
                              potcar_dir=_library(tmp_path, "variant",
                                                  potcar_text),
                              resolution=12, device="cpu")
-        gold.calc = calculator
+        platinum.calc = calculator
         with pytest.warns(RuntimeWarning, match="variant"):
-            assert np.isfinite(gold.get_potential_energy())
+            assert np.isfinite(platinum.get_potential_energy())
 
     def test_several_variants_raise_rather_than_guess(self, tmp_path,
                                                       potcar_text, operators,
-                                                      gold):
+                                                      platinum):
         """
         Fe vs Fe_pv differ in ZVAL and therefore in every energy. Choosing
         one by sort order would be a silent physics decision.
@@ -326,9 +326,9 @@ class TestPotcarDir:
                              potcar_dir=_library(tmp_path, "ambiguous",
                                                  potcar_text),
                              resolution=12, device="cpu")
-        gold.calc = calculator
+        platinum.calc = calculator
         with pytest.raises(ValueError, match="variants"):
-            gold.get_potential_energy()
+            platinum.get_potential_energy()
 
     def test_missing_element_names_what_it_looked_for(self, tmp_path,
                                                       potcar_text, operators):
@@ -349,7 +349,7 @@ class TestPotcarDir:
 
     def test_explicit_potcar_that_misses_a_species_is_reported(
             self, tmp_path, potcar_text, operators):
-        """A POTCAR for Au cannot silently be used for a cell containing Si."""
+        """A POTCAR for Pt cannot silently be used for a cell containing Si."""
         path = tmp_path / "POTCAR"
         path.write_text(potcar_text)
         calculator = Poraque(operators,
@@ -374,7 +374,7 @@ class TestFunctionalSelection:
     def test_default_is_pbe(self, operators):
         """The reference data is PAW_PBE with LEXCH = PE."""
         calculator = Poraque(operators,
-                             charges={"Au": 11.0}, device="cpu")
+                             charges={"Pt": 11.0}, device="cpu")
         assert calculator.functional == "pbe"
 
     def test_choice_reaches_the_energy(self, atoms, operators):
@@ -388,7 +388,7 @@ class TestFunctionalSelection:
         from poraque.physics import xc_energy
 
         for name in ("pbe", "lda", "none"):
-            calculator = Poraque(operators, charges={"Au": 11.0},
+            calculator = Poraque(operators, charges={"Pt": 11.0},
                                  functional=name, resolution=12, device="cpu")
             copy = atoms.copy()
             copy.calc = calculator
@@ -414,7 +414,7 @@ class TestFunctionalSelection:
 
     def test_functional_is_recorded_in_the_components(self, atoms, operators):
         calculator = Poraque(operators,
-                             charges={"Au": 11.0}, functional="lda",
+                             charges={"Pt": 11.0}, functional="lda",
                              resolution=12, device="cpu")
         atoms.calc = calculator
         with pytest.warns(RuntimeWarning):

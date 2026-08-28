@@ -37,7 +37,7 @@ superposition of isolated atoms**, :math:`\delta\rho = \rho - \rho_{\rm sup}`.
 Most of a crystal's valence density is its free atoms placed side by side, so
 this removes the part that was never in doubt — including nearly all of the
 dynamic range the ``asinh`` transform exists to absorb — and leaves the bonding
-charge. Measured on this project's own gold cells, the residual is about 4.5 %
+charge. Measured on this project's own platinum cells, the residual is about 4.5 %
 of the density in :math:`L^2`.
 
 Two consequences, and neither is cosmetic. The target is now **signed**, so

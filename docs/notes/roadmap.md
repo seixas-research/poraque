@@ -36,7 +36,7 @@ Everything else is refinement.
 ### B1. The dataset is five structures of one element
 
 Every number in the project measures interpolation between nearby geometries of
-gold. No amount of architectural work changes what that supports. This is the
+platinum. No amount of architectural work changes what that supports. This is the
 **single largest limitation** and it is a data problem, not a code problem —
 the ingestion layer, the shape-bucketed sampler and the configuration system
 were all built for a heterogeneous set.
@@ -153,7 +153,7 @@ practical argument fails — and that is worth knowing early.
 
 Priority order, by what each buys:
 
-1. **More gold geometries** (strains, vacancies, surfaces) — tests transfer
+1. **More platinum geometries** (strains, vacancies, surfaces) — tests transfer
    within one chemistry; cheapest, and the current numbers become meaningful
    rather than degenerate.
 2. **A second element**, ideally a simple metal (Al, Na) — the first real test
@@ -220,5 +220,5 @@ exists, and its outcome determines whether Phase 3 is worth attempting as
 designed. Measuring the error in $\delta T_s/\delta\rho$ is the first honest
 test of the thing this project is actually building.
 
-Run Phase 4.1 (more gold geometries) in parallel, since it is compute-bound
+Run Phase 4.1 (more platinum geometries) in parallel, since it is compute-bound
 rather than thought-bound.

@@ -113,7 +113,7 @@ GRIDC%NGPTAR(1) = GRID%NGPTAR(1)*2    ! then doubled
 CALL FFTCHK(GRIDC%NGPTAR)
 ```
 
-**The order is the algorithm.** For a 27-atom gold cell at 450 eV the coarse
+**The order is the algorithm.** For a 27-atom platinum cell at 450 eV the coarse
 grid is `4 × 15.25 = 61 → 64`, so the density grid is **128**; computing the
 density size directly and rounding once gives 64 — a factor of two, and a file
 VASP would reject.
@@ -162,14 +162,14 @@ table it carries. Training reads the augmentation records off the training
 `CHGCAR`s, averages them per element, and stores them in the `.pfno` bundle:
 
 ```text
-  PAW reference: Au  138 values, averaged over 494 atoms in 17 structure(s)
-  PAW reference   -> stored in the bundle (Au)
+  PAW reference: Pt  138 values, averaged over 494 atoms in 17 structure(s)
+  PAW reference   -> stored in the bundle (Pt)
 ```
 
 At inference the table is used when the directory has no reference of its own:
 
 ```text
-  using the bundle's PAW reference: Au (averaged over 494 atoms in 17 structures)
+  using the bundle's PAW reference: Pt (averaged over 494 atoms in 17 structures)
   !! these are AVERAGED on-site terms, not this structure's.
 ```
 
@@ -213,7 +213,7 @@ every structure — accepting that its own metrics are then a training fit.
 from ase.build import bulk
 from poraque.calculator import Poraque
 
-atoms = bulk("Au", "fcc", a=4.08, cubic=True)
+atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
 atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
 
 rho = atoms.calc.get_charge_density(atoms)   # ChargeDensity, e/Ang^3
@@ -225,7 +225,7 @@ print(atoms.calc.charge_analysis)            # populations, valence, method
 ```
 
 `potcar_dir` is a POTCAR **library** — one subdirectory per element,
-`<potcar_dir>/Au/POTCAR` — not a single POTCAR file. The entries for the
+`<potcar_dir>/Pt/POTCAR` — not a single POTCAR file. The entries for the
 elements the `Atoms` contains are assembled on demand and cached per
 composition, which is what lets one calculator serve arbitrary structures.
 

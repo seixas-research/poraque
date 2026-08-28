@@ -37,7 +37,7 @@ nitrogen, :math:`CO`, and the cohesive energy of diamond, as the task asks.
 .. note::
 
    Layer 3 needs reference calculations this repository does not ship: the
-   dataset is 17 gold structures. Those tests **skip** until the data exists.
+   dataset is 17 platinum structures. Those tests **skip** until the data exists.
    Point ``PORAQUE_REFERENCE_DATA`` at a directory laid out as
 
    .. code-block:: text
@@ -50,7 +50,7 @@ nitrogen, :math:`CO`, and the cohesive energy of diamond, as the task asks.
        <root>/diamond/   ...                     (bulk C)
 
    and they run. They additionally need **operators trained on the relevant
-   chemistry**: the shipped checkpoint saw only gold, and an FNO asked for the
+   chemistry**: the shipped checkpoint saw only platinum, and an FNO asked for the
    density of a nitrogen molecule is extrapolating far outside its training
    distribution. Passing tolerances are therefore stated per system and are
    the point of the exercise, not a formality.
@@ -311,8 +311,8 @@ class TestAlphaZUsesTheNominalCount:
     def test_alpha_z_still_scales_with_an_explicit_count(self):
         """The function itself is unchanged; only its caller's choice is."""
         _, structure = reference_components(WITH_OUTCAR[0])
-        one = alpha_z_energy(structure, {"Au": 100.0}, 10.0)
-        two = alpha_z_energy(structure, {"Au": 100.0}, 20.0)
+        one = alpha_z_energy(structure, {"Pt": 100.0}, 10.0)
+        two = alpha_z_energy(structure, {"Pt": 100.0}, 20.0)
         assert two == pytest.approx(2.0 * one)
 
 

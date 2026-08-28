@@ -340,14 +340,14 @@ class TestDerivedOutputPaths:
     def test_the_log_follows_the_name(self):
         import os
 
-        assert self._config(name="au_w16").log_path() == os.path.join(
-            "models", "au_w16", "log", "au_w16.log")
+        assert self._config(name="pt_w16").log_path() == os.path.join(
+            "models", "pt_w16", "log", "pt_w16.log")
 
     def test_the_metrics_follow_the_name(self):
         import os
 
-        assert self._config(name="au_w16").json_path() == os.path.join(
-            "models", "au_w16", "log", "au_w16.json")
+        assert self._config(name="pt_w16").json_path() == os.path.join(
+            "models", "pt_w16", "log", "pt_w16.json")
 
     def test_everything_lands_in_one_run_folder(self):
         """
@@ -355,14 +355,14 @@ class TestDerivedOutputPaths:
         are, the figures behind those numbers, and the config that produced
         them. They arrive and leave together.
         """
-        config = self._config(name="au_w16")
+        config = self._config(name="pt_w16")
         run = config.run_dir()
         for path in (config.checkpoint_path(), config.log_path(),
                      config.plot_dir(), config.report_dir()):
             assert path.startswith(run + "/"), path
 
     def test_each_toggle_switches_off_its_own_artefact(self):
-        config = self._config(name="au_w16")
+        config = self._config(name="pt_w16")
         config.output.write_pdf_report = False
         config.output.plot_figures = False
         config.output.write_log = False
@@ -372,7 +372,7 @@ class TestDerivedOutputPaths:
         assert config.checkpoint_path() is not None, "weights are separate"
 
     def test_a_null_root_switches_everything_off(self):
-        config = self._config(name="au_w16")
+        config = self._config(name="pt_w16")
         config.output.root = None
         assert config.run_dir() is None
         assert config.checkpoint_path() is None
@@ -381,7 +381,7 @@ class TestDerivedOutputPaths:
         assert config.log_path() is None
 
     def test_an_explicit_path_still_wins(self):
-        config = self._config(name="au_w16")
+        config = self._config(name="pt_w16")
         config.output.log = "somewhere/else.log"
         assert config.log_path() == "somewhere/else.log"
 
@@ -695,7 +695,7 @@ class TestModeSelectionReporting:
         assert "NOTE" not in text
 
     def test_a_tight_g_max_says_how_much_is_dead(self):
-        """fcc Au at 4.08 A with g_max 6 keeps 3 of 8."""
+        """fcc Pt at 4.08 A with g_max 6 keeps 3 of 8."""
         text = self._report(self._config(6.0), self._Set([4.08]))
         assert "3-3 of 8 modes retained" in text
         assert "dead parameters" in text

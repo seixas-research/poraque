@@ -14,13 +14,13 @@ module (and its own `experiments/euler_lagrange`) for the search-based kind.
 
 For every one of the eight checkpoints trained in this repo -- the four
 base-carrying variants (`kan_cheby`, `kan_bspline`, `kan_rbf`,
-`kan_rational`; `models/au_w16_m8_l3_<variant>/`) and their four
-`kan_use_base: false` ("pure") twins (`models/au_w16_m8_l3_<variant>_purekan/`)
+`kan_rational`; `models/pt_w16_m8_l3_<variant>/`) and their four
+`kan_use_base: false` ("pure") twins (`models/pt_w16_m8_l3_<variant>_purekan/`)
 -- this script:
 
 1. reads channel 0 of Fourier layer 0's activation off the real trained
    weights, as a closed-form SymPy expression;
-2. runs the real operator on a real, held-out gold structure
+2. runs the real operator on a real, held-out platinum structure
    (`struct_016`, never trained on by any of these eight runs -- see
    FUTURE.md's per-structure validation tables) and captures the actual
    pre-activation values a real forward pass sends into that channel;
@@ -53,16 +53,16 @@ from poraque.ml import load_bundle  # noqa: E402
 from poraque.ml.kan import BSplineKANActivation, symbolic_expression  # noqa: E402
 
 BASE_CHECKPOINTS = {
-    "kan_cheby": "models/au_w16_m8_l3_kancheby/au_w16_m8_l3_kancheby.pfno",
-    "kan_bspline": "models/au_w16_m8_l3_kanbspline/au_w16_m8_l3_kanbspline.pfno",
-    "kan_rbf": "models/au_w16_m8_l3_rbf/au_w16_m8_l3_rbf.pfno",
-    "kan_rational": "models/au_w16_m8_l3_rational/au_w16_m8_l3_rational.pfno",
+    "kan_cheby": "models/pt_w16_m8_l3_kancheby/pt_w16_m8_l3_kancheby.pfno",
+    "kan_bspline": "models/pt_w16_m8_l3_kanbspline/pt_w16_m8_l3_kanbspline.pfno",
+    "kan_rbf": "models/pt_w16_m8_l3_rbf/pt_w16_m8_l3_rbf.pfno",
+    "kan_rational": "models/pt_w16_m8_l3_rational/pt_w16_m8_l3_rational.pfno",
 }
 PURE_CHECKPOINTS = {
-    "kan_cheby (pure)": "models/au_w16_m8_l3_kancheby_purekan/au_w16_m8_l3_kancheby_purekan.pfno",
-    "kan_bspline (pure)": "models/au_w16_m8_l3_kanbspline_purekan/au_w16_m8_l3_kanbspline_purekan.pfno",
-    "kan_rbf (pure)": "models/au_w16_m8_l3_kanrbf_purekan/au_w16_m8_l3_kanrbf_purekan.pfno",
-    "kan_rational (pure)": "models/au_w16_m8_l3_kanrational_purekan/au_w16_m8_l3_kanrational_purekan.pfno",
+    "kan_cheby (pure)": "models/pt_w16_m8_l3_kancheby_purekan/pt_w16_m8_l3_kancheby_purekan.pfno",
+    "kan_bspline (pure)": "models/pt_w16_m8_l3_kanbspline_purekan/pt_w16_m8_l3_kanbspline_purekan.pfno",
+    "kan_rbf (pure)": "models/pt_w16_m8_l3_kanrbf_purekan/pt_w16_m8_l3_kanrbf_purekan.pfno",
+    "kan_rational (pure)": "models/pt_w16_m8_l3_kanrational_purekan/pt_w16_m8_l3_kanrational_purekan.pfno",
 }
 STRUCTURE = "data/cache/res32_potcar/struct_016/EXTCAR"
 LAYER, CHANNEL, N_VOXELS = 0, 0, 8

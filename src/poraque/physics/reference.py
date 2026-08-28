@@ -55,7 +55,7 @@ One directory per element, each holding an ordinary single-point calculation of
 one isolated atom in a large box::
 
     data/vasp/ref/
-        Au/     POSCAR POTCAR OSZICAR OUTCAR ...
+        Pt/     POSCAR POTCAR OSZICAR OUTCAR ...
         N/      ...
         C/      ...
 
@@ -67,7 +67,7 @@ of the package uses — the energy comes from ``OUTCAR`` when present and
     from poraque.physics import ReferenceEnergies
 
     references = ReferenceEnergies.from_directory("data/vasp/ref")
-    references["Au"]                       # -0.0786 eV
+    references["Pt"]                       # -0.0786 eV
     references.total_for(structure)        # sum over the atoms present
 """
 
@@ -172,15 +172,15 @@ class ReferenceEnergies:
     ----------
     energies : dict
         ``{element: energy}`` in eV. Keys are matched on the *bare* element
-        name, so a ``Au_pv`` POTCAR and a ``Au`` reference directory agree.
+        name, so a ``Pt_pv`` POTCAR and a ``Pt`` reference directory agree.
     source : str, optional
         Where the values came from, for :meth:`__repr__` and for provenance in
         an energy decomposition.
 
     Examples
     --------
-    >>> references = ReferenceEnergies({"Au": -0.0786})
-    >>> references["Au"]
+    >>> references = ReferenceEnergies({"Pt": -0.0786})
+    >>> references["Pt"]
     -0.0786
     """
 
@@ -226,7 +226,7 @@ class ReferenceEnergies:
             absent. Subtracting VASP's atomic energy from Poraquê's total
             leaves that offset entirely intact; subtracting Poraquê's own
             atomic energy cancels it, because the same terms are missing from
-            both sides. Measured on gold, this is the difference between a
+            both sides. Measured on platinum, this is the difference between a
             cohesive energy of :math:`-1157` eV/atom and one of
             :math:`-1.9` eV/atom.
 
@@ -262,7 +262,7 @@ class ReferenceEnergies:
             raise FileNotFoundError(
                 f"No reference-energy directory at {root!r}. It should hold "
                 f"one subdirectory per element, each an isolated-atom "
-                f"calculation: {root}/Au/OSZICAR, {root}/N/OSZICAR, ..."
+                f"calculation: {root}/Pt/OSZICAR, {root}/N/OSZICAR, ..."
             )
 
         energies = {}
@@ -379,7 +379,7 @@ class ReferenceEnergies:
 # Helpers
 # ===================================================================== #
 def _bare(symbol):
-    """``Au_pv`` -> ``Au``; matches :func:`poraque.fields.element_of`."""
+    """``Pt_pv`` -> ``Pt``; matches :func:`poraque.fields.element_of`."""
     return str(symbol).split("_")[0].split(".")[0].strip().rstrip("0123456789")
 
 

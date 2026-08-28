@@ -1,6 +1,6 @@
 task:
   type: all
-  name: au_w16_m8_l3
+  name: platinum_model_std 
 
 data:
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
@@ -17,14 +17,3 @@ training:
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
     euler_lagrange_weight: 0.0
-
-symbolic:
-  enable_symbolic_distillation: true
-  features: reduced
-  template: pauli
-  physics:
-    enable: true
-    positivity_weight: 100.0
-    thomas_fermi_weight: 100.0
-    von_weizsacker_weight: 100.0
-    p_infinity: 1.0e+06

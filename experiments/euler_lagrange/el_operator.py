@@ -43,13 +43,15 @@ import time
 import numpy as np
 import torch
 
-REPO = ("/Users/leseixas/Library/CloudStorage/Dropbox/Repositories/"
-        "seixas-research/poraque")
-CACHE = os.path.join(REPO, "data", "cache", "res32_potcar")
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+#: Prepared cache to read. Override with PORAQUE_EL_CACHE to point at another
+#: resolution or another dataset without editing this file.
+CACHE = os.environ.get("PORAQUE_EL_CACHE",
+                       os.path.join(REPO, "data", "cache", "res32_potcar_spin"))
 
 from poraque.fields import ChargeDensity, ExternalPotential
 from poraque.ml.data import discover_materials
-from poraque.ml.fno import FNO3d, set_precision
+from poraque.ml.fno import FNO3d
 from poraque.ml.physics import (
     hartree_potential,
     spectral_gradient,
@@ -149,7 +151,7 @@ if __name__ == "__main__":
     rho_std = rho_all.std().float()
     dv_std = dv_all.std().float()
     print(f"  target dv: std {dv_std:.3f} eV over the training set")
-    print(f"  (this is the uncorrected Euler-Lagrange residual)\n")
+    print("  (this is the uncorrected Euler-Lagrange residual)\n")
 
     header = (f"  {'model':<34} {'before':>10} {'after':>10} {'skill':>10}")
 

@@ -170,7 +170,7 @@ Notes from the implementation:
 
 **Check the data first.** The inequality is a theorem for all-electron
 densities; VASP's `CHGCAR`/`TAUCAR` are pseudo quantities. Use
-`pauli_bound_violation` before enabling the head. On the Au dataset it holds at
+`pauli_bound_violation` before enabling the head. On the Pt dataset it holds at
 every point of `struct_001`/`struct_002` and at all but one point of
 `struct_000` — and that point is where spectral downsampling rang $\tau$
 slightly negative, i.e. an artefact of resampling rather than of physics.

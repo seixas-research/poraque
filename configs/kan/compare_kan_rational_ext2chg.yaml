@@ -1,5 +1,5 @@
 # Controlled comparison: activation: kan_rational vs. the shipped gelu model
-# (models/au_w16_m8_l3), ext2chg only. Identical to configs/train.yaml except
+# (models/pt_w16_m8_l3), ext2chg only. Identical to configs/train.yaml except
 # `task.type` (ext2chg only, to isolate the comparison and skip symbolic
 # distillation, which is chg2tau-only anyway) and `model.activation` (+ its
 # num/den degree hyperparameters, left at the documented default).
@@ -8,15 +8,15 @@
 # itself relies on, so this is the same protocol with exactly one thing
 # changed.
 #
-# task.name is kept as the pre-rename `au_w16_m8_l3_rational` (not
+# task.name is kept as the pre-rename `pt_w16_m8_l3_rational` (not
 # `..._kanrational`) so this config still points at the already-trained
-# models/au_w16_m8_l3_rational/ produced before the activation was renamed
+# models/pt_w16_m8_l3_rational/ produced before the activation was renamed
 # `rational` -> `kan_rational` for consistency with kan_bspline/kan_cheby;
 # the checkpoint's own architecture record was patched to match, see
 # FUTURE.md.
 task:
   type: ext2chg
-  name: au_w16_m8_l3_rational
+  name: pt_w16_m8_l3_rational
 
 data:
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs

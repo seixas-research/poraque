@@ -31,7 +31,7 @@ model bundle; at inference they are written out again for a structure that has
 no reference of its own.
 
 .. warning::
-   This is an approximation with a measured size. On the Au dataset a single
+   This is an approximation with a measured size. On the Pt dataset a single
    averaged reference reproduces the true occupancies to about **9 % RMS**,
    and the dominant component varies by a factor of two across sites. It is a
    defensible starting guess for ``ICHARG=1``, not a converged on-site

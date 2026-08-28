@@ -16,7 +16,7 @@ the calculator protocol::
     from ase.build import bulk
     from poraque.calculator import Poraque
 
-    atoms = bulk("Au", "fcc", a=4.08, cubic=True)
+    atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
     atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
 
     rho = atoms.calc.get_charge_density(atoms)   # ChargeDensity, e/Ang^3
@@ -49,7 +49,7 @@ closed form (:mod:`poraque.physics.forces`) rather than by finite differences
 on a fixed grid. That construction is exact for a *local* pseudopotential and
 verified to :math:`10^{-7}` eV/Å against finite differences of the term it
 differentiates — but a PAW calculation adds projector and one-centre forces
-that no grid-based field carries. On the shipped gold structures the result
+that no grid-based field carries. On the shipped platinum structures the result
 gets the magnitude and not the direction. Read
 :meth:`Poraque.compute_forces` before using them for anything; geometry
 optimisation and molecular dynamics are *not* yet supportable.
@@ -75,6 +75,7 @@ from .fields import ExternalPotential, FieldGrid
 from .fields.structure import Structure
 from .ml import BUNDLE_FILENAME, resolve_bundle_path
 from .physics import EnergyCalculator
+from .physics.energy import total_density
 
 #: Fallback grid resolution when neither the caller nor the checkpoints say.
 DEFAULT_RESOLUTION = 32
@@ -99,11 +100,11 @@ class Poraque(Calculator):
         ``PSCORE`` values needed for the :math:`\mathbf G = 0` energy term.
     potcar_dir : str, optional
         A ``POTCAR`` *library* — one subdirectory per pseudopotential, as VASP
-        ships them (``<potcar_dir>/Au/POTCAR``, optionally ``.gz`` or ``.Z``).
+        ships them (``<potcar_dir>/Pt/POTCAR``, optionally ``.gz`` or ``.Z``).
         The right choice for a calculator that must serve arbitrary
         compositions: the entries for whatever elements an
         :class:`ase.Atoms` happens to contain are assembled on demand and
-        cached per composition. A flat layout (``POTCAR.Au``, ``Au.POTCAR``)
+        cached per composition. A flat layout (``POTCAR.Pt``, ``Pt.POTCAR``)
         is also recognised.
     charges : dict, optional
         ``{element: Z_val}``, used only when no ``POTCAR`` is available.
@@ -169,7 +170,7 @@ class Poraque(Calculator):
     Examples
     --------
     >>> from ase.build import bulk                                # doctest: +SKIP
-    >>> atoms = bulk("Au", "fcc", a=4.08, cubic=True)             # doctest: +SKIP
+    >>> atoms = bulk("Pt", "fcc", a=3.92, cubic=True)             # doctest: +SKIP
     >>> atoms.calc = Poraque("models/poraque_models.pfno",
     ...                      potcar_dir="POTCARs")                # doctest: +SKIP
 
@@ -242,7 +243,7 @@ class Poraque(Calculator):
             raise ValueError(
                 "Poraque needs a POTCAR (potcar=... for a fixed composition, "
                 "potcar_dir=... for a library) or an explicit "
-                "charges={'Au': 11.0} mapping: the external potential cannot "
+                "charges={'Pt': 11.0} mapping: the external potential cannot "
                 "be built without the pseudo-ion valence charges."
             )
 
@@ -536,7 +537,12 @@ class Poraque(Calculator):
                                         potential)
 
         nominal = calculator.nominal_electrons
-        raw_count = float(fields["density_raw"].integrate())
+        # `electron_count` on a spin pair, `integrate` on a plain field: the
+        # two-channel class deliberately offers no `integrate`, since the
+        # integral of (rho, m) is not one number.
+        raw = fields["density_raw"]
+        raw_count = float(raw.electron_count() if hasattr(raw, "magnetization")
+                          else raw.integrate())
         self.raw_electron_drift = (
             None if not nominal else (raw_count - nominal) / nominal)
 
@@ -819,7 +825,7 @@ class Poraque(Calculator):
             raise ValueError(
                 "No valence charges available, so there is no expected "
                 "electron count to check against. Supply a POTCAR or "
-                "charges={'Au': 11.0}."
+                "charges={'Pt': 11.0}."
             )
         return verify_total_charge(density, density.grid.cell, expected,
                                    tolerance=tolerance, warn=warn)
@@ -883,7 +889,7 @@ class Poraque(Calculator):
            pseudopotential; a PAW calculation adds a projector (non-local)
            force and a one-centre force, and neither is recoverable from
            :math:`\rho`, :math:`\tau` and :math:`V_{\rm loc}` on a grid.
-           Measured against VASP on the shipped gold structures — using VASP's
+           Measured against VASP on the shipped platinum structures — using VASP's
            *own* density, so with no model error at all — this reproduces the
            magnitude but not the direction: mean absolute error ~0.7 eV/Å
            against forces of ~1.4 eV/Å.
@@ -925,8 +931,12 @@ class Poraque(Calculator):
                 "force alone is wrong by two orders of magnitude."
             )
 
+        # The Hellmann-Feynman term is an integral of rho against dV_ext/dR,
+        # so it takes the total density; a spin pair's `.data` is the (rho, m)
+        # stack and would enter it as an extra leading axis.
         return hellmann_feynman_forces(
-            fields["density"].data, structure, potential.grid, potcar=potcar)
+            np.asarray(total_density(fields["density"])), structure,
+            potential.grid, potcar=potcar)
 
     def get_stress(self, atoms=None):
         """

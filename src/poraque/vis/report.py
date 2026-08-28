@@ -50,8 +50,23 @@ from .style import (
 
 
 def _as_array(field):
-    """Accept a :class:`~poraque.fields.ScalarField` or a raw array."""
-    return np.asarray(getattr(field, "data", field), dtype=float)
+    """
+    Accept a :class:`~poraque.fields.ScalarField` or a raw array.
+
+    A multi-channel field is refused rather than reduced. A
+    :class:`~poraque.fields.SpinDensity` stacks two channels into ``data``, and
+    every figure here draws *one* quantity: silently taking the first channel
+    would produce a plausible picture of the wrong thing, and passing the stack
+    through produced a Matplotlib error deep inside a run that had already
+    finished training. The caller chooses the channel, so it can label it.
+    """
+    values = np.asarray(getattr(field, "data", field), dtype=float)
+    if values.ndim != 3:
+        raise ValueError(
+            f"a field figure draws one 3D quantity, got shape {values.shape}. "
+            f"For a spin-polarised field pass the channel to draw -- `.total` "
+            f"or `.magnetization` -- rather than the field itself.")
+    return values
 
 
 def _thin_log_minor_labels(panel, subs=(2.0, 5.0)):

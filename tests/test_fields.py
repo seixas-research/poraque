@@ -315,6 +315,23 @@ class TestExternalPotential:
             ExternalPotential.compute(poscar, grid, {"Si": 4.0}, model="jellium")
 
 
+def _write_two_blocks(path, structure, grid, first, second):
+    """
+    A two-block volumetric file, in VASP's own layout.
+
+    Written here rather than through :class:`SpinDensity` because the point of
+    the tests that use it is what the *blocks* mean, and building the fixture
+    out of the class whose convention is under test would assume the answer.
+    """
+    from poraque.fields.spin import _format_block
+    from poraque.fields.vasp.volumetric import write_volumetric
+
+    write_volumetric(path, structure, first)
+    with open(path, "a") as handle:
+        handle.write("  {:d}  {:d}  {:d}\n".format(*grid.shape))
+        handle.write(_format_block(second, 5, 17, 11))
+
+
 # --------------------------------------------------------------------- #
 # CHGCAR-format I/O shared by every field
 # --------------------------------------------------------------------- #
@@ -359,6 +376,80 @@ class TestVolumetricIO:
         again = ChargeDensity.read(path, grid=grid)
         assert np.abs(again.data - values).max() < 1e-9
         assert again.electron_count() == pytest.approx(density.electron_count())
+
+    def test_taucar_is_not_volume_scaled(self, vasp_dir):
+        """
+        Poraquê used to read a ``TAUCAR`` the way it reads a ``CHGCAR``, as
+        tau*Omega. VASP 6.6.1's ``LTAU`` writes tau. The error was invisible
+        in a round trip -- it cancels -- and only showed against a *paired*
+        density, where it moved the integral by exactly the cell volume.
+        """
+        grid = FieldGrid((12, 12, 12), Poscar.from_string(POSCAR_TEXT).cell)
+        structure = Poscar.from_string(POSCAR_TEXT)
+        values = np.abs(np.random.default_rng(1).normal(size=grid.shape))
+        tau = KineticEnergyDensity(values, grid, structure)
+
+        path = vasp_dir / "TAUCAR"
+        tau.write(path)
+        raw = np.array(path.read_text().splitlines()[12].split(), dtype=float)
+        assert raw[0] == pytest.approx(values.ravel(order="F")[0], rel=1e-9)
+        assert grid.volume > 2.0, "a volume of one would make this test vacuous"
+
+        again = KineticEnergyDensity.read(path, grid=grid)
+        assert np.abs(again.data - values).max() < 1e-9
+
+    def test_the_two_taucar_blocks_are_spin_channels_and_are_summed(
+            self, vasp_dir):
+        """
+        A spin-polarised ``TAUCAR`` holds (tau_up, tau_down), not the
+        (total, magnetisation) pair a ``CHGCAR`` holds. Reading the first
+        block alone returned half of tau in an unpolarised cell -- a factor
+        that no round trip and no finite check on tau alone can see, and that
+        the von Weizsaecker bound catches only because it is a theorem.
+        """
+        grid = FieldGrid((12, 12, 12), Poscar.from_string(POSCAR_TEXT).cell)
+        structure = Poscar.from_string(POSCAR_TEXT)
+        rng = np.random.default_rng(2)
+        up = np.abs(rng.normal(size=grid.shape)) + 0.5
+        down = np.abs(rng.normal(size=grid.shape)) + 0.5
+
+        path = vasp_dir / "TAUCAR"
+        _write_two_blocks(path, structure, grid, up, down)
+
+        tau = KineticEnergyDensity.read(path, grid=grid)
+        assert np.abs(tau.data - (up + down)).max() < 1e-9
+
+    def test_a_single_block_taucar_is_already_the_total(self, vasp_dir):
+        """
+        The summation must not double an ``ISPIN = 1`` file -- nor a cached
+        one, which Poraquê writes itself with a single block.
+        """
+        grid = FieldGrid((12, 12, 12), Poscar.from_string(POSCAR_TEXT).cell)
+        structure = Poscar.from_string(POSCAR_TEXT)
+        values = np.abs(np.random.default_rng(3).normal(size=grid.shape))
+        path = vasp_dir / "TAUCAR"
+        KineticEnergyDensity(values, grid, structure).write(path)
+
+        assert np.abs(KineticEnergyDensity.read(path, grid=grid).data
+                      - values).max() < 1e-9
+
+    def test_a_chgcar_second_block_is_not_summed_into_the_density(
+            self, vasp_dir):
+        """
+        The counterpart guarantee: ``combine_blocks`` is opt-in per class, so
+        a spin-polarised ``CHGCAR``'s magnetisation stays out of the density.
+        """
+        grid = FieldGrid((12, 12, 12), Poscar.from_string(POSCAR_TEXT).cell)
+        structure = Poscar.from_string(POSCAR_TEXT)
+        rng = np.random.default_rng(4)
+        total = (np.abs(rng.normal(size=grid.shape)) + 0.5) * grid.volume
+        magnetization = rng.normal(size=grid.shape) * grid.volume
+
+        path = vasp_dir / "CHGCAR"
+        _write_two_blocks(path, structure, grid, total, magnetization)
+
+        density = ChargeDensity.read(path, grid=grid)
+        assert np.abs(density.data - total / grid.volume).max() < 1e-9
 
     def test_read_rejects_foreign_grid(self, vasp_dir):
         potential = ExternalPotential.from_vasp(vasp_dir)
@@ -524,7 +615,7 @@ class TestSmoothing:
     def test_methods_disagree_on_a_skewed_cell(self):
         """ndimage blurs along lattice axes, which is anisotropic in Cartesian
         space unless the cell is orthogonal. This is why 'spectral' is default;
-        the gold data set is fcc, so the distinction is not academic.
+        the platinum data set is fcc, so the distinction is not academic.
         """
         cell = 6.0 * np.array([[0, 1, 1], [1, 0, 1], [1, 1, 0]], dtype=float)
         field = self._field(cell)

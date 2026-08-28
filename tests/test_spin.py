@@ -349,3 +349,224 @@ class TestSpinOperator:
 
         other = load_bundle(path, "chg2tau", device="cpu")
         assert (other.in_channels, other.out_channels) == (2, 1)
+
+
+# ===================================================================== #
+# Resolving `data.spin: auto` against the data
+# ===================================================================== #
+def _runs(root, grid, poscar, polarized, count=2, start=0):
+    """``count`` calculation directories, spin-polarised or not."""
+    rng = np.random.default_rng(7)
+    for index in range(start, start + count):
+        directory = root / f"struct_{index:03d}"
+        directory.mkdir(parents=True, exist_ok=True)
+        poscar.write(str(directory / "POSCAR"))
+        values = rng.random(grid.shape) + 0.5
+        if polarized:
+            SpinDensity.from_up_down(
+                values, values * 0.6, grid, poscar).write(
+                    str(directory / "CHGCAR"))
+        else:
+            ChargeDensity(values, grid, poscar).write(
+                str(directory / "CHGCAR"))
+    return str(root)
+
+
+class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
+    """
+    Regression: ``data.spin: auto`` — the default — could never mean spin.
+
+    ``poraque-train`` passed ``spin=data.spin is True`` to the cache builder,
+    and ``"auto" is True`` is ``False``. So every ``ISPIN = 2`` magnetisation
+    block was discarded on the way into the cache, and the dataset's *own*
+    auto-detection then reported, correctly, that the cache carried no spin.
+    Two layers of detection agreeing, with the first one having thrown the
+    answer away.
+
+    The whole point of these tests is that the question is asked of the
+    **sources**. A test that only inspected the cache would have passed
+    throughout the bug.
+    """
+
+    def test_auto_carries_the_magnetisation_of_a_polarised_source(
+            self, tmp_path, grid, poscar):
+        from poraque.data import build_field_cache
+
+        root = _runs(tmp_path / "runs", grid, poscar, polarized=True)
+        cache = build_field_cache(root, tmp_path / "cache", resolution=8,
+                                  fields=("CHGCAR",), charges={"Fe": 8.0},
+                                  spin="auto")
+
+        cached = f"{cache}/struct_000/CHGCAR"
+        assert is_spin_polarized(cached), (
+            "spin: auto dropped the second block of an ISPIN = 2 source")
+        assert SpinDensity.read(cached).magnetic_moment() != 0.0
+
+    def test_auto_on_an_unpolarised_source_stays_single_channel(
+            self, tmp_path, grid, poscar):
+        from poraque.data import build_field_cache
+
+        root = _runs(tmp_path / "runs", grid, poscar, polarized=False)
+        cache = build_field_cache(root, tmp_path / "cache", resolution=8,
+                                  fields=("CHGCAR",), charges={"Fe": 8.0},
+                                  spin="auto")
+
+        assert not is_spin_polarized(f"{cache}/struct_000/CHGCAR")
+
+    def test_false_is_still_a_deliberate_opt_out(self, tmp_path, grid, poscar):
+        """Discarding the channel stays possible — it just has to be asked for."""
+        from poraque.data import build_field_cache
+
+        root = _runs(tmp_path / "runs", grid, poscar, polarized=True)
+        cache = build_field_cache(root, tmp_path / "cache", resolution=8,
+                                  fields=("CHGCAR",), charges={"Fe": 8.0},
+                                  spin=False)
+
+        assert not is_spin_polarized(f"{cache}/struct_000/CHGCAR")
+
+    def test_true_on_data_with_no_magnetisation_raises(self, tmp_path, grid,
+                                                       poscar):
+        """Rather than training a channel the data has no values for."""
+        from poraque.data import build_field_cache
+
+        root = _runs(tmp_path / "runs", grid, poscar, polarized=False)
+        with pytest.raises(ValueError, match="has a magnetisation block"):
+            build_field_cache(root, tmp_path / "cache", resolution=8,
+                              fields=("CHGCAR",), charges={"Fe": 8.0},
+                              spin=True)
+
+    def test_a_mixed_set_resolves_to_spin_and_zeroes_the_rest(
+            self, tmp_path, grid, poscar):
+        """
+        One operator has one channel count, so the decision is taken for the
+        whole dataset. An unpolarised member becomes ``m = 0``, which is a true
+        statement about a non-magnetic calculation rather than a padded one.
+        """
+        from poraque.data import build_field_cache
+
+        runs = tmp_path / "runs"
+        _runs(runs, grid, poscar, polarized=True, count=2, start=0)
+        _runs(runs, grid, poscar, polarized=False, count=1, start=2)
+        cache = build_field_cache(runs, tmp_path / "cache", resolution=8,
+                                  fields=("CHGCAR",), charges={"Fe": 8.0},
+                                  spin="auto")
+
+        assert is_spin_polarized(f"{cache}/struct_002/CHGCAR")
+        plain = SpinDensity.read(f"{cache}/struct_002/CHGCAR")
+        assert np.abs(plain.magnetization).max() < 1e-9
+        assert is_spin_polarized(f"{cache}/struct_000/CHGCAR")
+
+    def test_the_two_layouts_never_share_a_cache_directory(self, tmp_path,
+                                                           grid, poscar):
+        """
+        A one-channel cache reused for a two-channel run would be found, loaded
+        and silently trained on. The resolved value names the directory, so a
+        `spin: false` build and an `auto` build of the same ISPIN = 2 sources
+        land in different places.
+        """
+        import sys
+
+        sys.path.insert(0, "scripts")
+        from poraque.ml.config import TrainingConfig
+        from poraque_train import cache_tag
+
+        root = _runs(tmp_path / "runs", grid, poscar, polarized=True)
+        auto = TrainingConfig.from_dict(
+            {"data": {"root": root, "spin": "auto"}})
+        off = TrainingConfig.from_dict(
+            {"data": {"root": root, "spin": False}})
+
+        assert cache_tag(auto.data).endswith("_spin")
+        assert not cache_tag(off.data).endswith("_spin")
+        assert cache_tag(auto.data) != cache_tag(off.data)
+
+
+class TestDetectingASecondBlockIsCheap:
+    """
+    The detector is called once per material by the cache builder and again to
+    name the directory, so a full float parse of every 100 MB density to answer
+    a yes/no was 14 s of pure overhead per run on a 31-material set.
+    """
+
+    def test_it_agrees_with_a_full_parse(self, tmp_path, grid, poscar,
+                                         spin_density):
+        from poraque.fields.vasp.volumetric import read_volumetric
+
+        for name, field in (("spin", spin_density),
+                            ("plain", ChargeDensity(
+                                np.ones(grid.shape), grid, poscar))):
+            path = str(tmp_path / f"CHGCAR_{name}")
+            field.write(path)
+            _, _, extra = read_volumetric(path, read_all=True)
+            assert is_spin_polarized(path) is (len(extra) >= 1), name
+
+    def test_augmentation_records_are_not_mistaken_for_a_second_block(
+            self, tmp_path, grid, poscar):
+        """
+        The scan looks for the grid-dimension line repeated *exactly*. PAW
+        occupancies sit between the blocks and are full of numbers; a looser
+        test would read them as a magnetisation channel that is not there.
+        """
+        path = str(tmp_path / "CHGCAR")
+        ChargeDensity(np.ones(grid.shape), grid, poscar).write(
+            path, augmentation=["augmentation occupancies   1  4",
+                                "  8 8 8 8", "  1 2 3", "  0.1 0.2 0.3"])
+
+        assert is_spin_polarized(path) is False
+
+
+# ===================================================================== #
+# A spin-polarised prediction has to reach an energy
+# ===================================================================== #
+class TestASpinDensityCanBeIntegratedIntoAnEnergy:
+    """
+    Regression: it could not, and the adapter for it was never called.
+
+    Every term in :mod:`poraque.physics.energy` is a functional of the total
+    density, so a two-channel field has to be reduced before any of them can
+    integrate it. ``SpinDensity.as_charge_density`` existed for exactly that
+    and nothing in the package called it, so ``EnergyCalculator.compute`` —
+    and therefore the ASE calculator's ``get_potential_energy`` — raised
+    ``TypeError: float() argument must be ... not 'SpinDensity'`` for any model
+    trained with spin resolved on. Which, since ``data.spin: auto`` now
+    resolves against the data, is every model trained on ``ISPIN = 2`` runs.
+    """
+
+    def test_total_density_passes_a_plain_field_through(self, grid, poscar):
+        from poraque.physics.energy import total_density
+
+        field = ChargeDensity(np.ones(grid.shape) * 0.3, grid, poscar)
+        assert total_density(field) is field
+
+    def test_total_density_reduces_a_spin_pair_to_its_total(self,
+                                                            spin_density):
+        from poraque.physics.energy import total_density
+
+        reduced = total_density(spin_density)
+        assert np.allclose(np.asarray(reduced), spin_density.total)
+        assert np.asarray(reduced).shape == tuple(spin_density.grid.shape)
+
+    def test_the_energy_matches_the_one_from_the_total_alone(self,
+                                                             spin_density):
+        """
+        The electrostatic and kinetic terms depend only on the total, so
+        reducing the pair must not change them. This is what makes the
+        reduction safe rather than merely convenient.
+        """
+        from poraque.physics import EnergyCalculator
+
+        grid, poscar = spin_density.grid, spin_density.structure
+        potential = ExternalPotential(
+            np.random.default_rng(5).normal(size=grid.shape) * 5.0,
+            grid, poscar)
+        tau = KineticEnergyDensity(np.ones(grid.shape) * 2.0, grid, poscar)
+        calculator = EnergyCalculator(grid=grid, structure=poscar,
+                                      charges={"Fe": 8.0}, functional="lda")
+
+        paired = calculator.compute(spin_density, tau, potential)
+        plain = calculator.compute(spin_density.as_charge_density(), tau,
+                                   potential)
+
+        assert paired.total == pytest.approx(plain.total, rel=1e-12)
+        assert paired.n_electrons == pytest.approx(
+            spin_density.electron_count(), rel=1e-12)

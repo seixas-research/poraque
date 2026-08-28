@@ -179,7 +179,7 @@ Three consequences, all of which bound the claim:
    `ratio` field in `committee_spread` reports by how much, and it is expected
    to be below 1.
 2. **Blind to missing chemistry.** Every member trained on the same twelve
-   gold structures. Shown a silicon cell they may agree confidently and all be
+   platinum structures. Shown a silicon cell they may agree confidently and all be
    wrong together. No amount of committee size fixes this — it is a property of
    the training set, not the ensemble.
 3. **Not an error bar.** Use it to order candidates, not to put $\pm$ on a

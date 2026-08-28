@@ -14,12 +14,12 @@ narrowed by band gap, crystal system or stability — into a local dataset of
 charge densities that :mod:`poraque.data.mp_dataset` reads directly:
 
     >>> from poraque.data import MPDataFetcher
-    >>> fetcher = MPDataFetcher(["Ag", "Au", "Pt"], outdir="data/MP")   # doctest: +SKIP
+    >>> fetcher = MPDataFetcher(["Pt", "Pd", "Ni"], outdir="data/MP")   # doctest: +SKIP
     >>> print(fetcher.estimate())        # exact size, nothing transferred  # doctest: +SKIP
     >>> fetcher.run(max_size_mb=20)      # summary, structures, CHGCARs     # doctest: +SKIP
 
 A chemical space is *every* material whose composition uses only the given
-elements, across all stoichiometries and structures — the Ag-Au-Pt space
+elements, across all stoichiometries and structures — the Pt-Pd-Ni space
 contains the three elementals, the binaries and the ternaries alike.
 
 Authentication
@@ -44,7 +44,7 @@ payload. Storage is reported three ways because they differ a lot:
     gz on disk  bytes kept if CHGCARs stay gzipped   (x0.879 of download)
     unzipped    bytes kept if CHGCARs are expanded   (x2.99 of gz on disk)
 
-Both ratios were measured against the fully downloaded Au-Ag-Cu-Pd-Pt set
+Both ratios were measured against the fully downloaded Pt-Pd-Ni-Cu-Ag set
 (85 objects: 1044.6 MB downloaded, 917.7 MB gzipped, 2.74 GB unzipped) rather
 than guessed.
 
@@ -94,8 +94,8 @@ Command line
 ------------
 ::
 
-    poraque-mp --elements Ag Au Pt --estimate          # dry run, writes nothing
-    poraque-mp --elements Ag Au Pt --outdir data/MP --max-size-mb 20
+    poraque-mp --elements Pt Pd Ni --estimate          # dry run, writes nothing
+    poraque-mp --elements Pt Pd Ni --outdir data/MP --max-size-mb 20
     poraque-mp --elements Si O --band-gap 0.5 6.0 --crystal-system Cubic
 
     # every material with a charge density, sized from a sample of 20
@@ -159,7 +159,7 @@ from itertools import combinations
 from pathlib import Path
 
 # --- measured constants -----------------------------------------------------
-# Calibrated on the Au-Ag-Cu-Pd-Pt set (85 charge densities); see the module
+# Calibrated on the Pt-Pd-Ni-Cu-Ag set (85 charge densities); see the module
 # docstring. Ratios, not fits: they convert one measured total into another.
 DISK_PER_DOWNLOAD = 0.879  # gzipped-on-disk / bytes-downloaded
 UNZIP_EXPANSION = 2.99     # unzipped / gzipped-on-disk
@@ -510,8 +510,8 @@ class MPDataFetcher:
     Parameters
     ----------
     elements : sequence of str or str
-        Elements spanning the space, e.g. ``["Ag", "Au", "Pt"]``. A string is
-        accepted in either ``"Ag-Au-Pt"`` or ``"Ag Au Pt"`` form.
+        Elements spanning the space, e.g. ``["Pt", "Pd", "Ni"]``. A string is
+        accepted in either ``"Pt-Pd-Ni"`` or ``"Pt Pd Ni"`` form.
     api_key : str, optional
         Materials Project API key. Falls back to ``$MP_API_KEY``, then a local
         ``.env``, then ``~/.env``.
@@ -546,7 +546,7 @@ class MPDataFetcher:
 
     Examples
     --------
-    >>> with MPDataFetcher(["Ag", "Au", "Pt"], outdir="data/MP") as mp:  # doctest: +SKIP
+    >>> with MPDataFetcher(["Pt", "Pd", "Ni"], outdir="data/MP") as mp:  # doctest: +SKIP
     ...     print(mp.estimate())
     ...     mp.run(max_sites=8, max_size_mb=20)
     """
@@ -642,7 +642,7 @@ class MPDataFetcher:
         """
         Every non-empty subsystem of the space — :math:`2^n - 1` of them.
 
-        Querying the full system alone (``"Ag-Au-Pt"``) returns only the
+        Querying the full system alone (``"Pt-Pd-Ni"``) returns only the
         ternaries, so each subset has to be listed for the query to span the
         whole space.
         """

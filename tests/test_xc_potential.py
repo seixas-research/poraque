@@ -454,20 +454,20 @@ class TestFunctionalIsDeclarable:
         from poraque.fields.io import resolve_xc
 
         (tmp_path / "POSCAR").write_text(
-            "Au\n1.0\n4 0 0\n0 4 0\n0 0 4\nAu\n1\nDirect\n0 0 0\n")
+            "Pt\n1.0\n4 0 0\n0 4 0\n0 0 4\nPt\n1\nDirect\n0 0 0\n")
         (tmp_path / "POTCAR").write_text(
-            "  PAW_PBE Au 04Oct2007\n   ZVAL   =   11.000\n"
-            "   LEXCH  = PE\n   TITEL  = PAW_PBE Au 04Oct2007\n")
+            "  PAW_PBE Pt 04Oct2007\n   ZVAL   =   11.000\n"
+            "   LEXCH  = PE\n   TITEL  = PAW_PBE Pt 04Oct2007\n")
         assert resolve_xc(str(tmp_path), declared="auto") == "pbe"
 
     def test_an_lda_potcar_resolves_to_lda(self, tmp_path):
         from poraque.fields.io import resolve_xc
 
         (tmp_path / "POSCAR").write_text(
-            "Au\n1.0\n4 0 0\n0 4 0\n0 0 4\nAu\n1\nDirect\n0 0 0\n")
+            "Pt\n1.0\n4 0 0\n0 4 0\n0 0 4\nPt\n1\nDirect\n0 0 0\n")
         (tmp_path / "POTCAR").write_text(
-            "  PAW Au 04Oct2007\n   ZVAL   =   11.000\n"
-            "   LEXCH  = CA\n   TITEL  = PAW Au 04Oct2007\n")
+            "  PAW Pt 04Oct2007\n   ZVAL   =   11.000\n"
+            "   LEXCH  = CA\n   TITEL  = PAW Pt 04Oct2007\n")
         assert resolve_xc(str(tmp_path), declared="auto") == "lda"
 
     def test_an_unimplemented_functional_warns_rather_than_lying(self,
@@ -479,10 +479,10 @@ class TestFunctionalIsDeclarable:
         from poraque.fields.io import resolve_xc
 
         (tmp_path / "POSCAR").write_text(
-            "Au\n1.0\n4 0 0\n0 4 0\n0 0 4\nAu\n1\nDirect\n0 0 0\n")
+            "Pt\n1.0\n4 0 0\n0 4 0\n0 0 4\nPt\n1\nDirect\n0 0 0\n")
         (tmp_path / "POTCAR").write_text(
-            "  PAW Au\n   ZVAL   =   11.000\n   LEXCH  = 91\n"
-            "   TITEL  = PAW Au\n")
+            "  PAW Pt\n   ZVAL   =   11.000\n   LEXCH  = 91\n"
+            "   TITEL  = PAW Pt\n")
         with pytest.warns(RuntimeWarning, match="not implemented"):
             assert resolve_xc(str(tmp_path), declared="auto") == "pbe"
 

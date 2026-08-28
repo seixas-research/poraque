@@ -313,11 +313,11 @@ class TestEwald:
         :math:`E = -\xi q^2 e^2/2L` with :math:`\xi = 2.8372974795`.
         """
         length, charge = 4.0, 11.0
-        structure = Structure(np.eye(3) * length, ["Au"], [1],
+        structure = Structure(np.eye(3) * length, ["Pt"], [1],
                               np.zeros((1, 3)))
         expected = (-2.8372974795 * charge ** 2
                     * COULOMB_CONSTANT_EV_ANGSTROM / (2.0 * length))
-        assert ewald_energy(structure, {"Au": charge}) == pytest.approx(
+        assert ewald_energy(structure, {"Pt": charge}) == pytest.approx(
             expected, rel=1e-7)
 
     def test_translation_invariance(self):
@@ -350,9 +350,9 @@ class TestEwald:
 # ===================================================================== #
 class TestAlphaZ:
     def test_scales_with_the_electron_count_and_the_atom_count(self):
-        structure = Structure(np.eye(3) * 4.0, ["Au"], [2],
+        structure = Structure(np.eye(3) * 4.0, ["Pt"], [2],
                               np.array([[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]))
-        energy = alpha_z_energy(structure, {"Au": 100.0}, n_electrons=22.0)
+        energy = alpha_z_energy(structure, {"Pt": 100.0}, n_electrons=22.0)
         assert energy == pytest.approx(22.0 * 2 * 100.0 / 64.0)
 
     def test_raises_rather_than_defaulting_to_zero(self):
@@ -360,13 +360,13 @@ class TestAlphaZ:
         Silently dropping a term of order eV per atom would look like a
         working calculation while corrupting every comparison.
         """
-        structure = Structure(np.eye(3) * 4.0, ["Au"], [1], np.zeros((1, 3)))
+        structure = Structure(np.eye(3) * 4.0, ["Pt"], [1], np.zeros((1, 3)))
         with pytest.raises(KeyError, match="PSCORE"):
             alpha_z_energy(structure, {"Ag": 1.0}, n_electrons=11.0)
 
     def test_matches_a_decorated_potcar_symbol(self):
-        structure = Structure(np.eye(3) * 4.0, ["Au_pv"], [1], np.zeros((1, 3)))
-        assert alpha_z_energy(structure, {"Au": 10.0}, 1.0) == pytest.approx(
+        structure = Structure(np.eye(3) * 4.0, ["Pt_pv"], [1], np.zeros((1, 3)))
+        assert alpha_z_energy(structure, {"Pt": 10.0}, 1.0) == pytest.approx(
             10.0 / 64.0)
 
 
@@ -445,13 +445,13 @@ class TestEnergyCalculator:
     def test_from_potential_picks_up_grid_structure_and_charges(self):
         from poraque.fields import ExternalPotential
 
-        structure = Structure(np.eye(3) * 6.0, ["Au"], [1], np.zeros((1, 3)))
+        structure = Structure(np.eye(3) * 6.0, ["Pt"], [1], np.zeros((1, 3)))
         grid = FieldGrid((16, 16, 16), structure.cell)
-        potential = ExternalPotential.compute(structure, grid, {"Au": 11.0})
+        potential = ExternalPotential.compute(structure, grid, {"Pt": 11.0})
 
         calculator = EnergyCalculator.from_potential(potential)
         assert calculator.grid is grid
-        assert calculator.charges == {"Au": 11.0}
+        assert calculator.charges == {"Pt": 11.0}
         assert calculator.ewald_energy() is not None
         # No POTCAR tables were involved, so alpha_z must be absent, not zero.
         components = calculator.compute(np.zeros(grid.shape),

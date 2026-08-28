@@ -2,7 +2,7 @@
 # ("pure" KAN -- no w_c*silu(x) base term, only the learned rational
 # residual) vs. the base-carrying kan_rational
 # (compare_kan_rational_ext2chg.yaml) and the shipped gelu model
-# (models/au_w16_m8_l3), ext2chg only. Identical protocol to
+# (models/pt_w16_m8_l3), ext2chg only. Identical protocol to
 # compare_kan_rational_ext2chg.yaml except this one flag -- see FUTURE.md's
 # "Run kan_use_base: false" follow-up.
 #
@@ -13,7 +13,7 @@
 # vanishing residual -- see RationalKANActivation's docstring.
 task:
   type: ext2chg
-  name: au_w16_m8_l3_kanrational_purekan
+  name: pt_w16_m8_l3_kanrational_purekan
 
 data:
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs

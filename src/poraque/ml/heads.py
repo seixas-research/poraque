@@ -44,7 +44,7 @@ buys two things at once:
    :math:`\tau = \tau_{\rm vW}` *exactly*. That is the correct one-orbital
    (nodeless) limit, reachable rather than merely approachable — a soft
    penalty can only ever approach it from above.
-2. **The network stops re-deriving known physics.** On the Au dataset
+2. **The network stops re-deriving known physics.** On the Pt dataset
    :math:`\tau_{\rm vW}` accounts for ~31 % of :math:`\tau`; that fraction is
    now supplied analytically and exactly (spectral gradients on the plane-wave
    grid), leaving only the genuinely unknown Pauli term to learn. The residual

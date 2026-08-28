@@ -24,7 +24,7 @@ handling the fields MP does not publish.
 
     from poraque.data import MPDataFetcher, MPChargeDensityDataset
 
-    with MPDataFetcher(["Ag", "Au", "Pt"], outdir="data/MP") as mp:
+    with MPDataFetcher(["Pt", "Pd", "Ni"], outdir="data/MP") as mp:
         print(mp.estimate())            # exact size, nothing transferred
         mp.run(max_size_mb=20)
 
@@ -36,7 +36,7 @@ Validating what comes in
 its scale against Thomas-Fermi, its pointwise von Weizsaecker bound, and the
 provenance of the run that wrote it. It is wired into
 :func:`~poraque.data.cache.build_field_cache` and is on by default; see
-``DELETIONS.md`` for the dataset that made it necessary.
+the post-mortem for the dataset that made it necessary.
 
 Nothing here is imported by :mod:`poraque.ml` or :mod:`poraque.fields`, so the
 Materials Project client stays out of the import path of a training run that

@@ -4,30 +4,10 @@
 \chapter{The VASP interface}
 \label{ch:vasp}
 
-Poraqu\^e computes the external ionic potential natively, and reproducing
-VASP's own convention exactly required reading the Fortran source. This chapter
-records what it says, because the details decide whether the Python
-reconstruction agrees with a reference potential or misses it by $13\,\%$.
-
-Reference \file{EXTCAR} and \file{TAUCAR} files were used during development to
+Poraqu\^e computes the external ionic potential natively. Reference \file{EXTCAR} and \file{TAUCAR} files were used during development to
 \emph{validate} that reconstruction. They are not required to run Poraqu\^e ---
 nothing in the pipeline reads them --- and the reference calculations
-themselves are ordinary VASP~6.2.0 output in every other respect.
-
-\section{The tags that produce the reference files}
-
-Two \file{INCAR} flags, declared in \file{base.F} and parsed in \file{main.F}:
-
-\begin{center}
-\begin{tabular}{@{}lll@{}}
-\toprule
-Tag & Variable & Writes \\
-\midrule
-\opt{EXTCAR} & \opt{LEXTCAR} & local external (ionic) potential \\
-\opt{TAUCAR} & \opt{LTAUCAR} & kinetic energy density \\
-\bottomrule
-\end{tabular}
-\end{center}
+themselves are ordinary VASP~6.6.1 output in every other respect.
 
 \section{\texorpdfstring{\file{EXTCAR}}{EXTCAR}: the local pseudopotential}
 
@@ -82,7 +62,7 @@ Two further details are easy to miss and both are observable:
 \begin{itemize}
   \item \textbf{Hard truncation.} For $G \ge$ \opt{PSGMA2} the \emph{whole}
     contribution is zeroed, Coulomb tail included; VASP does not extrapolate
-    the table. For the gold potential \opt{PSGMAX} $=75.6\ \text{\AA}^{-1}$
+    the table. For the platinum potential \opt{PSGMAX} $=75.6\ \text{\AA}^{-1}$
     while a $128^3$ grid reaches $|\GG|_{\max}=106\ \text{\AA}^{-1}$, so the
     truncation is genuinely active and must be reproduced.
   \item \textbf{$G$ carries the $2\pi$.} \opt{LATT\_CUR\%B} is the reciprocal
@@ -119,13 +99,13 @@ and the values are in $\mathrm{eV}\cdot\text{\AA}^3$.
 The first number after the marker is \opt{PSGMAX}, the table's maximum
 wavevector --- \emph{not} the valence charge. The two can look alike in some
 files, and the misreading was the secondary cause of the original discrepancy.
-Confirmed against the gold \file{POTCAR}: the value is $75.5890395431569$, the
+Confirmed against the platinum \file{POTCAR}: the value is $75.5890395431569$, the
 block holds $1001$ numbers ($=$ \opt{PSGMAX} $+$ exactly $1000$ samples), and
 \opt{ZVAL} is $11$.
 \end{pnote}
 
 \opt{PSCORE} $= v_{\mathrm{short}}(q\to0) = 105.89\ \mathrm{eV}\cdot\text{\AA}^3$
-for gold feeds the \opt{PSCENC} energy correction and does not enter the
+for platinum feeds the \opt{PSCENC} energy correction and does not enter the
 potential, since $\vext(\GG=0)$ is zeroed.
 
 \subsection{Result}
@@ -164,7 +144,7 @@ the empirical form factor directly from a reference file,
   f(\GG) = -\,\frac{\Omega\,G^2\,\vext^{\mathrm{ref}}(\GG)}
                    {4\pi e^2 Z^{\mathrm{val}} S(\GG)} .
 \end{equation}
-Doing so for gold shows $f(G)$ decaying far more slowly than a Gaussian at low
+Doing so for platinum shows $f(G)$ decaying far more slowly than a Gaussian at low
 $G$ and then \emph{oscillating about zero} at large $G$ --- the signature of a
 repulsive pseudopotential core. No monotonic $e^{-G^2\sigma^2/2}$ can reproduce
 that, which is why fitting $\sigma$ saturates near a relative $L^2$ of $0.13$
@@ -239,7 +219,7 @@ asked to do:
 \begin{pwarn}
 Two paths remain untested. The multi-species sum in Eq.~\eqref{eq:vaspextcar}
 uses a per-species \opt{PSGMAX} and is implemented as such, but the present data
-set is pure gold. And \opt{ISPIN=2} writes a second block in both \file{CHGCAR}
+set is pure platinum. And \opt{ISPIN=2} writes a second block in both \file{CHGCAR}
 and \file{TAUCAR} which the reader currently ignores --- correct for these
 \opt{ISPIN=1} runs, a silent truncation otherwise.
 \end{pwarn}
@@ -278,7 +258,7 @@ densities are read as the system needs --- candidates are taken
 smallest-file-first and accepted only while they add rank --- so a
 hundred-material space costs a handful of small reads rather than a full pass.
 
-On the Ag--Au--Pt space this returns $11$, $11$ and $10$ with a residual of
+On the Ag--Pt--Pt space this returns $11$, $11$ and $10$ with a residual of
 zero to machine precision, from three elemental cells: exactly the \opt{ZVAL}
 of the three \opt{PAW\_PBE} potentials, read off the data.
 
@@ -305,7 +285,7 @@ definitions of $\vext$ wearing one name.
 pseudo-ion model is used --- $f_s(G)=e^{-G^2\sigma_s^2/2}$ in place of the
 tabulated $v^s_{\mathrm{short}}$ --- with $\sigma$ defaulting to $0.5$~\AA{},
 since no \opt{RCORE} is available to derive one from either. Measured on the
-Ag--Au--Pt densities, the two constructions differ from \emph{each other} by
+Ag--Pt--Pt densities, the two constructions differ from \emph{each other} by
 \begin{equation}
   \frac{\lVert \vext^{\mathrm{tab}} - \vext^{\mathrm{gauss}} \rVert_2}
        {\lVert \vext^{\mathrm{tab}} \rVert_2} \;=\; 0.38 ,

@@ -30,7 +30,7 @@ reproduce the density it came from, to within the radial approximation.
 
 The fixtures are synthetic Gaussian atoms, so the "reference density" is known
 in closed form and the tests do not depend on the repository's data being
-present. The real gold reference is used where it exists, and skipped where it
+present. The real platinum reference is used where it exists, and skipped where it
 does not.
 """
 
@@ -54,7 +54,7 @@ from poraque.fields.atomic import (
 from poraque.fields.vasp.poscar import Poscar
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REF_AU = os.path.join(_ROOT, "data", "vasp", "ref", "Au")
+REF_AU = os.path.join(_ROOT, "data", "vasp", "ref", "Pt")
 VASP_DIR = os.path.join(_ROOT, "data", "vasp")
 
 needs_reference_atom = pytest.mark.skipif(
@@ -308,56 +308,56 @@ class TestTheLibrary:
 
     def test_two_potcar_variants_of_one_element_coexist(self):
         """
-        ``Au`` and ``Au_pv`` are different atoms with different valence counts.
+        ``Pt`` and ``Pt_pv`` are different atoms with different valence counts.
         Merging them would give a baseline wrong for both.
         """
-        plain = synthetic_reference(element="Au", n_electrons=11.0)
-        plain.potcar_title, plain.potcar_sha256 = "PAW_PBE Au", "1" * 64
-        semicore = synthetic_reference(element="Au", n_electrons=17.0)
-        semicore.potcar_title, semicore.potcar_sha256 = "PAW_PBE Au_pv", "2" * 64
+        plain = synthetic_reference(element="Pt", n_electrons=11.0)
+        plain.potcar_title, plain.potcar_sha256 = "PAW_PBE Pt", "1" * 64
+        semicore = synthetic_reference(element="Pt", n_electrons=17.0)
+        semicore.potcar_title, semicore.potcar_sha256 = "PAW_PBE Pt_pv", "2" * 64
 
         library = AtomicReferenceLibrary()
         library.add(plain)
         library.add(semicore)
         assert len(library) == 2
-        assert library.lookup("Au", "PAW_PBE Au_pv").valence_charge == \
+        assert library.lookup("Pt", "PAW_PBE Pt_pv").valence_charge == \
             pytest.approx(17.0, rel=1e-6)
 
     def test_an_ambiguous_lookup_returns_nothing_rather_than_guessing(self):
-        plain = synthetic_reference(element="Au", n_electrons=11.0)
-        plain.potcar_title, plain.potcar_sha256 = "PAW_PBE Au", "1" * 64
-        semicore = synthetic_reference(element="Au", n_electrons=17.0)
-        semicore.potcar_title, semicore.potcar_sha256 = "PAW_PBE Au_pv", "2" * 64
+        plain = synthetic_reference(element="Pt", n_electrons=11.0)
+        plain.potcar_title, plain.potcar_sha256 = "PAW_PBE Pt", "1" * 64
+        semicore = synthetic_reference(element="Pt", n_electrons=17.0)
+        semicore.potcar_title, semicore.potcar_sha256 = "PAW_PBE Pt_pv", "2" * 64
         library = AtomicReferenceLibrary({plain.key: plain,
                                           semicore.key: semicore})
-        assert library.lookup("Au") is None
+        assert library.lookup("Pt") is None
 
     def test_a_decorated_symbol_finds_the_bare_element(self, library):
         assert library.lookup("Si_pv") is not None
         assert library.lookup("Si.pbe") is not None
 
     def test_base_element_strips_every_decoration_this_tree_uses(self):
-        assert base_element("Au_pv") == "Au"
+        assert base_element("Pt_pv") == "Pt"
         assert base_element("O.pbe-n-kjpaw") == "O"
         assert base_element("Fe1") == "Fe"
-        assert base_element("Au") == "Au"
+        assert base_element("Pt") == "Pt"
 
 
 # ===================================================================== #
 # Against the real reference atom
 # ===================================================================== #
 @needs_reference_atom
-class TestTheShippedGoldAtom:
+class TestTheShippedReferenceAtom:
     """
     The real thing, where the synthetic fixtures cannot reach.
 
-    A Gaussian is exactly spherical and exactly band-limited; a PAW gold atom
+    A Gaussian is exactly spherical and exactly band-limited; a PAW platinum atom
     in a box is neither. These are the numbers ``DESIGN_PAW.md`` quotes.
     """
 
     def test_it_ingests_with_its_valence_charge_and_its_augmentation(self):
         reference = reference_from_calculation(REF_AU)
-        assert reference.element == "Au"
+        assert reference.element == "Pt"
         assert reference.valence_charge == pytest.approx(11.0, rel=1e-5)
         assert reference.augmentation is not None
         assert len(reference.augmentation) == 138
@@ -389,7 +389,7 @@ class TestTheShippedGoldAtom:
 
     @pytest.mark.skipif(
         not os.path.exists(os.path.join(VASP_DIR, "struct_000", "CHGCAR")),
-        reason="the shipped gold supercells are not in this checkout")
+        reason="the shipped platinum supercells are not in this checkout")
     def test_the_residual_is_far_smaller_than_the_density(self):
         """
         The claim delta-density mode rests on: ~96 % of the field is just the
@@ -412,7 +412,7 @@ class TestTheShippedGoldAtom:
         86.6 % RMS from a bulk site, which is why nothing selects it silently.
         """
         library = build_library([REF_AU])
-        structure = Poscar(np.eye(3) * 6.0, ["Au"], [2],
+        structure = Poscar(np.eye(3) * 6.0, ["Pt"], [2],
                            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]])
         lines, missing = augmentation_from_atoms(structure, library)
         assert not missing
@@ -421,7 +421,7 @@ class TestTheShippedGoldAtom:
 
     def test_an_uncovered_element_yields_no_partial_block(self):
         library = build_library([REF_AU])
-        structure = Poscar(np.eye(3) * 6.0, ["Au", "Ag"], [1, 1],
+        structure = Poscar(np.eye(3) * 6.0, ["Pt", "Ag"], [1, 1],
                            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]])
         lines, missing = augmentation_from_atoms(structure, library)
         assert lines == []

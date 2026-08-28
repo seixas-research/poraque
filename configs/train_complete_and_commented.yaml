@@ -25,7 +25,7 @@ task:
   #             can reach a total energy, since the ASE calculator needs the
   #             whole chain.
   type: all
-  name: au_w16_m8_l3_complete
+  name: pt_w16_m8_l3_complete
 
 data:
   # A POTCAR *library* (one subdirectory per pseudopotential). With it the
@@ -40,7 +40,7 @@ data:
   # which is the point of it existing at all.
   #
   # It exists because an entire dataset of invalid tau was ingested, cached,
-  # trained on and reported before anyone noticed (see DELETIONS.md). The
+  # trained on and reported before anyone noticed. The
   # files parsed, the grids matched, the values were finite and positive, and
   # the loss went down. Nothing about a scalar field on a grid says what unit
   # it is in or which code wrote it, so the checks have to be physical.
@@ -60,12 +60,19 @@ data:
   #               of two numerical noises -- and a small violating fraction is
   #               tolerated because band-limited fields ring.
   #
-  #   provenance  The run must state its code version and set LTAU = .TRUE.,
-  #               and its INCAR is hashed into the record. This is the only
-  #               one of the three that does not depend on the numbers being
-  #               wrong in a detectable way, and it is the one that would have
-  #               stopped the bad data at the door: those runs asked for tau
-  #               with `TAUCAR = .TRUE.`, which is not a VASP tag at all.
+  #   provenance  The run's INCAR must set LTAU = .TRUE., and is hashed into
+  #               the record. This is the only one of the three that does not
+  #               depend on the numbers being wrong in a detectable way, and
+  #               it is the one that would have stopped the bad data at the
+  #               door: those runs asked for tau with `TAUCAR = .TRUE.`,
+  #               which is not a VASP tag at all.
+  #
+  #               Both facts come from the INCAR, which is an INPUT and is
+  #               therefore wherever the calculation is. The code version is
+  #               not -- it lives in OUTCAR/vasprun.xml, which are outputs a
+  #               dataset need not ship -- so a missing version is NOTED and
+  #               let through rather than refused. A version that IS recorded
+  #               is still checked against minimum_version.
   #
   # A failure STOPS the build, naming the material and the numbers. Verdicts
   # go to <cache>/tau_validation.json; each cached material keeps its own
@@ -135,9 +142,9 @@ data:
   #             an element that was not, and means something different again
   #             when half the set is surface atoms.
   #
-  #   material  the previous behaviour: average the training calculations'
+  #   material  average the training calculations'
   #             records per element. More ACCURATE for an element the training
-  #             set covers -- measured on this project's gold data a free-atom
+  #             set covers -- measured on this project's platinum data a free-atom
   #             record sat 86.6% RMS from a bulk site against 9.9% for the
   #             average. That gap is the honest cost of the transferability,
   #             not an argument that either is wrong.
@@ -202,9 +209,10 @@ data:
     vw_relative_tolerance: 0.05
     vw_absolute_tolerance: 1.0e-6
     max_violation_fraction: 0.01
-    require_provenance: true
+    require_provenance: true    # LTAU + INCAR hash; both come from the INCAR
+    require_code_version: false # OUTCAR/vasprun.xml are outputs, not required
     required_tag: LTAU
-    minimum_version: "6.6.1"    # user-specified for this project
+    minimum_version: "6.6.1"    # user-specified; applied to a version if given
 
 model:
   # THE THREE THAT SET THE SIZE. All three are "some number of channels",
@@ -308,7 +316,7 @@ model:
   #
   # So a g_max tighter than `modes` leaves the unreached weights with exactly
   # zero gradient: allocated, saved into the .pfno, never trained. At modes=8
-  # and g_max=6 a 4.08 Ang fcc Au cell keeps 3 modes -- 5.3% of R -- and the
+  # and g_max=6 a 4.08 Ang fcc Pt cell keeps 3 modes -- 5.3% of R -- and the
   # other 94.7% is dead.
   #
   # And the sharper trap: dead is not harmless, because it is dead *at random

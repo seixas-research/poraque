@@ -46,7 +46,7 @@ reading it precisely so that training and inference see the same construction.
 :func:`infer_valence_charges`: a ``CHGCAR`` integrates to the valence electron
 count of its own cell, which gives one linear equation per material in the
 per-element charges, and a chemical space of any breadth supplies more equations
-than unknowns. On the Ag-Au-Pt set this returns 11, 11 and 10 to within
+than unknowns. On the Pt-Pd-Ni set this returns 11, 11 and 10 to within
 :math:`10^{-6}` — the POTCAR values, read off the densities.
 
 **There is no** :math:`\tau` **and no energy.** ``chg2tau`` cannot be trained on
@@ -145,7 +145,7 @@ def discover_mp_chgcars(root, pattern=CHGCAR_PREFIX):
     if not records:
         raise FileNotFoundError(
             f"No {pattern}* files under {root}. Download some first: "
-            f"poraque-mp --elements Ag Au Pt --outdir {root.parent}"
+            f"poraque-mp --elements Pt Pd Ni --outdir {root.parent}"
         )
     return records
 

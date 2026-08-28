@@ -81,7 +81,7 @@ CALL FFTCHK(GRIDC%NGPTAR)
 \end{lstlisting}
 
 \begin{pwarn}
-\textbf{The order is the algorithm.} For a 27-atom gold cell at 450\,eV the
+\textbf{The order is the algorithm.} For a 27-atom platinum cell at 450\,eV the
 coarse grid is $4\times15.25 = 61 \to 64$, so the density grid is $128$;
 computing the density size directly and rounding once gives $64$ --- a factor
 of two, and a file VASP would reject.
@@ -154,8 +154,8 @@ off the training \file{CHGCAR}s, averaged per chemical element, and stored in
 the \opt{.pfno} bundle:
 
 \begin{lstlisting}
-  PAW reference: Au  138 values, averaged over 494 atoms in 17 structure(s)
-  PAW reference   -> stored in the bundle (Au)
+  PAW reference: Pt  138 values, averaged over 494 atoms in 17 structure(s)
+  PAW reference   -> stored in the bundle (Pt)
 \end{lstlisting}
 
 At inference that table is used whenever the directory has no reference of its

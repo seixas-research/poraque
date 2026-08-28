@@ -94,14 +94,14 @@ recoverable or unnecessary:
   densities themselves. A pseudopotential `CHGCAR` integrates to its cell's
   valence electron count, which is one linear equation per material in the
   per-element charges; a chemical space of any breadth over-determines them.
-  On the Ag–Au–Pt set this returns 11, 11 and 10 — the `POTCAR` values, read
+  On the Ag–Pt–Pt set this returns 11, 11 and 10 — the `POTCAR` values, read
   off the data, from three small files.
 
 So the recipe for a broad `ext2chg` model is:
 
 ```bash
-poraque-mp --elements Ag Au Pt --estimate                    # size it first
-poraque-mp --elements Ag Au Pt --output data/MP --max-size-mb 20
+poraque-mp --elements Pt Pd Ni --estimate                    # size it first
+poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
 poraque-train --config configs/train_materialsproject.yaml
 ```
 
@@ -124,7 +124,7 @@ data:
 With the library, the archive supplies the structure and the library supplies
 the pseudopotentials — together everything VASP's own `POTION` construction
 needs — and $V_\mathrm{ext}$ is accurate to a relative $2\times10^{-5}$.
-Without it, the Gaussian pseudo-ion model stands in. On the Ag–Au–Pt set the
+Without it, the Gaussian pseudo-ion model stands in. On the Ag–Pt–Pt set the
 two differ by **0.38 relative $L_2$**: different fields, not different
 roundings of one. A species the library cannot serve warns once and falls back
 on its own; the rest still get the exact potential. See
@@ -161,7 +161,7 @@ any payload.
 ```python
 from poraque.data import MPDataFetcher
 
-with MPDataFetcher(["Ag", "Au", "Pt"], outdir="data/MP",
+with MPDataFetcher(["Pt", "Pd", "Ni"], outdir="data/MP",
                    band_gap=(0.0, 0.0),        # metals
                    num_sites=(1, 8)) as mp:
     mp.dry_run()                               # report only; writes nothing

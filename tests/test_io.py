@@ -435,8 +435,8 @@ class TestAugmentation:
 
         n = int(np.prod(shape))
         values = [f"{i:.5E}" for i in range(n)]
-        lines = ["Au", "   1.0", "  2.0 0.0 0.0", "  0.0 2.0 0.0",
-                 "  0.0 0.0 2.0", "  Au", "   1", "Direct",
+        lines = ["Pt", "   1.0", "  2.0 0.0 0.0", "  0.0 2.0 0.0",
+                 "  0.0 0.0 2.0", "  Pt", "   1", "Direct",
                  "  0.0 0.0 0.0", ""]
         lines.append("  {}  {}  {}".format(*shape))
         for start in range(0, n, columns):
@@ -506,7 +506,7 @@ class TestAugmentation:
         from poraque.fields.vasp.volumetric import read_augmentation
 
         grid = FieldGrid((4, 4, 4), np.eye(3) * 5.0)
-        structure = Poscar(np.eye(3) * 5.0, ["Au"], [1], np.zeros((1, 3)))
+        structure = Poscar(np.eye(3) * 5.0, ["Pt"], [1], np.zeros((1, 3)))
         density = ChargeDensity(np.ones(grid.shape) * 0.5, grid, structure)
 
         block = ["augmentation occupancies   1  3", "  0.1 0.2 0.3"]
@@ -521,7 +521,7 @@ class TestAugmentation:
         from poraque.fields.vasp.poscar import Poscar
 
         grid = FieldGrid((4, 4, 4), np.eye(3) * 5.0)
-        structure = Poscar(np.eye(3) * 5.0, ["Au"], [1], np.zeros((1, 3)))
+        structure = Poscar(np.eye(3) * 5.0, ["Pt"], [1], np.zeros((1, 3)))
         density = ChargeDensity(np.ones(grid.shape) * 0.5, grid, structure)
 
         plain = density.write(str(tmp_path / "a"))
@@ -536,7 +536,7 @@ class TestAugmentation:
         from poraque.fields.vasp.poscar import Poscar
 
         grid = FieldGrid((4, 4, 4), np.eye(3) * 5.0)
-        structure = Poscar(np.eye(3) * 5.0, ["Au"], [1], np.zeros((1, 3)))
+        structure = Poscar(np.eye(3) * 5.0, ["Pt"], [1], np.zeros((1, 3)))
         values = np.random.default_rng(0).random(grid.shape)
         density = ChargeDensity(values, grid, structure)
 
@@ -656,10 +656,10 @@ class TestAugmentationReference:
             directory.mkdir()
             self._write_chgcar(directory / "CHGCAR", value)
         reference = build_reference([str(tmp_path / "a"), str(tmp_path / "b")])
-        assert set(reference) == {"Au"}
-        assert np.allclose(reference["Au"]["values"], 3.0)
-        assert reference["Au"]["atoms"] == 2
-        assert reference["Au"]["structures"] == 2
+        assert set(reference) == {"Pt"}
+        assert np.allclose(reference["Pt"]["values"], 3.0)
+        assert reference["Pt"]["atoms"] == 2
+        assert reference["Pt"]["structures"] == 2
 
     def test_a_directory_without_records_contributes_nothing(self, tmp_path):
         from poraque.fields.vasp.augmentation import build_reference
@@ -671,8 +671,8 @@ class TestAugmentationReference:
 
     @staticmethod
     def _write_chgcar(path, value, augmentation=True):
-        lines = ["Au", "   1.0", "  2.0 0.0 0.0", "  0.0 2.0 0.0",
-                 "  0.0 0.0 2.0", "  Au", "   1", "Direct",
+        lines = ["Pt", "   1.0", "  2.0 0.0 0.0", "  0.0 2.0 0.0",
+                 "  0.0 0.0 2.0", "  Pt", "   1", "Direct",
                  "  0.0 0.0 0.0", "", "  2  2  2",
                  "0.0 0.0 0.0 0.0 0.0", "0.0 0.0 0.0"]
         if augmentation:
@@ -854,7 +854,7 @@ class TestVaspGridRule:
     and doubling it gives 64 where VASP gives 128.
     """
 
-    #: 27-atom gold cell, ENCUT 450, PREC=Accurate -> VASP writes 128^3.
+    #: 27-atom platinum cell, ENCUT 450, PREC=Accurate -> VASP writes 128^3.
     GOLD_CELL = [[0.0, 6.233932, 6.233932],
                  [6.233932, 0.0, 6.233932],
                  [6.233932, 6.233932, 0.0]]

@@ -23,7 +23,7 @@ them merely approximate.
 a per-atom offset of order :math:`10^{3}` eV from the absent PAW one-centre
 terms. Subtracting *VASP's* atomic energy leaves that offset untouched;
 subtracting *Poraquê's own* atomic energy cancels it. The measured difference
-on gold is a cohesive energy of :math:`-1157` eV/atom against one of
+on platinum is a cohesive energy of :math:`-1157` eV/atom against one of
 :math:`-1.9` eV/atom.
 
 **The result is physically sized.** A cohesive energy in the right units, with
@@ -55,15 +55,15 @@ needs_dataset = pytest.mark.skipif(
     reason="the shipped VASP dataset is not present in this checkout")
 
 # `method="poraque"` evaluates the isolated atom's energy from its own fields,
-# and the kinetic term needs the reference TAUCAR. Every Au TAUCAR was purged on
-# 2026-08-25 as physically invalid -- see DELETIONS.md -- so these tests have no
+# and the kinetic term needs the reference TAUCAR. Every Pt TAUCAR was purged on
+# 2026-08-25 as physically invalid -- see the post-mortem -- so these tests have no
 # kinetic labels to work from until the VASP 6.6.1 / LTAU recomputation lands.
 # The condition is the file itself rather than a hard skip, so they revive on
 # their own the moment it does; nothing has to be remembered.
 needs_reference_tau = pytest.mark.skipif(
-    not os.path.exists(os.path.join(REF_DIR, "Au", "TAUCAR")),
-    reason="no reference TAUCAR: the Au kinetic-energy data was purged as "
-           "invalid (see DELETIONS.md) and is pending recomputation with "
+    not os.path.exists(os.path.join(REF_DIR, "Pt", "TAUCAR")),
+    reason="no reference TAUCAR: the Pt kinetic-energy data was purged as "
+           "invalid and is pending recomputation with "
            "VASP 6.6.1 / LTAU = .TRUE.")
 
 
@@ -102,8 +102,8 @@ def components(name, references=None):
 class TestReadingReferences:
     def test_reads_one_energy_per_element_directory(self):
         references = ReferenceEnergies.from_directory(REF_DIR, method="code")
-        assert "Au" in references
-        assert references["Au"] == pytest.approx(-0.0786091, abs=1e-6)
+        assert "Pt" in references
+        assert references["Pt"] == pytest.approx(-0.0786091, abs=1e-6)
 
     @needs_reference_tau
     def test_the_two_methods_disagree_by_the_paw_offset(self):
@@ -116,7 +116,7 @@ class TestReadingReferences:
         """
         code = ReferenceEnergies.from_directory(REF_DIR, method="code")
         own = ReferenceEnergies.from_directory(REF_DIR, method="poraque")
-        assert abs(own["Au"] - code["Au"]) > 1000.0
+        assert abs(own["Pt"] - code["Pt"]) > 1000.0
 
     def test_rejects_an_unknown_method(self):
         with pytest.raises(ValueError, match="method="):
@@ -127,17 +127,17 @@ class TestReadingReferences:
             ReferenceEnergies.from_directory("/nonexistent/ref")
 
     def test_energy_is_read_from_outcar_or_oszicar(self):
-        assert read_total_energy(os.path.join(REF_DIR, "Au")) is not None
+        assert read_total_energy(os.path.join(REF_DIR, "Pt")) is not None
 
     def test_decorated_symbols_match_the_bare_element(self):
-        """``Au_pv`` in a POTCAR must find the ``Au`` reference."""
-        references = ReferenceEnergies({"Au": -1.0})
-        assert references["Au_pv"] == -1.0
-        assert "Au.pbe" in references
+        """``Pt_pv`` in a POTCAR must find the ``Pt`` reference."""
+        references = ReferenceEnergies({"Pt": -1.0})
+        assert references["Pt_pv"] == -1.0
+        assert "Pt.pbe" in references
 
     def test_total_for_sums_over_atoms(self):
-        references = ReferenceEnergies({"Au": -2.0})
-        structure = Poscar(cell=np.eye(3) * 10.0, symbols=["Au"], counts=[3],
+        references = ReferenceEnergies({"Pt": -2.0})
+        structure = Poscar(cell=np.eye(3) * 10.0, symbols=["Pt"], counts=[3],
                            scaled_positions=np.zeros((3, 3)))
         assert references.total_for(structure) == pytest.approx(-6.0)
 
@@ -148,8 +148,8 @@ class TestReadingReferences:
         It has the right units and a plausible magnitude, and is wrong by whole
         atoms.
         """
-        references = ReferenceEnergies({"Au": -2.0})
-        structure = Poscar(cell=np.eye(3) * 10.0, symbols=["Au", "Ag"],
+        references = ReferenceEnergies({"Pt": -2.0})
+        structure = Poscar(cell=np.eye(3) * 10.0, symbols=["Pt", "Ag"],
                            counts=[1, 1],
                            scaled_positions=[[0, 0, 0], [0.5, 0.5, 0.5]])
         assert references.missing_for(structure) == ["Ag"]
@@ -230,7 +230,7 @@ class TestSelfReferencingRemovesThePawOffset:
         """
         Right order, right sign, for a late transition metal.
 
-        Gold's cohesive energy is a few eV per atom. Referenced against
+        Platinum's cohesive energy is a few eV per atom. Referenced against
         Poraquê's own isolated atom the answer lands there; referenced against
         VASP's it does not, by three orders of magnitude.
         """
@@ -300,7 +300,7 @@ class TestCalculatorIntegration:
         from poraque.calculator import _resolve_references
 
         assert _resolve_references(None) is None
-        assert _resolve_references({"Au": -1.0})["Au"] == -1.0
+        assert _resolve_references({"Pt": -1.0})["Pt"] == -1.0
         assert isinstance(_resolve_references(REF_DIR), ReferenceEnergies)
-        built = ReferenceEnergies({"Au": -1.0})
+        built = ReferenceEnergies({"Pt": -1.0})
         assert _resolve_references(built) is built

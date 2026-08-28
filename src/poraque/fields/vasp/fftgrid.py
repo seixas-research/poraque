@@ -31,7 +31,7 @@ density grid is derived in two stages rather than one:
 
 **The order is the whole point.** Rounding the coarse grid to an FFT-friendly
 size and then doubling is not the same as computing the fine size directly and
-rounding once: for a 27-atom gold cell at 450 eV the coarse grid is 61 → 64, so
+rounding once: for a 27-atom platinum cell at 450 eV the coarse grid is 61 → 64, so
 the density grid is 128 — where rounding ``4 x 15.25 = 61`` in one step gives
 64, a factor of two too small. That was a real discrepancy against every
 reference calculation in this project's dataset.

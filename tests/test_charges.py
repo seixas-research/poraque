@@ -75,7 +75,7 @@ def two_gaussians():
     """
     cell = np.eye(3) * LENGTH
     grid = FieldGrid((POINTS,) * 3, cell)
-    structure = Poscar(cell=cell, symbols=["Au"], counts=[2],
+    structure = Poscar(cell=cell, symbols=["Pt"], counts=[2],
                        scaled_positions=[[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]])
 
     coordinates = grid.cartesian_coordinates()
@@ -94,7 +94,7 @@ def skewed_gaussians():
     """The same idea in a non-orthogonal cell, where wrapping alone is wrong."""
     cell = np.array([[10.0, 0.0, 0.0], [5.0, 8.66, 0.0], [0.0, 0.0, 10.0]])
     grid = FieldGrid((24, 24, 24), cell)
-    structure = Poscar(cell=cell, symbols=["Au"], counts=[2],
+    structure = Poscar(cell=cell, symbols=["Pt"], counts=[2],
                        scaled_positions=[[0.2, 0.2, 0.5], [0.7, 0.7, 0.5]])
 
     coordinates = grid.cartesian_coordinates()
@@ -172,7 +172,7 @@ class TestEveryPartitioning:
     def test_recovers_a_known_split(self, two_gaussians, method):
         """Charges 8 and 4, far apart: no scheme has room to disagree."""
         result = partial_charges(two_gaussians, method=method,
-                                 valence={"Au": 6.0})
+                                 valence={"Pt": 6.0})
         assert result.populations[0] == pytest.approx(8.0, abs=0.1)
         assert result.populations[1] == pytest.approx(4.0, abs=0.1)
 
@@ -185,14 +185,14 @@ class TestEveryPartitioning:
         this assertion would notice.
         """
         result = partial_charges(two_gaussians, method=method,
-                                 valence={"Au": 6.0})
+                                 valence={"Pt": 6.0})
         assert result.total_population == pytest.approx(
             two_gaussians.integrate(), rel=1e-9)
 
     def test_net_charge_is_valence_minus_population(self, two_gaussians,
                                                     method):
         result = partial_charges(two_gaussians, method=method,
-                                 valence={"Au": 6.0})
+                                 valence={"Pt": 6.0})
         assert np.allclose(result.charges,
                            result.valence - result.populations)
 
@@ -205,7 +205,7 @@ class TestEveryPartitioning:
         single rounding.
         """
         result = partial_charges(skewed_gaussians, method=method,
-                                 valence={"Au": 4.5})
+                                 valence={"Pt": 4.5})
         assert result.total_population == pytest.approx(
             skewed_gaussians.integrate(), rel=1e-9)
         assert result.populations[0] > result.populations[1]
@@ -219,7 +219,7 @@ class TestEveryPartitioning:
         import json
 
         payload = partial_charges(two_gaussians, method=method,
-                                  valence={"Au": 6.0}).as_dict()
+                                  valence={"Pt": 6.0}).as_dict()
         json.dumps(payload)
         assert payload["method"] == method
         assert len(payload["charges"]) == 2
@@ -244,7 +244,7 @@ class TestVoronoi:
         """
         cell = np.eye(3) * 8.0
         grid = FieldGrid((16, 16, 16), cell)
-        structure = Poscar(cell=cell, symbols=["Au"], counts=[2],
+        structure = Poscar(cell=cell, symbols=["Pt"], counts=[2],
                            scaled_positions=[[0.25, 0.5, 0.5],
                                              [0.75, 0.5, 0.5]])
         density = ChargeDensity(np.ones(grid.shape), grid, structure)
@@ -263,7 +263,7 @@ class TestVoronoi:
         """
         cell = np.eye(3) * 8.0
         grid = FieldGrid((16, 16, 16), cell)
-        structure = Poscar(cell=cell, symbols=["Au"], counts=[2],
+        structure = Poscar(cell=cell, symbols=["Pt"], counts=[2],
                            scaled_positions=[[0.25, 0.5, 0.5],
                                              [0.75, 0.5, 0.5]])
         density = ChargeDensity(np.ones(grid.shape), grid, structure)
@@ -288,17 +288,17 @@ class TestVoronoi:
 class TestHirshfeld:
     def test_falls_back_to_the_exponential_promolecule(self, two_gaussians):
         """Without references it still works, and says that it did."""
-        result = hirshfeld_charges(two_gaussians, valence={"Au": 6.0})
-        assert result.details["promolecule"]["Au"] == "exponential model"
+        result = hirshfeld_charges(two_gaussians, valence={"Pt": 6.0})
+        assert result.details["promolecule"]["Pt"] == "exponential model"
         assert result.total_population == pytest.approx(
             two_gaussians.integrate(), rel=1e-9)
 
     @needs_references
     def test_uses_a_real_isolated_atom_density_when_available(self,
                                                               two_gaussians):
-        result = hirshfeld_charges(two_gaussians, valence={"Au": 6.0},
+        result = hirshfeld_charges(two_gaussians, valence={"Pt": 6.0},
                                    references=REF_DIR)
-        assert result.details["promolecule"]["Au"] == "isolated-atom CHGCAR"
+        assert result.details["promolecule"]["Pt"] == "isolated-atom CHGCAR"
 
     @needs_dataset
     @needs_references
@@ -313,7 +313,7 @@ class TestHirshfeld:
         """
         density = ChargeDensity.read(os.path.join(CACHE_DIR, "struct_000",
                                                   "CHGCAR"))
-        result = hirshfeld_charges(density, valence={"Au": 11.0},
+        result = hirshfeld_charges(density, valence={"Pt": 11.0},
                                    references=REF_DIR)
         assert np.abs(result.charges).max() < 0.05
 
@@ -326,11 +326,11 @@ class TestHirshfeld:
         """
         cell = np.eye(3) * 30.0                 # mostly vacuum
         grid = FieldGrid((20, 20, 20), cell)
-        structure = Poscar(cell=cell, symbols=["Au"], counts=[2],
+        structure = Poscar(cell=cell, symbols=["Pt"], counts=[2],
                            scaled_positions=[[0.1, 0.1, 0.1],
                                              [0.2, 0.2, 0.2]])
         density = ChargeDensity(np.full(grid.shape, 1e-6), grid, structure)
-        result = hirshfeld_charges(density, valence={"Au": 1.0})
+        result = hirshfeld_charges(density, valence={"Pt": 1.0})
         assert np.isfinite(result.populations).all()
         assert result.total_population == pytest.approx(density.integrate(),
                                                         rel=1e-9)
@@ -343,7 +343,7 @@ class TestHirshfeld:
         The spherical average must preserve the norm, or the promolecule is
         mis-scaled and every Hirshfeld charge shifts with it.
         """
-        reference = ChargeDensity.read(os.path.join(REF_DIR, "Au", "CHGCAR"))
+        reference = ChargeDensity.read(os.path.join(REF_DIR, "Pt", "CHGCAR"))
         radii, profile = atomic_radial_profile(reference)
         integral = np.trapezoid(profile * 4 * np.pi * radii ** 2, radii)
         assert integral == pytest.approx(11.0, rel=0.05)
@@ -354,7 +354,7 @@ class TestHirshfeld:
 # ===================================================================== #
 class TestBaderNative:
     def test_finds_one_maximum_per_well_separated_atom(self, two_gaussians):
-        result = bader_charges(two_gaussians, valence={"Au": 6.0},
+        result = bader_charges(two_gaussians, valence={"Pt": 6.0},
                                backend="native")
         assert result.details["backend"] == "native"
         assert result.details["maxima"] == 2
@@ -369,7 +369,7 @@ class TestBaderNative:
         """
         cell = np.eye(3) * 12.0
         grid = FieldGrid((36, 36, 36), cell)
-        structure = Poscar(cell=cell, symbols=["Au"], counts=[2],
+        structure = Poscar(cell=cell, symbols=["Pt"], counts=[2],
                            scaled_positions=[[0.35, 0.5, 0.5],
                                              [0.65, 0.5, 0.5]])
         coordinates = grid.cartesian_coordinates()
@@ -396,7 +396,7 @@ class TestBaderNative:
         """
         cell = np.eye(3) * 8.0
         grid = FieldGrid((20, 20, 20), cell)
-        structure = Poscar(cell=cell, symbols=["Au"], counts=[1],
+        structure = Poscar(cell=cell, symbols=["Pt"], counts=[1],
                            scaled_positions=[[0.5, 0.5, 0.5]])
         rng = np.random.default_rng(0)
         values = 1.0 + 0.5 * rng.random(grid.shape)     # many local maxima
@@ -412,7 +412,7 @@ class TestBaderNative:
             pytest.skip("dataset not present")
         density = ChargeDensity.read(os.path.join(CACHE_DIR, "struct_000",
                                                   "CHGCAR"))
-        result = bader_charges(density, valence={"Au": 11.0}, backend="native")
+        result = bader_charges(density, valence={"Pt": 11.0}, backend="native")
         assert result.total_population == pytest.approx(density.integrate(),
                                                         rel=1e-9)
         assert result.total_charge == pytest.approx(0.0, abs=1e-5)
@@ -482,13 +482,13 @@ class TestCalculatorCharges:
                                  projection_channels=8, device="cpu",
                                  training_resolution=16)
              for task in ("ext2chg", "chg2tau")})
-        return Poraque(bundle, charges={"Au": 11.0}, device="cpu")
+        return Poraque(bundle, charges={"Pt": 11.0}, device="cpu")
 
     @pytest.fixture
     def atoms(self):
         ase = pytest.importorskip("ase")
 
-        return ase.Atoms("Au2", cell=np.eye(3) * 4.08, pbc=True,
+        return ase.Atoms("Pt2", cell=np.eye(3) * 4.08, pbc=True,
                          scaled_positions=[[0, 0, 0], [0.5, 0.5, 0.5]])
 
     def test_matches_the_ase_interface(self, calculator, atoms):

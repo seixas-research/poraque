@@ -10,7 +10,7 @@ r"""
 The kinetic-energy-density ingestion gate.
 
 These tests exist because a whole dataset of invalid :math:`\tau` was ingested,
-cached, trained on and reported before anyone noticed (``DELETIONS.md``). The
+cached, trained on and reported before anyone noticed. The
 regression they pin is therefore not a bug in a function — it is the absence of
 any check at all.
 
@@ -39,7 +39,7 @@ them as ground truth.
 
 The headline test is
 :class:`TestTheThousandFoldScalingIsRejected`: the exact failure mode that
-destroyed the gold τ dataset, reduced to a fixture.
+destroyed the platinum τ dataset, reduced to a fixture.
 """
 
 import json
@@ -193,7 +193,7 @@ class TestScaleAgainstThomasFermi:
 # ===================================================================== #
 class TestTheThousandFoldScalingIsRejected:
     r"""
-    The bug that produced ``DELETIONS.md``, as a fixture.
+    The bug that produced the post-mortem, as a fixture.
 
     A :math:`\tau` scaled by :math:`10^3` is finite, positive, smooth, on the
     right grid, and satisfies the von Weizsäcker bound *more* comfortably than
@@ -243,7 +243,7 @@ class TestTheThousandFoldScalingIsRejected:
                          provenance=good_provenance())
         message = str(excinfo.value)
         assert "tau*Omega" in message and "Hartree" in message
-        assert "DELETIONS.md" in message
+        assert "relax data.tau_validation" in message
 
 
 # ===================================================================== #
@@ -352,11 +352,47 @@ class TestProvenance:
         with pytest.raises(TauValidationError, match="nothing recorded"):
             validate_tau(tau, rho, grid, provenance=None)
 
-    def test_a_run_with_no_output_file_has_no_version(self, tmp_path, system):
+    def test_a_run_with_no_output_file_passes_and_says_so(self, tmp_path,
+                                                          system):
+        """
+        The version lives in ``OUTCAR``/``vasprun.xml``, which are outputs. A
+        dataset is not obliged to ship them, and refusing an otherwise valid
+        and physically consistent tau for want of one made a complete set
+        untrainable over a file that says nothing about the field. The gap is
+        recorded instead, so a run that could not name its version stays
+        distinguishable from one that did.
+        """
+        grid, rho, tau = system
+        run = write_run(tmp_path / "stripped", "LTAU = .TRUE.\n",
+                        outcar_version=None)
+        record = validate_tau(tau, rho, grid,
+                              provenance=read_tau_provenance(run))
+
+        assert record["passed"] is True
+        assert any("no code version" in note for note in record["warnings"])
+        assert record["failures"] == []
+
+    def test_the_missing_version_can_still_be_made_fatal(self, tmp_path,
+                                                         system):
+        """The old behaviour, available on request rather than by default."""
         grid, rho, tau = system
         run = write_run(tmp_path / "stripped", "LTAU = .TRUE.\n",
                         outcar_version=None)
         with pytest.raises(TauValidationError, match="no code version"):
+            validate_tau(tau, rho, grid,
+                         provenance=read_tau_provenance(run),
+                         config={"require_code_version": True})
+
+    def test_a_recorded_version_is_still_checked(self, tmp_path, system):
+        """
+        Dropping the *requirement* must not drop the *comparison*. A run that
+        does name a version older than 6.6.1 is still refused -- that check
+        costs nothing and is the one with teeth.
+        """
+        grid, rho, tau = system
+        run = write_run(tmp_path / "old", "LTAU = .TRUE.\n",
+                        outcar_version="6.2.0")
+        with pytest.raises(TauValidationError, match="below the required"):
             validate_tau(tau, rho, grid,
                          provenance=read_tau_provenance(run))
 
@@ -567,7 +603,7 @@ class TestTheGateStopsACacheBuild:
         assert manifest.entries["struct_000"]["scale"]["ratio"] > 100.0
 
     def test_the_patched_build_provenance_is_refused_end_to_end(self, tmp_path):
-        """The gold dataset's own INCAR and version, through the real path."""
+        """The platinum dataset's own INCAR and version, through the real path."""
         from poraque.data import build_field_cache
 
         root = tmp_path / "runs"

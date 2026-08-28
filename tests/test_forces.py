@@ -91,7 +91,7 @@ def outcar_forces(path):
 
 @pytest.fixture(scope="module")
 def rattled_case():
-    """VASP's own density, potential and geometry for a rattled gold cell."""
+    """VASP's own density, potential and geometry for a rattled platinum cell."""
     cache = os.path.join(CACHE_DIR, RATTLED)
     vasp = os.path.join(VASP_DIR, RATTLED)
     if not os.path.isdir(cache):
@@ -196,7 +196,7 @@ class TestLocalPotentialForces:
         """
         Symmetry, on the structure that has it.
 
-        ``struct_010`` is an undistorted cubic gold cell, so every force must
+        ``struct_010`` is an undistorted cubic platinum cell, so every force must
         vanish. It is a weak test on its own — an implementation returning zero
         always would pass — which is why it sits beside the finite-difference
         check rather than instead of it.
@@ -333,8 +333,8 @@ class TestCalculatorForces:
                                      projection_channels=8, device="cpu",
                                      training_resolution=16)
                  for task in ("ext2chg", "chg2tau")})
-            calculator = Poraque(bundle, charges={"Au": 11.0}, device="cpu")
-            atoms = Atoms("Au2", cell=np.eye(3) * 4.08, pbc=True,
+            calculator = Poraque(bundle, charges={"Pt": 11.0}, device="cpu")
+            atoms = Atoms("Pt2", cell=np.eye(3) * 4.08, pbc=True,
                           scaled_positions=[[0, 0, 0], [0.5, 0.5, 0.5]])
             with pytest.warns(RuntimeWarning):
                 with pytest.raises(ValueError, match="POTCAR"):

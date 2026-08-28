@@ -15,10 +15,10 @@ history rather than in the repository:
 **Generating training data** (:func:`tau_incar`). A ``CHGCAR`` comes out of any
 run; a ``TAUCAR`` does not. It needs ``LTAU = .TRUE.`` — whose default is
 ``.FALSE.`` outside meta-GGA — together with ``LCHARG = .TRUE.``, which is what
-actually writes both files. The gold dataset was generated instead with a
+actually writes both files. The platinum dataset was generated instead with a
 ``TAUCAR = .TRUE.`` line that is not a VASP tag at all, by a patched build, and
 every kinetic energy density it produced had to be thrown away. See
-``DELETIONS.md``. Having the correct deck in the source tree, next to the gate
+the post-mortem. Having the correct deck in the source tree, next to the gate
 that enforces it, is the cheapest possible guard against a repeat.
 
 **Consuming a prediction** (:func:`band_structure_incar`, :func:`dos_incar`,
@@ -103,7 +103,7 @@ def tau_incar(system="poraque", encut=450, ediff=1e-8, ispin=1, prec="Accurate",
 
     Examples
     --------
-    >>> deck = tau_incar(system="Au supercell", encut=450)
+    >>> deck = tau_incar(system="Pt supercell", encut=450)
     >>> "LTAU" in deck and ".TRUE." in deck and "LCHARG" in deck
     True
     """
@@ -280,7 +280,7 @@ def write_band_structure_deck(directory, chgcar=None, structure=None,
     kpath : sequence, optional
         Brillouin-zone path; see :func:`line_mode_kpoints`. Defaults to the
         FCC path Γ-X-W-K-Γ-L-U-W-L-K, which is the right one for this
-        project's gold cells and the wrong one for anything else.
+        project's platinum cells and the wrong one for anything else.
     labels : sequence of str, optional
     encut : float, optional
         Must match the density's run.

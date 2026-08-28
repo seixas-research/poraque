@@ -33,7 +33,7 @@ nonsense.
 \opt{volume\_scaled = True}: VASP stores $\rho\Omega$ and $\tau\Omega$, so the
 conversion happens transparently on read and write, and
 \opt{integrate()} returns the electron count directly. Verified against the
-reference data: $297.0000$ electrons for $27$ gold atoms at
+reference data: $297.0000$ electrons for $27$ platinum atoms at
 $Z^{\mathrm{val}}=11$. \pyclass{ExternalPotential} declares it \opt{False},
 matching \file{LOCPOT}.
 \end{ptip}
@@ -56,7 +56,7 @@ rounded up to even, FFT-friendly sizes.
 
 \begin{pwarn}
 The cutoff-derived shape is an \emph{estimate}. VASP's exact rounding is
-version- and setting-dependent: for the gold data set the rule yields $64^3$
+version- and setting-dependent: for the platinum data set the rule yields $64^3$
 where VASP used $128^3$, and on a strained cell VASP chose $120$ on one axis
 where the rule gives $128$. Every result in this guide reads the grid from the
 files, so no conclusion depends on the heuristic --- but it should not be relied
@@ -79,10 +79,6 @@ Nothing is approximated: the result is the exact band-limited projection, it
 remains exactly periodic, and because the $\GG=0$ coefficient is copied
 unchanged, the cell average --- hence $\int\rho\,\mathrm{d}\rr$ --- is preserved
 to machine precision.
-
-Trilinear or spline interpolation would do none of these things: it aliases
-high-frequency content onto low frequencies, breaks periodicity at the cell
-boundary, and shifts the integral.
 
 \begin{ptip}
 Measured: a band-limited field downsampled $64^3\to32^3$ agrees with direct
@@ -136,8 +132,7 @@ would be a silent physics error if mixed across a data set.
 \section{Hardware acceleration}
 \label{sec:hardware}
 
-\opt{resolve\_device} prefers CUDA, then Apple Metal (MPS), then CPU, and
-degrades gracefully: an explicit request for an absent backend warns and falls
+\opt{resolve\_device} prefers CUDA, then Apple Metal (MPS), then CPU. An explicit request for an absent backend warns and falls
 back rather than raising, so a configuration written on a workstation still runs
 on a laptop.
 

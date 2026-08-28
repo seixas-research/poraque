@@ -157,14 +157,24 @@ class ScalarField(ABC):
     volume_scaled : bool
         Whether the on-disk values are multiplied by the cell volume. VASP does
         this for the *charge density* in ``CHGCAR`` (it stores ``rho * Omega``)
-        but not for potentials in ``LOCPOT``. Subclasses declare their own
-        convention so that :meth:`read` and :meth:`write` stay symmetric.
+        but not for potentials in ``LOCPOT``, and not for the kinetic energy
+        density in ``TAUCAR``. Subclasses declare their own convention so that
+        :meth:`read` and :meth:`write` stay symmetric.
+    reads_all_blocks : bool
+        Whether :meth:`read` parses every grid block in the file rather than
+        stopping after the first. Off by default because the blocks after the
+        first are the expensive half of a ``CHGCAR``: the augmentation records
+        and the magnetisation grid, neither of which a single-channel field
+        wants. A subclass whose file spreads *one* physical quantity over
+        several blocks turns it on and combines them in
+        :meth:`combine_blocks`.
     """
 
     name = "scalar field"
     default_filename = "FIELD"
     unit = ""
     volume_scaled = False
+    reads_all_blocks = False
 
     def __init__(self, data, grid, structure, metadata=None, dtype=None):
         self.data = np.asarray(data, dtype=resolve_dtype(dtype))
@@ -326,7 +336,9 @@ class ScalarField(ABC):
         ScalarField
             An instance of the calling subclass.
         """
-        structure, raw, _ = read_volumetric(path)
+        structure, raw, extra = read_volumetric(path,
+                                                read_all=cls.reads_all_blocks)
+        raw = cls.combine_blocks(raw, extra)
 
         if grid is None:
             grid = FieldGrid(raw.shape, structure.cell)
@@ -354,6 +366,30 @@ class ScalarField(ABC):
             metadata={"source": str(path)},
             dtype=dtype,
         )
+
+    @classmethod
+    def combine_blocks(cls, raw, extra):
+        """
+        Reduce the grid blocks of one file to the single field they describe.
+
+        The default keeps the first block and discards the rest, which is right
+        for every field VASP writes one block per channel of: a spin-polarised
+        ``CHGCAR``'s second block is the *magnetisation*, a different quantity
+        on the same mesh, and belongs to :class:`~poraque.fields.SpinDensity`
+        rather than here.
+
+        Parameters
+        ----------
+        raw : numpy.ndarray
+            The first grid block, in file units.
+        extra : sequence of numpy.ndarray
+            The blocks after it. Empty unless :attr:`reads_all_blocks` is set.
+
+        Returns
+        -------
+        numpy.ndarray
+        """
+        return raw
 
     def to_file_values(self):
         """

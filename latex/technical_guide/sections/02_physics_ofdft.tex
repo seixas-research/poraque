@@ -71,7 +71,7 @@ functional except $\Ts[\rho]$. The classical approximations are:
     densities). Neither is reliable across chemistry.
 \end{description}
 
-Chapter~\ref{ch:results} measures these on gold. Thomas--Fermi achieves a
+Chapter~\ref{ch:results} measures these on platinum. Thomas--Fermi achieves a
 \emph{negative} coefficient of determination --- it is a worse pointwise
 predictor of $\tau$ than the constant mean --- which is the expected failure of
 a uniform-gas limit applied to a $d$-band metal. That is the gap a learned
@@ -116,13 +116,6 @@ standard convention --- adopted here and by VASP --- is to set the $\GG=0$
 component of \emph{each} Coulomb term to zero individually, which amounts to
 adding a uniform neutralising background. The consequence is that potentials are
 defined only up to a constant, and their cell average vanishes.
-
-\begin{ptip}
-This convention is why \file{EXTCAR} written by VASP has a cell average of
-$-2.5\times10^{-12}$ eV, and why Poraqu\^e's reconstruction reproduces it to
-$\sim10^{-16}$. Agreement of the mean was the first check that the two codes
-share a convention, before any pointwise comparison was meaningful.
-\end{ptip}
 
 \section{The external potential of pseudo-ions}
 \label{sec:extpot}

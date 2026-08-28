@@ -171,7 +171,7 @@ Input & $(B, 1, N_1, N_2, N_3)$, normalised field \\
 Coordinates & append 3 fractional-coordinate channels \\
 Lifting & $1\times1\times1$ convolution to width $C$ \\
 Fourier layers ($\times L$) & Eq.~\eqref{eq:fourierlayer} + pointwise + GroupNorm + FiLM, residual \\
-Projection & two $1\times1\times1$ convolutions with GELU \\
+Projection & two $1\times1\times1$ convolutions \\
 Output & $(B, 1, N_1, N_2, N_3)$ \\
 \bottomrule
 \end{tabular}

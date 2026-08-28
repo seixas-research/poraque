@@ -48,7 +48,8 @@ import numpy as np
 from .base import resolve_dtype
 from .density import ChargeDensity
 from .grid import FieldGrid
-from .vasp.volumetric import read_volumetric, write_volumetric
+from .vasp.volumetric import (_open_text, read_volumetric,
+                              write_volumetric)
 
 
 def is_spin_polarized(path):
@@ -76,8 +77,51 @@ def is_spin_polarized(path):
 
         return hdf5_is_spin_polarized(path)
 
-    _, _, extra = read_volumetric(path, read_all=True)
-    return len(extra) >= 1
+    return _text_has_second_block(path)
+
+
+def _text_has_second_block(path):
+    """
+    Whether a ``CHGCAR``-format text file repeats its grid-dimension line.
+
+    Scanned rather than parsed. The obvious implementation --
+    ``read_volumetric(path, read_all=True)`` and count the blocks -- converts
+    every value in the file to a float to answer a yes/no: 0.44 s on a 108³
+    spin-polarised ``CHGCAR``, which the cache builder pays once per material
+    and then again to name the cache directory. Looking for the marker instead
+    costs a linear scan with no float conversion.
+
+    VASP separates the two grid blocks by repeating ``NGXF NGYF NGZF`` on its
+    own line, so the marker is the *first* such line seen a second time. Only
+    an exact match against the shape already read counts, which is what keeps
+    the augmentation records -- occupancies, not grid dimensions -- from
+    matching by accident.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+
+    Returns
+    -------
+    bool
+    """
+    shape = None
+    with _open_text(path) as handle:
+        for line in handle:
+            fields = line.split()
+            if len(fields) != 3:
+                continue
+            try:
+                candidate = tuple(int(token) for token in fields)
+            except ValueError:
+                continue
+            if any(value <= 0 for value in candidate):
+                continue
+            if shape is None:
+                shape = candidate
+            elif candidate == shape:
+                return True
+    return False
 
 
 class SpinDensity:

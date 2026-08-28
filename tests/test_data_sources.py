@@ -40,12 +40,12 @@ from poraque.fields import ChargeDensity, ExternalPotential, FieldGrid
 from poraque.fields import KineticEnergyDensity
 from poraque.fields.vasp.poscar import Poscar
 
-CHARGES = {"Si": 4.0, "Au": 11.0}
+CHARGES = {"Si": 4.0, "Pt": 11.0}
 
 #: Provenance every synthetic run now carries. The ingestion gate refuses a
 #: TAUCAR whose run cannot say which code wrote it under which tag, so a
 #: fixture that omits this is a fixture of *invalid* data -- which is what the
-#: repository's own gold TAUCARs turned out to be (see DELETIONS.md).
+#: repository's own platinum TAUCARs turned out to be.
 VALID_TAU_INCAR = "LTAU = .TRUE.\nLCHARG = .TRUE.\n"
 VALID_OUTCAR = (" vasp.6.6.1 18Jan21 (build Jul 30 2026 13:44:49) complex\n")
 
@@ -69,7 +69,7 @@ def plausible_tau(density, grid):
 
     return thomas_fermi_tau(density) + von_weizsacker_tau(density, grid)
 
-#: The reference POTCAR shipped with the repository's gold dataset. Tests that
+#: The reference POTCAR shipped with the repository's platinum dataset. Tests that
 #: need a *complete* local-potential table use it and skip when it is absent —
 #: no fixture can fabricate one, since a truncated table parses fine and then
 #: cannot be splined onto the PSGMAX mesh.
@@ -119,9 +119,9 @@ def potcar_library(tmp_path):
     if not os.path.exists(REFERENCE_POTCAR):
         pytest.skip("reference POTCAR not available")
     root = tmp_path / "potcars"
-    (root / "Au").mkdir(parents=True)
+    (root / "Pt").mkdir(parents=True)
     with open(REFERENCE_POTCAR, "r", errors="replace") as source:
-        (root / "Au" / "POTCAR").write_text(source.read())
+        (root / "Pt" / "POTCAR").write_text(source.read())
     return str(root)
 
 
@@ -400,7 +400,7 @@ class TestPotcarLibrary:
 
     def test_without_a_library_the_potential_is_the_gaussian_model(self, tmp_path):
         archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
-                             element="Au")
+                             element="Pt")
         source = resolve_source(archive, charges=CHARGES)
         record = source.discover()[0]
 
@@ -412,7 +412,7 @@ class TestPotcarLibrary:
     def test_with_a_library_the_potential_is_tabulated(self, tmp_path,
                                                        potcar_library):
         archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
-                             element="Au")
+                             element="Pt")
         source = resolve_source(archive, potcar_dir=potcar_library)
         record = source.discover()[0]
 
@@ -432,7 +432,7 @@ class TestPotcarLibrary:
         about one number on one fixture.
         """
         archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
-                             element="Au")
+                             element="Pt")
         record = resolve_source(archive).discover()[0]
         grid = resolve_source(archive).grid(record)
 
@@ -450,11 +450,11 @@ class TestPotcarLibrary:
             self, tmp_path, potcar_library):
         """Z_val is stated by the POTCAR; inferring it would be a detour."""
         archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
-                             element="Au")
+                             element="Pt")
 
         source = resolve_source(archive, potcar_dir=potcar_library)
 
-        assert source.charges["Au"] == 11.0
+        assert source.charges["Pt"] == 11.0
 
     def test_a_missing_element_warns_and_falls_back(self, tmp_path,
                                                     potcar_library):
@@ -489,7 +489,7 @@ class TestPotcarLibrary:
             self, tmp_path, potcar_library):
         """POTCARs are routinely removed from archived runs for licensing."""
         runs = os.path.dirname(write_calculation(
-            tmp_path / "runs" / "struct_000", element="Au"))
+            tmp_path / "runs" / "struct_000", element="Pt"))
         source = resolve_source(runs, potcar_dir=potcar_library)
         record = source.discover()[0]
 
@@ -501,7 +501,7 @@ class TestPotcarLibrary:
     def test_a_run_with_its_own_potcar_ignores_the_library(self, tmp_path,
                                                            potcar_library):
         runs = os.path.dirname(write_calculation(
-            tmp_path / "runs" / "struct_000", element="Au",
+            tmp_path / "runs" / "struct_000", element="Pt",
             potcar=REFERENCE_POTCAR))
         source = resolve_source(runs, potcar_dir=potcar_library)
         record = source.discover()[0]
@@ -513,7 +513,7 @@ class TestPotcarLibrary:
     def test_the_cache_records_which_construction_was_used(self, tmp_path,
                                                            potcar_library):
         archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
-                             element="Au")
+                             element="Pt")
         lines = []
 
         build_field_cache(archive, tmp_path / "out", resolution=8,
@@ -620,10 +620,10 @@ class TestMixedFieldDataset:
         calculations use, at which point the mixture is no longer a mixture.
         """
         runs = os.path.dirname(write_calculation(
-            tmp_path / "runs" / "struct_000", element="Au",
+            tmp_path / "runs" / "struct_000", element="Pt",
             potcar=REFERENCE_POTCAR))
         archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
-                             element="Au")
+                             element="Pt")
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")

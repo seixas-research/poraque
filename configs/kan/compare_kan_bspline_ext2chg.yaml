@@ -1,9 +1,9 @@
 # Controlled comparison: activation: kan_bspline vs. the shipped gelu model
-# (models/au_w16_m8_l3), ext2chg only. See compare_kan_cheby_ext2chg.yaml's
+# (models/pt_w16_m8_l3), ext2chg only. See compare_kan_cheby_ext2chg.yaml's
 # header -- same reasoning, same protocol, only the activation differs.
 task:
   type: ext2chg
-  name: au_w16_m8_l3_kanbspline
+  name: pt_w16_m8_l3_kanbspline
 
 data:
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs

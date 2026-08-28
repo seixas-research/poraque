@@ -22,7 +22,7 @@ task:
 
 data:
   train_paths:
-    - data/MP/Ag-Au-Pt
+    - data/MP/Pt-Pd-Ni
   # Coarser than the raw grids but finer than the default, because this set
   # spans large cells and the spectral downsample is exact for band-limited
   # fields -- there is no interpolation error to trade against.

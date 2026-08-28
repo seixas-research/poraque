@@ -43,7 +43,7 @@ from poraque.fields import ChargeDensity, FieldGrid
 
 path = "data/vasp/struct_000/CHGCAR"
 rho = ChargeDensity.read(path, grid=FieldGrid.from_file(path))
-print(rho.integrate())   # 297.0 for 27 Au atoms at ZVAL = 11
+print(rho.integrate())   # 297.0 for 27 Pt atoms at ZVAL = 11
 \end{lstlisting}
 
 A result that misses the integer points at a truncated or misread file long
@@ -74,12 +74,12 @@ modelled: charge densities are objects in a public S3 bucket, so their sizes
 are read with \opt{HEAD} requests that move no payload.
 
 \begin{lstlisting}
-poraque-mp --elements Ag Au Pt --estimate
+poraque-mp --elements Pt Pd Ni --estimate
 \end{lstlisting}
 
 \begin{lstlisting}
 ==================================================================
-  CHGCAR ESTIMATE - Ag-Au-Pt space
+  CHGCAR ESTIMATE - Pt-Pd-Ni space
 ==================================================================
   Materials in space           : 27
   FILES TO DOWNLOAD            : 27
@@ -100,7 +100,7 @@ Then download. \opt{--output} (equivalently \opt{--outdir}) defaults to the
 them where you ran it rather than somewhere it chose:
 
 \begin{lstlisting}
-poraque-mp --elements Ag Au Pt --output data/MP --max-size-mb 20
+poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
 \end{lstlisting}
 
 Useful filters: \opt{--band-gap MIN MAX} (\opt{0 0} selects metals),
@@ -132,7 +132,7 @@ Three consequences, and Poraqu\^e handles the first two for you:
   \item[The valence charges are recoverable.] A pseudopotential \file{CHGCAR}
     integrates to its cell's valence electron count, which is one linear
     equation per material in the per-element $Z^{\mathrm{val}}$. A chemical
-    space of any breadth over-determines them. On the Ag--Au--Pt set this
+    space of any breadth over-determines them. On the Ag--Pt--Pt set this
     returns $11$, $11$ and $10$ --- the \file{POTCAR} values, read off the
     data, from three small files.
   \item[$\tau$ is not.] No public archive publishes a kinetic energy density,
@@ -155,7 +155,7 @@ per species, as VASP distributes them:
 data:
   train_paths:
     - data/MP
-  potcar_dir: /opt/vasp/potpaw_PBE     # <dir>/Ag/POTCAR, <dir>/Au/POTCAR, ...
+  potcar_dir: /opt/vasp/potpaw_PBE     # <dir>/Ag/POTCAR, <dir>/Pt/POTCAR, ...
   resolution: 32
 \end{lstlisting}
 
@@ -176,7 +176,7 @@ none & Gaussian pseudo-ion model & order $10^{-1}$ \\
 \end{tabular}
 \end{center}
 
-Measured on the Ag--Au--Pt set, the two constructions differ \emph{from each
+Measured on the Ag--Pt--Pt set, the two constructions differ \emph{from each
 other} by $0.38$ relative $L^2$. They are different fields, not different
 roundings of one; the Technical Guide shows why no analytic form factor can
 close that gap.

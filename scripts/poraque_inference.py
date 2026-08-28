@@ -300,8 +300,8 @@ def augmentation_from_atoms(reference, structure, log):
     Last resort: the isolated atoms' own one-centre records.
 
     The only source that works for an element the training set has never seen,
-    and **measurably the worst of the three**. On this project's gold data a
-    free Au atom's record sits 86.6 % RMS away from a bulk Au site, against
+    and **measurably the worst of the three**. On this project's platinum data a
+    free Pt atom's record sits 86.6 % RMS away from a bulk Pt site, against
     9.9 % for the training-set average — a free atom and an atom in a metal
     genuinely have different on-site occupations, and the one-centre terms are
     exactly where that difference lives.
@@ -332,7 +332,7 @@ def augmentation_from_atoms(reference, structure, log):
 
     log(f"        using ISOLATED-ATOM records for {library.elements()}")
     log("        !! these are FREE-ATOM on-site terms. Measured on this "
-        "project's gold")
+        "project's platinum")
     log("        data they are ~86 % RMS from a bulk site, against ~9 % for "
         "the")
     log("        training-set average. Use them only for an element the "
@@ -353,7 +353,7 @@ def resolve_augmentation(directory, bundle, structure, shape, log,
     1. **A reference calculation beside the structure.** Exact: these are that
        system's own records.
     2. **The bundle's per-element average**, over the training calculations.
-       ~9.9 % RMS from a bulk site on the gold data.
+       ~9.9 % RMS from a bulk site on the platinum data.
     3. **The isolated-atom database.** ~86.6 % RMS. Explicit request only, for
        an element nothing else covers.
 
@@ -484,7 +484,7 @@ def vasp_native_grid(structure, args, log):
     :meth:`~poraque.fields.FieldGrid.from_encut` sizes a grid the way a
     plane-wave code *should*; this reproduces what VASP actually does, which is
     not the same thing. VASP rounds the **coarse** grid to an FFT-friendly
-    size and only then doubles it for the density, so a 27-atom gold cell at
+    size and only then doubles it for the density, so a 27-atom platinum cell at
     450 eV gets 128 points where rounding the density size in one step gives
     64 — a factor of two, and a ``CHGCAR`` VASP would refuse on a restart.
 
@@ -944,7 +944,7 @@ def build_parser():
     parser.add_argument("--sigma", type=float, default=None,
                         help="explicit Gaussian width in Angstrom for every species")
     parser.add_argument("--zval", nargs="*", metavar="EL=CHARGE",
-                        help="valence-charge overrides, e.g. Au=11")
+                        help="valence-charge overrides, e.g. Pt=11")
 
     parser.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
     parser.add_argument("--paw-source", default="auto",
@@ -955,7 +955,7 @@ def build_parser():
                              "per-element average. 'atomic' uses the "
                              "isolated-atom database, which is a much rougher "
                              "approximation (~86%% vs ~9%% RMS on this "
-                             "project's gold data) and exists for elements "
+                             "project's platinum data) and exists for elements "
                              "nothing else covers")
     parser.add_argument("--atomic-reference", default=None,
                         help="isolated-atom database built by poraque-atoms, "

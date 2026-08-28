@@ -79,7 +79,7 @@ missing a term says so rather than looking complete.
 PBE is the default because it matches the reference data: the calculations
 Poraqu\^e ingests use \opt{PAW\_PBE} pseudopotentials with \opt{LEXCH = PE}, so
 $\rho$ and $\tau$ are PBE quantities. Evaluating an LDA $E_{\rm xc}$ on a PBE
-density is neither a PBE energy nor an LDA one. On the reference Au supercells
+density is neither a PBE energy nor an LDA one. On the reference Pt supercells
 the two differ by $-0.92$ eV/atom ($0.65\,\%$ of $E_{\rm xc}$), so the choice
 is not cosmetic.
 
@@ -143,7 +143,7 @@ print(calc.compute(rho, tau, vext))
 
 \begin{ptip}
 \opt{electrons} is the cheapest available diagnostic. It should equal the total
-\opt{ZVAL} --- 297 for the 27 Au atoms above --- to a few parts in $10^{4}$. A
+\opt{ZVAL} --- 297 for the 27 Pt atoms above --- to a few parts in $10^{4}$. A
 predicted density that has drifted off it invalidates every electrostatic term,
 since all of them are linear or quadratic in $\rho$.
 \end{ptip}
@@ -159,7 +159,7 @@ scored without being written to disk first.
 from ase.build import bulk
 from poraque.calculator import Poraque
 
-atoms = bulk("Au", "fcc", a=4.08, cubic=True)
+atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
 atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
 
 energy = atoms.get_potential_energy()
@@ -208,10 +208,10 @@ Recognised layouts, in preference order --- each accepting a \file{.gz} or
 \file{.Z} suffix:
 
 \begin{enumerate}
-  \item \file{<dir>/Au/POTCAR} --- what VASP ships;
-  \item \file{<dir>/Au\_pv/POTCAR} --- a variant, used only if it is the
+  \item \file{<dir>/Pt/POTCAR} --- what VASP ships;
+  \item \file{<dir>/Pt\_pv/POTCAR} --- a variant, used only if it is the
     \emph{only} candidate, with a warning;
-  \item \file{<dir>/POTCAR.Au} or \file{<dir>/Au.POTCAR} --- flat.
+  \item \file{<dir>/POTCAR.Pt} or \file{<dir>/Pt.POTCAR} --- flat.
 \end{enumerate}
 
 \begin{pnote}
@@ -247,7 +247,7 @@ of the energy it differentiates to $10^{-7}$ eV/\AA.
 The \emph{physics} is incomplete for PAW datasets. Hellmann--Feynman is the
 whole force only for a \emph{local} pseudopotential; a PAW calculation adds a
 projector force and a one-centre force, and neither is recoverable from $\rho$,
-$\tau$ and $V_{\rm loc}$ on a grid. Measured against VASP on gold, using
+$\tau$ and $V_{\rm loc}$ on a grid. Measured against VASP on platinum, using
 VASP's own density: MAE $0.83$ eV/\AA\ against forces of $1.66$ eV/\AA. The
 magnitude is right, the direction is not, so \textbf{geometry optimisation and
 molecular dynamics remain unavailable}.
@@ -288,7 +288,7 @@ single-point calculation of one atom in a large box:
 
 \begin{lstlisting}
 data/vasp/ref/
-    Au/     POSCAR POTCAR OSZICAR OUTCAR CHGCAR TAUCAR
+    Pt/     POSCAR POTCAR OSZICAR OUTCAR CHGCAR TAUCAR
     N/      ...
 \end{lstlisting}
 
@@ -310,7 +310,7 @@ choice matters more than anything else here.
 \begin{center}
 \begin{tabular}{@{}lll@{}}
 \toprule
-\opt{method} & $E_{\rm iso}$ from & Au cohesive energy \\
+\opt{method} & $E_{\rm iso}$ from & Pt cohesive energy \\
 \midrule
 \opt{"poraque"} (default) & Poraqu\^e's own expression & $\mathbf{-1.9}$ eV/atom \\
 \opt{"code"} & VASP \file{OUTCAR}/\file{OSZICAR} & $-1157$ eV/atom \\
@@ -386,12 +386,12 @@ grid.
 
 \paragraph{It is not a DFT total energy.} \file{CHGCAR} holds the valence
 \emph{pseudo} density and \file{TAUCAR} the valence pseudo kinetic energy
-density, so the PAW one-centre terms are absent entirely. For the 27-atom Au
+density, so the PAW one-centre terms are absent entirely. For the 27-atom Pt
 cell above the result is $\approx -31215$ eV against a VASP \opt{TOTEN} of
 order $-100$ eV. Nothing in this module can close that gap.
 
 \paragraph{Energy differences are not usable yet either.} Measured on the
-current seventeen-structure Au dataset, within each composition group:
+current seventeen-structure Pt dataset, within each composition group:
 
 \begin{center}
 \begin{tabular}{@{}lrr@{}}

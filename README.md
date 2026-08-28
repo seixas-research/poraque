@@ -78,7 +78,7 @@ poraque-train --config configs/train.yaml --kfold --k-folds 5
 # 3. predict a structure that has never been computed. --models points at
 #    the bundle step 1 wrote: models/<task.name>/<task.name>.pfno
 poraque-inference new_structure/ --output predictions/new_structure \
-    --models models/au_w16_m8_l3/au_w16_m8_l3.pfno
+    --models models/pt_w16_m8_l3/pt_w16_m8_l3.pfno
 
 # 4. calibrate: does committee disagreement predict error? Run this on
 #    LABELLED data first -- it costs nothing and says whether step 5 means
@@ -123,8 +123,8 @@ and copy only what you need into your own file.
 Everything a run writes lands under `models/<name>/`:
 
 ```text
-models/au_w16_m8_l3/
-    au_w16_m8_l3.pfno     the weights
+models/pt_w16_m8_l3/
+    pt_w16_m8_l3.pfno     the weights
     log/                  training log, metrics JSON, resolved config
     plots/                loss curves, parity, field slices
     report/               the generated PDF
@@ -168,7 +168,7 @@ Or drive it from ASE:
 from ase.build import bulk
 from poraque.calculator import Poraque
 
-atoms = bulk("Au", "fcc", a=4.08, cubic=True)
+atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
 atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
 
 rho = atoms.calc.get_charge_density(atoms)   # ChargeDensity, e/Ang^3
@@ -180,7 +180,7 @@ print(atoms.calc.charge_analysis)            # populations, valence, method
 ```
 
 `potcar_dir` is a POTCAR **library** — one subdirectory per element,
-`<potcar_dir>/Au/POTCAR` — not a single POTCAR file. The entries for whatever
+`<potcar_dir>/Pt/POTCAR` — not a single POTCAR file. The entries for whatever
 elements the `Atoms` happens to contain are assembled on demand, which is what
 lets one calculator serve arbitrary compositions.
 
@@ -196,10 +196,10 @@ with `HEAD` requests that transfer no payload:
 
 ```bash
 # a pure dry run: prints to the console and writes nothing at all
-poraque-mp --elements Ag Au Pt --estimate
+poraque-mp --elements Pt Pd Ni --estimate
 
 # download into ./data/MP, skipping anything over 20 MB
-poraque-mp --elements Ag Au Pt --output data/MP --max-size-mb 20
+poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
 ```
 
 `--output` (or `--outdir`) defaults to the **current directory**, so a command
@@ -228,7 +228,7 @@ pseudopotentials, and the external potential — the model's *input* — cannot 
 built exactly without them. Point at the POTCAR library that generated the data
 (MP uses the VASP PBE set) and V_ext is VASP's tabulated local potential,
 accurate to a relative 2×10⁻⁵. Leave it out and the Gaussian pseudo-ion model
-stands in: on the Ag–Au–Pt set the two differ by **0.38 relative L2** — they
+stands in: on the Ag–Pt–Pt set the two differ by **0.38 relative L2** — they
 are different fields, not different roundings of one. Missing entries warn and
 fall back per element rather than failing the run.
 
@@ -276,7 +276,7 @@ in its first lines.
 
 ## Status
 
-Seventeen gold supercells — ten 27-atom cells and seven 32-atom cells, spanning
+Seventeen platinum supercells — ten 27-atom cells and seven 32-atom cells, spanning
 four grid shapes. A single 80/20 split at `32³` working resolution, 300 epochs
 with early stopping, whole structures held out (`seed=42`):
 
@@ -306,7 +306,7 @@ respectively.
 > than one should buy. Use `--kfold` for a figure that covers every structure.
 
 > Still one element. These numbers measure interpolation between geometries of
-> gold and now, weakly, extrapolation across cell size. They say nothing about
+> platinum and now, weakly, extrapolation across cell size. They say nothing about
 > transfer to other chemistry. Growing the dataset remains the main open item —
 > see `docs/notes/roadmap.md`.
 

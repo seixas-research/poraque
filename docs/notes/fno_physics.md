@@ -155,7 +155,7 @@ head, which makes the bound structural rather than penalised.
 
 ### 3.3 Measured result
 
-On the Au₂₇ dataset (2 structures, 32³ spectral downsample, 200 epochs),
+On the the 27-atom metal supercell dataset (2 structures, 32³ spectral downsample, 200 epochs),
 leave-one-out, evaluated in physical units (eV/Å³) on the **held-out**
 material:
 
@@ -172,7 +172,7 @@ enters the total energy — is reproduced to **2.0 %** on both folds.
 The classical functionals are not merely worse — Thomas-Fermi has *negative*
 $R^2$, i.e. it is a worse pointwise predictor of $\tau$ than the constant mean.
 That is expected and is exactly the known failure of TF for a $d$-band metal
-with strong density inhomogeneity: TF is the uniform-gas limit, and gold's
+with strong density inhomogeneity: TF is the uniform-gas limit, and platinum's
 core and $d$-shell regions are as far from uniform as matter gets. The learned
 operator beating it by an order of magnitude is the result that motivates the
 whole programme.
@@ -274,7 +274,7 @@ All of the above is implemented and unit-tested in `poraque/ml/physics.py`;
 * **Model 2** learns the object orbital-free DFT is missing. It is constrained
   by exact theorems ($\tau \ge \tau_{\rm vW}$, the uniform-gas limit, coordinate
   scaling) that should be built into the architecture rather than penalised.
-* Measured on Au₂₇, the learned KEDF beats Thomas-Fermi and von Weizsäcker by
+* Measured on the 27-atom metal supercell, the learned KEDF beats Thomas-Fermi and von Weizsäcker by
   roughly an order of magnitude in relative $L^2$ — on two related structures,
   which bounds what may be concluded.
 * The **Euler–Lagrange equation** couples the two models through quantities

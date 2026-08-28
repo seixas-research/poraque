@@ -23,7 +23,7 @@ factor can reproduce the oscillatory short-range part.
 
 **Secondary finding.** The `POTCAR` `local part` block was being misparsed. The
 first number after the marker is **`PSGMAX`** (the table's maximum wavevector,
-75.589 Å⁻¹ for the Au PAW\_PBE potential), **not `ZVAL`**. This is the q-mesh
+75.589 Å⁻¹ for the Pt PAW\_PBE potential), **not `ZVAL`**. This is the q-mesh
 convention that was previously flagged as unrecoverable from the `POTCAR`
 alone; the source settles it.
 
@@ -128,7 +128,7 @@ Verified directly against `data/vasp/struct_000/POTCAR`: the value after
 are unmistakably different quantities. Units are eV·Å³ (`VPST` is added to
 `ZZ/G²` before the division by $\Omega$).
 
-`PSCORE` = $v_{\rm short}(q\!\to\!0)$ = 105.89 eV·Å³ for Au. It feeds the
+`PSCORE` = $v_{\rm short}(q\!\to\!0)$ = 105.89 eV·Å³ for Pt. It feeds the
 `PSCENC` energy correction (`pot.F:1035–1045`) and does **not** enter the
 potential, since $V(\mathbf G=0)$ is zeroed.
 
@@ -264,7 +264,7 @@ for training and is documented rather than chased.
    `PSGMAX` well below $|G|_{\max}$ means the reference itself is truncated.
 4. **Multi-species is untested.** The formula sums over species with per-species
    `PSGMAX`, and the implementation follows that, but this dataset is
-   single-species (Au). Validate on a binary before relying on it.
+   single-species (Pt). Validate on a binary before relying on it.
 5. **`ISPIN=2` is not handled.** Both `CHGCAR` and `TAUCAR` then carry a second
    (magnetization) block, which our reader currently ignores — it reads the
    first block only. Fine for these non-spin-polarised runs (`ISPIN=1`), a

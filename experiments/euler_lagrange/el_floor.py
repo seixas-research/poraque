@@ -18,24 +18,22 @@ thing in a cell whose potential swings by 10 eV and another in one that swings
 by 300.
 """
 import os
-import sys
 
 import numpy as np
 import torch
 
-REPO = ("/Users/leseixas/Library/CloudStorage/Dropbox/Repositories/"
-        "seixas-research/poraque")
-CACHE = os.path.join(REPO, "data", "cache", "res32_potcar")
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+#: Prepared cache to read. Override with PORAQUE_EL_CACHE to point at another
+#: resolution or another dataset without editing this file.
+CACHE = os.environ.get("PORAQUE_EL_CACHE",
+                       os.path.join(REPO, "data", "cache", "res32_potcar_spin"))
 
 from poraque.fields import ChargeDensity, ExternalPotential, KineticEnergyDensity
 from poraque.ml.data import discover_materials
 from poraque.ml.physics import (
     hartree_potential,
-    integrate,
     thomas_fermi_potential,
     von_weizsacker_potential,
-    thomas_fermi_tau,
-    von_weizsacker_tau,
     xc_potential,
 )
 
@@ -86,8 +84,8 @@ if __name__ == "__main__":
     # 2. The residual, over every structure, for a range of lambda and
     #    with the xc term on and off.
     # ---------------------------------------------------------------- #
-    print(f"\n--- Euler-Lagrange residual on ground-state reference data ---")
-    print(f"    r = dTs/drho + v_ext + v_H + v_xc, cell average removed\n")
+    print("\n--- Euler-Lagrange residual on ground-state reference data ---")
+    print("    r = dTs/drho + v_ext + v_H + v_xc, cell average removed\n")
     header = (f"  {'kinetic functional':<26} {'xc':<5} "
               f"{'std(r) [eV]':>12} {'std(r)/std(vext)':>18} "
               f"{'max|r| [eV]':>12}")
@@ -128,14 +126,15 @@ if __name__ == "__main__":
     # 3. Is the residual structured, or is it noise? A learnable field
     #    should correlate with something.
     # ---------------------------------------------------------------- #
-    print(f"\n--- is the residual structured? (TF + (1/9) vW, xc on) ---")
-    print(f"  Pearson r of the residual against candidate explanatory fields,")
-    print(f"  averaged over structures. |corr| near 1 means a local functional")
-    print(f"  of that field could reproduce it.\n")
+    print("\n--- is the residual structured? (TF + (1/9) vW, xc on) ---")
+    print("  Pearson r of the residual against candidate explanatory fields,")
+    print("  averaged over structures. |corr| near 1 means a local functional")
+    print("  of that field could reproduce it.\n")
 
     def corr(a, b):
         a, b = a.flatten(), b.flatten()
-        a = a - a.mean(); b = b - b.mean()
+        a = a - a.mean()
+        b = b - b.mean()
         return (a @ b / (a.norm() * b.norm())).item()
 
     fields = {"rho": [], "rho^(1/3)": [], "rho^(2/3)": [], "v_ext": [],
@@ -157,3 +156,45 @@ if __name__ == "__main__":
     for name, values in fields.items():
         print(f"  {name:<12} {np.mean(values):>8.4f}  "
               f"(spread {np.std(values):.4f})")
+
+    # ---------------------------------------------------------------- #
+    # 4. Correlation assumes a straight line. This does not: bin by the
+    #    field, take the mean residual in each bin, and ask how much
+    #    variance that one-dimensional curve already accounts for.
+    #    Whatever is left is what a NON-local operator would have to
+    #    supply, and it is the number that decides whether an operator
+    #    is the right tool at all.
+    # ---------------------------------------------------------------- #
+    def explained(r, x, bins=64):
+        """R^2 of the best pointwise function of ``x`` alone."""
+        r, x = r.flatten().numpy(), x.flatten().numpy()
+        edges = np.quantile(x, np.linspace(0.0, 1.0, bins + 1))
+        edges[-1] += 1e-12
+        index = np.clip(np.digitize(x, edges) - 1, 0, bins - 1)
+        fit = np.zeros_like(r)
+        for b in range(bins):
+            mask = index == b
+            if mask.any():
+                fit[mask] = r[mask].mean()
+        return 1.0 - np.var(r - fit) / np.var(r)
+
+    print("\n--- how much of it is POINTWISE? (TF + (1/9) vW, xc on) ---")
+    print("  Variance explained by the best function of one field alone,")
+    print("  with no assumption that the function is linear. 1 - R^2 is an")
+    print("  upper bound on what a non-local operator could add.\n")
+
+    scores = {"rho": [], "tau": [], "v_ext": []}
+    for record in records:
+        rho, vext, tau, cell = load(record)
+        kin = (thomas_fermi_potential(rho)
+               + (1.0 / 9.0) * von_weizsacker_potential(rho, cell))
+        total = (kin + vext + hartree_potential(rho, cell)
+                 + xc_potential(rho, "pbe", cell=cell))
+        r = total - total.mean()
+        scores["rho"].append(explained(r, rho))
+        scores["tau"].append(explained(r, tau))
+        scores["v_ext"].append(explained(r, vext))
+    for name, values in scores.items():
+        print(f"  f({name:<6}) R^2 = {np.mean(values):>7.4f}  "
+              f"(spread {np.std(values):.4f})  "
+              f"-> {100 * (1 - np.mean(values)):.1f}% left over")
