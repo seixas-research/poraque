@@ -161,7 +161,22 @@ class DataConfig:
         Where spectrally downsampled copies are written.
     pattern : str
         Prefix identifying calculation folders inside a ``vasp`` path. Ignored
-        by the other layouts.
+        by the other layouts, which have no subdirectories to select.
+
+        It is a **prefix, not a glob**: matching is
+        ``os.path.basename(child).startswith(pattern)``, so ``"structure"``
+        selects ``structure_0042`` and an empty string selects every
+        subdirectory.
+
+        The default names this project's own layout
+        (``data/vasp/structures/structure_00NN``). It was ``"struct"`` until
+        2026-08-28 — a prefix of the current one, so it selected exactly the
+        same directories, which is why the two are interchangeable on this
+        data and why the change is safe. It is **part of the cache
+        fingerprint** even so: two prefixes that happen to agree on one dataset
+        need not agree on the next, and a cache that silently held a different
+        set of materials than the config describes is the failure the
+        fingerprint exists to prevent.
     code : str
         DFT code name, or ``"auto"`` to detect it.
     potcar_dir : str or None
@@ -422,7 +437,7 @@ class DataConfig:
     root: str = "data/vasp/structures"
     source: str = "auto"
     cache: str = "data/cache"
-    pattern: str = "struct"
+    pattern: str = "structure"
     code: str = "auto"
     resolution: int = 32
     potcar_dir: str = None
@@ -769,6 +784,23 @@ class ModelConfig:
         close to ``silu`` (a small learnable perturbation on top of it,
         matching the base term the original KAN paper itself uses), so
         switching to one does not destabilise training at step 0.
+    projection_activation : str or None
+        Nonlinearity of the read-out head. ``null`` (the default) follows
+        ``activation``, which is what "the activation" means unless something
+        says otherwise.
+
+        It is separable because it was not always the same: until 2026-08-28
+        the read-out was a hard-coded ``GELU`` while ``activation`` governed
+        only the Fourier layers, so ``model.activation`` selected :math:`L`
+        nonlinearities out of :math:`L+1` and the odd one out appeared in no
+        config. A checkpoint that records no read-out nonlinearity is
+        therefore one written before that change, and
+        :meth:`~poraque.ml.training.FieldOperator.from_state` restores
+        ``gelu`` for it rather than the recorded ``activation`` — otherwise
+        every silu-trained model would quietly start computing something else.
+
+        A per-channel KAN variant here is sized by ``projection_channels``,
+        not by ``width``.
     kan_setup : dict or None
         Everything the KAN activation needs, in one block — **read only when**
         ``activation: kan``. ``null`` (the default) means the defaults below,
@@ -867,6 +899,7 @@ class ModelConfig:
     n_layers: int = 3
     projection_channels: int = 64
     activation: str = "silu"
+    projection_activation: str = None
     kan_setup: dict = None
     use_coordinates: bool = True
     cell_conditioning: bool = True

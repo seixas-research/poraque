@@ -66,7 +66,7 @@ def spin_dataset(tmp_path, grid, poscar):
     """Three synthetic materials with spin-polarised CHGCARs."""
     rng = np.random.default_rng(1)
     for index in range(3):
-        directory = tmp_path / f"struct_{index:03d}"
+        directory = tmp_path / f"structure_{index:03d}"
         directory.mkdir()
         ExternalPotential(rng.normal(size=grid.shape) * 5.0, grid,
                           poscar).write(str(directory / "EXTCAR"))
@@ -249,7 +249,7 @@ class TestSpinDataset:
         """The default path must be untouched by any of this."""
         rng = np.random.default_rng(2)
         for index in range(2):
-            directory = tmp_path / f"struct_{index:03d}"
+            directory = tmp_path / f"structure_{index:03d}"
             directory.mkdir()
             ExternalPotential(rng.normal(size=grid.shape), grid,
                               poscar).write(str(directory / "EXTCAR"))
@@ -282,7 +282,7 @@ class TestSpinOperator:
         import os
 
         potential = ExternalPotential.read(
-            os.path.join(spin_dataset, "struct_000", "EXTCAR"))
+            os.path.join(spin_dataset, "structure_000", "EXTCAR"))
         prediction = operator.predict(potential)
         assert isinstance(prediction, SpinDensity)
         assert prediction.data.shape == (2,) + tuple(grid.shape)
@@ -295,7 +295,7 @@ class TestSpinOperator:
                                  width=6, modes=3, n_layers=1,
                                  projection_channels=8, device="cpu")
         density = SpinDensity.read(
-            os.path.join(spin_dataset, "struct_000", "CHGCAR"))
+            os.path.join(spin_dataset, "structure_000", "CHGCAR"))
         prediction = operator.predict(density)
         assert isinstance(prediction, KineticEnergyDensity)
         assert prediction.data.shape == tuple(grid.shape)
@@ -339,7 +339,7 @@ class TestSpinOperator:
         save_bundle(path, {"ext2chg": operator, "chg2tau": partner})
 
         potential = ExternalPotential.read(
-            os.path.join(spin_dataset, "struct_000", "EXTCAR"))
+            os.path.join(spin_dataset, "structure_000", "EXTCAR"))
         expected = operator.predict(potential)
 
         reloaded = load_bundle(path, "ext2chg", device="cpu")
@@ -358,7 +358,7 @@ def _runs(root, grid, poscar, polarized, count=2, start=0):
     """``count`` calculation directories, spin-polarised or not."""
     rng = np.random.default_rng(7)
     for index in range(start, start + count):
-        directory = root / f"struct_{index:03d}"
+        directory = root / f"structure_{index:03d}"
         directory.mkdir(parents=True, exist_ok=True)
         poscar.write(str(directory / "POSCAR"))
         values = rng.random(grid.shape) + 0.5
@@ -397,7 +397,7 @@ class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
                                   fields=("CHGCAR",), charges={"Fe": 8.0},
                                   spin="auto")
 
-        cached = f"{cache}/struct_000/CHGCAR"
+        cached = f"{cache}/structure_000/CHGCAR"
         assert is_spin_polarized(cached), (
             "spin: auto dropped the second block of an ISPIN = 2 source")
         assert SpinDensity.read(cached).magnetic_moment() != 0.0
@@ -411,7 +411,7 @@ class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
                                   fields=("CHGCAR",), charges={"Fe": 8.0},
                                   spin="auto")
 
-        assert not is_spin_polarized(f"{cache}/struct_000/CHGCAR")
+        assert not is_spin_polarized(f"{cache}/structure_000/CHGCAR")
 
     def test_false_is_still_a_deliberate_opt_out(self, tmp_path, grid, poscar):
         """Discarding the channel stays possible — it just has to be asked for."""
@@ -422,7 +422,7 @@ class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
                                   fields=("CHGCAR",), charges={"Fe": 8.0},
                                   spin=False)
 
-        assert not is_spin_polarized(f"{cache}/struct_000/CHGCAR")
+        assert not is_spin_polarized(f"{cache}/structure_000/CHGCAR")
 
     def test_true_on_data_with_no_magnetisation_raises(self, tmp_path, grid,
                                                        poscar):
@@ -451,10 +451,10 @@ class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
                                   fields=("CHGCAR",), charges={"Fe": 8.0},
                                   spin="auto")
 
-        assert is_spin_polarized(f"{cache}/struct_002/CHGCAR")
-        plain = SpinDensity.read(f"{cache}/struct_002/CHGCAR")
+        assert is_spin_polarized(f"{cache}/structure_002/CHGCAR")
+        plain = SpinDensity.read(f"{cache}/structure_002/CHGCAR")
         assert np.abs(plain.magnetization).max() < 1e-9
-        assert is_spin_polarized(f"{cache}/struct_000/CHGCAR")
+        assert is_spin_polarized(f"{cache}/structure_000/CHGCAR")
 
     def test_the_two_layouts_never_share_a_cache_directory(self, tmp_path,
                                                            grid, poscar):

@@ -180,3 +180,430 @@ Output & $(B, 1, N_1, N_2, N_3)$ \\
 The residual connection around each Fourier layer stabilises deeper stacks; the
 pointwise branch supplies the local, high-frequency content that mode
 truncation removes from the spectral branch.
+
+\section{The five parameters that size a run}
+\label{sec:sizing}
+
+Four settings fix the operator's shape and one fixes the grid it is trained on.
+They are easy to confuse, because four of the five are ``some number of
+channels'' and the fifth is the only one that is not a property of the model at
+all. Written against the architecture above:
+
+\begin{center}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Key & Symbol & Section & What it sets \\
+\midrule
+\opt{model.width}               & $C$   & \opt{model} & channels carried through the stack \\
+\opt{model.modes}               & $M_i$ & \opt{model} & Fourier coefficients kept per axis \\
+\opt{model.n\_layers}           & $L$   & \opt{model} & how many times the cycle runs \\
+\opt{model.projection\_channels}& $C_P$ & \opt{model} & hidden width of the read-out \\
+\opt{data.resolution}           & $N$   & \opt{data}  & longest grid axis after downsampling \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{The operator, with every index written out}
+\label{sec:indexed}
+
+Equations~\eqref{eq:noperator} and~\eqref{eq:fourierlayer} suppress the channel
+indices, which is what makes the four architecture settings hard to tell apart:
+they are all ``some number of channels'' until it is written down which sum
+each one is the upper limit of. Written out in full, with $\rr$ a grid point
+and $\kk$ a reciprocal-lattice point:
+
+\paragraph{Lifting.}
+\begin{equation}
+  v^{(0)}_{o}(\rr) = \sum_{i=1}^{C_{\mathrm{in}}+3}
+      W^{\mathrm{lift}}_{o i}\, x_{i}(\rr) + b^{\mathrm{lift}}_{o},
+  \qquad o = 1,\dots,C
+  \label{eq:idx-lift}
+\end{equation}
+The $+3$ is the appended fractional coordinates. No nonlinearity here: the
+lift is affine.
+
+\paragraph{Fourier layer $\ell = 1,\dots,L$.}
+\begin{align}
+  \hat v^{(\ell-1)}_{i}(\kk)
+    &= \Fop\bigl[v^{(\ell-1)}_{i}\bigr](\kk)
+    \label{eq:idx-fft} \\[2pt]
+  \hat z^{(\ell)}_{o}(\kk)
+    &= \begin{cases}
+         \displaystyle\sum_{i=1}^{C}
+           R^{(\ell,\,c(\kk))}_{i o\,k_1 k_2 k_3}\,\hat v^{(\ell-1)}_{i}(\kk)
+           & \kk \ \text{retained},\\[10pt]
+         0 & \text{otherwise},
+       \end{cases}
+    \label{eq:idx-spectral} \\[2pt]
+  z^{(\ell)}_{o}(\rr)
+    &= \Fop^{-1}\bigl[\hat z^{(\ell)}_{o}\bigr](\rr)
+    \label{eq:idx-ifft} \\[2pt]
+  y^{(\ell)}_{o}(\rr)
+    &= \mathrm{GroupNorm}\Bigl(
+         z^{(\ell)}_{o}(\rr)
+         + \sum_{i=1}^{C} W^{(\ell)}_{o i}\, v^{(\ell-1)}_{i}(\rr)
+         + b^{(\ell)}_{o} \Bigr)
+    \label{eq:idx-norm} \\[2pt]
+  y^{(\ell)}_{o}(\rr)
+    &\leftarrow \bigl(1 + \gamma_{o}(\text{cell})\bigr)\, y^{(\ell)}_{o}(\rr)
+                + \beta_{o}(\text{cell})
+    \label{eq:idx-film} \\[2pt]
+  v^{(\ell)}_{o}(\rr)
+    &= v^{(\ell-1)}_{o}(\rr) + \sigma\bigl(y^{(\ell)}_{o}(\rr)\bigr)
+    \label{eq:idx-residual}
+\end{align}
+
+\paragraph{Read-out.}
+\begin{align}
+  u_{p}(\rr)
+    &= \sigma\Bigl(
+         \sum_{o=1}^{C} P^{(1)}_{p o}\, v^{(L)}_{o}(\rr) + b^{(1)}_{p} \Bigr),
+    \qquad p = 1,\dots,C_P
+    \label{eq:idx-read1} \\
+  \mathrm{out}_{q}(\rr)
+    &= \sum_{p=1}^{C_P} P^{(2)}_{q p}\, u_{p}(\rr) + b^{(2)}_{q},
+    \qquad q = 1,\dots,C_{\mathrm{out}}
+    \label{eq:idx-read2}
+\end{align}
+
+\noindent
+with the index ranges
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Index & Range & Set by \\
+\midrule
+$o,\,i$      & $1,\dots,C$                  & \opt{width} \\
+$\ell$       & $1,\dots,L$                  & \opt{n\_layers} \\
+$p$          & $1,\dots,C_P$                & \opt{projection\_channels} \\
+$k_1,k_2,k_3$& $k_1<m_1,\ k_2<m_2,\ 0 \le k_3 < m_3$ & \opt{modes}, with \opt{resolution} \\
+$c$          & $1,\dots,4$                  & the four $(\pm k_1, \pm k_2)$ corners \\
+$q$          & $1,\dots,C_{\mathrm{out}}$   & the task \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+and the retained band, for a sample on an $(N_1,N_2,N_3)$ grid,
+\begin{equation}
+  m_1 = \min\!\left(M, \tfrac{N_1}{2}\right), \quad
+  m_2 = \min\!\left(M, \tfrac{N_2}{2}\right), \quad
+  m_3 = \min\!\left(M, \tfrac{N_3}{2}+1\right).
+  \label{eq:retained}
+\end{equation}
+The third axis is the one \texttt{rfftn} halves, so it carries only
+$k_3 \ge 0$; the first two carry both signs, which is what the four corners
+$c$ enumerate.
+
+\subsection{GroupNorm, FiLM, and where the nonlinearity goes}
+\label{sec:blockorder}
+
+Equations~\eqref{eq:idx-norm}--\eqref{eq:idx-residual} are three steps between
+the inverse transform and the next layer's input, and their \emph{order} is
+load-bearing. The canonical Fourier neural operator has none of them: Li
+\emph{et al.} write $v_{\ell+1} = \sigma(W v_\ell + \mathcal{K}v_\ell)$, the
+activation applied directly to the sum. Poraqu\^e inserts a normalisation and a
+conditioning step in between, and closes with a residual.
+
+\paragraph{GroupNorm --- because the batch is not a population.}
+The spectral branch's output scale is not controlled by anything: it is a sum
+over $m_1m_2m_3$ retained coefficients of a field whose spectrum varies from
+material to material, so two samples in the same batch can leave
+Eq.~\eqref{eq:idx-ifft} an order of magnitude apart. Something has to set the
+scale the activation sees.
+
+It cannot be \texttt{BatchNorm}. Batch statistics assume the samples in a batch
+are draws from one population, and here they are not even the same
+\emph{shape}: shape-bucketed batching (Section~\ref{sec:discinv}) means the
+batch is whatever materials happen to share a grid, its size varies, and a
+$24^3$ and a $120^3$ sample never meet. \texttt{GroupNorm} computes its
+statistics \emph{within a sample}, over a group of channels and all of space,
+so it is indifferent to both.
+
+The group count is the largest divisor of $C$ not exceeding $8$ --- at $C=16$,
+eight groups of two channels --- because \texttt{GroupNorm} requires
+divisibility and \opt{width} is free.
+
+\paragraph{FiLM --- the only place the lattice reaches the stack.}
+Two materials can share a grid shape and differ entirely in physical scale, so
+the cell must enter explicitly. Feature-wise linear modulation is one affine
+map per channel, driven by the cell embedding:
+\begin{equation}
+  y^{(\ell)}_{o} \;\longleftarrow\;
+  \bigl(1 + \gamma_{o}(\text{cell})\bigr)\, y^{(\ell)}_{o}
+  + \beta_{o}(\text{cell}),
+\end{equation}
+which is Eq.~\eqref{eq:idx-film}. It touches no spatial index, so it is
+oblivious to the grid --- and the projection producing $\gamma$ and $\beta$ is
+\textbf{zero-initialised}, so at step zero $\gamma = \beta = 0$ and the whole
+modulation is exactly the identity. Conditioning is something the operator
+learns to use, not something imposed on it before it has learned anything.
+
+\paragraph{Why FiLM comes after the normalisation and not before.}
+Because a normalisation removes whatever a modulation just applied, to the
+extent that the modulation is constant within a group. Applying the same
+$(\gamma, \beta)$ on either side of \texttt{GroupNorm} and measuring the change
+against no modulation at all:
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Groups & Channels per group & Relative change \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{modulation before the norm}} \\
+$16$ & $1$  & $3\times10^{-6}$ \\
+$8$  & $2$  & $0.32$ \\
+$4$  & $4$  & $0.36$ \\
+$1$  & $16$ & $0.39$ \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{modulation after the norm --- what Poraqu\^e does}} \\
+$8$  & $2$  & $\mathbf{1.16}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+With one channel per group the modulation is annihilated exactly: the
+normalisation restores the mean and variance the affine map had just changed,
+and only its \emph{sign} survives. At the shipped eight groups of two, roughly
+a third of it survives, as within-group contrast. Placed after the norm it
+acts in full. The ordering is not a stylistic preference --- it is the
+difference between conditioning that works and conditioning that is mostly
+undone one line later.
+
+\paragraph{The residual comes last.}
+$v^{(\ell)} = v^{(\ell-1)} + \sigma(\cdot)$ means each layer contributes a
+correction rather than replacing the field, which is what makes a deeper stack
+trainable, and it is why the identity is reachable: with FiLM at its
+initialisation and $\sigma$ small, a fresh block is close to a no-op.
+
+\begin{pnote}
+\textbf{The activation between Fourier layers is \opt{silu} (or \opt{gelu}),
+and it is already there.} $\sigma$ in Eq.~\eqref{eq:idx-residual} \emph{is}
+\opt{model.activation}: one application per block, $L$ in total. What differs
+from the canonical FNO is not whether the nonlinearity is present but where it
+sits --- after the normalisation and the conditioning rather than immediately
+after the spectral sum, so that it acts on a signal of controlled scale that
+already knows which cell it belongs to. Applying it first would normalise the
+activation's output instead of its input, which is the arrangement
+normalisation exists to avoid.
+
+The $\sigma$ in the read-out, Eq.~\eqref{eq:idx-read1}, is the same one, so the
+stack contains $L+1$ nonlinearities and \opt{activation} governs all of them:
+at the default \opt{silu}, every one of them is SiLU.
+\end{pnote}
+
+\subsection{Reading the cost off the indices}
+
+Each setting appears in exactly one place, and that placement \emph{is} the
+scaling:
+
+\begin{description}
+  \item[$C$ is the range of \emph{both} sums in Eq.~\eqref{eq:idx-spectral}.]
+    It is the input index $i$ and the output index $o$ of the same
+    contraction, so the weight tensor $R$ carries $C^2$ of them and the cost
+    is \textbf{quadratic}. Nothing else in the architecture has this property.
+  \item[$m_1 m_2 m_3$ are free indices on $R$, not summed.] Every retained
+    coefficient gets its own $C \times C$ block, so the count is
+    \textbf{cubic} in \opt{modes} --- $R$ has shape
+    $(4, C, C, m_1, m_2, m_3)$, which is Eq.~\eqref{eq:idx-spectral} read as
+    an array.
+  \item[$L$ counts repetitions of the block, not terms in a sum.]
+    Equations~\eqref{eq:idx-fft}--\eqref{eq:idx-residual} are applied $L$
+    times with independent weights, so depth is \textbf{linear} --- and it
+    composes the learned convolutions, which is how it buys range that
+    \opt{modes} would charge cubically for.
+  \item[$C_P$ appears only in Eqs.~\eqref{eq:idx-read1}--\eqref{eq:idx-read2},
+    outside the loop.] It is the range of one sum, evaluated once, so it is
+    \textbf{linear and paid once} --- $C C_P + C_P C_{\mathrm{out}}$ weights
+    in total.
+  \item[$N_1 N_2 N_3$ appears nowhere.] No index range above refers to the
+    grid. That is Section~\ref{sec:discinv} restated: $\rr$ and $\kk$ are
+    arguments, not indices, and \opt{resolution} enters only through
+    Eq.~\eqref{eq:retained}, where it can \emph{cap} $m_i$ but never enlarge
+    the weight tensor.
+\end{description}
+
+\begin{pnote}
+$\sigma$ in Eq.~\eqref{eq:idx-residual} is \opt{model.activation} --- by
+default \opt{silu}, optionally one of the per-channel learnable
+Kolmogorov--Arnold variants --- and so is the read-out's nonlinearity in
+Eq.~\eqref{eq:idx-read1}. One key, $L+1$ applications.
+
+A per-channel variant is sized by the layer it sits in: $C$ learned functions
+inside a Fourier block, $C_P$ in the read-out.
+
+\opt{model.projection\_activation} overrides the read-out alone. Its default is
+\opt{null}, meaning ``whatever \opt{activation} is'', which is the only thing a
+reader should have to know. It exists because the read-out has not always
+followed: it was a fixed $\mathrm{GELU}$ until 2026-08-28, so one key then
+governed $L$ nonlinearities out of $L+1$ and the exception appeared in no
+config. A checkpoint written before the change records no read-out
+nonlinearity, and is reloaded with $\mathrm{GELU}$ on exactly that evidence ---
+which is a statement about old files, not a default for new ones.
+\end{pnote}
+
+\subsection{What each one buys}
+
+\begin{description}
+  \item[\opt{width} --- how much information travels through.] The number of
+    channels the field is carried in between the lifting layer and the
+    read-out, and therefore how many distinct features of the density the
+    operator can hold at once. It is the operator's representational capacity.
+  \item[\opt{modes} --- how far it travels in space.] Mode $m$ on an axis of
+    length $\ell_i$ is a wavelength $\ell_i/m$, so \opt{modes} fixes both the finest
+    feature the learned convolution can resolve and the longest range over
+    which it can correlate. It is a \emph{capacity limit}, not a requirement:
+    on a grid too coarse to supply that many, fewer are used automatically,
+    which is what lets one set of weights serve materials on different grids
+    (Section~\ref{sec:discinv}).
+  \item[\opt{n\_layers} --- how many times the cycle is applied.] Depth
+    composes the learned convolutions. Two layers of $M$ modes reach further
+    than one layer of $M$ modes, because the second acts on a field the first
+    has already delocalised --- so depth buys effective range at \emph{linear}
+    cost, which \opt{modes} does not.
+  \item[\opt{projection\_channels} --- how the result is read out.] The hidden
+    width of the two-convolution head that maps the $C$ channels back to
+    the physical output. It appears once, at the end, never inside a Fourier
+    layer, and is purely pointwise.
+  \item[\opt{resolution} --- what the operator is shown.] Not an architecture
+    parameter. It is the longest grid axis after the spectral downsampling of
+    Section~\ref{sec:resample}, applied once when the cache is built, and it
+    fixes the band of physics present in the data rather than the band the
+    operator acts on.
+\end{description}
+
+\subsection{Where the parameters are}
+
+The spectral tensor is the model. For the shipped configuration
+($C=16$, $M=8$, $L=3$, $C_P=64$), counting a complex weight as two parameters
+--- which is what \pyclass{FNO3d.n\_parameters} does, and therefore what the
+training log prints:
+
+\begin{center}
+\begin{tabular}{@{}llrr@{}}
+\toprule
+Component & Where & Parameters & Share \\
+\midrule
+Spectral $R$    & Eq.~\eqref{eq:idx-spectral} & $3\,145\,728$ & $99.79\%$ \\
+FiLM            & Eq.~\eqref{eq:idx-film}     & $3\,168$      & $0.10\%$ \\
+Cell encoder    & $\gamma,\beta$ inputs       & $1\,312$      & $0.04\%$ \\
+Read-out        & Eqs.~\eqref{eq:idx-read1}--\eqref{eq:idx-read2} & $1\,153$ & $0.04\%$ \\
+Pointwise $W$   & Eq.~\eqref{eq:idx-norm}     & $816$         & $0.03\%$ \\
+GroupNorm       & Eq.~\eqref{eq:idx-norm}     & $96$          & $0.00\%$ \\
+Lifting         & Eq.~\eqref{eq:idx-lift}     & $80$          & $0.00\%$ \\
+\midrule
+Total           &                             & $3\,152\,353$ & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+One term in one equation is $99.79\%$ of the model. Cell conditioning and
+normalisation together are $0.14\%$, and the read-out --- the whole of
+\opt{projection\_channels} --- is $0.04\%$.
+
+\noindent
+Each row is its equation's index ranges multiplied out:
+\begin{align}
+  \text{spectral}  &: \; L \times 4 \times C^2 \times m_1 m_2 m_3
+                      \quad\text{complex} \\
+  \text{pointwise} &: \; L \times (C^2 + C) \\
+  \text{lifting}   &: \; C\,(C_{\mathrm{in}} + 3) + C \\
+  \text{read-out}  &: \; C C_P + C_P + C_P\,C_{\mathrm{out}} + C_{\mathrm{out}}
+\end{align}
+Only the first matters, and it grows as $C^2 M^3 L$ --- the $C^2$ from the two
+summed channel indices, the $M^3$ from the three free mode indices, the $L$
+from the repetition.
+
+\subsection{Cost is not the parameter count}
+
+Doubling each setting in turn, at the shipped configuration on a $32^3$ grid
+(CPU, forward and backward, four threads):
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Change & Parameters & Time \\
+\midrule
+\opt{width} $16 \to 32$               & $3.99\times$ & $2.89\times$ \\
+\opt{modes} $8 \to 12$                & $3.37\times$ & $1.32\times$ \\
+\opt{n\_layers} $3 \to 6$             & $2.00\times$ & $1.97\times$ \\
+\opt{projection\_channels} $64 \to 128$ & $1.00\times$ & $1.31\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The two rows where the columns disagree are the ones worth remembering.
+
+\opt{modes} is \emph{expensive in memory and cheap in time}: $(12/8)^3 = 3.375$
+more weights, but the FFT is unchanged and only the contraction over retained
+coefficients grows, which is not the dominant term at this size. It is the knob
+that runs a model out of memory long before it runs it out of wall clock.
+
+\opt{projection\_channels} is the reverse --- \emph{free in parameters and not
+free in time}. It adds $1\,152$ weights, $0.07\%$ of the model, because it is
+one pointwise map at the end; but that map is evaluated at every one of the
+$N^3$ voxels, so its cost scales with the grid rather than with its own size.
+Read the parameter count alone and it looks like nothing, which is why it is
+often the best place to spend a budget that \opt{width} would otherwise consume
+quadratically.
+
+\subsection{Resolution}
+
+Resolution is the only one of the five that changes the \emph{data}. At the
+shipped architecture:
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Grid & Voxels & Time \\
+\midrule
+$16^3$ & $0.12\times$ & $0.33\times$ \\
+$24^3$ & $0.42\times$ & $0.68\times$ \\
+$32^3$ & $1.00\times$ & $1.00\times$ \\
+$48^3$ & $3.38\times$ & $2.36\times$ \\
+$64^3$ & $8.00\times$ & $6.21\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Time approaches the $N^3\log N$ of the transforms as the grid grows, and falls
+short of it below $32^3$ where fixed per-layer overhead dominates. Memory is
+the harder limit: activations are $C N^3$ per layer and scale exactly, with no
+overhead to hide behind.
+
+\begin{pwarn}
+\opt{resolution} and \opt{modes} are not independent. An $N^3$ grid supplies
+$(N/2,\, N/2,\, N/2+1)$ modes --- the last axis is the halved one of
+\texttt{rfftn} --- so at \opt{resolution: 32} any \opt{modes} above $16$
+allocates weights that no sample can reach: allocated, saved into the
+checkpoint, never trained. The shipped $M=8$ at $N=32$ uses half the available
+band, which leaves room to raise one without the other.
+\end{pwarn}
+
+\begin{pnote}
+None of the four architecture parameters refers to $N$. That is the point of
+Section~\ref{sec:discinv}: the same weights are applied to a $24^3$ and a
+$120^3$ sample, and \opt{resolution} can be changed without invalidating a
+checkpoint's shape. What it does invalidate is the \emph{comparison} --- a
+model trained at $32^3$ has seen a narrower band of physics than one trained at
+$64^3$, whatever their reported errors say.
+\end{pnote}
+
+\subsection{Choosing them}
+
+In one clause each: \opt{width} is how much information travels through;
+\opt{modes} is how far it travels in space; \opt{n\_layers} composes the whole
+cycle; and \opt{projection\_channels} is only how the result is read out.
+
+A budget is usually best spent in that reverse order:
+
+\begin{enumerate}
+  \item \opt{projection\_channels}, first, because it is nearly free in
+    parameters --- but judge it on the wall clock, not on the model size.
+  \item \opt{n\_layers}, when the operator needs more \emph{range}: it buys
+    that linearly, where \opt{modes} buys it cubically.
+  \item \opt{width}, when it needs more \emph{capacity}, and pay the square.
+  \item \opt{modes}, last and deliberately, after checking it against
+    \opt{resolution}.
+\end{enumerate}

@@ -419,6 +419,7 @@ class FieldOperator:
         architecture = {
             key: getattr(backbone, key)
             for key in ("modes", "mode_selection", "g_max", "activation",
+                        "projection_activation",
                         "cell_conditioning", "embedding_dim",
                         "kan_grid_size", "kan_spline_order", "kan_grid_range",
                         "kan_degree", "kan_rational_num_degree",
@@ -481,12 +482,21 @@ class FieldOperator:
         FieldOperator
         """
         inferred = infer_backbone_kwargs(state["model_state"])
+        architecture = dict(state.get("architecture") or {})
+        # The read-out's nonlinearity followed a hard-coded GELU until
+        # 2026-08-28 and now follows `activation`. A checkpoint that does not
+        # record which it used is by definition one written before the change,
+        # so "gelu" is not a default here -- it is the answer. Restoring it as
+        # `activation` instead would silently change what every silu-trained
+        # model computes, which is the exact failure the architecture record
+        # exists to prevent.
+        architecture.setdefault("projection_activation", "gelu")
         # Recorded architecture wins over the inference: mode_selection,
         # g_max, activation, cell_conditioning and embedding_dim live in no
         # tensor shape, so inference alone would silently reset them to the
         # constructor defaults. Checkpoints written before the record existed
         # simply have no entry here and keep the inferred/default values.
-        inferred.update(state.get("architecture") or {})
+        inferred.update(architecture)
         # Explicitly recorded channel counts win over the inference, which
         # cannot separate in_channels from the coordinate channels.
         for key in ("in_channels", "out_channels", "use_coordinates"):

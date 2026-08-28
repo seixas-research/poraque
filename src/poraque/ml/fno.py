@@ -603,7 +603,8 @@ class FNO3d(nn.Module):
                  kan_grid_size=8, kan_spline_order=3, kan_grid_range=(-2.0, 2.0),
                  kan_degree=6, kan_rational_num_degree=4,
                  kan_rational_den_degree=4, kan_use_base=True,
-                 mode_selection="fixed", g_max=None):
+                 mode_selection="fixed", g_max=None,
+                 projection_activation=None):
         super().__init__()
         if isinstance(modes, int):
             modes = (modes, modes, modes)
@@ -616,6 +617,18 @@ class FNO3d(nn.Module):
                 f"Unknown activation: {activation!r}; expected one of "
                 f"{sorted(ACTIVATIONS)}."
             )
+        # `None` means "whatever the Fourier layers use", which is what a
+        # caller means by `activation` unless they say otherwise. The read-out
+        # used a hard-coded GELU until 2026-08-28; a checkpoint written before
+        # then carries no record of this and `from_state` restores "gelu" for
+        # it, so an old model still computes what it was trained to compute.
+        projection_activation = str(projection_activation or activation)
+        if projection_activation not in ACTIVATIONS:
+            raise ValueError(
+                f"Unknown projection_activation: {projection_activation!r}; "
+                f"expected one of {sorted(ACTIVATIONS)}."
+            )
+        self.projection_activation = projection_activation
 
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
@@ -663,7 +676,8 @@ class FNO3d(nn.Module):
         ])
         self.project = nn.Sequential(
             nn.Conv3d(self.width, projection_channels, kernel_size=1),
-            nn.GELU(),
+            build_activation(self.projection_activation, projection_channels,
+                             **activation_kwargs),
             nn.Conv3d(projection_channels, self.out_channels, kernel_size=1),
         )
 

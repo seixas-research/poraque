@@ -527,11 +527,17 @@ class TestShippedConfigs:
                   "data.storage", "data.compression", "data.compression_level",
                   "training.epochs"}
 
-    #: The annotated reference, which lists **every** key at its default on
-    #: purpose: it is the map a short config is copied from, not a description
-    #: of an experiment. Holding it to the rule below would delete the thing
-    #: it exists to be.
-    REFERENCE = "train_complete_and_commented"
+    #: Configs whose stated purpose is to be explicit, and which the rule
+    #: below would therefore delete rather than tidy:
+    #:
+    #: ``train_complete_and_commented`` lists **every** key at its default. It
+    #:     is the map a short config is copied from, not a description of an
+    #:     experiment.
+    #: ``train_Pt`` spells out the run that produced the shipped model, so the
+    #:     file records what was in force rather than what happened to differ
+    #:     from a default that may since have moved. That is the same argument
+    #:     the archived per-run config rests on, applied to a committed one.
+    EXPLICIT = {"train_complete_and_commented", "train_Pt"}
 
     @pytest.mark.parametrize("name", _shipped_configs())
     def test_it_states_only_what_it_changes(self, name):
@@ -543,8 +549,8 @@ class TestShippedConfigs:
 
         import yaml
 
-        if name == self.REFERENCE:
-            pytest.skip("the annotated reference lists every key by design")
+        if name in self.EXPLICIT:
+            pytest.skip(f"{name} is deliberately explicit; see EXPLICIT")
 
         with open(os.path.join(self.ROOT, f"{name}.yaml")) as handle:
             raw = yaml.safe_load(handle)

@@ -896,3 +896,74 @@ class TestTheKanBlockInAConfig:
         assert model.kan_grid_size == 5
         assert model.kan_grid_range == (-1.0, 1.0)
         assert model.blocks[0].activation.base_weight is None
+
+
+class TestTheReadOutFollowsTheConfiguredActivation:
+    """
+    Until 2026-08-28 the projection head was a hard-coded `nn.GELU()`, so
+    `model.activation` governed L nonlinearities out of L+1 and the odd one
+    out was invisible from any config. It now follows `activation` like the
+    rest of the stack.
+
+    The compatibility half is the point: a checkpoint that does not record
+    which nonlinearity its read-out used is, by definition, one written before
+    the change, so `gelu` is the *answer* for it rather than a default.
+    Restoring it as `activation` would silently change what every silu-trained
+    model computes.
+    """
+
+    def test_a_stateless_activation_reaches_the_read_out(self):
+        for name in ("silu", "gelu", "relu", "tanh"):
+            model = FNO3d(width=4, modes=2, n_layers=1, projection_channels=8,
+                          activation=name)
+            assert model.projection_activation == name
+            assert type(model.project[1]) is type(
+                build_activation(name, channels=8))
+
+    @pytest.mark.parametrize("name", sorted(KAN_ACTIVATIONS))
+    def test_a_kan_read_out_is_sized_by_projection_channels(self, name):
+        """Not by `width`: the head is C_P channels wide, not C."""
+        model = FNO3d(width=4, modes=2, n_layers=1, projection_channels=8,
+                      activation=name, kan_degree=3, kan_grid_size=4)
+
+        assert model.project[1].channels == 8
+        assert model.blocks[0].activation.channels == 4
+
+    def test_it_can_be_set_independently(self):
+        model = FNO3d(width=4, modes=2, n_layers=1, projection_channels=8,
+                      activation="silu", projection_activation="gelu")
+        assert model.projection_activation == "gelu"
+        assert isinstance(model.project[1], torch.nn.GELU)
+
+    def test_an_unknown_name_raises(self):
+        with pytest.raises(ValueError, match="Unknown projection_activation"):
+            FNO3d(width=4, modes=2, n_layers=1, projection_channels=8,
+                  projection_activation="softplus")
+
+    def test_a_checkpoint_records_it(self, tmp_path):
+        operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+                                 projection_channels=8, activation="silu",
+                                 device="cpu")
+        assert operator.state()["architecture"]["projection_activation"] == "silu"
+
+        path = save_bundle(str(tmp_path / "m.pfno"), {"ext2chg": operator})
+        restored = load_bundle(path, "ext2chg", device="cpu")
+        assert restored.model.projection_activation == "silu"
+
+    def test_a_checkpoint_without_the_record_reloads_as_gelu(self):
+        """
+        The regression this guards: a pre-2026-08-28 model trained with
+        `activation: silu` had a GELU read-out. Reloading it as silu would
+        load the right weights into the wrong architecture and quietly return
+        different numbers.
+        """
+        operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+                                 projection_channels=8, activation="silu",
+                                 device="cpu")
+        state = operator.state()
+        state["architecture"].pop("projection_activation")
+
+        restored = FieldOperator.from_state(state, device="cpu")
+        assert restored.model.activation == "silu"
+        assert restored.model.projection_activation == "gelu"
+        assert isinstance(restored.model.project[1], torch.nn.GELU)

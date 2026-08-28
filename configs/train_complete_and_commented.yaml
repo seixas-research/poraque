@@ -55,6 +55,7 @@ model:
   # on a large one.
 
   activation: silu              # silu | gelu | relu | tanh (stateless) | kan (learned per channel)
+  projection_activation: null   # read-out nonlinearity; null follows `activation`
   kan_setup: null               # read ONLY when activation: kan; null means the defaults below
   # kan_setup:
   #   variant: bspline          # bspline (the KAN paper) | cheby | rbf | rational
