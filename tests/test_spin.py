@@ -570,3 +570,123 @@ class TestASpinDensityCanBeIntegratedIntoAnEnergy:
         assert paired.total == pytest.approx(plain.total, rel=1e-12)
         assert paired.n_electrons == pytest.approx(
             spin_density.electron_count(), rel=1e-12)
+
+
+class TestTheSpinChannelReachesThePhysicsHelpers:
+    """
+    `squeeze(1)` is a **no-op** on an axis of width 2, and it was used
+    throughout `ml/physics.py` to mean "drop the channel axis". Every helper
+    that did so was therefore correct for a one-channel field and wrong for a
+    spin-polarised one -- which, since `data.spin: auto` resolves to True on
+    this project's data, is every model it now trains.
+
+    Three failure modes, all present at once:
+
+    * a **crash**, where the surviving channel axis broadcast against the three
+      Cartesian components of the gradient. This is what `loss: sobolev`
+      reported;
+    * a **silent wrong answer**, where a ``(B, ...)`` kernel broadcast against
+      a ``(B, C, ...)`` field and, at ``C == B``, lined the channel axis up
+      with the batch axis and returned finite nonsense;
+    * a **meaningless second channel**, where an elementwise functional of rho
+      was evaluated on the magnetisation -- ``(5/3) C_TF m^(2/3)`` and
+      ``v_x(m)`` -- and then broadcast into a residual built from
+      single-channel potentials.
+    """
+
+    @staticmethod
+    def _fields(batch=3, channels=2, n=8):
+        cell = torch.eye(3).unsqueeze(0).repeat(batch, 1, 1) * 6.0
+        torch.manual_seed(0)
+        return torch.rand(batch, channels, n, n, n) + 0.1, cell
+
+    def test_the_gradient_is_taken_per_channel(self):
+        from poraque.ml.physics import spectral_gradient
+
+        field, cell = self._fields()
+        gradient = spectral_gradient(field, cell)
+
+        assert gradient.shape == (3, 2, 3, 8, 8, 8)
+        for channel in range(2):
+            assert torch.allclose(gradient[:, channel],
+                                  spectral_gradient(field[:, channel], cell),
+                                  atol=1e-6)
+
+    def test_a_single_channel_field_keeps_its_old_shape(self):
+        """`(B, 1, ...)` must still give `(B, 3, ...)`: every other caller in
+        the package relies on it."""
+        from poraque.ml.physics import spectral_gradient
+
+        field, cell = self._fields(channels=1)
+        assert spectral_gradient(field, cell).shape == (3, 3, 8, 8, 8)
+
+    @pytest.mark.parametrize("batch", [2, 3])
+    def test_the_laplacian_does_not_align_channels_with_the_batch(self, batch):
+        """
+        `batch == channels == 2` is the dangerous case: it broadcast without
+        error and returned a finite, wrong answer.
+        """
+        from poraque.ml.physics import spectral_laplacian
+
+        field, cell = self._fields(batch=batch)
+        laplacian = spectral_laplacian(field, cell)
+
+        assert laplacian.shape == field.shape
+        for channel in range(2):
+            assert torch.allclose(laplacian[:, channel],
+                                  spectral_laplacian(field[:, channel], cell),
+                                  atol=1e-6)
+
+    @pytest.mark.parametrize("name", ["hartree", "lda", "pbe"])
+    def test_the_potentials_are_functionals_of_rho_alone(self, name):
+        from poraque.ml.physics import hartree_potential, xc_potential
+
+        field, cell = self._fields(batch=2)
+        call = (hartree_potential if name == "hartree"
+                else lambda f, c: xc_potential(f, name, cell=c))
+
+        spin = call(field, cell)
+        assert spin.shape[1] == 1, "the magnetisation is not an argument of it"
+        assert torch.allclose(spin, call(field[:, :1], cell), atol=1e-9)
+
+    def test_the_euler_lagrange_residual_ignores_the_magnetisation(self):
+        from poraque.ml.physics import euler_lagrange_residual
+
+        field, cell = self._fields(batch=2)
+        external = torch.randn(2, 1, 8, 8, 8)
+
+        residual = euler_lagrange_residual(field, external, cell, v_xc="pbe")
+        assert residual.shape == (2, 1, 8, 8, 8)
+        assert torch.allclose(
+            residual,
+            euler_lagrange_residual(field[:, :1], external, cell, v_xc="pbe"),
+            atol=1e-6)
+
+    def test_the_sobolev_loss_trains_on_two_channels(self):
+        """The reported failure: `loss: sobolev` on ISPIN = 2 data."""
+        from poraque.ml.losses import SobolevLoss
+
+        target, cell = self._fields()
+        prediction = (target + 0.01 * torch.randn_like(target)).requires_grad_(True)
+
+        value = SobolevLoss(weight=0.1)(prediction, target, cell)
+        value.backward()
+
+        assert torch.isfinite(value)
+        assert prediction.grad is not None and torch.isfinite(prediction.grad).all()
+
+    def test_the_sobolev_loss_constrains_the_magnetisation_too(self):
+        """
+        It is a *data* term, not a physical constraint: whatever the operator
+        predicts is part of the target. Taking channel 0 alone would leave
+        grad(m) unconstrained and nothing would say so.
+        """
+        from poraque.ml.losses import SobolevLoss
+
+        target, cell = self._fields()
+        loss = SobolevLoss(weight=0.1)
+        spoiled = target.clone()
+        spoiled[:, 1] += 0.3 * torch.randn_like(spoiled[:, 1])
+
+        assert float(loss(target.clone(), target, cell)) == pytest.approx(0.0, abs=1e-6)
+        assert float(loss(spoiled, target, cell)) > 1e-3

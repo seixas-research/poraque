@@ -35,16 +35,17 @@ training:
   weight_decay: 0.0001
   optimizer: adamw              # adamw | adam | sgd; identical to adam at weight_decay 0
   scheduler: cosine             # cosine | null
-  loss: relative_l2             # relative_l2 | sobolev
+  loss: sobolev                 # relative_l2 | sobolev (int (|f|^2 + w_Sob |grad f|^2) )
+  sobolev_weight: 0.1           # weight of the gradient term when loss: sobolev (w_Sob)
   valid_fraction: 0.2           # held out at the STRUCTURE level; 0 trains on everything
   eval_epoch: 10                # evaluate and log every this many epochs
   early_stopping: 300           # epochs without improvement before stopping; 0 disables
   seed: 42                      # the validation draw, the fold partition, the batch order
   device: auto                  # auto (CUDA, then MPS, then CPU) or an explicit backend
   physics:
-    electron_count_weight: 0.1  # int(rho) = the known valence count
-    positivity_weight: 0.0
-    von_weizsacker_weight: 0.0
+    electron_count_weight: 1.0  # ext2chg: int(rho) must equal the known valence count
+    positivity_weight: 0.1      # rho, tau >= 0 (a Log head is the better fix)
+    von_weizsacker_weight: 0.1  # chg2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
     euler_lagrange_weight: 0.0
 
 output:

@@ -533,11 +533,14 @@ class TestShippedConfigs:
     #: ``train_complete_and_commented`` lists **every** key at its default. It
     #:     is the map a short config is copied from, not a description of an
     #:     experiment.
-    #: ``train_Pt`` spells out the run that produced the shipped model, so the
+    #: ``train`` and ``train_Pt`` spell out the runs they describe, so each
     #:     file records what was in force rather than what happened to differ
     #:     from a default that may since have moved. That is the same argument
     #:     the archived per-run config rests on, applied to a committed one.
-    EXPLICIT = {"train_complete_and_commented", "train_Pt"}
+    #:
+    #: What is left under the rule is the comparison configs, where restating
+    #: a default really would bury the one line that differs.
+    EXPLICIT = {"train_complete_and_commented", "train", "train_Pt"}
 
     @pytest.mark.parametrize("name", _shipped_configs())
     def test_it_states_only_what_it_changes(self, name):

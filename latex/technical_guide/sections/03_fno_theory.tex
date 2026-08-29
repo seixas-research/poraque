@@ -475,10 +475,12 @@ which is a statement about old files, not a default for new ones.
 
 \subsection{Where the parameters are}
 
-The spectral tensor is the model. For the shipped configuration
-($C=16$, $M=8$, $L=3$, $C_P=64$), counting a complex weight as two parameters
---- which is what \pyclass{FNO3d.n\_parameters} does, and therefore what the
-training log prints:
+The spectral tensor is the model. Counted on the shipped
+\file{platinum\_W16-M8-L3} itself --- its \opt{ext2chg} half, $C=16$, $M=8$,
+$L=3$, $C_P=64$, and $C_{\mathrm{in}}=1$, $C_{\mathrm{out}}=2$ because the
+platinum data is spin-polarised and the density it predicts is
+$(\rho, m)$ --- with a complex weight counted as two parameters, which is what
+\pyclass{FNO3d.n\_parameters} does and therefore what the training log prints:
 
 \begin{center}
 \begin{tabular}{@{}llrr@{}}
@@ -488,25 +490,31 @@ Component & Where & Parameters & Share \\
 Spectral $R$    & Eq.~\eqref{eq:idx-spectral} & $3\,145\,728$ & $99.79\%$ \\
 FiLM            & Eq.~\eqref{eq:idx-film}     & $3\,168$      & $0.10\%$ \\
 Cell encoder    & $\gamma,\beta$ inputs       & $1\,312$      & $0.04\%$ \\
-Read-out        & Eqs.~\eqref{eq:idx-read1}--\eqref{eq:idx-read2} & $1\,153$ & $0.04\%$ \\
+Read-out        & Eqs.~\eqref{eq:idx-read1}--\eqref{eq:idx-read2} & $1\,218$ & $0.04\%$ \\
 Pointwise $W$   & Eq.~\eqref{eq:idx-norm}     & $816$         & $0.03\%$ \\
 GroupNorm       & Eq.~\eqref{eq:idx-norm}     & $96$          & $0.00\%$ \\
 Lifting         & Eq.~\eqref{eq:idx-lift}     & $80$          & $0.00\%$ \\
 \midrule
-Total           &                             & $3\,152\,353$ & \\
+Total           &                             & $3\,152\,418$ & \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 One term in one equation is $99.79\%$ of the model. Cell conditioning and
-normalisation together are $0.14\%$, and the read-out --- the whole of
+normalisation together are $0.15\%$, and the read-out --- the whole of
 \opt{projection\_channels} --- is $0.04\%$.
 
+The second output channel is almost free, and the table says why: $C_{\rm out}$
+appears only in Eq.~\eqref{eq:idx-read2}, so predicting $m$ alongside $\rho$
+costs $C_P + 1 = 65$ parameters, or $0.002\%$. Nothing in the spectral tensor
+knows how many fields it is carrying.
+
 \noindent
-Each row is its equation's index ranges multiplied out:
+Each row is its equation's index ranges multiplied out. Note the leading
+$2$ on the spectral row: $R$ is a \emph{complex} tensor, and a complex weight
+is two real parameters.
 \begin{align}
-  \text{spectral}  &: \; L \times 4 \times C^2 \times m_1 m_2 m_3
-                      \quad\text{complex} \\
+  \text{spectral}  &: \; \mathbf{2} \times L \times 4 \times C^2 \times m_1 m_2 m_3 \\
   \text{pointwise} &: \; L \times (C^2 + C) \\
   \text{lifting}   &: \; C\,(C_{\mathrm{in}} + 3) + C \\
   \text{read-out}  &: \; C C_P + C_P + C_P\,C_{\mathrm{out}} + C_{\mathrm{out}}
@@ -514,6 +522,32 @@ Each row is its equation's index ranges multiplied out:
 Only the first matters, and it grows as $C^2 M^3 L$ --- the $C^2$ from the two
 summed channel indices, the $M^3$ from the three free mode indices, the $L$
 from the repetition.
+
+\begin{pnote}
+\textbf{Why the training log prints roughly twice what the spectral formula
+gives.} For the shipped model ($C=16$, $M=8$, $L=3$),
+\begin{equation*}
+  4 \times C^2 \times M^3 \times L
+  = 4 \times 256 \times 512 \times 3 = 1\,572\,864,
+\end{equation*}
+and that is right --- it is the number of \emph{complex} weights in $R$,
+exactly what the three ``spectral tensors'' hold. Two things stand between it
+and the $3\,152\,418$ the log reports:
+
+\begin{enumerate}
+  \item \textbf{a factor of two}, because
+    \pyclass{FNO3d.n\_parameters} counts a complex weight as the two real
+    numbers it is: $1\,572\,864 \to 3\,145\,728$;
+  \item \textbf{everything that is not $R$}: $6\,690$ parameters --- the FiLM
+    projections ($3\times1\,056$), the cell encoder ($1\,312$), the read-out
+    ($1\,218$), the pointwise convolutions ($3\times272$), GroupNorm
+    ($3\times32$) and the lift ($80$).
+\end{enumerate}
+
+$3\,145\,728 + 6\,690 = 3\,152\,418$, which is the table above. A
+one-channel model would report $65$ fewer: its last convolution is
+$C_P C_{\mathrm{out}} + C_{\mathrm{out}} = 65$ rather than $130$.
+\end{pnote}
 
 \subsection{Cost is not the parameter count}
 

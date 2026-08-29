@@ -159,17 +159,32 @@ def spectral_gradient(field, cell):
     Returns
     -------
     torch.Tensor
-        ``(B, 3, Nx, Ny, Nz)`` gradient, in field-units per Å.
+        ``(B, 3, Nx, Ny, Nz)`` for a single field, or
+        ``(B, C, 3, Nx, Ny, Nz)`` when a channel axis of width :math:`C > 1`
+        was given — one gradient per channel, in field-units per Å.
+
+    Notes
+    -----
+    A multi-channel field used to be a ``RuntimeError``: the channel axis was
+    removed with ``squeeze(1)``, which is a **silent no-op** on an axis of
+    width 2, and the surviving axis then broadcast against the three Cartesian
+    components. Every spin-polarised run reaches this through
+    :class:`~poraque.ml.losses.SobolevLoss`, so ``loss: sobolev`` could not be
+    used on ``ISPIN = 2`` data at all.
     """
-    values = field.squeeze(1) if field.dim() == 5 else field
+    values = field[:, 0] if field.dim() == 5 and field.shape[1] == 1 else field
     shape = tuple(values.shape[-3:])
     g = reciprocal_vectors(cell, shape, values.device, values.dtype)
 
     # fftn on the real tensor keeps the input precision: float64 fields get
     # complex128 transforms, so a double-precision run stays double here.
     transformed = torch.fft.fftn(values, dim=(-3, -2, -1))
-    return torch.fft.ifftn(1j * g * transformed.unsqueeze(1),
-                           dim=(-3, -2, -1)).real
+    if values.dim() == 5:
+        # (B, C, 1, ...) * (B, 1, 3, ...) -> (B, C, 3, ...)
+        product = 1j * g.unsqueeze(1) * transformed.unsqueeze(2)
+    else:
+        product = 1j * g * transformed.unsqueeze(1)
+    return torch.fft.ifftn(product, dim=(-3, -2, -1)).real
 
 
 def spectral_laplacian(field, cell):
@@ -187,15 +202,25 @@ def spectral_laplacian(field, cell):
     -------
     torch.Tensor
         Same shape as ``field``, in field-units per Å².
+
+    Notes
+    -----
+    A multi-channel field was worse here than a crash. ``squeeze(1)`` is a
+    no-op on an axis of width 2, leaving ``(B, C, …)`` to broadcast against a
+    ``(B, …)`` kernel: that raises when ``C != B`` and, when ``C == B``, lines
+    the *channel* axis up with the *batch* axis and returns a finite, wrong
+    answer. A two-channel field in a batch of two is not a contrived case.
     """
-    squeezed = field.dim() == 5
-    values = field.squeeze(1) if squeezed else field
+    single = field.dim() == 5 and field.shape[1] == 1
+    values = field[:, 0] if single else field
     shape = tuple(values.shape[-3:])
     g2 = reciprocal_vectors(cell, shape, values.device, values.dtype).pow(2).sum(1)
+    if values.dim() == 5:
+        g2 = g2.unsqueeze(1)          # (B, 1, ...) against (B, C, ...)
 
     transformed = torch.fft.fftn(values, dim=(-3, -2, -1))
     result = torch.fft.ifftn(-g2 * transformed, dim=(-3, -2, -1)).real
-    return result.unsqueeze(1) if squeezed else result
+    return result.unsqueeze(1) if single else result
 
 
 def integrate(field, cell):
@@ -424,7 +449,12 @@ def hartree_potential(density, cell):
         Positive (repulsive), as it must be.
     """
     squeezed = density.dim() == 5
-    values = density.squeeze(1) if squeezed else density
+    # Channel 0 is rho. The Hartree term is the classical repulsion of the
+    # total charge and the magnetisation is not one of its arguments;
+    # `squeeze(1)` was a silent no-op on a spin-polarised (rho, m) pair, which
+    # then broadcast a (B, ...) kernel against a (B, 2, ...) field -- a crash
+    # for most batch sizes and, at batch 2, a finite wrong answer.
+    values = density[:, 0] if squeezed else density
     shape = tuple(values.shape[-3:])
 
     g2 = reciprocal_vectors(cell, shape, values.device, values.dtype).pow(2).sum(1)
@@ -671,7 +701,11 @@ def xc_energy_density(density, cell=None, functional="pbe", epsilon=1e-30):
         )
 
     squeezed = density.dim() == 5
-    values = density.squeeze(1) if squeezed else density
+    # Channel 0 is rho. `squeeze(1)` was used here and is a silent no-op on a
+    # spin-polarised (rho, m) pair, which then reached spectral_gradient as a
+    # two-channel field. This form of v_xc is the unpolarised one evaluated on
+    # the total density -- see von_weizsacker_tau, which already did this.
+    values = density[:, 0] if squeezed else density
 
     # The gradient is taken of the UNCLIPPED field: clipping first puts a kink
     # wherever a band-limited density rings below zero, and differentiating a
@@ -769,6 +803,16 @@ def xc_potential(density, functional="pbe", cell=None, epsilon=1e-12,
         was given.
     """
     name = str(functional).lower()
+    # Channel 0 is rho, reduced once so every branch below agrees on what it
+    # is a functional of. This is the unpolarised form evaluated on the total
+    # density (see xc_energy_density), so m is not one of its arguments: the
+    # LDA branch is elementwise and would otherwise return v_x(m) in the
+    # second channel as though the magnetisation were a density, while the
+    # gradient-corrected branch would return an exactly-zero one. Both are
+    # answers to a question nobody asked, and both then broadcast into an
+    # Euler-Lagrange residual built from single-channel potentials.
+    if density.dim() == 5 and density.shape[1] > 1:
+        density = density[:, :1]
     if name in ("none", "off"):
         return torch.zeros_like(density)
     if name in ("x", "exchange", "lda_x", "x-only"):
@@ -960,6 +1004,15 @@ def euler_lagrange_residual(density, v_external, cell, lam=1.0 / 9.0,
     the warning that the residual alone has trivial solutions and the data
     terms must stay dominant.
     """
+    # Every term below is a functional of rho, so the magnetisation is reduced
+    # away once, here, rather than in each of them. The elementwise helpers --
+    # thomas_fermi_potential and the LDA branch of xc_potential -- cannot
+    # detect a channel they were handed by mistake: they would return
+    # (5/3)C_TF m^(2/3) and v_x(m) in a second channel, finite numbers with no
+    # meaning, and clamp_min(0) on a signed m on top of that.
+    if density.dim() == 5 and density.shape[1] > 1:
+        density = density[:, :1]
+
     if kinetic is None:
         kinetic_term = (thomas_fermi_potential(density)
                         + lam * von_weizsacker_potential(density, cell, epsilon))
@@ -1032,6 +1085,8 @@ def exact_kinetic_potential(density, v_external, cell, xc="pbe", mu=None):
     torch.Tensor
         Kinetic potential in eV, zero-mean unless ``mu`` is given.
     """
+    if density.dim() == 5 and density.shape[1] > 1:
+        density = density[:, :1]      # a functional of rho; see the residual
     known = (v_external + hartree_potential(density, cell)
              + xc_potential(density, xc, cell=cell))
     if mu is None:

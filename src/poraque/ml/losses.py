@@ -84,7 +84,17 @@ class SobolevLoss(nn.Module):
         self.value_loss = RelativeL2Loss(epsilon)
 
     def forward(self, prediction, target, cell):
-        """Compare fields and their gradients; ``cell`` is ``(B, 3, 3)`` in Å."""
+        r"""
+        Compare fields and their gradients; ``cell`` is ``(B, 3, 3)`` in Å.
+
+        Every channel contributes its own gradient. This is a *data* term, not
+        a physical constraint: whatever the operator predicts is part of the
+        target and should be as smooth as the target is, so a spin-polarised
+        run constrains :math:`\nabla m` alongside :math:`\nabla\rho` rather
+        than leaving the magnetisation free. That is the opposite of what
+        :func:`~poraque.ml.physics.von_weizsacker_tau` wants, which is a
+        functional of :math:`\rho` alone and takes channel 0.
+        """
         loss = self.value_loss(prediction, target)
         if self.weight > 0.0:
             predicted_gradient = spectral_gradient(prediction, cell)
