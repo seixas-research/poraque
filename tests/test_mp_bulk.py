@@ -554,10 +554,9 @@ class TestTheManifest:
 
 
 class TestResuming:
-    def _manifest(self, fetcher, rows, legacy=False):
-        directory = fetcher.legacy_chgcar_dir if legacy else fetcher.outdir
-        directory.mkdir(parents=True, exist_ok=True)
-        with (directory / MANIFEST_JSON).open("w") as handle:
+    def _manifest(self, fetcher, rows):
+        fetcher.outdir.mkdir(parents=True, exist_ok=True)
+        with (fetcher.outdir / MANIFEST_JSON).open("w") as handle:
             json.dump(rows, handle)
 
     def test_a_settled_entry_is_not_fetched_again(self, tmp_path, monkeypatch):
@@ -784,85 +783,6 @@ class TestTheDownloadLayout:
 
         assert (f.outdir / "mp-1").is_dir()
         assert not (f.outdir / "mp-2").exists()
-
-
-class TestAnArchiveInTheOldLayoutIsResumedNotRefetched:
-    """
-    The layout moved; the objects did not. A resume that only recognised the
-    new spelling would re-download an entire archive in order to rename it,
-    which is the one outcome this module exists to prevent.
-    """
-
-    def _legacy(self, fetcher, identifier, suffix=".gz"):
-        directory = fetcher.legacy_chgcar_dir
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"CHGCAR_{identifier}{suffix}"
-        path.write_bytes(b"not really a density, but it is on disk")
-        return path
-
-    def test_a_flat_file_counts_as_already_downloaded(self, tmp_path,
-                                                      monkeypatch):
-        f = fetcher_with(["mp-1", "mp-2"], tmp_path, monkeypatch=monkeypatch)
-        self._legacy(f, "mp-1")
-        fetched = []
-        f._rester.get_charge_density_from_material_id = (
-            lambda i: (fetched.append(i), FakeChgcar())[1])
-        f.download()
-
-        assert fetched == ["mp-2"]
-
-    def test_an_uncompressed_flat_file_counts_too(self, tmp_path, monkeypatch):
-        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
-        self._legacy(f, "mp-1", suffix="")
-        fetched = []
-        f._rester.get_charge_density_from_material_id = (
-            lambda i: (fetched.append(i), FakeChgcar())[1])
-        f.download()
-
-        assert fetched == []
-
-    def test_a_flat_hdf5_store_counts_too(self, tmp_path, monkeypatch):
-        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
-        directory = f.legacy_chgcar_dir
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / "mp-1.h5").write_bytes(b"a store")
-        fetched = []
-        f._rester.get_charge_density_from_material_id = (
-            lambda i: (fetched.append(i), FakeChgcar())[1])
-        f.download()
-
-        assert fetched == []
-
-    def test_a_manifest_written_beside_the_old_densities_is_read(
-            self, tmp_path, monkeypatch):
-        f = fetcher_with(["mp-1", "mp-2"], tmp_path, monkeypatch=monkeypatch)
-        f.legacy_chgcar_dir.mkdir(parents=True, exist_ok=True)
-        with (f.legacy_chgcar_dir / MANIFEST_JSON).open("w") as handle:
-            json.dump([{"material_id": "mp-1", "status": "downloaded",
-                        "size_mb": 1.0}], handle)
-
-        assert set(f.load_manifest()) == {"mp-1"}
-
-    def test_the_new_manifest_wins_when_both_exist(self, tmp_path, monkeypatch):
-        """A machine part way through the change has both; the current one is
-        the one that was written last."""
-        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
-        f.legacy_chgcar_dir.mkdir(parents=True, exist_ok=True)
-        with (f.legacy_chgcar_dir / MANIFEST_JSON).open("w") as handle:
-            json.dump([{"material_id": "mp-old", "status": "downloaded"}],
-                      handle)
-        with (f.outdir / MANIFEST_JSON).open("w") as handle:
-            json.dump([{"material_id": "mp-new", "status": "downloaded"}],
-                      handle)
-
-        assert set(f.load_manifest()) == {"mp-new"}
-
-    def test_storage_commands_see_both_layouts(self, tmp_path, monkeypatch):
-        f = fetcher_with(["mp-1", "mp-2"], tmp_path, monkeypatch=monkeypatch)
-        f.download()                       # mp-1/CHGCAR.gz, mp-2/CHGCAR.gz
-        self._legacy(f, "mp-9")            # chgcar/CHGCAR_mp-9.gz
-
-        assert len(f._downloaded()) == 3
 
 
 class TestStoringAsHDF5:

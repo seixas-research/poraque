@@ -115,10 +115,6 @@ data/MP/
     mp-126/fields.h5           # with --hdf5
 \end{lstlisting}
 
-The flat \file{chgcar/CHGCAR\_mp-124.gz} layout this replaces is still read,
-and an archive already on disk in it still \emph{resumes} rather than
-re-downloading --- so nothing has to be moved.
-
 Useful filters: \opt{--band-gap MIN MAX} (\opt{0 0} selects metals),
 \opt{--crystal-system}, \opt{--stable-only}, \opt{--num-sites MIN MAX}, and
 \opt{--max-sites} / \opt{--max-size-mb} / \opt{--limit} to cap the download.

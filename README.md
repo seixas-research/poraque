@@ -220,9 +220,6 @@ data/MP/
     mp-126/fields.h5           # with --hdf5
 ```
 
-The flat `chgcar/CHGCAR_mp-124.gz` layout this replaces is still read, and an
-archive already on disk in it still *resumes* rather than re-downloading.
-
 Then train. `train_paths` is a list, so a download can be trained on alone or
 beside your own runs:
 

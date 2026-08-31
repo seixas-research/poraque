@@ -129,16 +129,11 @@ straight into a training config with no rearranging::
     data:
       root: data/MP
 
-It replaces a flat ``chgcar/CHGCAR_mp-124.gz``, where the material id lived in
-the filename and every density in the archive shared one directory. The cost of
-that arrangement was not tidiness: nothing could be placed *beside* a density
-— a structure file, a POTCAR record, a second field — without inventing a
-second naming convention for it, and a per-material directory needs none.
-
-**The old layout is still read, and still resumed from.** An archive already on
-disk keeps working, `decompress`/`recompress` see both, and an interrupted
-download picks up where it stopped rather than re-fetching thousands of objects
-to rename them.
+The cost of putting the id in the *filename* instead — one flat directory of
+``CHGCAR_mp-124.gz`` — was not tidiness: nothing could be placed *beside* a
+density, not a structure file, a POTCAR record or a second field, without
+inventing a second naming convention for it. A per-material directory needs
+none.
 
 Downloading in bulk
 -------------------
@@ -275,12 +270,6 @@ DENSITY_FILENAME = "CHGCAR"
 #: prepared cache uses (:mod:`poraque.data.cache`), because it is the same
 #: thing: one material, one store, addressed as ``fields.h5::CHGCAR``.
 STORE_FILENAME = "fields.h5"
-
-#: Where downloads used to go: one flat directory of ``CHGCAR_<id>.gz``.
-#: Kept because archives already on disk are in that layout and must still be
-#: read and, more importantly, still *resumed* -- re-fetching tens of thousands
-#: of objects because the layout moved is not a trade anyone would accept.
-LEGACY_SUBDIRECTORY = "chgcar"
 
 
 def retrieval_provenance():
@@ -675,24 +664,11 @@ class MPDataFetcher:
 
         One directory per material, named by its id, holding a ``CHGCAR`` --
         the shape of a VASP run, which is the shape every other source in
-        :mod:`poraque.data.sources` already reads. The flat
-        ``chgcar/CHGCAR_mp-124.gz`` it replaces put the id in the filename and
-        the whole archive in one directory, which meant nothing could be added
-        beside a density later without inventing a second naming convention
-        for it.
+        :mod:`poraque.data.sources` already reads. It is what lets anything be
+        added *beside* a density later: a structure file, a POTCAR record, a
+        second field, none of which a filename could have carried.
         """
         return self.outdir / str(identifier)
-
-    @property
-    def legacy_chgcar_dir(self):
-        """
-        The flat directory downloads used to go to, for resuming one.
-
-        Nothing is written here any more. It is read by :meth:`_existing` and
-        :meth:`load_manifest` so an archive fetched before the layout changed
-        resumes instead of restarting.
-        """
-        return self.outdir / LEGACY_SUBDIRECTORY
 
     @property
     def structure_dir(self):
@@ -1126,26 +1102,18 @@ class MPDataFetcher:
         """Where material ``identifier``'s HDF5 field store belongs."""
         return self.material_dir(identifier) / STORE_FILENAME
 
-    def _legacy_paths(self, identifier):
-        """Every place a previous version of this class may have written it."""
-        flat = self.legacy_chgcar_dir
-        return (flat / f"CHGCAR_{identifier}.gz",
-                flat / f"CHGCAR_{identifier}",
-                flat / f"{identifier}.h5")
-
     def _existing(self, identifier):
         """
         Whichever variant of this material is already on disk, or ``None``.
 
-        Every layout is consulted, not only the current one: gzipped or plain,
-        ``CHGCAR`` or HDF5 store, in the material's own directory or in the
-        flat ``chgcar/`` an older download used. A resume that only recognised
-        the new spelling would re-fetch an entire archive to rename it.
+        All three spellings the download itself can produce are consulted --
+        gzipped, plain, or an HDF5 store -- because ``compress`` and ``hdf5``
+        are per-call options and a resume must not re-fetch a material merely
+        because the second run asked for a different encoding of it.
         """
         candidates = (self._chgcar_path(identifier, compress=True),
                       self._chgcar_path(identifier, compress=False),
-                      self._store_path(identifier),
-                      *self._legacy_paths(identifier))
+                      self._store_path(identifier))
         for path in candidates:
             if path.exists() and path.stat().st_size > 0:
                 return path
@@ -1155,10 +1123,10 @@ class MPDataFetcher:
         """
         How a file is named in the manifest: relative to ``outdir``.
 
-        The bare filename would do when every density had the material id in
-        its name. Now they are all called ``CHGCAR`` and only the directory
-        tells them apart, so the manifest records ``mp-124/CHGCAR.gz`` --
-        which is also what makes a row locate its file.
+        Every density is called ``CHGCAR``, so only its directory tells one
+        from another: a bare filename would name all of them at once. The row
+        records ``mp-124/CHGCAR.gz``, which is also what makes it locate its
+        file.
         """
         try:
             return str(path.relative_to(self.outdir))
@@ -1179,9 +1147,7 @@ class MPDataFetcher:
             data/MP/mp-126/fields.h5        # --hdf5
 
         which is the shape of a VASP run and the shape
-        :class:`~poraque.data.sources.BulkDensitySource` reads. The flat
-        ``chgcar/CHGCAR_mp-124.gz`` layout this replaces is still read, and
-        still resumed from, so an archive already on disk is not re-fetched.
+        :class:`~poraque.data.sources.BulkDensitySource` reads.
 
         **Resume** is by manifest first and by file second. ``manifest.json``
         at the top of ``outdir`` records every entry already accounted for, so
@@ -1393,11 +1359,6 @@ class MPDataFetcher:
         """
         path = self.outdir / MANIFEST_JSON
         if not path.exists():
-            # An archive fetched before the layout changed kept its manifest
-            # beside the densities. Reading it is what lets that download
-            # resume rather than restart.
-            path = self.legacy_chgcar_dir / MANIFEST_JSON
-        if not path.exists():
             return {}
         try:
             with path.open() as handle:
@@ -1453,13 +1414,11 @@ class MPDataFetcher:
     # ------------------------------------------------------------------ #
     def _downloaded(self):
         """
-        Every downloaded ``CHGCAR`` on disk, in either layout, sorted.
+        Every downloaded ``CHGCAR`` on disk, sorted.
 
-        One glob covers both: ``mp-124/CHGCAR.gz`` is where a download goes
-        now and ``chgcar/CHGCAR_mp-124.gz`` is where it used to, and both are
-        one level below ``outdir`` with a name beginning ``CHGCAR``. A machine
-        part way through the change has some of each, and a storage command
-        that saw only one of them would silently do half the job.
+        One glob one level below ``outdir``, since that is where every
+        material's directory is. ``structures/`` holds CIFs and matches
+        nothing.
         """
         return sorted(path for path in
                       self.outdir.glob(f"*/{DENSITY_FILENAME}*")

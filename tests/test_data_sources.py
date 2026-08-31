@@ -274,17 +274,6 @@ class TestDetection:
 
         assert [record.identifier for record in records] == ["mp-1"]
 
-    def test_the_conventional_chgcar_subdirectory_is_followed(self, tmp_path):
-        """Pointing a config at `data/MP` should find `data/MP/chgcar`."""
-        download = tmp_path / "MP"
-        write_bulk(download / "chgcar", identifiers=("mp-1", "mp-2"))
-        (download / "summary.csv").write_text("material_id\nmp-1\n")
-
-        source = resolve_source(download)
-
-        assert isinstance(source, BulkDensitySource)
-        assert len(source.discover()) == 2
-
     def test_an_unrecognisable_directory_says_what_was_looked_for(self, tmp_path):
         (tmp_path / "empty").mkdir()
 
@@ -309,8 +298,8 @@ class TestDetection:
 
 class TestADownloadIsOneDirectoryPerMaterial:
     r"""
-    ``poraque-mp`` writes ``data/MP/mp-124/CHGCAR.gz``, not
-    ``data/MP/chgcar/CHGCAR_mp-124.gz``.
+    ``poraque-mp`` writes ``data/MP/mp-124/CHGCAR.gz``: the id names the
+    directory, not the file.
 
     The shape is the same as a VASP run and the same as a prepared cache, which
     is the point — and also the hazard, because those three are then
@@ -319,10 +308,6 @@ class TestADownloadIsOneDirectoryPerMaterial:
     download would offer ``CHGCAR`` and no ``EXTCAR``, and every ``ext2chg``
     run on it would fail for want of an input field that was never missing —
     it is *computed*, and only :class:`BulkDensitySource` knows to compute it.
-
-    The flat layout is still read. Archives are on disk in it, and re-fetching
-    tens of thousands of objects to rename them is not a migration anyone would
-    accept.
     """
 
     def test_it_is_detected_as_a_bulk_archive(self, download):
@@ -360,12 +345,11 @@ class TestADownloadIsOneDirectoryPerMaterial:
         """It holds a CHGCAR in a per-material directory too."""
         assert detect_source(calculations) is CalculationSource
 
-    def test_the_flat_layout_still_reads(self, bulk):
-        assert detect_source(bulk) is BulkDensitySource
-        assert len(resolve_source(bulk).discover()) == 2
-
-    def test_both_layouts_in_one_directory_are_all_found(self, tmp_path):
-        """A download interrupted across the change, or extended by hand."""
+    def test_loose_files_beside_directories_are_all_found(self, tmp_path):
+        """
+        An archive assembled by hand is not obliged to pick one arrangement,
+        and a source that ignored the other would drop materials silently.
+        """
         root = str(tmp_path / "mixed")
         write_download(root, identifiers=("mp-1",))
         write_bulk(root, identifiers=("mp-2",))
@@ -373,19 +357,6 @@ class TestADownloadIsOneDirectoryPerMaterial:
         records = resolve_source(root).discover()
 
         assert sorted(r.identifier for r in records) == ["mp-1", "mp-2"]
-
-    def test_a_lone_legacy_chgcar_directory_is_not_a_material(self, tmp_path):
-        """
-        The one case the two readings could disagree on: `data/MP/chgcar/`
-        holding a single density. As a per-material directory it would become a
-        material called "chgcar"; it is the flat archive, and is read as one.
-        """
-        download = tmp_path / "MP"
-        write_bulk(download / "chgcar", identifiers=("mp-1",))
-
-        records = resolve_source(download).discover()
-
-        assert [record.identifier for record in records] == ["mp-1"]
 
     def test_a_directory_of_two_densities_is_not_one_material(self, tmp_path):
         """
