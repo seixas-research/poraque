@@ -425,6 +425,26 @@ as a fraction.
 enabling when the derivative matters — $\tau_\mathrm{vW}$ depends on
 $\nabla\rho$, so gradient noise is amplified in low-density regions.
 
+**The validation column follows the objective.** With `loss: sobolev` the
+progress table reports `val rel H1` rather than `val rel L2`, and the number
+behind it is the objective's own data term evaluated on the held-out set —
+`rel L2` plus `sobolev_weight` times the relative $L^2$ of the gradient:
+
+```text
+    train loss: mean PhysicsInformedLoss per batch   |   val rel H1: held-out error, physical units
+    val rel H1 = rel L2 + 0.1 x the relative L2 of the gradient, matching the
+    objective; the final per-structure table below reports plain rel L2
+          epoch     train loss     val rel H1
+```
+
+That is not only a label. Early stopping and the checkpoint are decided on this
+number, and while it read `val rel L2` a Sobolev run was selecting the model
+that minimised a functional it was not training on. An $H^1$ error is a larger
+number than the $L^2$ of the same prediction, so the two columns are not
+comparable — which is why the **per-structure table at the end of a run reports
+relative $L^2$ whatever the objective was**. That is the number to quote, and
+the one that lets two runs with different losses be put side by side.
+
 ### `physics`
 
 | Weight | Constraint it penalises the violation of | Shipped |

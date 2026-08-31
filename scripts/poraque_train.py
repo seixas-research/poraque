@@ -1038,8 +1038,9 @@ def split_history(history):
 
     :func:`poraque.ml.train` returns lists keyed by ``train_loss``,
     ``val_error`` and ``val_epoch``, and -- whenever a validation split exists
-    -- three scalars beside them: ``best_epoch``, ``best_error`` and
-    ``stopped_early``. Serialising the two together is what makes this worth a
+    -- four scalars beside them: ``best_epoch``, ``best_error``,
+    ``stopped_early`` and ``val_metric`` (the norm the first two are measured
+    in). Serialising the two together is what makes this worth a
     function: ``list(map(float, v))`` over an ``int`` raises ``TypeError``, and
     a validation split is the default, so the failure is on the common path.
 

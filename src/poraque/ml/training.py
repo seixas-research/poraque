@@ -26,7 +26,8 @@ from ..fields import ChargeDensity, ExternalPotential, KineticEnergyDensity
 from .data import make_dataloader
 from .device import describe_device, resolve_device
 from .fno import FNO3d
-from .losses import PhysicsInformedLoss, relative_error
+from .losses import (PhysicsInformedLoss, relative_error,
+                     relative_h1_error)
 from .tasks import resolve_task
 from .transforms import FieldTransform, Identity
 
@@ -966,8 +967,13 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         anything plotting them must use ``val_epoch`` for the x-axis rather
         than assuming one point per epoch.
 
-        When validating, also ``best_epoch`` and ``best_error``, and
-        ``stopped_early`` recording whether patience ran out.
+        When validating, also ``best_epoch`` and ``best_error``,
+        ``stopped_early`` recording whether patience ran out, and
+        ``val_metric`` naming the norm ``val_error`` is measured in —
+        ``"rel L2"``, or ``"rel H1"`` when the objective carries a Sobolev
+        gradient term. The final per-structure evaluation reports plain
+        relative :math:`L^2` whatever the objective was, so the two are
+        comparable across runs.
     """
     torch.manual_seed(seed)
     criterion = loss or PhysicsInformedLoss(task=operator.task.name)
@@ -1015,17 +1021,31 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     # units -- and reading the second as if it were the first is an easy and
     # expensive mistake.
     validating = validation_loader is not None
+    # The validation column names the norm it is actually measured in. A
+    # `loss: sobolev` run constrains the gradient as well as the values, so
+    # watching it on a plain L2 reports a quantity the optimiser is not
+    # minimising -- and early stopping then selects against the wrong one.
+    # `sobolev_weight` is read off the criterion rather than passed in, so the
+    # label cannot disagree with the objective it describes.
+    sobolev_weight = float(getattr(criterion, "sobolev_weight", 0.0) or 0.0)
+    val_metric = "rel H1" if sobolev_weight > 0.0 else "rel L2"
     # One number for the objective, whatever it is made of. A physics-informed
     # run's `train loss` is the total the optimiser actually stepped on --
     # data plus every weighted constraint -- and that total is the only
     # quantity a reader can compare against another run's.
     header = f"    {'epoch':>11s}  {'train loss':>13s}"
     if validating:
-        header += f"  {'val rel L2':>13s}"
+        header += f"  {f'val {val_metric}':>13s}"
     if verbose:
         legend = f"    train loss: mean {type(criterion).__name__} per batch"
         if validating:
-            legend += "   |   val rel L2: held-out error, physical units"
+            legend += (f"   |   val {val_metric}: held-out error, "
+                       f"physical units")
+            if sobolev_weight > 0.0:
+                legend += (f"\n    val rel H1 = rel L2 + {sobolev_weight:g} x "
+                           f"the relative L2 of the gradient, matching the "
+                           f"objective; the final per-structure table below "
+                           f"reports plain rel L2")
         else:
             legend += "   |   no validation split: this is a TRAINING FIT"
         emit(legend)
@@ -1106,7 +1126,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         message = f"    {f'{epoch + 1}/{epochs}':>11s}  {mean_loss:>13.5f}"
         exhausted = False
         if validating:
-            error = evaluate(operator, validation_loader)
+            error = evaluate(operator, validation_loader,
+                             sobolev_weight=sobolev_weight)
             history["val_error"].append(error)
             history["val_epoch"].append(epoch + 1)
             message += f"  {error:>13.5f}"
@@ -1139,20 +1160,23 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         operator.model.load_state_dict(best_state)
         if verbose and not stopped_early and best_epoch != len(history["train_loss"]):
             emit(f"    restored the best weights, from epoch {best_epoch} "
-                 f"(val rel L2 {best_error:.5f})")
+                 f"(val {val_metric} {best_error:.5f})")
 
     if validating:
         history["best_epoch"] = best_epoch
         history["best_error"] = best_error
         history["stopped_early"] = stopped_early
+        # Which norm `val_error` is in, so a figure or a report cannot label a
+        # stored series by assuming it.
+        history["val_metric"] = val_metric
 
     return history
 
 
 @torch.no_grad()
-def evaluate(operator, loader):
-    """
-    Mean relative :math:`L^2` error over a loader, in *physical* units.
+def evaluate(operator, loader, sobolev_weight=0.0):
+    r"""
+    Mean relative error over a loader, in *physical* units.
 
     Evaluating in physical units matters: a small error in a compressed
     (asinh) representation can hide a large error in the density itself.
@@ -1161,6 +1185,12 @@ def evaluate(operator, loader):
     ----------
     operator : FieldOperator
     loader : torch.utils.data.DataLoader
+    sobolev_weight : float, optional
+        When positive, report the relative :math:`H^1` error
+        (:func:`~poraque.ml.losses.relative_h1_error`) with this gradient
+        weight instead of the relative :math:`L^2`. Pass the weight the
+        objective was built with, so the number watched is the number
+        optimised. Zero — the default — is the plain :math:`L^2`.
 
     Returns
     -------
@@ -1187,6 +1217,11 @@ def evaluate(operator, loader):
             prediction = prediction + baseline
             physical_target = physical_target + baseline
 
-        errors.append(relative_error(prediction, physical_target).cpu())
+        if sobolev_weight > 0.0:
+            error = relative_h1_error(prediction, physical_target, cell,
+                                      weight=sobolev_weight)
+        else:
+            error = relative_error(prediction, physical_target)
+        errors.append(error.cpu())
 
     return float(torch.cat(errors).mean()) if errors else float("nan")

@@ -14,7 +14,8 @@ task:
 
 data:
   train_paths:
-    - data/MP/Pt-Pd-Ni          # a bulk CHGCAR archive, auto-detected
+    - data/MP/Pt-Pd-Ni          # a poraque-mp download: one mp-<id>/ directory per
+                                #   material, auto-detected as a bulk archive
   resolution: 40                # coarser than the raw grids, finer than the default; the
                                 #   downsample is exact for band-limited fields
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # essential here: an MP download ships

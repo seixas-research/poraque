@@ -247,8 +247,13 @@ class TrainingReport:
                        np.arange(1, train.size + 1, dtype=float),
                        "Training objective", 0)]
             if has_validation:
+                # The series is whatever `train()` measured it in -- an H1 for
+                # a `loss: sobolev` run -- and a figure that assumed L2 would
+                # mislabel it silently.
+                norm = "H^1" if history.get("val_metric") == "rel H1" else "L^2"
                 panels.append((axes[1], validation, val_epochs,
-                               "Validation relative $L^2$ (physical units)", 1))
+                               f"Validation relative ${norm}$ "
+                               f"(physical units)", 1))
 
             for axis, values, epochs, label, slot in panels:
                 colour = series_color(slot)

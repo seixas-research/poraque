@@ -1061,6 +1061,14 @@ class TrainingConfig_:
         ``"auto"`` (CUDA, then Apple MPS, then CPU), or an explicit backend.
     loss : str
         ``"relative_l2"`` or ``"sobolev"``.
+
+        The progress table names the norm it is watching, so the two are told
+        apart at a glance: ``val rel L2`` for the first, ``val rel H1`` for the
+        second, where the ``H1`` number is the objective's own data term on the
+        held-out set. It is the number early stopping and the checkpoint are
+        decided on, which is why it has to be the one the run is minimising.
+        The per-structure table at the end of a run reports relative
+        :math:`L^2` whatever the objective was, so two runs remain comparable.
     optimizer : str
         ``adamw`` (default), ``adam`` or ``sgd``.
 
@@ -1080,7 +1088,11 @@ class TrainingConfig_:
 
         ``sgd`` (momentum 0.9) is the non-adaptive control.
     sobolev_weight : float
-        Weight of the gradient term when ``loss: sobolev``.
+        Weight of the gradient term when ``loss: sobolev``. It also scales the
+        reported ``val rel H1``, which is
+        ``rel L2 + sobolev_weight * relL2(grad)`` -- at zero the objective and
+        the column are both a plain relative :math:`L^2`, and the log says so
+        rather than claiming an :math:`H^1` the run is not measuring.
     physics : dict
         Weights of the physics-informed terms for the **neural operator**. All
         default to zero, so the objective is the supervised baseline until one

@@ -27,7 +27,12 @@ What is asserted
 * the documentation badge is labelled "Manual" and the word "sphinx" appears
   nowhere in either row. That is a house rule shared with the website
   (``poraque.seixas.dev``'s own notes say the same): the manual is a manual,
-  and which generator built it is an implementation detail.
+  and which generator built it is an implementation detail;
+* every badge naming a dependency names one ``pyproject.toml`` actually
+  declares, and every badge is a link. A badge for a package the project does
+  not depend on is a claim about the stack that nothing would ever correct —
+  which is why there is no ``pymatgen`` badge: it arrives transitively through
+  ``mp-api`` and is not declared here.
 
 Pure text: no network, no build, so it runs everywhere and in milliseconds.
 Whether the URLs *resolve* is a separate question, checked by hand when the row
@@ -65,6 +70,16 @@ def rows():
     """``(readme, sphinx)`` badge lists, read once."""
     return (readme_badges(_read("README.md")),
             sphinx_badges(_read("docs/source/index.rst")))
+
+
+@pytest.fixture(scope="module")
+def declared():
+    """The distributions ``pyproject.toml`` lists under ``dependencies``."""
+    block = re.search(r"dependencies = \[(.*?)\]", _read("pyproject.toml"),
+                      re.S)
+    assert block, "pyproject.toml no longer lists dependencies"
+    return {re.split(r"[<>=!~\[]", name)[0].strip().lower()
+            for name in re.findall(r"'([^']+)'", block.group(1))}
 
 
 class TestTheTwoBadgeRowsAgree:
@@ -114,6 +129,86 @@ class TestTheVersionBearingBadgesAreTruthful:
         assert len(badges) == 1
         assert "/github/license/seixas-research/poraque" in badges[0]
         assert "MIT" in _read("LICENSE")
+
+
+class TestTheDependencyBadgesNameRealDependencies:
+    """
+    The row doubles as a statement of what the package is built on, so each
+    entry has to be backed by ``pyproject.toml``. The regression this guards
+    against is a badge added for a library that is merely *used somewhere* —
+    `pymatgen` is the live example: it reaches the package through ``mp-api``
+    and is not a declared dependency, so it gets no badge.
+    """
+
+    #: Badge label -> the distribution `pyproject.toml` must declare.
+    STACK = {"PyTorch": "torch", "ASE": "ase", "h5py": "h5py",
+             "mp--api": "mp-api"}
+
+    @pytest.mark.parametrize("label,distribution", sorted(STACK.items()))
+    def test_the_badge_names_a_declared_dependency(self, label, distribution,
+                                                   declared):
+        assert distribution in declared
+
+    @pytest.mark.parametrize("label", sorted(STACK))
+    def test_the_badge_is_in_the_row(self, label, rows):
+        assert len([url for url in rows[0] if f"/badge/{label}-" in url]) == 1
+
+    def test_h5py_is_there_because_the_cache_format_is(self, rows):
+        """
+        `data.storage: hdf5` is a first-class cache layout, not an extra, and
+        `h5py` is a hard dependency because of it. The badge says so.
+        """
+        badge = [url for url in rows[0] if "/badge/h5py-" in url]
+        assert len(badge) == 1
+        assert "style=for-the-badge" in badge[0]
+
+    def test_no_badge_claims_pymatgen(self, rows):
+        joined = " ".join(rows[0] + rows[1]).lower()
+        assert "pymatgen" not in joined
+
+
+class TestEveryBadgeIsALink:
+    """
+    A badge that is only an image is a dead end: the reader has been told a
+    library is used and given nowhere to go. Both rows are checked, because
+    they are written in different markup and only one of them is read by the
+    people who write it.
+    """
+
+    def test_the_readme_row_has_one_target_per_badge(self, rows):
+        targets = re.findall(
+            r"\[!\[[^\]]*\]\(https://img\.shields\.io/[^)]+\)\]\(([^)]+)\)",
+            _read("README.md"))
+        assert len(targets) == len(rows[0])
+
+    def test_the_landing_page_row_has_one_target_per_badge(self, rows):
+        text = _read("docs/source/index.rst")
+        block = text[:text.index("Poraquê\n=======")]
+        assert len(re.findall(r'<a href="([^"]+)">', block)) == len(rows[1])
+
+    @pytest.mark.parametrize("label,home", (
+        ("PyTorch", "https://pytorch.org/"),
+        ("ASE", "https://wiki.fysik.dtu.dk/ase/"),
+        ("h5py", "https://www.h5py.org/"),
+        ("mp--api", "https://pypi.org/project/mp-api/"),
+    ))
+    def test_a_stack_badge_points_at_that_project(self, label, home):
+        """Not at Poraquê's own PyPI page, which is what a copied badge does."""
+        pattern = (r"\[!\[[^\]]*\]\(https://img\.shields\.io/badge/"
+                   + re.escape(label) + r"-[^)]+\)\]\(([^)]+)\)")
+        found = re.search(pattern, _read("README.md"))
+        assert found, f"no {label} badge in README.md"
+        assert found.group(1) == home
+
+    def test_the_python_badge_points_at_python(self):
+        """
+        It reads Poraquê's classifiers, but it is a badge *about Python*, and
+        a reader clicking it wants the language, not this package's PyPI page.
+        """
+        found = re.search(
+            r"\[!\[[^\]]*\]\(https://img\.shields\.io/pypi/pyversions/"
+            r"[^)]+\)\]\(([^)]+)\)", _read("README.md"))
+        assert found and found.group(1) == "https://www.python.org/"
 
 
 class TestTheDocumentationBadge:

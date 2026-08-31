@@ -14,11 +14,18 @@ common on disk::
 
     A. a DFT calculation            B. a bulk density archive     C. a prepared cache
     -------------------            ---------------------         -------------------
-    runs/struct_000/               chgcar/                       cache/res32/
-        POSCAR  INCAR  POTCAR          CHGCAR_mp-124.gz              mp-124/
-        CHGCAR  TAUCAR  OUTCAR         CHGCAR_mp-81.gz                   EXTCAR  CHGCAR
-    runs/struct_001/                   CHGCAR_mp-126.gz              struct_000/
-        ...                            manifest.csv                      EXTCAR  CHGCAR  TAUCAR
+    runs/struct_000/               data/MP/                      cache/res32/
+        POSCAR  INCAR  POTCAR          manifest.csv                  mp-124/
+        CHGCAR  TAUCAR  OUTCAR         mp-124/CHGCAR.gz                  EXTCAR  CHGCAR
+    runs/struct_001/                   mp-81/CHGCAR.gz               struct_000/
+        ...                            mp-126/fields.h5                  EXTCAR  CHGCAR  TAUCAR
+
+B and C look alike on purpose — one directory per material, named by it — and
+the difference between them is the *content*, not the shape: an archive
+publishes a density and nothing else, so its external potential has to be
+built; a cache holds the fields already prepared, so nothing is computed. B
+also still reads its own older, flat form (``chgcar/CHGCAR_mp-124.gz``), which
+is what archives already on disk are in.
 
 What they *do* have in common is what the operator needs: for each material, a
 grid and up to three fields on it. That is the whole of this module's contract.
@@ -72,8 +79,10 @@ FIELD_CLASSES = {
 #: case-insensitively. Compression suffixes are stripped before matching.
 BULK_PREFIXES = ("CHGCAR",)
 
-#: Subdirectory a bulk archive's densities conventionally live in, as
-#: :class:`~poraque.data.materials_project.MPDataFetcher` writes them.
+#: Subdirectory a bulk archive's densities used to live in, as
+#: :class:`~poraque.data.materials_project.MPDataFetcher` wrote them before the
+#: per-material layout. Still followed: archives in that shape are on disk and
+#: keep working.
 BULK_SUBDIRECTORY = "chgcar"
 
 #: Files whose presence marks a directory as a DFT calculation rather than an
@@ -127,6 +136,51 @@ def _is_density_file(entry, prefixes=BULK_PREFIXES):
     if not any(stem.upper().startswith(prefix) for prefix in prefixes):
         return False
     return not os.path.splitext(stem)[1]
+
+
+def _lone_density(directory, prefixes=BULK_PREFIXES):
+    """
+    The single density file in a per-material directory, or ``None``.
+
+    This is what distinguishes ``data/MP/mp-124/CHGCAR.gz`` — one material,
+    named by its directory — from ``data/MP/chgcar/``, the flat archive that
+    holds every material at once. **Exactly one** density is the test: a
+    directory with two is not one material's, whatever it is, and guessing
+    which of them to train on is not a decision to make silently.
+
+    A calculation directory is excluded outright. It also holds one density,
+    but it holds the *inputs* as well, and reading it here would build the
+    external potential from a model when the ``POTCAR`` to do it exactly is
+    sitting beside the file.
+
+    Returns
+    -------
+    str or None
+        Path to the density, in whichever storage layout the directory uses:
+        a ``CHGCAR`` (compressed or not) or ``fields.h5::CHGCAR``.
+    """
+    if not os.path.isdir(directory) or _is_calculation_directory(directory):
+        return None
+
+    entries = [entry for entry in sorted(os.listdir(directory))
+               if _is_density_file(entry, prefixes)
+               and os.path.isfile(os.path.join(directory, entry))]
+    if len(entries) == 1:
+        return os.path.join(directory, entries[0])
+    if entries:
+        return None
+
+    store = _hdf5_store(directory)
+    if store is None:
+        return None
+
+    from ..fields.hdf5 import field_names, join_target
+
+    try:
+        available = set(field_names(store))
+    except (OSError, ValueError):
+        return None
+    return join_target(store, "CHGCAR") if "CHGCAR" in available else None
 
 
 def _hdf5_store(directory):
@@ -686,12 +740,21 @@ class CalculationSource(MaterialSource):
 # ---------------------------------------------------------------------- #
 class BulkDensitySource(MaterialSource):
     r"""
-    Bulk layout: a flat directory of standalone density files.
+    Bulk layout: standalone densities, one material each, nothing beside them.
 
     This is what a public archive ships — the Materials Project serves one
-    gzipped ``CHGCAR`` per material and nothing beside it::
+    ``CHGCAR`` per material and no inputs at all. Two arrangements of the same
+    thing are read, and a directory may hold both::
 
-        chgcar/CHGCAR_mp-124.gz  chgcar/CHGCAR_mp-81.gz  chgcar/manifest.csv
+        data/MP/mp-124/CHGCAR.gz        one directory per material, named by it
+        data/MP/mp-126/fields.h5        the same, stored as a field store
+        data/MP/chgcar/CHGCAR_mp-81.gz  the older flat form, id in the filename
+
+    The first is what :class:`~poraque.data.materials_project.MPDataFetcher`
+    writes and is the layout to point a config at; the second is what it used
+    to write, kept because those archives exist. A per-material directory is
+    what lets anything be added *beside* a density later — the flat form had
+    only the filename to say things with.
 
     Compression is transparent, so nothing is ever expanded on disk.
 
@@ -743,22 +806,43 @@ class BulkDensitySource(MaterialSource):
         """
         The directory that actually holds the densities.
 
-        A download is written as ``data/MP/{summary.csv,structures/,chgcar/}``,
-        and pointing a config at ``data/MP`` is the natural thing to do, so the
-        conventional ``chgcar/`` subdirectory is followed when the given
-        directory holds no densities itself.
+        Three shapes are accepted, tried in this order, and the order is what
+        keeps them from colliding:
+
+        1. ``root`` itself full of density *files* — a plain archive;
+        2. ``root/chgcar/`` full of them — the flat layout a download used to
+           be written in, still followed so an archive already on disk works;
+        3. ``root`` full of per-material *directories* — where a download goes
+           now, and where nothing needs resolving.
+
+        Asking (2) before (3) matters for the one case where both could
+        answer: a legacy ``data/MP`` whose ``chgcar/`` happens to hold a single
+        density. Read as (3) that directory would become a material called
+        "chgcar"; read as (2) it is what it is.
         """
         root = str(root)
-        if cls._holds_densities(root):
+        if cls._holds_flat_densities(root):
             return root
         nested = os.path.join(root, BULK_SUBDIRECTORY)
-        return nested if cls._holds_densities(nested) else root
+        return nested if cls._holds_flat_densities(nested) else root
 
     @staticmethod
-    def _holds_densities(root):
+    def _holds_flat_densities(root):
+        """Whether ``root`` holds standalone density *files*."""
         return os.path.isdir(root) and any(
             _is_density_file(entry) and os.path.isfile(os.path.join(root, entry))
             for entry in os.listdir(root))
+
+    @classmethod
+    def _holds_material_directories(cls, root):
+        """Whether ``root`` holds per-material *directories* of densities."""
+        return any(_lone_density(child) for child in _subdirectories(root))
+
+    @classmethod
+    def _holds_densities(cls, root):
+        """Whether ``root`` holds densities at all, in either arrangement."""
+        return (cls._holds_flat_densities(root)
+                or cls._holds_material_directories(root))
 
     @classmethod
     def detect(cls, root):
@@ -767,10 +851,20 @@ class BulkDensitySource(MaterialSource):
         return cls._holds_densities(cls._resolve_root(root))
 
     def discover(self):
+        """
+        Every material under the root, in whichever arrangement it uses.
+
+        Both are scanned in one pass rather than one being chosen, so a
+        directory holding some of each — a download interrupted across the
+        layout change, or an archive extended by hand — yields all of it. A
+        material found in both wins from its own directory: that is the
+        current layout, and the file inside it is the one a fresh download
+        wrote.
+        """
         from ..fields.io.compressed import strip_compression_suffix
 
         prefixes = tuple(self.options.get("prefixes") or BULK_PREFIXES)
-        records = []
+        records = {}
         for entry in sorted(os.listdir(self.root)):
             path = os.path.join(self.root, entry)
             if not os.path.isfile(path) or not _is_density_file(entry, prefixes):
@@ -778,9 +872,20 @@ class BulkDensitySource(MaterialSource):
             stem = strip_compression_suffix(entry)
             # `CHGCAR_mp-124` -> `mp-124`; a bare `CHGCAR` keeps its own name.
             identifier = stem.split("_", 1)[1] if "_" in stem else stem
-            records.append(self._record(identifier, self.root,
-                                        {"CHGCAR": path}))
-        return records
+            records[identifier] = self._record(identifier, self.root,
+                                               {"CHGCAR": path})
+
+        # `data/MP/mp-124/CHGCAR.gz`: the directory names the material, so the
+        # file inside it does not have to, and a second field could be dropped
+        # beside it tomorrow without renaming anything.
+        for child in _subdirectories(self.root):
+            density = _lone_density(child, prefixes)
+            if density is None:
+                continue
+            identifier = os.path.basename(os.path.normpath(child))
+            records[identifier] = self._record(identifier, child,
+                                               {"CHGCAR": density})
+        return [records[key] for key in sorted(records)]
 
     @property
     def charges(self):
@@ -974,15 +1079,34 @@ class PreparedFieldsSource(MaterialSource):
 
     @classmethod
     def detect(cls, root):
+        """
+        A prepared cache: per-material directories holding *prepared fields*.
+
+        The rule is that a material's directory carries something more than a
+        density. That is what separates this layout from a bulk archive, which
+        since the per-material download layout has exactly the same shape:
+        ``data/MP/mp-124/CHGCAR.gz`` and ``cache/res32/mp-124/CHGCAR`` are
+        indistinguishable as directory trees, and only the contents say which
+        is which.
+
+        A cache always has more, whichever task it was built for — ``EXTCAR``
+        with ``CHGCAR`` for ``ext2chg``, ``CHGCAR`` with ``TAUCAR`` for
+        ``chg2tau`` — because :data:`~poraque.data.cache.CACHED_FIELDS` writes
+        every field its source provides. An archive publishes the density and
+        nothing else. So a directory of lone densities is declined here and
+        falls through to :class:`BulkDensitySource`, which is the class that
+        knows an external potential still has to be *built* for it.
+
+        Getting this backwards is not a detection nicety: read as a cache, an
+        MP download would offer ``CHGCAR`` alone, and every ``ext2chg`` run on
+        it would fail for want of an input field that was never missing.
+        """
         if not os.path.isdir(root) or _is_calculation_directory(root):
             return False
         for child in _subdirectories(root):
             if _is_calculation_directory(child):
                 return False
-            if any(os.path.exists(os.path.join(child, name))
-                   for name in FIELD_CLASSES):
-                return True
-            if _hdf5_store(child):
+            if set(cls._fields_in(child)) - {"CHGCAR"}:
                 return True
         return False
 

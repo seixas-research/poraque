@@ -15,7 +15,8 @@ task:
 data:
   train_paths:                  # each root is auto-detected and all of them are pooled
     - data/vasp                 # local VASP runs: V_ext from their own POTCARs
-    - data/MP/chgcar            # standalone densities: V_ext from `potcar_dir`, or Gaussian
+    - data/MP                   # standalone densities, one mp-<id>/ directory each:
+                                #   V_ext from `potcar_dir`, or Gaussian
                                 # CAVEAT: those are two DEFINITIONS of V_ext, ~0.1 relative L2
                                 #   apart. A legitimate trade, never a good accident; the run
                                 #   warns when it happens.

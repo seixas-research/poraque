@@ -271,3 +271,47 @@ def relative_error(prediction, target):
         ``(B,)`` errors.
     """
     return RelativeL2Loss(reduction="none")(prediction, target)
+
+
+def relative_h1_error(prediction, target, cell, weight=0.1, epsilon=1e-8):
+    r"""
+    Per-sample relative :math:`H^1` error, for reporting.
+
+    The same combination :class:`SobolevLoss` minimises — the relative
+    :math:`L^2` on the values plus ``weight`` times the relative :math:`L^2` on
+    the spectral gradients — evaluated per sample rather than reduced. That
+    identity is the point of the function: a run whose objective includes the
+    gradient term should be *watched* on the quantity it is optimising, so the
+    validation curve and the training curve describe the same thing and early
+    stopping selects the model the objective prefers.
+
+    It is deliberately not the textbook
+    :math:`\lVert u\rVert_{H^1}^2 = \lVert u\rVert^2 + \lVert\nabla u\rVert^2`,
+    which would be a third quantity agreeing with neither the objective nor the
+    reported :math:`L^2`.
+
+    Parameters
+    ----------
+    prediction, target : torch.Tensor
+        ``(B, C, Nx, Ny, Nz)`` fields, in physical units for reporting.
+    cell : torch.Tensor
+        ``(B, 3, 3)`` lattice vectors in Å; the gradient is spectral, so it
+        needs the cell.
+    weight : float, optional
+        Weight of the gradient term. Pass the run's ``sobolev_weight``.
+    epsilon : float, optional
+        Floor on the target norms.
+
+    Returns
+    -------
+    torch.Tensor
+        ``(B,)`` errors.
+    """
+    value = RelativeL2Loss(epsilon, reduction="none")(prediction, target)
+    if weight <= 0.0:
+        return value
+    predicted_gradient = spectral_gradient(prediction, cell)
+    target_gradient = spectral_gradient(target, cell)
+    difference = (predicted_gradient - target_gradient).flatten(1).norm(dim=1)
+    scale = target_gradient.flatten(1).norm(dim=1).clamp_min(epsilon)
+    return value + weight * (difference / scale)

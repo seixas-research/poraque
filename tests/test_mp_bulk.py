@@ -518,8 +518,8 @@ class TestTheManifest:
     def test_both_manifests_are_written(self, tmp_path, monkeypatch):
         f = fetcher_with(["mp-1", "mp-2"], tmp_path, monkeypatch=monkeypatch)
         f.download()
-        assert (f.chgcar_dir / MANIFEST_JSON).exists()
-        assert (f.chgcar_dir / "manifest.csv").exists()
+        assert (f.outdir / MANIFEST_JSON).exists()
+        assert (f.outdir / "manifest.csv").exists()
 
     def test_provenance_is_stamped_per_run(self):
         stamp = retrieval_provenance()
@@ -554,9 +554,10 @@ class TestTheManifest:
 
 
 class TestResuming:
-    def _manifest(self, fetcher, rows):
-        fetcher.chgcar_dir.mkdir(parents=True, exist_ok=True)
-        with (fetcher.chgcar_dir / MANIFEST_JSON).open("w") as handle:
+    def _manifest(self, fetcher, rows, legacy=False):
+        directory = fetcher.legacy_chgcar_dir if legacy else fetcher.outdir
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / MANIFEST_JSON).open("w") as handle:
             json.dump(rows, handle)
 
     def test_a_settled_entry_is_not_fetched_again(self, tmp_path, monkeypatch):
@@ -607,8 +608,9 @@ class TestResuming:
                                                          monkeypatch):
         """The two mechanisms overlap; neither depends on the other."""
         f = fetcher_with(["mp-1", "mp-2"], tmp_path, monkeypatch=monkeypatch)
-        f.chgcar_dir.mkdir(parents=True, exist_ok=True)
-        FakeChgcar().write_file(str(f._chgcar_path("mp-1", compress=False)))
+        path = f._chgcar_path("mp-1", compress=False)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        FakeChgcar().write_file(str(path))
         fetched = []
         f._rester.get_charge_density_from_material_id = (
             lambda i: (fetched.append(i), FakeChgcar())[1])
@@ -619,8 +621,8 @@ class TestResuming:
     def test_an_unreadable_manifest_costs_a_refetch_not_the_run(self, tmp_path,
                                                                 monkeypatch):
         f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
-        f.chgcar_dir.mkdir(parents=True, exist_ok=True)
-        (f.chgcar_dir / MANIFEST_JSON).write_text("{ not json")
+        f.outdir.mkdir(parents=True, exist_ok=True)
+        (f.outdir / MANIFEST_JSON).write_text("{ not json")
 
         assert f.load_manifest() == {}
         assert f.download()[0]["status"] == "downloaded"
@@ -707,13 +709,169 @@ class TestConvertingAPymatgenStructure:
         assert poscar_from_pymatgen(poscar) is poscar
 
 
+class TestTheDownloadLayout:
+    r"""
+    One directory per material, named by its id: ``data/MP/mp-124/CHGCAR.gz``.
+
+    It replaces a flat ``chgcar/CHGCAR_mp-124.gz``, where the id lived in the
+    filename and every density in the archive shared one directory. What that
+    cost was not tidiness — nothing could be placed *beside* a density without
+    inventing a second naming convention for it.
+
+    Two things have to hold for the change to be safe rather than merely
+    tidier, and both are asserted here: an archive already on disk in the old
+    layout must still be **resumed** rather than re-fetched, and the manifest
+    must still locate its files now that every one of them is called
+    ``CHGCAR``.
+    """
+
+    def test_each_density_gets_its_own_directory(self, tmp_path, monkeypatch):
+        f = fetcher_with(["mp-1", "mp-2"], tmp_path, monkeypatch=monkeypatch)
+        f.download()
+
+        for identifier in ("mp-1", "mp-2"):
+            assert (f.outdir / identifier / "CHGCAR.gz").exists()
+
+    def test_the_filename_no_longer_carries_the_id(self, tmp_path, monkeypatch):
+        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
+        f.download(compress=False)
+
+        assert (f.outdir / "mp-1" / "CHGCAR").exists()
+        assert not list(f.outdir.glob("CHGCAR_*"))
+
+    def test_the_manifest_sits_at_the_top_not_beside_the_densities(
+            self, tmp_path, monkeypatch):
+        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
+        f.download()
+
+        assert (f.outdir / MANIFEST_JSON).exists()
+        assert not (f.outdir / "chgcar").exists()
+
+    def test_a_manifest_row_locates_its_file(self, tmp_path, monkeypatch):
+        """
+        Every density is now called ``CHGCAR``, so a bare filename would name
+        all of them at once. The row records the path relative to ``outdir``.
+        """
+        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
+        row = f.download()[0]
+
+        assert row["file"] == os.path.join("mp-1", "CHGCAR.gz")
+        assert (f.outdir / row["file"]).exists()
+
+    def test_an_hdf5_store_goes_in_the_same_place(self, tmp_path, monkeypatch):
+        pytest.importorskip("h5py")
+        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
+        row = f.download(hdf5=True)[0]
+
+        assert (f.outdir / "mp-1" / "fields.h5").exists()
+        assert row["file"] == os.path.join("mp-1", "fields.h5")
+
+    def test_a_failure_leaves_no_empty_directory_behind(self, tmp_path,
+                                                        monkeypatch):
+        """
+        An empty ``mp-2/`` would be discovered later as a material with no
+        density — a hole that looks like a directory rather than like a gap.
+        """
+        f = fetcher_with(["mp-1", "mp-2"], tmp_path, monkeypatch=monkeypatch)
+
+        def flaky(identifier):
+            if identifier == "mp-2":
+                raise ValueError("no such object")
+            return FakeChgcar()
+
+        f._rester.get_charge_density_from_material_id = flaky
+        f.download()
+
+        assert (f.outdir / "mp-1").is_dir()
+        assert not (f.outdir / "mp-2").exists()
+
+
+class TestAnArchiveInTheOldLayoutIsResumedNotRefetched:
+    """
+    The layout moved; the objects did not. A resume that only recognised the
+    new spelling would re-download an entire archive in order to rename it,
+    which is the one outcome this module exists to prevent.
+    """
+
+    def _legacy(self, fetcher, identifier, suffix=".gz"):
+        directory = fetcher.legacy_chgcar_dir
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"CHGCAR_{identifier}{suffix}"
+        path.write_bytes(b"not really a density, but it is on disk")
+        return path
+
+    def test_a_flat_file_counts_as_already_downloaded(self, tmp_path,
+                                                      monkeypatch):
+        f = fetcher_with(["mp-1", "mp-2"], tmp_path, monkeypatch=monkeypatch)
+        self._legacy(f, "mp-1")
+        fetched = []
+        f._rester.get_charge_density_from_material_id = (
+            lambda i: (fetched.append(i), FakeChgcar())[1])
+        f.download()
+
+        assert fetched == ["mp-2"]
+
+    def test_an_uncompressed_flat_file_counts_too(self, tmp_path, monkeypatch):
+        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
+        self._legacy(f, "mp-1", suffix="")
+        fetched = []
+        f._rester.get_charge_density_from_material_id = (
+            lambda i: (fetched.append(i), FakeChgcar())[1])
+        f.download()
+
+        assert fetched == []
+
+    def test_a_flat_hdf5_store_counts_too(self, tmp_path, monkeypatch):
+        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
+        directory = f.legacy_chgcar_dir
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "mp-1.h5").write_bytes(b"a store")
+        fetched = []
+        f._rester.get_charge_density_from_material_id = (
+            lambda i: (fetched.append(i), FakeChgcar())[1])
+        f.download()
+
+        assert fetched == []
+
+    def test_a_manifest_written_beside_the_old_densities_is_read(
+            self, tmp_path, monkeypatch):
+        f = fetcher_with(["mp-1", "mp-2"], tmp_path, monkeypatch=monkeypatch)
+        f.legacy_chgcar_dir.mkdir(parents=True, exist_ok=True)
+        with (f.legacy_chgcar_dir / MANIFEST_JSON).open("w") as handle:
+            json.dump([{"material_id": "mp-1", "status": "downloaded",
+                        "size_mb": 1.0}], handle)
+
+        assert set(f.load_manifest()) == {"mp-1"}
+
+    def test_the_new_manifest_wins_when_both_exist(self, tmp_path, monkeypatch):
+        """A machine part way through the change has both; the current one is
+        the one that was written last."""
+        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
+        f.legacy_chgcar_dir.mkdir(parents=True, exist_ok=True)
+        with (f.legacy_chgcar_dir / MANIFEST_JSON).open("w") as handle:
+            json.dump([{"material_id": "mp-old", "status": "downloaded"}],
+                      handle)
+        with (f.outdir / MANIFEST_JSON).open("w") as handle:
+            json.dump([{"material_id": "mp-new", "status": "downloaded"}],
+                      handle)
+
+        assert set(f.load_manifest()) == {"mp-new"}
+
+    def test_storage_commands_see_both_layouts(self, tmp_path, monkeypatch):
+        f = fetcher_with(["mp-1", "mp-2"], tmp_path, monkeypatch=monkeypatch)
+        f.download()                       # mp-1/CHGCAR.gz, mp-2/CHGCAR.gz
+        self._legacy(f, "mp-9")            # chgcar/CHGCAR_mp-9.gz
+
+        assert len(f._downloaded()) == 3
+
+
 class TestStoringAsHDF5:
     def test_the_download_writes_a_store(self, tmp_path, monkeypatch):
         pytest.importorskip("h5py")
         f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
         rows = f.download(hdf5=True, compression="gzip")
 
-        store = f.chgcar_dir / "mp-1.h5"
+        store = f.material_dir("mp-1") / "fields.h5"
         assert store.exists()
         assert field_names(str(store)) == ["CHGCAR"]
         assert rows[0]["grid"] == [8, 8, 8]
@@ -728,7 +886,8 @@ class TestStoringAsHDF5:
         g.download(compress=False)
 
         binary = ChargeDensity.read(
-            str(f.chgcar_dir / "mp-1.h5") + "::CHGCAR", dtype="float64")
+            str(f.material_dir("mp-1") / "fields.h5") + "::CHGCAR",
+            dtype="float64")
         text = ChargeDensity.read(g._chgcar_path("mp-1", compress=False),
                                   dtype="float64")
         assert np.allclose(binary.data, text.data, rtol=0, atol=1e-10)

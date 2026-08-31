@@ -285,7 +285,7 @@ class TestEarlyStopping:
         errors = iter([1.0, 0.1] + [9.0] * 50)
         snapshots = []
 
-        def fake_evaluate(operator, loader):
+        def fake_evaluate(operator, loader, **_):
             snapshots.append({k: v.detach().clone()
                               for k, v in operator.model.state_dict().items()})
             return next(errors)
@@ -392,6 +392,152 @@ class TestTheObjectiveIsReportedAsOneNumber:
             assert len(row) == len(header)
 
 
+class TestTheValidationColumnNamesItsOwnNorm:
+    r"""
+    ``loss: sobolev`` constrains the gradient as well as the values, so the
+    number watched during training has to be the one being minimised.
+
+    The regression this pins is a label, but not only a label. The column read
+    ``val rel L2`` whatever the objective was, and the quantity behind it was a
+    plain :math:`L^2` — so a Sobolev run reported a number the optimiser was
+    not stepping on, plotted it as the validation curve, and *selected the
+    checkpoint on it*. Early stopping was choosing the model that minimised the
+    wrong functional.
+
+    The final per-structure table is deliberately untouched: it reports
+    relative :math:`L^2` whatever the run was trained with, because that is
+    what makes two runs comparable at all.
+    """
+
+    def _sobolev(self, weight=0.1):
+        from poraque.ml.losses import PhysicsInformedLoss
+
+        return PhysicsInformedLoss(task="chg2tau", sobolev_weight=weight)
+
+    def test_a_plain_run_still_says_rel_l2(self, toy):
+        lines = []
+        history = _train_toy(toy, epochs=2, eval_every=1, validate=True,
+                             log=lines.append)
+        assert history["val_metric"] == "rel L2"
+        assert "val rel L2" in next(line for line in lines if "epoch" in line)
+
+    def test_a_sobolev_run_says_rel_h1(self, toy):
+        lines = []
+        history = _train_toy(toy, epochs=2, eval_every=1, validate=True,
+                             log=lines.append, loss=self._sobolev())
+        assert history["val_metric"] == "rel H1"
+        header = next(line for line in lines if "epoch" in line)
+        assert "val rel H1" in header and "val rel L2" not in header
+
+    def test_the_legend_says_what_the_h1_is_made_of(self, toy):
+        """A reader who has never seen the column needs the definition once."""
+        lines = []
+        _train_toy(toy, epochs=1, eval_every=1, validate=True,
+                   log=lines.append, loss=self._sobolev(weight=0.25))
+        legend = " ".join(lines)
+        assert "rel L2 + 0.25 x" in legend
+        assert "reports plain rel L2" in legend
+
+    def test_the_number_is_not_the_l2_relabelled(self, toy):
+        """
+        The whole point: an H1 error is a different number. Relabelling the
+        same value would satisfy a test on the header and none of the reason
+        the header was wrong.
+        """
+        plain = _train_toy(toy, epochs=2, eval_every=1, validate=True,
+                           verbose=False)
+        sobolev = _train_toy(toy, epochs=2, eval_every=1, validate=True,
+                             verbose=False, loss=self._sobolev(weight=0.5))
+        assert sobolev["val_error"][-1] > plain["val_error"][-1]
+
+    def test_it_is_the_objective_evaluated_on_the_held_out_set(self, toy):
+        """
+        `evaluate` and `SobolevLoss` must agree, or the validation curve is
+        measuring a third thing that happens to look like the objective.
+        """
+        import torch
+
+        from poraque.ml.losses import SobolevLoss, relative_h1_error
+
+        torch.manual_seed(0)
+        prediction = torch.randn(2, 1, 8, 8, 8)
+        target = torch.randn(2, 1, 8, 8, 8)
+        cell = torch.eye(3).expand(2, 3, 3) * 5.0
+
+        per_sample = relative_h1_error(prediction, target, cell, weight=0.3)
+        assert per_sample.shape == (2,)
+        assert float(per_sample.mean()) == pytest.approx(
+            float(SobolevLoss(0.3)(prediction, target, cell)), rel=1e-5)
+
+    def test_zero_weight_is_exactly_the_l2(self, toy):
+        """
+        `sobolev_weight: 0` is a relative L2 by construction, and the label
+        follows the weight rather than the config keyword — so a run that asks
+        for Sobolev and weights the gradient at nothing is reported honestly
+        as what it is.
+        """
+        import torch
+
+        from poraque.ml.losses import relative_error, relative_h1_error
+
+        torch.manual_seed(0)
+        prediction = torch.randn(2, 1, 6, 6, 6)
+        target = torch.randn(2, 1, 6, 6, 6)
+        cell = torch.eye(3).expand(2, 3, 3) * 5.0
+        assert torch.allclose(
+            relative_h1_error(prediction, target, cell, weight=0.0),
+            relative_error(prediction, target))
+
+        history = _train_toy(toy, epochs=1, eval_every=1, validate=True,
+                             verbose=False, loss=self._sobolev(weight=0.0))
+        assert history["val_metric"] == "rel L2"
+
+    def test_the_figure_labels_the_axis_it_actually_plotted(self, toy, tmp_path):
+        """
+        The stored series is whatever `train` measured, and a figure that
+        assumed L2 would mislabel it with nothing to notice.
+        """
+        pytest.importorskip("matplotlib")
+        from poraque.vis import TrainingReport
+
+        report = TrainingReport(str(tmp_path))
+        history = _train_toy(toy, epochs=2, eval_every=1, validate=True,
+                             verbose=False, loss=self._sobolev())
+        report.loss_curves(history, name="sobolev")
+
+        import matplotlib.pyplot as plt
+
+        plt.close("all")
+        assert history["val_metric"] == "rel H1"
+        assert os.path.exists(os.path.join(str(tmp_path), "sobolev.png"))
+
+
+class TestTheFinalEvaluationIsAlwaysARelativeL2:
+    """
+    Whatever a run was trained on, what it *reports* per structure is a
+    relative :math:`L^2` — so two runs with different objectives can be put
+    side by side. The metric is computed from NumPy arrays and never consults
+    the loss, and this asserts that rather than assuming it.
+    """
+
+    def test_the_column_is_there_whatever_the_objective(self):
+        columns = dict((key, title) for title, key, _ in
+                       poraque_train.METRIC_COLUMNS)
+        assert columns["relative_l2"] == "rel L2"
+
+    def test_the_metric_function_is_never_told_what_the_loss_was(self):
+        import inspect
+
+        import numpy as np
+
+        parameters = inspect.signature(poraque_train.metrics).parameters
+        assert set(parameters) == {"prediction", "target", "grid"}
+
+        values = poraque_train.metrics(np.ones((4, 4, 4)) * 1.1,
+                                       np.ones((4, 4, 4)))
+        assert values["relative_l2"] == pytest.approx(0.1, rel=1e-6)
+
+
 class TestLossSummaryRows:
     def test_reports_one_number(self):
         rows = poraque_train.loss_summary({"train_loss": [0.5]})
@@ -424,7 +570,8 @@ class TestHistorySerialisation:
 
         assert set(curves) == {"train_loss", "val_error", "val_epoch"}
         assert all(isinstance(value, list) for value in curves.values())
-        assert set(stopping) == {"best_epoch", "best_error", "stopped_early"}
+        assert set(stopping) == {"best_epoch", "best_error", "stopped_early",
+                                 "val_metric"}
 
     def test_a_real_history_survives_json(self, toy):
         """The failure was a TypeError on the way into json.dump."""

@@ -175,6 +175,31 @@ def write_bulk(directory, identifiers=("mp-1", "mp-2"), shape=(12, 12, 12),
     return directory
 
 
+def write_download(directory, identifiers=("mp-1", "mp-2"), shape=(12, 12, 12),
+                   compress=True, element="Si"):
+    """
+    A download in the current layout: one directory per material, named by it.
+
+    Deliberately not built from :func:`write_bulk` -- the two layouts are what
+    is under test, and expressing one in terms of the other would make them
+    agree by construction.
+    """
+    directory = str(directory)
+    for index, identifier in enumerate(identifiers):
+        child = os.path.join(directory, identifier)
+        os.makedirs(child, exist_ok=True)
+        _, _, _, density = _material(np.eye(3) * (5.0 + index), shape,
+                                     seed=index + 10, element=element)
+        path = os.path.join(child, "CHGCAR")
+        density.write(path)
+        if compress:
+            with open(path, "rb") as source, \
+                    gzip.open(path + ".gz", "wb") as sink:
+                sink.write(source.read())
+            os.remove(path)
+    return directory
+
+
 def write_prepared(directory, names=("a", "b"), shape=(12, 12, 12), tau=True):
     """A cache: one directory per material, holding the fields themselves."""
     directory = str(directory)
@@ -203,6 +228,11 @@ def calculations(tmp_path):
 @pytest.fixture
 def bulk(tmp_path):
     return write_bulk(tmp_path / "chgcar")
+
+
+@pytest.fixture
+def download(tmp_path):
+    return write_download(tmp_path / "MP")
 
 
 @pytest.fixture
@@ -275,6 +305,121 @@ class TestDetection:
 
     def test_available_formats_are_in_detection_order(self):
         assert available_formats() == ["vasp", "prepared", "bulk"]
+
+
+class TestADownloadIsOneDirectoryPerMaterial:
+    r"""
+    ``poraque-mp`` writes ``data/MP/mp-124/CHGCAR.gz``, not
+    ``data/MP/chgcar/CHGCAR_mp-124.gz``.
+
+    The shape is the same as a VASP run and the same as a prepared cache, which
+    is the point — and also the hazard, because those three are then
+    indistinguishable as directory *trees* and only their contents say which is
+    which. Getting it wrong is not cosmetic: read as a prepared cache, a
+    download would offer ``CHGCAR`` and no ``EXTCAR``, and every ``ext2chg``
+    run on it would fail for want of an input field that was never missing —
+    it is *computed*, and only :class:`BulkDensitySource` knows to compute it.
+
+    The flat layout is still read. Archives are on disk in it, and re-fetching
+    tens of thousands of objects to rename them is not a migration anyone would
+    accept.
+    """
+
+    def test_it_is_detected_as_a_bulk_archive(self, download):
+        assert detect_source(download) is BulkDensitySource
+
+    def test_the_directory_names_the_material(self, download):
+        records = resolve_source(download).discover()
+        assert [record.identifier for record in records] == ["mp-1", "mp-2"]
+
+    def test_each_record_points_into_its_own_directory(self, download):
+        for record in resolve_source(download).discover():
+            assert os.path.basename(record.directory) == record.identifier
+            assert record.files["CHGCAR"].startswith(record.directory)
+
+    def test_the_potential_is_still_computed_not_expected_on_disk(self, download):
+        """The failure a prepared-cache misdetection would produce."""
+        source = resolve_source(download)
+        assert "EXTCAR" in source.provides(source.discover()[0])
+
+    def test_a_prepared_cache_is_still_a_prepared_cache(self, prepared):
+        """The same tree shape; the extra field is what separates them."""
+        assert detect_source(prepared) is PreparedFieldsSource
+
+    def test_a_cache_holding_only_densities_reads_as_an_archive(self, tmp_path):
+        """
+        Which is what it is. A cache always writes more than the density --
+        `EXTCAR` for ext2chg, `TAUCAR` for chg2tau -- so a directory of lone
+        densities has never been one.
+        """
+        root = write_download(tmp_path / "lone", identifiers=("a",),
+                              compress=False)
+        assert detect_source(root) is BulkDensitySource
+
+    def test_a_vasp_run_still_wins_over_both(self, calculations):
+        """It holds a CHGCAR in a per-material directory too."""
+        assert detect_source(calculations) is CalculationSource
+
+    def test_the_flat_layout_still_reads(self, bulk):
+        assert detect_source(bulk) is BulkDensitySource
+        assert len(resolve_source(bulk).discover()) == 2
+
+    def test_both_layouts_in_one_directory_are_all_found(self, tmp_path):
+        """A download interrupted across the change, or extended by hand."""
+        root = str(tmp_path / "mixed")
+        write_download(root, identifiers=("mp-1",))
+        write_bulk(root, identifiers=("mp-2",))
+
+        records = resolve_source(root).discover()
+
+        assert sorted(r.identifier for r in records) == ["mp-1", "mp-2"]
+
+    def test_a_lone_legacy_chgcar_directory_is_not_a_material(self, tmp_path):
+        """
+        The one case the two readings could disagree on: `data/MP/chgcar/`
+        holding a single density. As a per-material directory it would become a
+        material called "chgcar"; it is the flat archive, and is read as one.
+        """
+        download = tmp_path / "MP"
+        write_bulk(download / "chgcar", identifiers=("mp-1",))
+
+        records = resolve_source(download).discover()
+
+        assert [record.identifier for record in records] == ["mp-1"]
+
+    def test_a_directory_of_two_densities_is_not_one_material(self, tmp_path):
+        """
+        Exactly one density is what makes a directory a material's. Two is
+        something else, and picking one of them to train on is not a decision
+        to make silently.
+        """
+        root = tmp_path / "odd"
+        write_bulk(root / "several", identifiers=("mp-1", "mp-2"))
+        (root / "keep").mkdir()
+        write_bulk(root / "keep", identifiers=("mp-9",))
+
+        # `several/` holds two, so it is not a material; `keep/` holds one, but
+        # its file still carries the id, which is the flat spelling.
+        source = resolve_source(root)
+        assert "several" not in [r.identifier for r in source.discover()]
+
+    def test_an_hdf5_download_is_read_the_same_way(self, tmp_path):
+        pytest.importorskip("h5py")
+        from poraque.fields.hdf5 import write_fields
+
+        root = tmp_path / "MPh5"
+        for index, identifier in enumerate(("mp-1", "mp-2")):
+            child = root / identifier
+            child.mkdir(parents=True)
+            _, _, _, density = _material(np.eye(3) * (5.0 + index),
+                                         (8, 8, 8), seed=index)
+            write_fields(str(child / "fields.h5"), {"CHGCAR": density})
+
+        assert detect_source(root) is BulkDensitySource
+        records = resolve_source(root).discover()
+        assert [r.identifier for r in records] == ["mp-1", "mp-2"]
+        assert all(r.files["CHGCAR"].endswith("fields.h5::CHGCAR")
+                   for r in records)
 
 
 # ---------------------------------------------------------------------- #

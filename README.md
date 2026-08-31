@@ -12,9 +12,11 @@
 <div align="center">
 
 [![PyPI](https://img.shields.io/pypi/v/poraque?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/poraque/)
-[![Python](https://img.shields.io/pypi/pyversions/poraque?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/poraque/)
+[![Python](https://img.shields.io/pypi/pyversions/poraque?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![ASE](https://img.shields.io/badge/ASE-3.2x-4B8BBE?style=for-the-badge)](https://wiki.fysik.dtu.dk/ase/)
+[![h5py](https://img.shields.io/badge/h5py-HDF5-0E7C86?style=for-the-badge)](https://www.h5py.org/)
+[![mp-api](https://img.shields.io/badge/mp--api-Materials%20Project-3B3F8C?style=for-the-badge)](https://pypi.org/project/mp-api/)
 [![On-line manual](https://img.shields.io/readthedocs/poraque?style=for-the-badge&logo=readthedocs&logoColor=white&label=Manual)](https://poraque.readthedocs.io/)
 [![License: MIT](https://img.shields.io/github/license/seixas-research/poraque?color=green&style=for-the-badge)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-poraque-181717?style=for-the-badge&logo=github)](https://github.com/seixas-research/poraque)
@@ -205,6 +207,21 @@ poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
 `--output` (or `--outdir`) defaults to the **current directory**, so a command
 that writes hundreds of megabytes puts them where you ran it. Files stay
 gzipped; Poraquê reads compressed volumetric files in place.
+
+A download is **one directory per material, named by its id** — the shape of a
+VASP run, and the shape `data.train_paths` already reads:
+
+```text
+data/MP/
+    summary.csv  manifest.json  manifest.csv
+    structures/mp-124.cif
+    mp-124/CHGCAR.gz
+    mp-81/CHGCAR.gz
+    mp-126/fields.h5           # with --hdf5
+```
+
+The flat `chgcar/CHGCAR_mp-124.gz` layout this replaces is still read, and an
+archive already on disk in it still *resumes* rather than re-downloading.
 
 Then train. `train_paths` is a list, so a download can be trained on alone or
 beside your own runs:

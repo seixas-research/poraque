@@ -109,13 +109,44 @@ Command line
 file behind. Everything else writes into ``--outdir`` (``--output`` is accepted
 too), which defaults to the current directory.
 
+What a download leaves behind
+-----------------------------
+**One directory per material, named by its id**, holding that material's
+files::
+
+    data/MP/
+        summary.csv  summary.json  chgcar_estimate.csv
+        manifest.json  manifest.csv
+        structures/mp-124.cif  structures/mp-81.cif
+        mp-124/CHGCAR.gz
+        mp-81/CHGCAR.gz
+        mp-126/fields.h5                    # --hdf5
+
+That is the shape of a VASP run, and it is the shape
+:class:`~poraque.data.sources.BulkDensitySource` reads — so a download drops
+straight into a training config with no rearranging::
+
+    data:
+      root: data/MP
+
+It replaces a flat ``chgcar/CHGCAR_mp-124.gz``, where the material id lived in
+the filename and every density in the archive shared one directory. The cost of
+that arrangement was not tidiness: nothing could be placed *beside* a density
+— a structure file, a POTCAR record, a second field — without inventing a
+second naming convention for it, and a per-material directory needs none.
+
+**The old layout is still read, and still resumed from.** An archive already on
+disk keeps working, `decompress`/`recompress` see both, and an interrupted
+download picks up where it stopped rather than re-fetching thousands of objects
+to rename them.
+
 Downloading in bulk
 -------------------
 A run over thousands of objects is interrupted, rate-limited and partially
 failed as a matter of course, so :meth:`MPDataFetcher.download` treats all three
 as normal:
 
-* **Resume** from ``chgcar/manifest.json``, rewritten after every single file.
+* **Resume** from ``manifest.json``, rewritten after every single file.
   An entry marked ``downloaded`` or ``cached`` is settled; a ``failed`` one is
   retried, since that is the only way the set ever reaches completeness. A file
   on disk with no manifest entry is honoured too, so the two mechanisms overlap
@@ -140,6 +171,7 @@ perfectly well and cannot seed a VASP ``ICHARG=1`` restart.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import gzip
 import json
@@ -232,6 +264,23 @@ TRANSIENT_ERRORS = (
 #: Written beside the CHGCARs as a human-readable record of what a fetch did.
 #: Nothing reads it back; the dataset layer discovers files directly.
 MANIFEST_FILENAME = "manifest.csv"
+
+#: Filename a downloaded density is given inside its own material directory.
+#: Bare ``CHGCAR``, as VASP writes it: the material is named by the directory,
+#: so repeating the id in the filename would say the same thing twice and would
+#: make the file unreadable to anything that keys on VASP's own names.
+DENSITY_FILENAME = "CHGCAR"
+
+#: Filename of the HDF5 field store, when ``--hdf5`` is used. The same name the
+#: prepared cache uses (:mod:`poraque.data.cache`), because it is the same
+#: thing: one material, one store, addressed as ``fields.h5::CHGCAR``.
+STORE_FILENAME = "fields.h5"
+
+#: Where downloads used to go: one flat directory of ``CHGCAR_<id>.gz``.
+#: Kept because archives already on disk are in that layout and must still be
+#: read and, more importantly, still *resumed* -- re-fetching tens of thousands
+#: of objects because the layout moved is not a trade anyone would accept.
+LEGACY_SUBDIRECTORY = "chgcar"
 
 
 def retrieval_provenance():
@@ -516,7 +565,8 @@ class MPDataFetcher:
         Materials Project API key. Falls back to ``$MP_API_KEY``, then a local
         ``.env``, then ``~/.env``.
     outdir : str or pathlib.Path, optional
-        Where ``summary.*``, ``structures/`` and ``chgcar/`` are written.
+        Where ``summary.*``, ``structures/``, ``manifest.*`` and the
+        per-material ``mp-124/`` directories are written.
     compress : bool, optional
         Keep the downloaded CHGCARs gzipped (default). Poraquê reads them
         gzipped, so the only reason to turn this off is another tool that
@@ -619,10 +669,30 @@ class MPDataFetcher:
     # ------------------------------------------------------------------ #
     # Layout
     # ------------------------------------------------------------------ #
+    def material_dir(self, identifier):
+        """
+        The directory one material's files live in: ``<outdir>/mp-124``.
+
+        One directory per material, named by its id, holding a ``CHGCAR`` --
+        the shape of a VASP run, which is the shape every other source in
+        :mod:`poraque.data.sources` already reads. The flat
+        ``chgcar/CHGCAR_mp-124.gz`` it replaces put the id in the filename and
+        the whole archive in one directory, which meant nothing could be added
+        beside a density later without inventing a second naming convention
+        for it.
+        """
+        return self.outdir / str(identifier)
+
     @property
-    def chgcar_dir(self):
-        """Directory the CHGCARs are written to."""
-        return self.outdir / "chgcar"
+    def legacy_chgcar_dir(self):
+        """
+        The flat directory downloads used to go to, for resuming one.
+
+        Nothing is written here any more. It is read by :meth:`_existing` and
+        :meth:`load_manifest` so an archive fetched before the layout changed
+        resumes instead of restarting.
+        """
+        return self.outdir / LEGACY_SUBDIRECTORY
 
     @property
     def structure_dir(self):
@@ -1049,15 +1119,51 @@ class MPDataFetcher:
     def _chgcar_path(self, identifier, compress=None):
         """Where material ``identifier``'s CHGCAR belongs."""
         compress = self.compress if compress is None else compress
-        return self.chgcar_dir / f"CHGCAR_{identifier}{'.gz' if compress else ''}"
+        suffix = ".gz" if compress else ""
+        return self.material_dir(identifier) / f"{DENSITY_FILENAME}{suffix}"
+
+    def _store_path(self, identifier):
+        """Where material ``identifier``'s HDF5 field store belongs."""
+        return self.material_dir(identifier) / STORE_FILENAME
+
+    def _legacy_paths(self, identifier):
+        """Every place a previous version of this class may have written it."""
+        flat = self.legacy_chgcar_dir
+        return (flat / f"CHGCAR_{identifier}.gz",
+                flat / f"CHGCAR_{identifier}",
+                flat / f"{identifier}.h5")
 
     def _existing(self, identifier):
-        """Whichever variant — gzipped or plain — is already on disk."""
-        for compressed in (True, False):
-            path = self._chgcar_path(identifier, compress=compressed)
+        """
+        Whichever variant of this material is already on disk, or ``None``.
+
+        Every layout is consulted, not only the current one: gzipped or plain,
+        ``CHGCAR`` or HDF5 store, in the material's own directory or in the
+        flat ``chgcar/`` an older download used. A resume that only recognised
+        the new spelling would re-fetch an entire archive to rename it.
+        """
+        candidates = (self._chgcar_path(identifier, compress=True),
+                      self._chgcar_path(identifier, compress=False),
+                      self._store_path(identifier),
+                      *self._legacy_paths(identifier))
+        for path in candidates:
             if path.exists() and path.stat().st_size > 0:
                 return path
         return None
+
+    def _manifest_name(self, path):
+        """
+        How a file is named in the manifest: relative to ``outdir``.
+
+        The bare filename would do when every density had the material id in
+        its name. Now they are all called ``CHGCAR`` and only the directory
+        tells them apart, so the manifest records ``mp-124/CHGCAR.gz`` --
+        which is also what makes a row locate its file.
+        """
+        try:
+            return str(path.relative_to(self.outdir))
+        except ValueError:                                      # pragma: no cover
+            return path.name
 
     def download(self, limit=None, max_sites=None, max_size_mb=None,
                  compress=None, skip_existing=True, hdf5=False,
@@ -1065,9 +1171,21 @@ class MPDataFetcher:
         """
         Download the charge densities. Resumable; one failure never aborts the batch.
 
+        Each density is written into **its own directory**, named by the
+        material id::
+
+            data/MP/mp-124/CHGCAR.gz
+            data/MP/mp-81/CHGCAR.gz
+            data/MP/mp-126/fields.h5        # --hdf5
+
+        which is the shape of a VASP run and the shape
+        :class:`~poraque.data.sources.BulkDensitySource` reads. The flat
+        ``chgcar/CHGCAR_mp-124.gz`` layout this replaces is still read, and
+        still resumed from, so an archive already on disk is not re-fetched.
+
         **Resume** is by manifest first and by file second. ``manifest.json``
-        beside the densities records every entry already accounted for, so a
-        run that is interrupted after 900 of 3000 objects re-reads that file
+        at the top of ``outdir`` records every entry already accounted for, so
+        a run that is interrupted after 900 of 3000 objects re-reads that file
         and starts at 901 without stat-ing, re-resolving or re-heading the
         first 900. A file on disk with no manifest entry — a manifest lost, or
         a directory assembled by hand — is still honoured, so the two
@@ -1096,7 +1214,7 @@ class MPDataFetcher:
             resumes rather than restarting.
         hdf5 : bool, optional
             Convert each density to a Poraquê HDF5 field store
-            (``chgcar/mp-124.h5``) instead of writing a ``CHGCAR``. The values
+            (``mp-124/fields.h5``) instead of writing a ``CHGCAR``. The values
             are identical; what is gained is that the file is read without
             parsing millions of numbers, and what is lost is the PAW
             augmentation block, which no HDF5 layout here carries — so a store
@@ -1109,16 +1227,17 @@ class MPDataFetcher:
         Returns
         -------
         list of dict
-            The manifest, written to ``chgcar/manifest.json`` **and**
-            ``manifest.csv`` after every file so an interrupted run leaves a
-            truthful record. Per entry: material id, formula, site count, grid
-            dimensions, file, size, status, attempts, and the retrieval
-            provenance.
+            The manifest, written to ``manifest.json`` **and**
+            ``manifest.csv`` at the top of ``outdir`` after every file, so an
+            interrupted run leaves a truthful record. Per entry: material id,
+            formula, site count, grid dimensions, file (relative to ``outdir``,
+            since every density is now called ``CHGCAR``), size, status,
+            attempts, and the retrieval provenance.
         """
         compress = self.compress if compress is None else compress
         rester = self._connect()
         estimate = self.estimate()
-        self.chgcar_dir.mkdir(parents=True, exist_ok=True)
+        self.outdir.mkdir(parents=True, exist_ok=True)
 
         by_id = {str(d.material_id): d for d in self.search()}
         targets = [by_id[i] for i, size in estimate.sizes.items()
@@ -1174,8 +1293,12 @@ class MPDataFetcher:
                 self._write_manifest(manifest)
                 continue
 
-            path = (self.chgcar_dir / f"{identifier}.h5" if hdf5
+            path = (self._store_path(identifier) if hdf5
                     else self._chgcar_path(identifier, compress=compress))
+            # The material's directory is created only once the download is
+            # about to be attempted, so a filtered-out or failed entry does not
+            # leave an empty `mp-124/` behind for a later scan to puzzle over.
+            path.parent.mkdir(parents=True, exist_ok=True)
             clock = time.time()
             try:
                 chgcar, attempts = with_retries(
@@ -1193,6 +1316,11 @@ class MPDataFetcher:
                 # silent about a hole in the dataset.
                 print(f"{label}: FAILED - {type(error).__name__}: {error}")
                 path.unlink(missing_ok=True)
+                # An empty `mp-124/` left by a failure would be discovered as a
+                # material with no density; `rmdir` refuses a non-empty one, so
+                # a directory holding anything else survives untouched.
+                with contextlib.suppress(OSError):
+                    path.parent.rmdir()
                 manifest.append(self._manifest_row(
                     identifier, document, None, "failed",
                     f"{type(error).__name__}: {error}", provenance=provenance))
@@ -1263,7 +1391,12 @@ class MPDataFetcher:
             manifest costs a re-download, and refusing to start would cost the
             whole archive.
         """
-        path = self.chgcar_dir / MANIFEST_JSON
+        path = self.outdir / MANIFEST_JSON
+        if not path.exists():
+            # An archive fetched before the layout changed kept its manifest
+            # beside the densities. Reading it is what lets that download
+            # resume rather than restart.
+            path = self.legacy_chgcar_dir / MANIFEST_JSON
         if not path.exists():
             return {}
         try:
@@ -1277,17 +1410,17 @@ class MPDataFetcher:
         return {str(row.get("material_id")): row for row in rows
                 if row.get("material_id")}
 
-    @staticmethod
-    def _manifest_row(identifier, document, path, status, error="", grid=None,
-                      attempts=1, provenance=None):
+    def _manifest_row(self, identifier, document, path, status, error="",
+                      grid=None, attempts=1, provenance=None):
         """One manifest record: what was fetched, how big, and from where."""
+        namer = self._manifest_name
         if grid is None and path is not None:
             grid = _peek_grid(path)
         return {
             "material_id": identifier,
             "formula_pretty": document.formula_pretty,
             "nsites": document.nsites,
-            "file": path.name if path else "",
+            "file": namer(path) if path else "",
             "size_mb": round(path.stat().st_size / 1e6, 2) if path else 0.0,
             "compressed": bool(path and path.suffix in (".gz", ".h5")),
             "status": status,
@@ -1306,9 +1439,10 @@ class MPDataFetcher:
         the end so an interrupted run leaves a manifest at all — which is the
         thing the next run resumes from.
         """
-        with (self.chgcar_dir / MANIFEST_JSON).open("w") as handle:
+        self.outdir.mkdir(parents=True, exist_ok=True)
+        with (self.outdir / MANIFEST_JSON).open("w") as handle:
             json.dump(manifest, handle, indent=2)
-        with (self.chgcar_dir / MANIFEST_FILENAME).open("w", newline="") as handle:
+        with (self.outdir / MANIFEST_FILENAME).open("w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=MANIFEST_COLUMNS,
                                     extrasaction="ignore")
             writer.writeheader()
@@ -1317,9 +1451,23 @@ class MPDataFetcher:
     # ------------------------------------------------------------------ #
     # Storage
     # ------------------------------------------------------------------ #
+    def _downloaded(self):
+        """
+        Every downloaded ``CHGCAR`` on disk, in either layout, sorted.
+
+        One glob covers both: ``mp-124/CHGCAR.gz`` is where a download goes
+        now and ``chgcar/CHGCAR_mp-124.gz`` is where it used to, and both are
+        one level below ``outdir`` with a name beginning ``CHGCAR``. A machine
+        part way through the change has some of each, and a storage command
+        that saw only one of them would silently do half the job.
+        """
+        return sorted(path for path in
+                      self.outdir.glob(f"*/{DENSITY_FILENAME}*")
+                      if path.is_file())
+
     def decompress(self, keep_original=False, dry_run=False):
         """
-        Expand the downloaded CHGCARs in place (``CHGCAR_x.gz`` -> ``CHGCAR_x``).
+        Expand the downloaded CHGCARs in place (``CHGCAR.gz`` -> ``CHGCAR``).
 
         .. warning::
            Poraquê reads gzipped volumetric files directly, so this is **not**
@@ -1341,13 +1489,14 @@ class MPDataFetcher:
         dict
             ``{"n": files, "before": bytes, "after": bytes}``.
         """
-        files = sorted(self.chgcar_dir.glob("CHGCAR_*.gz"))
+        files = [path for path in self._downloaded()
+                 if path.suffix == ".gz"]
         if not files:
-            print(f"No gzipped CHGCARs in {self.chgcar_dir}")
+            print(f"No gzipped CHGCARs under {self.outdir}")
             return {"n": 0, "before": 0, "after": 0}
 
         before = sum(path.stat().st_size for path in files)
-        free = shutil.disk_usage(self.chgcar_dir).free
+        free = shutil.disk_usage(self.outdir).free
         projected = before * UNZIP_EXPANSION
         needed = projected + before if keep_original else projected
 
@@ -1386,10 +1535,10 @@ class MPDataFetcher:
 
     def recompress(self, level=6):
         """Re-gzip expanded CHGCARs, reclaiming the space :meth:`decompress` cost."""
-        files = [path for path in sorted(self.chgcar_dir.glob("CHGCAR_*"))
-                 if path.suffix != ".gz"]
+        files = [path for path in self._downloaded()
+                 if path.suffix not in (".gz", ".h5")]
         if not files:
-            print(f"No expanded CHGCARs in {self.chgcar_dir}")
+            print(f"No expanded CHGCARs under {self.outdir}")
             return {"n": 0, "before": 0, "after": 0}
 
         before = sum(path.stat().st_size for path in files)
@@ -1617,8 +1766,9 @@ def build_parser():
     # where it was run, not somewhere it picked.
     parser.add_argument("--outdir", "--output", dest="outdir", default=".",
                         metavar="DIR",
-                        help="destination for summary.*, structures/ and "
-                             "chgcar/ (default: the current directory)")
+                        help="destination for summary.*, structures/, "
+                             "manifest.* and one mp-<id>/ directory per "
+                             "material (default: the current directory)")
     parser.add_argument("--estimate", action="store_true",
                         help="dry run: report the size on the console and "
                              "write nothing at all")

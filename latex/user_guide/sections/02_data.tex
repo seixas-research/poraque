@@ -103,6 +103,22 @@ them where you ran it rather than somewhere it chose:
 poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
 \end{lstlisting}
 
+A download is \textbf{one directory per material, named by its id} --- the
+shape of a VASP run, and the shape \opt{data.train\_paths} already reads:
+
+\begin{lstlisting}
+data/MP/
+    summary.csv  manifest.json  manifest.csv
+    structures/mp-124.cif
+    mp-124/CHGCAR.gz
+    mp-81/CHGCAR.gz
+    mp-126/fields.h5           # with --hdf5
+\end{lstlisting}
+
+The flat \file{chgcar/CHGCAR\_mp-124.gz} layout this replaces is still read,
+and an archive already on disk in it still \emph{resumes} rather than
+re-downloading --- so nothing has to be moved.
+
 Useful filters: \opt{--band-gap MIN MAX} (\opt{0 0} selects metals),
 \opt{--crystal-system}, \opt{--stable-only}, \opt{--num-sites MIN MAX}, and
 \opt{--max-sites} / \opt{--max-size-mb} / \opt{--limit} to cap the download.
@@ -121,8 +137,10 @@ a time. Expanding them buys nothing and costs roughly three times the storage.
 
 \section{What an MP download does and does not contain}
 
-It contains one compressed \file{CHGCAR} per material and nothing else --- no
-\file{POSCAR}, \file{INCAR}, \file{POTCAR}, \file{OUTCAR} or \file{TAUCAR}.
+It contains one compressed \file{CHGCAR} per material directory and nothing
+else --- no \file{POSCAR}, \file{INCAR}, \file{POTCAR}, \file{OUTCAR} or
+\file{TAUCAR}. (That emptiness is also what tells the directory apart from a
+prepared cache, which has the same shape and always holds more than a density.)
 Three consequences, and Poraqu\^e handles the first two for you:
 
 \begin{description}

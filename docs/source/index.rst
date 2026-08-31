@@ -8,6 +8,12 @@
           which is exactly the pair that drifts, so
           tests/test_badges.py asserts they have not.
 
+          Every badge links out: to the project it names, or to that
+          project's PyPI page when it has no separate home. The row is
+          identity (PyPI, Python), then the stack the package is built on
+          (PyTorch, ASE, h5py, mp-api), then where to read and reuse it
+          (Manual, License, GitHub).
+
           No logo here: furo already puts one in the sidebar
           (conf.py's light_logo/dark_logo), and a second copy in the body
           would be the same image twice on the same screen.
@@ -19,7 +25,7 @@
        <a href="https://pypi.org/project/poraque/">
          <img src="https://img.shields.io/pypi/v/poraque?style=for-the-badge&amp;logo=pypi&amp;logoColor=white" alt="pypi">
        </a>
-       <a href="https://pypi.org/project/poraque/">
+       <a href="https://www.python.org/">
          <img src="https://img.shields.io/pypi/pyversions/poraque?style=for-the-badge&amp;logo=python&amp;logoColor=white" alt="python">
        </a>
        <a href="https://pytorch.org/">
@@ -27,6 +33,12 @@
        </a>
        <a href="https://wiki.fysik.dtu.dk/ase/">
          <img src="https://img.shields.io/badge/ASE-3.2x-4B8BBE?style=for-the-badge" alt="ase">
+       </a>
+       <a href="https://www.h5py.org/">
+         <img src="https://img.shields.io/badge/h5py-HDF5-0E7C86?style=for-the-badge" alt="h5py">
+       </a>
+       <a href="https://pypi.org/project/mp-api/">
+         <img src="https://img.shields.io/badge/mp--api-Materials%20Project-3B3F8C?style=for-the-badge" alt="mp-api">
        </a>
        <a href="https://poraque.readthedocs.io/">
          <img src="https://img.shields.io/readthedocs/poraque?style=for-the-badge&amp;logo=readthedocs&amp;logoColor=white&amp;label=Manual" alt="on-line manual">
