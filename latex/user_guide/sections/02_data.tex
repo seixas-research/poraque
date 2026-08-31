@@ -110,10 +110,27 @@ shape of a VASP run, and the shape \opt{data.train\_paths} already reads:
 data/MP/
     summary.csv  manifest.json  manifest.csv
     structures/mp-124.cif
-    mp-124/CHGCAR.gz
-    mp-81/CHGCAR.gz
-    mp-126/fields.h5           # with --hdf5
+    mp-124/  CHGCAR.gz  INCAR  KPOINTS  POSCAR  mp.json
+    mp-81/   CHGCAR.gz  INCAR  KPOINTS  POSCAR  mp.json
+    mp-126/  fields.h5  ...                       # with --hdf5
 \end{lstlisting}
+
+The three VASP inputs reconstruct the calculation, so a material directory is
+one VASP can be pointed at. \file{INCAR} and \file{KPOINTS} come from the task
+record the density belongs to; MP's standard static set fills in when a record
+cannot be read, and the file says which of the two it is. The \file{POSCAR}
+comes from the \textbf{density's own header} --- that is the geometry it was
+computed at, and taking it from anywhere else is how a directory ends up with a
+structure and a density that disagree. \opt{--no-vasp-inputs} skips all three.
+
+\begin{ptip}
+\textbf{None of them is training data.} The loader records the density and
+nothing else, and the external potential stays \emph{computed} --- exactly as
+it must be, since at inference time there is no DFT run to read one from. The
+\file{mp.json} beside them is what keeps the directory from being taken for a
+VASP run now that it looks like one; deleting it changes which source reads the
+data.
+\end{ptip}
 
 Useful filters: \opt{--band-gap MIN MAX} (\opt{0 0} selects metals),
 \opt{--crystal-system}, \opt{--stable-only}, \opt{--num-sites MIN MAX}, and

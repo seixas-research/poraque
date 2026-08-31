@@ -215,10 +215,22 @@ VASP run, and the shape `data.train_paths` already reads:
 data/MP/
     summary.csv  manifest.json  manifest.csv
     structures/mp-124.cif
-    mp-124/CHGCAR.gz
-    mp-81/CHGCAR.gz
-    mp-126/fields.h5           # with --hdf5
+    mp-124/{CHGCAR.gz, INCAR, KPOINTS, POSCAR, mp.json}
+    mp-81/ {CHGCAR.gz, INCAR, KPOINTS, POSCAR, mp.json}
+    mp-126/{fields.h5, ...}    # with --hdf5
 ```
+
+The three VASP inputs reconstruct the calculation, so a material directory is
+one VASP can be pointed at. `INCAR` and `KPOINTS` come from the task record the
+density belongs to — MP's standard static set fills in when a record cannot be
+read, and the file says which. The `POSCAR` comes from the **density's own
+header**: that is the geometry it was computed at, and taking it from anywhere
+else is how a directory ends up with a structure and a density that disagree.
+
+None of them is training data. The loader records the density and nothing else,
+and the external potential stays *computed* — `mp.json` is what keeps the
+directory from being mistaken for a VASP run now that it looks like one.
+`--no-vasp-inputs` skips the three.
 
 Then train. `train_paths` is a list, so a download can be trained on alone or
 beside your own runs:

@@ -10,6 +10,7 @@ other, and a table cell that runs off the page. Neither raises, so neither is
 caught by asserting that a figure was written.
 """
 
+import csv
 import os
 import shutil
 
@@ -746,6 +747,207 @@ class TestLongTableBreaking:
         assert found == set(per_material), (
             f"{len(set(per_material)) - len(found)} structures never reached "
             f"the page")
+
+
+class TestRawPlotDataIsWrittenBesideTheFigure:
+    r"""
+    ``output.save_raw_plot_data`` writes the numbers behind each figure, so a
+    plot can be redrawn for publication without re-running the model.
+
+    Three properties matter more than the file existing. The sidecar shares
+    the **stem** of the figure it belongs to, so the pairing is visible in a
+    listing rather than reconstructed from a convention. It carries what was
+    *drawn*, not a second computation of it — a file that disagreed with its
+    own image would be worse than no file. And it is off unless asked for: a
+    run that never wanted it should write nothing extra.
+    """
+
+    def _report(self, tmp_path, save_data=True):
+        return TrainingReport(str(tmp_path), prefix="ext2chg",
+                              save_data=save_data)
+
+    def _history(self):
+        return {"train_loss": [0.9, 0.5, 0.3, 0.21],
+                "val_error": [0.8, 0.25], "val_epoch": [2, 4],
+                "val_metric": "rel L2"}
+
+    # -------------------------- off by default -------------------------- #
+    def test_nothing_extra_is_written_when_it_is_off(self, tmp_path, fields):
+        report = self._report(tmp_path, save_data=False)
+        report.loss_curves(self._history())
+        report.parity(*fields, bins=16)
+        report.field_comparison(*fields)
+
+        assert report.data_files == []
+        assert not [n for n in os.listdir(tmp_path)
+                    if n.endswith((".csv", ".npz"))]
+
+    def test_the_default_is_off(self):
+        assert TrainingReport("anywhere").save_data is False
+
+    # ------------------------- the training curve ------------------------ #
+    def test_the_curve_lands_beside_its_own_figure(self, tmp_path):
+        figure = self._report(tmp_path).loss_curves(self._history())
+        assert os.path.exists(os.path.splitext(figure)[0] + ".csv")
+
+    def test_every_epoch_is_a_row_and_the_gaps_stay_empty(self, tmp_path):
+        """
+        `eval_epoch > 1` means validation exists only on some epochs. Carrying
+        the last value forward, or writing a zero, would put points in the file
+        that the run never measured.
+        """
+        self._report(tmp_path).loss_curves(self._history())
+        rows = list(csv.DictReader(
+            open(tmp_path / "ext2chg_loss_curves.csv", encoding="utf-8")))
+
+        assert [row["epoch"] for row in rows] == ["1", "2", "3", "4"]
+        assert [row["train_loss"] for row in rows] == ["0.9", "0.5", "0.3",
+                                                       "0.21"]
+        assert [row["val_rel_l2"] for row in rows] == ["", "0.8", "", "0.25"]
+
+    def test_the_column_names_the_norm_it_holds(self, tmp_path):
+        """A `loss: sobolev` run measures an H1; calling both columns
+        "validation loss" would make the file unreadable a month later."""
+        history = dict(self._history(), val_metric="rel H1")
+        self._report(tmp_path).loss_curves(history)
+        header = open(tmp_path / "ext2chg_loss_curves.csv",
+                      encoding="utf-8").readline().strip()
+
+        assert header == "epoch,train_loss,val_rel_h1"
+
+    def test_a_run_without_validation_writes_one_column(self, tmp_path):
+        self._report(tmp_path).loss_curves({"train_loss": [1.0, 0.5]})
+        rows = list(csv.reader(
+            open(tmp_path / "ext2chg_loss_curves.csv", encoding="utf-8")))
+
+        assert rows[0] == ["epoch", "train_loss"]
+        assert len(rows) == 3
+
+    def test_there_is_no_physics_column(self, tmp_path):
+        """
+        `train_loss` is the total the optimiser stepped on, and the per-term
+        breakdown was removed from `history` in 2026-08-28 because the
+        components are reported unweighted and never summed to it. A
+        `physics_loss` column here would be an invented number.
+        """
+        self._report(tmp_path).loss_curves(self._history())
+        header = open(tmp_path / "ext2chg_loss_curves.csv",
+                      encoding="utf-8").readline()
+
+        assert "physics" not in header
+
+    # ----------------------------- the parity ---------------------------- #
+    def test_the_bins_account_for_every_voxel(self, tmp_path, fields):
+        """
+        The counts are the histogram's, so they must add up to the field --
+        which is the check that says the file holds the drawn data rather than
+        a re-binning of it.
+        """
+        reference, prediction = fields
+        self._report(tmp_path).parity(reference, prediction, bins=16)
+        rows = list(csv.DictReader(
+            open(tmp_path / "ext2chg_parity.csv", encoding="utf-8")))
+
+        assert sum(int(row["count"]) for row in rows) == reference.size
+        assert sum(float(row["density"]) for row in rows) == pytest.approx(1.0)
+
+    def test_each_split_is_normalised_to_its_own_voxels(self, tmp_path, fields):
+        """
+        Two structures need not have the same grid size, so the figure colours
+        by each split's own share. The file has to say the same thing.
+        """
+        reference, prediction = fields
+        held_out = (reference[:6], prediction[:6])
+        self._report(tmp_path).parity(reference, prediction,
+                                      validation=held_out, bins=16)
+        rows = list(csv.DictReader(
+            open(tmp_path / "ext2chg_parity.csv", encoding="utf-8")))
+
+        for split, expected in (("training", reference.size),
+                                ("validation", held_out[0].size)):
+            selected = [row for row in rows if row["split"] == split]
+            assert selected
+            assert sum(int(row["count"]) for row in selected) == expected
+            assert sum(float(row["density"])
+                       for row in selected) == pytest.approx(1.0)
+
+    def test_empty_bins_are_dropped_and_the_edges_kept(self, tmp_path, fields):
+        """
+        A 200-bin grid is 40 000 cells of which a few thousand are occupied.
+        The zeros carry nothing -- but the edges do, and a log axis makes them
+        unrecoverable from the centres, so they get their own file.
+        """
+        self._report(tmp_path).parity(*fields, bins=32)
+        rows = list(csv.DictReader(
+            open(tmp_path / "ext2chg_parity.csv", encoding="utf-8")))
+        edges = list(csv.DictReader(
+            open(tmp_path / "ext2chg_parity_bin_edges.csv", encoding="utf-8")))
+
+        assert 0 < len(rows) < 32 * 32
+        assert len(edges) == 33
+        assert all(float(row["count"]) > 0 for row in rows)
+
+    def test_a_scatter_parity_writes_the_points_it_drew(self, tmp_path, fields):
+        """With `scatter` there are no bins; the points are the data."""
+        self._report(tmp_path).parity(*fields, scatter=True, bins=16)
+        rows = list(csv.DictReader(
+            open(tmp_path / "ext2chg_parity.csv", encoding="utf-8")))
+
+        assert len(rows) == fields[0].size
+        assert set(rows[0]) == {"split", "reference", "prediction"}
+
+    # ----------------------------- the slices ---------------------------- #
+    def test_the_three_panels_are_stored_as_arrays(self, tmp_path, fields):
+        self._report(tmp_path).field_comparison(*fields, label="rho",
+                                                unit="e/Ang^3")
+        stored = np.load(tmp_path / "ext2chg_field_slice.npz")
+
+        assert stored["reference"].shape == (12, 12)
+        assert stored["prediction"].shape == (12, 12)
+        assert str(stored["label"]) == "rho"
+
+    def test_the_error_panel_is_stored_not_left_to_arithmetic(self, tmp_path,
+                                                              fields):
+        """
+        A reader who reconstructs it and gets something else then knows the
+        file is inconsistent, instead of trusting their own subtraction.
+        """
+        self._report(tmp_path).field_comparison(*fields)
+        stored = np.load(tmp_path / "ext2chg_field_slice.npz")
+
+        assert np.allclose(stored["error"],
+                           stored["prediction"] - stored["reference"])
+
+    def test_the_arrays_are_the_slice_that_was_drawn(self, tmp_path, fields):
+        reference, prediction = fields
+        self._report(tmp_path).field_comparison(reference, prediction,
+                                                axis=0, index=3)
+        stored = np.load(tmp_path / "ext2chg_field_slice.npz")
+
+        assert np.array_equal(stored["reference"], reference[3])
+        assert int(stored["axis"]) == 0 and int(stored["index"]) == 3
+
+    def test_the_file_records_what_it_takes_to_redraw_it(self, tmp_path, fields):
+        """Colour limits included: they were chosen from a quantile of the
+        error, so a redraw that recomputed them would not match the figure."""
+        self._report(tmp_path).field_comparison(*fields, unit="eV")
+        stored = np.load(tmp_path / "ext2chg_field_slice.npz")
+
+        assert set(stored.files) >= {"reference", "prediction", "error",
+                                     "axis", "index", "colour_limits",
+                                     "error_limits", "label", "unit",
+                                     "log_scale"}
+        assert stored["error_limits"][0] < 0 < stored["error_limits"][1]
+
+    # ------------------------------ bookkeeping -------------------------- #
+    def test_written_files_are_reported_back(self, tmp_path, fields):
+        """So the run log can name them without re-deriving the names."""
+        report = self._report(tmp_path)
+        report.loss_curves(self._history())
+        report.field_comparison(*fields)
+
+        assert len(report.data_files) == 2
+        assert all(os.path.exists(path) for path in report.data_files)
 
 
 class TestParetoPlot:

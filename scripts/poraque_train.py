@@ -1479,7 +1479,8 @@ def _figure_sink(config):
 
     return TrainingReport(os.path.join(config.report_dir(),
                                        f"{model_name(config)}_figures"),
-                          dpi=config.output.dpi, fmt=config.output.plot_format)
+                          dpi=config.output.dpi, fmt=config.output.plot_format,
+                          save_data=config.output.save_raw_plot_data)
 
 
 def run_symbolic_distillation(task, dataset, operator, config, log,
@@ -1716,7 +1717,8 @@ def run_task(task_name, cache, config, log, n_tasks=1):
 
         report = TrainingReport(figure_dir, dpi=config.output.dpi,
                                 fmt=config.output.plot_format,
-                                prefix=f"{task.name}")
+                                prefix=f"{task.name}",
+                                save_data=config.output.save_raw_plot_data)
         figures.append(report.loss_curves(
             history, title=f"{task.name} ({len(train_set)} training structures)"))
 
@@ -1800,6 +1802,9 @@ def run_task(task_name, cache, config, log, n_tasks=1):
     checkpoint = None
     if figures:
         log(f"  figures         -> {figure_dir} ({len(figures)})")
+    if report is not None and report.data_files:
+        log(f"  raw plot data   -> {figure_dir} "
+            f"({len(report.data_files)} files)")
 
     # ---------------- the weights, before anything optional ---------------- #
     # The unified bundle is written once every task has trained, which is
@@ -2020,7 +2025,8 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
                 report = TrainingReport(
                     plot_directory(config), dpi=config.output.dpi,
                     fmt=config.output.plot_format,
-                    prefix=f"{task.name}_fold{index}_{name}")
+                    prefix=f"{task.name}_fold{index}_{name}",
+                    save_data=config.output.save_raw_plot_data)
                 figures.append(report.loss_curves(
                     history, title=f"{task.name} · fold {index}"))
                 figures.append(report.field_comparison(

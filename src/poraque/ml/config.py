@@ -1320,6 +1320,26 @@ class OutputConfig:
         Image format for saved figures.
     dpi : int
         Raster resolution for saved figures.
+    save_raw_plot_data : bool
+        Write the numbers behind each figure beside it, so a plot can be
+        redrawn for publication without re-running the model. Off by default:
+        it is a few hundred kilobytes per run and most runs never need it.
+
+        Each file takes the **stem of the figure it belongs to**, so the
+        pairing is visible in a directory listing::
+
+            plots/ext2chg_loss_curves.png     plots/ext2chg_loss_curves.csv
+            plots/ext2chg_parity.png          plots/ext2chg_parity.csv
+            plots/ext2chg_s000_field_slice.png
+            plots/ext2chg_s000_field_slice.npz
+
+        Tabular figures get a CSV; the slice figure gets a compressed ``.npz``,
+        because what it draws are three 2D arrays and a CSV of a 108x108 grid
+        is neither smaller nor easier to read back.
+
+        Requires ``plot_figures``: the data is written by the figure methods
+        as they draw, which is what guarantees the file and the image show the
+        same numbers rather than two independent computations of them.
     """
 
     root: str = "models"
@@ -1331,6 +1351,7 @@ class OutputConfig:
     json: str = None
     plot_format: str = "png"
     dpi: int = 200
+    save_raw_plot_data: bool = False
 
 
 @dataclass

@@ -145,7 +145,9 @@ def _lone_density(directory, prefixes=BULK_PREFIXES):
     A calculation directory is excluded outright. It also holds one density,
     but it holds the *inputs* as well, and reading it here would build the
     external potential from a model when the ``POTCAR`` to do it exactly is
-    sitting beside the file.
+    sitting beside the file. An archive entry is *not* excluded, whatever
+    input files ``poraque-mp`` reconstructed into it — those are for VASP, not
+    for training, and only the density is recorded.
 
     Returns
     -------
@@ -197,10 +199,41 @@ def _hdf5_store(directory):
     return None
 
 
+def _is_archive_entry(directory):
+    r"""
+    Whether ``directory`` is one entry of a published density archive.
+
+    ``poraque-mp`` reconstructs a ``POSCAR``, ``INCAR`` and ``KPOINTS`` beside
+    each downloaded density, so the directory can be handed straight to VASP.
+    That makes it indistinguishable *by its files* from a calculation
+    directory — the marker is what tells them apart, and it is written by the
+    thing that knows.
+
+    The distinction is not bookkeeping. Read as a calculation, an archive entry
+    loses two things at once: the valence charges
+    :class:`BulkDensitySource` infers from the densities, which are the only
+    source of :math:`Z^{\rm val}` when no ``POTCAR`` is present; and the
+    reconstructed ``POSCAR`` becomes a *training input* rather than a
+    convenience — and it was written from the density's own header, so a
+    pipeline reading it would be taking the long way round to the same
+    geometry while pretending it came from somewhere independent.
+    """
+    from .materials_project import ENTRY_MARKER
+
+    return os.path.isfile(os.path.join(directory, ENTRY_MARKER))
+
+
 def _is_calculation_directory(path):
-    """Whether ``path`` holds the input files of a DFT run, in any code."""
-    return any(os.path.exists(os.path.join(path, name))
-               for name in calculation_markers())
+    """
+    Whether ``path`` holds the input files of a DFT run, in any code.
+
+    An archive entry is excluded however many input files were reconstructed
+    into it; see :func:`_is_archive_entry`.
+    """
+    if not any(os.path.exists(os.path.join(path, name))
+               for name in calculation_markers()):
+        return False
+    return not _is_archive_entry(path)
 
 
 def _subdirectories(root):

@@ -56,3 +56,6 @@ output:
   checkpoint: true              # write the .pfno
   plot_format: png
   dpi: 400
+  save_raw_plot_data: true      # write the numbers behind each figure beside it
+                                #   (<figure stem>.csv / .npz), so a plot can be
+                                #   redrawn for publication without re-running

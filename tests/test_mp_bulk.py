@@ -114,15 +114,41 @@ class FakeChgcar:
             np.eye(3) * lattice,
             [FakeSite("Si", [0.0, 0.0, 0.0]), FakeSite("Si", [0.5, 0.5, 0.5])])
         volume = float(lattice) ** 3
-        self.data = {"total": np.full(shape, 8.0 / volume) * volume}
+        # Varied rather than constant, and seeded so it is reproducible. A
+        # constant grid gzips to almost nothing, which made the stored file
+        # round to 0.00 MB and the manifest look as though it had recorded no
+        # size -- a property of the double, not of any real density.
+        values = 8.0 / volume * (1.0 + 0.5 * np.sin(
+            np.arange(int(np.prod(shape)), dtype=float)).reshape(shape))
+        self.data = {"total": values * volume}
 
     def write_file(self, path):
+        """
+        Write a CHGCAR, **gzipping when the name says so** -- as pymatgen's own
+        ``VolumetricData.write_file`` does, through ``zopen``.
+
+        Poraque's writer keys on nothing but the path it is handed, so without
+        this the double left plain text under a ``.gz`` name. Everything that
+        merely checks a file exists passed; the first thing to actually *read*
+        one back -- reconstructing a POSCAR from a stored density's header --
+        got ``BadGzipFile`` from a file production would never have produced.
+        """
+        import gzip
+
         from poraque.data.materials_project import poscar_from_pymatgen
 
         structure = poscar_from_pymatgen(self.structure)
         grid = FieldGrid(self.dim, structure.cell)
-        ChargeDensity(self.data["total"] / grid.volume, grid,
-                      structure).write(path)
+        density = ChargeDensity(self.data["total"] / grid.volume, grid,
+                                structure)
+        path = str(path)
+        if not path.endswith(".gz"):
+            density.write(path)
+            return
+        density.write(path[:-3])
+        with open(path[:-3], "rb") as source, gzip.open(path, "wb") as sink:
+            sink.write(source.read())
+        os.remove(path[:-3])
 
 
 def fetcher_with(identifiers, tmp_path, monkeypatch, sizes=None,
@@ -497,13 +523,20 @@ class TestBackingOff:
 # ===================================================================== #
 class TestTheManifest:
     def test_it_records_what_a_reader_needs(self, tmp_path, monkeypatch):
-        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
+        """
+        A 24^3 density rather than the 8^3 default, because ``size_mb`` is
+        rounded to two decimals: the default grid gzips to under 10 kB and so
+        rounds honestly to 0.00, which would make this assertion untestable
+        rather than false. Real objects are megabytes.
+        """
+        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch,
+                         chgcar=FakeChgcar(shape=(24, 24, 24)))
         row = f.download()[0]
 
         assert row["material_id"] == "mp-1"
         assert row["formula_pretty"] == "SiO2"
         assert row["nsites"] == 6
-        assert row["grid"] == [8, 8, 8]
+        assert row["grid"] == [24, 24, 24]
         assert row["size_mb"] > 0
         assert row["status"] == "downloaded"
 
@@ -783,6 +816,257 @@ class TestTheDownloadLayout:
 
         assert (f.outdir / "mp-1").is_dir()
         assert not (f.outdir / "mp-2").exists()
+
+
+class TestTheReconstructedVaspInputs:
+    r"""
+    Each material directory gets an ``INCAR``, ``KPOINTS`` and ``POSCAR``, so
+    what a download leaves behind is a directory VASP can be pointed at.
+
+    Three claims, and the third is the one with teeth.
+
+    **The POSCAR is the density's own structure**, read from its header rather
+    than taken from the API. A summary document carries the same calculation's
+    relaxed answer, which need not agree with the geometry the density was
+    computed at — and a directory whose POSCAR and CHGCAR disagree is exactly
+    the defect that put 2.5 % relative L2 into ``structure_0042``'s external
+    potential and went unreported for weeks.
+
+    **The INCAR and KPOINTS come from the task record when it can be read**,
+    and from MP's standard static set when it cannot. Which one is written into
+    the file and recorded in the manifest, because a deck that cannot say where
+    it came from is not worth keeping.
+
+    **None of it is training data.** Adding a POSCAR makes the directory look
+    exactly like a VASP run, and a VASP run is what ``CalculationSource``
+    claims — so an archive entry says what it is, and reading it stays with
+    ``BulkDensitySource``.
+    """
+
+    def _with_inputs(self, tmp_path, monkeypatch, identifiers=("mp-1",),
+                     record=True):
+        fetcher = fetcher_with(list(identifiers), tmp_path,
+                               monkeypatch=monkeypatch)
+        fetcher._task_ids = {i: f"mp-{900 + n}"
+                             for n, i in enumerate(identifiers)}
+        documents = ([{"task_id": fetcher._task_ids[identifiers[0]],
+                       "orig_inputs": {
+                           "incar": {"ENCUT": 520, "ISPIN": 2},
+                           "kpoints": "auto\n0\nGamma\n6 6 6\n0 0 0"}}]
+                     if record else [])
+        fetcher._rester.materials = SimpleNamespace(
+            tasks=SimpleNamespace(search=lambda **kwargs: documents))
+        return fetcher
+
+    def test_all_three_land_beside_the_density(self, tmp_path, monkeypatch):
+        fetcher = self._with_inputs(tmp_path, monkeypatch)
+        fetcher.download()
+
+        directory = fetcher.material_dir("mp-1")
+        for name in ("INCAR", "KPOINTS", "POSCAR"):
+            assert (directory / name).is_file()
+        assert (directory / "CHGCAR.gz").is_file()
+
+    def test_the_task_record_is_used_when_it_is_there(self, tmp_path,
+                                                      monkeypatch):
+        fetcher = self._with_inputs(tmp_path, monkeypatch)
+        row = fetcher.download()[0]
+
+        assert row["inputs"] == "task"
+        incar = (fetcher.material_dir("mp-1") / "INCAR").read_text()
+        assert "ENCUT = 520" in incar
+        assert "6 6 6" in (fetcher.material_dir("mp-1") / "KPOINTS").read_text()
+
+    def test_the_standard_set_fills_in_when_it_is_not(self, tmp_path,
+                                                      monkeypatch):
+        fetcher = self._with_inputs(tmp_path, monkeypatch, record=False)
+        row = fetcher.download()[0]
+
+        assert row["inputs"] == "standard"
+        assert (fetcher.material_dir("mp-1") / "INCAR").read_text().count(
+            "ENCUT") == 1
+
+    def test_the_incar_says_which_one_it_is(self, tmp_path, monkeypatch):
+        """
+        MP's standard set says what MP would choose for this structure *today*,
+        which is not necessarily what produced the density beside it. A deck
+        that does not say so invites being quoted as the calculation's own.
+        """
+        recorded = self._with_inputs(tmp_path / "a", monkeypatch)
+        recorded.download()
+        assert "the task record" in (
+            recorded.material_dir("mp-1") / "INCAR").read_text()
+
+        standard = self._with_inputs(tmp_path / "b", monkeypatch, record=False)
+        standard.download()
+        assert "NOT this run" in (
+            standard.material_dir("mp-1") / "INCAR").read_text()
+
+    def test_the_poscar_is_the_density_own_structure(self, tmp_path,
+                                                     monkeypatch):
+        """Not the API's. The two files in the directory have to agree."""
+        from poraque.fields.vasp.volumetric import read_structure_header
+
+        fetcher = self._with_inputs(tmp_path, monkeypatch)
+        fetcher.download(compress=False)
+        directory = fetcher.material_dir("mp-1")
+
+        written = Poscar.from_file(str(directory / "POSCAR"))
+        density = read_structure_header(str(directory / "CHGCAR"))
+
+        assert np.allclose(written.cell, density.cell)
+        assert np.allclose(written.scaled_positions, density.scaled_positions)
+        assert list(written.symbols) == list(density.symbols)
+
+    def test_one_batched_query_serves_the_whole_batch(self, tmp_path,
+                                                      monkeypatch):
+        """Per material it would be one round trip each, which is the pattern
+        `_resolve_keys` exists to avoid."""
+        fetcher = self._with_inputs(tmp_path, monkeypatch,
+                                    identifiers=("mp-1", "mp-2", "mp-3"))
+        calls = []
+        fetcher._rester.materials = SimpleNamespace(
+            tasks=SimpleNamespace(
+                search=lambda **kwargs: (calls.append(kwargs), [])[1]))
+        fetcher.download()
+
+        assert len(calls) == 1
+
+    def test_the_flag_turns_it_off(self, tmp_path, monkeypatch):
+        fetcher = self._with_inputs(tmp_path, monkeypatch)
+        row = fetcher.download(vasp_inputs=False)[0]
+
+        assert "inputs" not in row
+        assert sorted(p.name for p in fetcher.material_dir("mp-1").iterdir()) \
+            == ["CHGCAR.gz"]
+
+    def test_a_failure_to_write_costs_the_deck_not_the_density(
+            self, tmp_path, monkeypatch):
+        """A deck is a convenience beside the data; the data is why the run
+        exists."""
+        fetcher = self._with_inputs(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            type(fetcher), "write_vasp_inputs",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disk full")))
+        row = fetcher.download()[0]
+
+        assert row["status"] == "downloaded"
+        assert row["inputs"].startswith("failed: RuntimeError")
+        assert (fetcher.material_dir("mp-1") / "CHGCAR.gz").is_file()
+
+    def test_an_already_downloaded_material_gets_its_deck_too(
+            self, tmp_path, monkeypatch):
+        """
+        Turning the flag on and re-running should fill the gaps. The structure
+        comes from the stored file's *header*, which stops at the blank line
+        ending the structure block -- a few hundred bytes, not the grid.
+        """
+        first = self._with_inputs(tmp_path, monkeypatch)
+        first.download(vasp_inputs=False)
+        assert not (first.material_dir("mp-1") / "INCAR").exists()
+
+        second = self._with_inputs(tmp_path, monkeypatch)
+        row = second.download()[0]
+
+        # The row is the first run's, carried forward: a settled entry is not
+        # re-fetched, which is the whole point of the manifest. What changes is
+        # that it now has a deck.
+        assert row["status"] == "downloaded"
+        assert row["inputs"] == "task"
+        assert (second.material_dir("mp-1") / "POSCAR").is_file()
+        assert (second.material_dir("mp-1") / "INCAR").is_file()
+
+    def test_backfilling_does_not_re_download_anything(self, tmp_path,
+                                                       monkeypatch):
+        first = self._with_inputs(tmp_path, monkeypatch)
+        first.download(vasp_inputs=False)
+
+        second = self._with_inputs(tmp_path, monkeypatch)
+        fetched = []
+        second._rester.get_charge_density_from_material_id = (
+            lambda i: (fetched.append(i), FakeChgcar())[1])
+        second.download()
+
+        assert fetched == []
+        assert (second.material_dir("mp-1") / "INCAR").is_file()
+
+    def test_the_marker_records_what_was_written(self, tmp_path, monkeypatch):
+        fetcher = self._with_inputs(tmp_path, monkeypatch)
+        fetcher.download()
+
+        with (fetcher.material_dir("mp-1") / "mp.json").open() as handle:
+            marker = json.load(handle)
+
+        assert marker["material_id"] == "mp-1"
+        assert set(marker["written"]) >= {"INCAR", "KPOINTS", "POSCAR"}
+        assert marker["file"] == os.path.join("mp-1", "CHGCAR.gz")
+
+
+class TestTheDeckDoesNotBecomeTrainingData:
+    r"""
+    A reconstructed ``POSCAR`` makes a material directory indistinguishable
+    from a VASP run, and ``CalculationSource`` is asked first.
+
+    Claimed there, an archive entry loses the valence charges
+    ``BulkDensitySource`` infers from the densities — the only source of
+    :math:`Z^{
+m val}` when no ``POTCAR`` is present — and the reconstructed
+    POSCAR becomes a training input, which is the long way round to a geometry
+    that came from the density in the first place.
+
+    So each entry carries a marker saying what it is. These tests assert that
+    the marker is doing the work, by checking what happens without it.
+    """
+
+    def _downloaded(self, tmp_path, monkeypatch):
+        fetcher = fetcher_with(["mp-1", "mp-2"], tmp_path,
+                               monkeypatch=monkeypatch)
+        fetcher._task_ids = {"mp-1": "mp-901", "mp-2": "mp-902"}
+        fetcher._rester.materials = SimpleNamespace(
+            tasks=SimpleNamespace(search=lambda **kwargs: []))
+        fetcher.download()
+        return fetcher
+
+    def test_it_is_still_read_as_a_bulk_archive(self, tmp_path, monkeypatch):
+        from poraque.data.sources import BulkDensitySource, detect_source
+
+        fetcher = self._downloaded(tmp_path, monkeypatch)
+        assert detect_source(str(fetcher.outdir)) is BulkDensitySource
+
+    def test_only_the_density_reaches_the_record(self, tmp_path, monkeypatch):
+        from poraque.data.sources import resolve_source
+
+        fetcher = self._downloaded(tmp_path, monkeypatch)
+        source = resolve_source(str(fetcher.outdir))
+        records = source.discover()
+
+        assert [record.identifier for record in records] == ["mp-1", "mp-2"]
+        assert all(set(record.files) == {"CHGCAR"} for record in records)
+
+    def test_the_potential_is_still_computed(self, tmp_path, monkeypatch):
+        """The POSCAR beside it changes nothing: V_ext is Poraque's own
+        arithmetic in training and at inference alike."""
+        from poraque.data.sources import resolve_source
+
+        fetcher = self._downloaded(tmp_path, monkeypatch)
+        source = resolve_source(str(fetcher.outdir))
+
+        assert "EXTCAR" in source.provides(source.discover()[0])
+
+    def test_without_the_marker_it_would_be_taken_for_a_calculation(
+            self, tmp_path, monkeypatch):
+        """
+        The regression this guards, stated as the counterfactual. If this ever
+        stops holding, the marker has become dead weight and can go; while it
+        holds, deleting it silently changes which source reads the data.
+        """
+        from poraque.data.sources import CalculationSource, detect_source
+
+        fetcher = self._downloaded(tmp_path, monkeypatch)
+        for identifier in ("mp-1", "mp-2"):
+            (fetcher.material_dir(identifier) / "mp.json").unlink()
+
+        assert detect_source(str(fetcher.outdir)) is CalculationSource
 
 
 class TestStoringAsHDF5:

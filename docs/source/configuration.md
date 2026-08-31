@@ -503,19 +503,63 @@ only discourages violating it.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `log` | `logs/fno_training.log` | human-readable training log |
-| `json` | `logs/fno_training.json` | metrics and full loss history |
-| `checkpoint_dir` | `models` | model weights; `null` disables checkpointing |
-| `plot_dir` | `results/plots` | figures; `null` disables plotting |
-| `report_dir` | `reports` | PDF reports; `null` disables them |
+| `root` | `models` | parent of the run folder; `null` disables **all** output |
+| `checkpoint` | `true` | write `<name>.pfno` |
+| `write_log` | `true` | write `log/`: the log, the metrics JSON, the resolved config |
+| `plot_figures` | `true` | render `plots/` |
+| `write_pdf_report` | `true` | typeset `report/` |
+| `log`, `json` | `null` | override the two log paths; `null` derives them from `task.name` |
 | `plot_format` | `png` | `png`, `pdf` or `svg` |
-| `dpi` | `160` | raster resolution for saved figures |
+| `dpi` | `200` | raster resolution for saved figures |
+| `save_raw_plot_data` | `false` | write the numbers behind each figure beside it |
 
-These name *directories*; the files inside them are named from
-[`task.name`](task-section), so several runs can share one `checkpoint_dir` or
-`report_dir` without colliding. Figures go one level deeper, in
-`<plot_dir>/<name>/`, because a figure filename carries the task and the
-structure but not the run.
+Everything a run writes lives under `<root>/<name>/` — the weights, `log/`,
+`plots/` and `report/` together. `root` is the only path setting and
+[`task.name`](task-section) is the only thing that distinguishes two runs, so
+"delete this experiment" and "send me that model" are one directory each rather
+than a collection of fragments by filename.
+
+### `save_raw_plot_data`
+
+A figure is an argument someone will later want to make differently — in a
+journal's colours, at a journal's size, with two runs on one axis. Re-running
+the model to recover the numbers is the expensive way to do that, so with this
+on each figure method writes what it drew, beside what it drew:
+
+```text
+plots/ext2chg_loss_curves.png       plots/ext2chg_loss_curves.csv
+plots/ext2chg_parity.png            plots/ext2chg_parity.csv
+                                    plots/ext2chg_parity_bin_edges.csv
+plots/ext2chg_s000_field_slice.png  plots/ext2chg_s000_field_slice.npz
+```
+
+The sidecar shares the **stem** of its figure, so the pairing is a property of
+the directory listing rather than of a convention to remember. Tabular figures
+get a CSV; the slice figure gets a compressed `.npz`, because what it draws are
+three 2D arrays and a CSV of a 108×108 grid is neither smaller nor easier to
+read back.
+
+- **The loss curve** is one row per epoch: `epoch`, `train_loss`, and the
+  validation column *named for the norm it holds* (`val_rel_l2`, or
+  `val_rel_h1` for a `loss: sobolev` run). Epochs on which validation was not
+  measured leave that cell **empty** rather than interpolated — filling them
+  would put points in the file the run never measured. There is no physics
+  column: `train_loss` is the total the optimiser stepped on, and the per-term
+  breakdown is not recorded.
+- **The parity plot** is one row per *occupied* bin: `split`, `reference`,
+  `prediction`, `count`, `density`. Long format, because that pivots straight
+  back into a `pcolormesh`; occupied bins only, because a 200-bin grid is
+  40 000 cells of which a few thousand carry anything. The bin edges go in
+  their own file, since a log axis makes them unrecoverable from the centres.
+- **The slice figure** stores the three panels as arrays — `reference`,
+  `prediction`, `error` — with the colour limits the figure used. The error is
+  *stored*, not left to be recomputed: a reader who reconstructs it and gets
+  something else then knows the file is inconsistent, rather than trusting
+  their own subtraction.
+
+It needs `plot_figures`. The data is written by the figure methods as they
+draw, which is what guarantees the file and the image show the same numbers
+rather than two independent computations of them.
 
 The resolved configuration is written next to `json` with the suffix
 `_config.yaml`. PDF reports are assembled in a temporary directory that is

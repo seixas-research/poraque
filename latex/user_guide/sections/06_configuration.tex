@@ -502,9 +502,56 @@ derives them from \opt{task.name}; set them only to write outside the run
 folder. \\
 \opt{plot\_format} & \opt{png} & \opt{png}, \opt{pdf} or \opt{svg}. \\
 \opt{dpi} & \opt{200} & Raster resolution for saved figures. \\
+\opt{save\_raw\_plot\_data} & \opt{false} & Write the numbers behind each
+figure beside it, so a plot can be redrawn without re-running the model. \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\subsection{\opt{save\_raw\_plot\_data}}
+
+A figure is an argument someone will later want to make differently --- in a
+journal's colours, at a journal's size, with two runs on one axis. Re-running
+the model to get the numbers back is the expensive way to do that, so with this
+on each figure method writes what it drew, beside what it drew:
+
+\begin{lstlisting}
+plots/ext2chg_loss_curves.png       plots/ext2chg_loss_curves.csv
+plots/ext2chg_parity.png            plots/ext2chg_parity.csv
+                                    plots/ext2chg_parity_bin_edges.csv
+plots/ext2chg_s000_field_slice.png  plots/ext2chg_s000_field_slice.npz
+\end{lstlisting}
+
+The sidecar shares the \textbf{stem} of its figure, so the pairing is a
+property of the directory listing rather than of a convention to remember.
+Tabular figures get a CSV; the slice figure gets a compressed \file{.npz},
+because what it draws are three 2D arrays and a CSV of a $108\times108$ grid is
+neither smaller nor easier to read back.
+
+\begin{description}
+  \item[The loss curve] is one row per epoch: \opt{epoch}, \opt{train\_loss},
+    and the validation column \emph{named for the norm it holds}
+    (\opt{val\_rel\_l2}, or \opt{val\_rel\_h1} for a \opt{loss: sobolev} run).
+    Epochs on which validation was not measured leave that cell \textbf{empty}
+    rather than interpolated: filling them would put points in the file the run
+    never measured. There is no physics column --- \opt{train\_loss} is the
+    total the optimiser stepped on, and the per-term breakdown is not recorded.
+  \item[The parity plot] is one row per \emph{occupied} bin: \opt{split},
+    \opt{reference}, \opt{prediction}, \opt{count}, \opt{density}. Long format,
+    because that pivots straight back into a \opt{pcolormesh}; occupied bins
+    only, because a 200-bin grid is 40\,000 cells of which a few thousand carry
+    anything. The bin edges go in their own file, since a log axis makes them
+    unrecoverable from the centres.
+  \item[The slice figure] stores the three panels as arrays --- \opt{reference},
+    \opt{prediction} and \opt{error} --- together with the colour limits the
+    figure used. The error is \emph{stored}, not left to be recomputed: a reader
+    who reconstructs it and gets something else then knows the file is
+    inconsistent, rather than trusting their own subtraction.
+\end{description}
+
+It needs \opt{plot\_figures}. The data is written by the figure methods as they
+draw, which is what guarantees the file and the image show the same numbers
+rather than two independent computations of them.
 
 The resolved configuration is written next to \opt{json} with the suffix
 \file{\_config.yaml}. PDF reports are assembled in a temporary directory that

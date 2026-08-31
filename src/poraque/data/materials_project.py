@@ -118,9 +118,16 @@ files::
         summary.csv  summary.json  chgcar_estimate.csv
         manifest.json  manifest.csv
         structures/mp-124.cif  structures/mp-81.cif
-        mp-124/CHGCAR.gz
-        mp-81/CHGCAR.gz
-        mp-126/fields.h5                    # --hdf5
+        mp-124/CHGCAR.gz  INCAR  KPOINTS  POSCAR  mp.json
+        mp-81/CHGCAR.gz   INCAR  KPOINTS  POSCAR  mp.json
+        mp-126/fields.h5  INCAR  KPOINTS  POSCAR  mp.json   # --hdf5
+
+**The three input files reconstruct the calculation, so a material directory
+is one VASP can be pointed at.** ``INCAR`` and ``KPOINTS`` come from the task
+record the density belongs to; the ``POSCAR`` comes from the **density's own
+header**, which is the geometry it was computed at. ``--no-vasp-inputs`` skips
+them. None of the three is training data: the loader records the density and
+nothing else, and ``V_ext`` stays computed.
 
 That is the shape of a VASP run, and it is the shape
 :class:`~poraque.data.sources.BulkDensitySource` reads — so a download drops
@@ -270,6 +277,28 @@ DENSITY_FILENAME = "CHGCAR"
 #: prepared cache uses (:mod:`poraque.data.cache`), because it is the same
 #: thing: one material, one store, addressed as ``fields.h5::CHGCAR``.
 STORE_FILENAME = "fields.h5"
+
+#: VASP input files reconstructed beside each density, so a downloaded material
+#: is a directory VASP itself can be pointed at. None of them is training data:
+#: :class:`~poraque.data.sources.BulkDensitySource` records only the density,
+#: and the external potential stays *computed* -- see :data:`ENTRY_MARKER`.
+INPUT_FILENAMES = ("INCAR", "KPOINTS", "POSCAR")
+
+#: Written into every material directory, and load-bearing rather than
+#: decorative.
+#:
+#: Reconstructing a ``POSCAR`` makes the directory look exactly like a VASP run
+#: --- which is what it is for --- and a run directory is precisely what
+#: :class:`~poraque.data.sources.CalculationSource` claims. Claimed there, an
+#: archive entry loses the two things that make it usable: the valence charges
+#: inferred from the densities, and the guarantee that ``V_ext`` is built from
+#: the density's own header. So each entry says what it is, and the sources
+#: read it (:func:`poraque.data.sources._is_archive_entry`).
+#:
+#: The contents are that material's manifest row plus the list of files
+#: written, so a directory carried out of the archive still records where its
+#: density came from and when.
+ENTRY_MARKER = "mp.json"
 
 
 def retrieval_provenance():
@@ -621,6 +650,7 @@ class MPDataFetcher:
         self._rester = None
         self._documents = None
         self._keys = None
+        self._task_ids = {}
         self._estimate = None
         self._searched_all = False
         self._fields = []
@@ -874,6 +904,11 @@ class MPDataFetcher:
             if not known:
                 continue
             newest = max(known, key=lambda task: updated[task])
+            # Kept, not discarded: this is the task the density belongs to, so
+            # it is also the task whose INCAR and KPOINTS produced it. Reading
+            # them later costs one batched query instead of re-deriving which
+            # calculation to ask about.
+            self._task_ids[identifier] = newest
             alpha = AlphaID(validate_ids([newest])[0].split("-")[-1], prefix="mp")
             keys[identifier] = f"{CHGCAR_PREFIX}/{alpha.string}.json.gz"
 
@@ -1135,7 +1170,7 @@ class MPDataFetcher:
 
     def download(self, limit=None, max_sites=None, max_size_mb=None,
                  compress=None, skip_existing=True, hdf5=False,
-                 compression="gzip", compression_level=4):
+                 compression="gzip", compression_level=4, vasp_inputs=True):
         """
         Download the charge densities. Resumable; one failure never aborts the batch.
 
@@ -1189,6 +1224,13 @@ class MPDataFetcher:
             HDF5 codec: ``"gzip"``, ``"lzf"`` or ``None``.
         compression_level : int, optional
             Gzip level.
+        vasp_inputs : bool, optional
+            Reconstruct ``INCAR``, ``KPOINTS`` and ``POSCAR`` beside each
+            density (default), so a material's directory is one VASP can be
+            pointed at. Costs one batched query for the whole batch, never one
+            per material. Nothing in training reads them --
+            :class:`~poraque.data.sources.BulkDensitySource` records only the
+            density, and the external potential stays computed.
 
         Returns
         -------
@@ -1245,6 +1287,35 @@ class MPDataFetcher:
             print(f"  {len(targets) - len(remaining)} already done, "
                   f"{len(remaining)} to fetch")
 
+        # Everything that needs a deck: what is about to be fetched, plus
+        # anything already settled whose directory has no marker yet -- which
+        # is what "turn --vasp-inputs on and re-run" looks like from here. A
+        # settled entry never reaches the loop below, so if it were not
+        # collected now it would never be given one.
+        needing = [str(document.material_id) for document in remaining]
+        backfill = ([row for row in manifest
+                     if _is_settled(row)
+                     and not self._has_entry_marker(row.get("material_id"))]
+                    if vasp_inputs else [])
+        needing += [str(row["material_id"]) for row in backfill]
+
+        # One batched query for all of them, before the first density. Per
+        # material it would be one round trip each, which is the pattern
+        # `_resolve_keys` exists to avoid.
+        inputs = (self.task_inputs(needing) if vasp_inputs and needing else {})
+
+        if backfill:
+            print(f"  writing VASP inputs for {len(backfill)} material(s) "
+                  f"already on disk")
+            for row in backfill:
+                identifier = str(row["material_id"])
+                stored = self.outdir / str(row.get("file") or "")
+                if not stored.is_file():
+                    continue
+                row["inputs"] = self._reconstruct_inputs(
+                    identifier, stored, inputs.get(identifier), row)
+            self._write_manifest(manifest)
+
         for position, document in enumerate(remaining, 1):
             identifier = str(document.material_id)
             label = (f"[{position}/{len(remaining)}] {identifier} "
@@ -1253,9 +1324,15 @@ class MPDataFetcher:
             found = self._existing(identifier) if skip_existing else None
             if found is not None:
                 print(f"{label}: already present, skipping")
-                manifest.append(self._manifest_row(identifier, document, found,
-                                                   "cached",
-                                                   provenance=provenance))
+                row = self._manifest_row(identifier, document, found, "cached",
+                                         provenance=provenance)
+                # The density is there; the deck may not be, if it was fetched
+                # before `--vasp-inputs` or by a run that skipped them. Filling
+                # it in reads a few hundred bytes of header, not the grid.
+                if vasp_inputs:
+                    row["inputs"] = self._reconstruct_inputs(
+                        identifier, found, inputs.get(identifier), row)
+                manifest.append(row)
                 self._write_manifest(manifest)
                 continue
 
@@ -1297,10 +1374,14 @@ class MPDataFetcher:
                   f"{path.stat().st_size / 1e6:.1f} MB "
                   f"in {time.time() - clock:.1f}s"
                   f"{f' ({attempts} attempts)' if attempts > 1 else ''}")
-            manifest.append(self._manifest_row(identifier, document, path,
-                                               "downloaded", grid=grid,
-                                               attempts=attempts,
-                                               provenance=provenance))
+            row = self._manifest_row(identifier, document, path, "downloaded",
+                                     grid=grid, attempts=attempts,
+                                     provenance=provenance)
+            if vasp_inputs:
+                row["inputs"] = self._reconstruct_inputs(
+                    identifier, path, inputs.get(identifier), row,
+                    structure=poscar_from_pymatgen(chgcar.structure))
+            manifest.append(row)
             self._write_manifest(manifest)
 
         succeeded = sum(1 for row in manifest if _is_settled(row))
@@ -1316,6 +1397,216 @@ class MPDataFetcher:
             print(f"  -> {len(failed)} failed; re-running this command retries "
                   f"only those.")
         return manifest
+
+    # ------------------------------------------------------------------ #
+    # VASP inputs
+    # ------------------------------------------------------------------ #
+    def task_inputs(self, identifiers):
+        """
+        ``{material_id: orig_inputs}`` for the calculations behind the densities.
+
+        One batched query over the task ids :meth:`_resolve_keys` already
+        worked out, asking only for ``orig_inputs`` -- the ``INCAR``,
+        ``KPOINTS`` and structure the calculation was actually *run* with,
+        rather than what a standard input set would have chosen for it today.
+
+        Kept out of :meth:`_resolve_keys` deliberately. That method is on the
+        estimate path, and ``orig_inputs`` carries a full structure per task;
+        pulling it while merely *sizing* the database would repeat the mistake
+        :data:`ESTIMATE_FIELDS` exists to correct.
+
+        A material whose task cannot be read is simply absent from the result.
+        Its inputs then fall back to MP's standard static set, which is a
+        weaker answer but a real one, and the manifest says which was used.
+
+        Parameters
+        ----------
+        identifiers : sequence of str
+
+        Returns
+        -------
+        dict
+        """
+        wanted = [str(i) for i in identifiers]
+        tasks = {self._task_ids[i]: i for i in wanted if i in self._task_ids}
+        if not tasks:
+            return {}
+
+        rester = self._connect()
+        print(f"Reading VASP inputs for {len(tasks)} tasks ...")
+        found = {}
+        try:
+            documents = self._batched_search(
+                rester.materials.tasks.search, "task_ids", sorted(tasks),
+                fields=["task_id", "orig_inputs"])
+        except Exception as error:                              # noqa: BLE001
+            # Inputs are a convenience beside the data, never the data. A
+            # failure here must not cost the densities the run came for.
+            print(f"  could not read task inputs ({type(error).__name__}: "
+                  f"{error}); falling back to MP's standard input set")
+            return {}
+
+        for document in documents:
+            identifier = tasks.get(str(_field(document, "task_id")))
+            inputs = _field(document, "orig_inputs")
+            if identifier and inputs is not None:
+                found[identifier] = inputs
+        print(f"  -> {len(found)}/{len(tasks)} tasks carry their inputs")
+        return found
+
+    def write_vasp_inputs(self, identifier, structure, inputs=None):
+        """
+        Write ``INCAR``, ``KPOINTS`` and ``POSCAR`` into a material's directory.
+
+        **The ``POSCAR`` comes from the density, not from the API.** A
+        ``CHGCAR`` carries its own structure block, and that is the geometry
+        the density was computed at; a summary document's structure is the
+        same calculation's *relaxed* answer and need not agree to better than
+        the run's own convergence. Taking the density's is how the two files in
+        the directory stay consistent with each other -- the same rule
+        ``poraque-vasp`` follows, and the same regression
+        (``TestTheGeometryComesFromTheDensityNotTheStructureFile``) that made
+        it a rule.
+
+        ``INCAR`` and ``KPOINTS`` come from the task's own ``orig_inputs`` when
+        :meth:`task_inputs` could read them, and from
+        :class:`~pymatgen.io.vasp.sets.MPStaticSet` otherwise. Which one was
+        used is written into the ``INCAR`` as a comment and recorded in the
+        manifest, because a deck that says where it came from is the only kind
+        worth keeping.
+
+        Parameters
+        ----------
+        identifier : str
+        structure : poraque.fields.vasp.poscar.Poscar
+            The density's own structure.
+        inputs : object, optional
+            That material's ``orig_inputs``, from :meth:`task_inputs`.
+
+        Returns
+        -------
+        str
+            ``"task"`` or ``"standard"`` -- which source the INCAR and KPOINTS
+            came from.
+        """
+        directory = self.material_dir(identifier)
+        directory.mkdir(parents=True, exist_ok=True)
+        structure.write(str(directory / "POSCAR"))
+
+        incar, kpoints, origin = self._incar_and_kpoints(structure, inputs)
+        provenance = ("the task record this density came from" if origin == "task"
+                      else "MPStaticSet -- MP's standard set, NOT this run")
+        (directory / "INCAR").write_text(
+            f"# Reconstructed by poraque-mp for {identifier}\n"
+            f"# Source: {provenance}\n"
+            f"# The POSCAR beside this file is the density's own structure.\n"
+            f"{incar}\n")
+        (directory / "KPOINTS").write_text(f"{kpoints}\n")
+        return origin
+
+    @staticmethod
+    def _incar_and_kpoints(structure, inputs):
+        """
+        The two decks and where they came from, as ``(incar, kpoints, origin)``.
+
+        The task record is preferred and its two halves are taken
+        *independently*: a document may carry an ``INCAR`` and no ``KPOINTS``,
+        and dropping both because one is missing would discard a real answer
+        for a tidier branch. ``origin`` reports ``"task"`` only when both came
+        from it, so it never overstates.
+        """
+        from pymatgen.io.vasp.inputs import Incar
+
+        recorded_incar = _field(inputs, "incar") if inputs is not None else None
+        recorded_kpoints = (_field(inputs, "kpoints")
+                            if inputs is not None else None)
+
+        incar = kpoints = None
+        if recorded_incar:
+            incar = str(Incar({str(k): v for k, v in dict(recorded_incar).items()}))
+        if recorded_kpoints is not None:
+            kpoints = str(recorded_kpoints)
+
+        if incar is None or kpoints is None:
+            standard = _standard_input_set(structure)
+            if incar is None and standard is not None:
+                incar = str(standard.incar)
+            if kpoints is None and standard is not None:
+                kpoints = str(standard.kpoints)
+
+        origin = ("task" if recorded_incar and recorded_kpoints is not None
+                  else "standard")
+        return incar or "", kpoints or "", origin
+
+    def _has_entry_marker(self, identifier):
+        """Whether this material's directory already records what it is."""
+        if not identifier:
+            return True
+        return (self.material_dir(identifier) / ENTRY_MARKER).is_file()
+
+    def _reconstruct_inputs(self, identifier, density_path, inputs, row,
+                            structure=None):
+        """
+        Write one material's deck and its marker; report what happened.
+
+        ``structure`` is the density's own, when the caller has it in hand from
+        the download it just did. For a material that was already on disk it is
+        read back from the file's **header**, which stops at the blank line
+        ending the structure block and so costs a few hundred bytes whatever
+        the grid -- there is no reason to parse a hundred megabytes of voxels
+        to learn where the atoms are.
+
+        Never fatal. A deck is a convenience beside the data; a run that has
+        the density it came for must not lose it to a failure writing an INCAR.
+
+        Returns
+        -------
+        str
+            ``"task"``, ``"standard"``, or ``"failed: <reason>"``.
+        """
+        try:
+            if structure is None:
+                structure = self._structure_of(density_path)
+            origin = self.write_vasp_inputs(identifier, structure, inputs)
+            self.write_entry_marker(identifier, row,
+                                    files=(*INPUT_FILENAMES,
+                                           os.path.basename(str(density_path))))
+            return origin
+        except Exception as error:                              # noqa: BLE001
+            print(f"  {identifier}: could not write VASP inputs "
+                  f"({type(error).__name__}: {error})")
+            return f"failed: {type(error).__name__}"
+
+    @staticmethod
+    def _structure_of(path):
+        """The structure a stored density carries, in either storage layout."""
+        from ..fields.hdf5 import HDF5_SUFFIXES
+
+        path = str(path)
+        if path.lower().endswith(HDF5_SUFFIXES):
+            from ..fields import ChargeDensity
+            from ..fields.hdf5 import join_target
+
+            return ChargeDensity.read(join_target(path, "CHGCAR")).structure
+
+        from ..fields.vasp.volumetric import read_structure_header
+
+        return read_structure_header(path)
+
+    def write_entry_marker(self, identifier, row, files=()):
+        """
+        Record what this directory is, and what was written into it.
+
+        See :data:`ENTRY_MARKER`: without it a directory holding a ``POSCAR``
+        is a VASP run to every source in :mod:`poraque.data.sources`, and an
+        archive entry read as a run loses its inferred valence charges.
+        """
+        directory = self.material_dir(identifier)
+        directory.mkdir(parents=True, exist_ok=True)
+        payload = dict(row or {})
+        payload["written"] = list(files)
+        with (directory / ENTRY_MARKER).open("w") as handle:
+            json.dump(payload, handle, indent=2)
 
     def _store_density(self, chgcar, path, hdf5, compression, level):
         """
@@ -1584,6 +1875,51 @@ class MPDataFetcher:
         return estimate
 
 
+def _field(document, name):
+    """
+    One field of an API document, whether it is a model or a plain dict.
+
+    ``mp-api`` returns pydantic models for some queries and dictionaries for
+    others depending on the fields asked for, and the difference is not
+    something a caller should have to track.
+    """
+    if document is None:
+        return None
+    if isinstance(document, dict):
+        return document.get(name)
+    return getattr(document, name, None)
+
+
+def _standard_input_set(structure):
+    """
+    MP's own static input set for a structure, or ``None``.
+
+    The fallback when a task's recorded inputs cannot be read. It is a weaker
+    answer and is labelled as one wherever it is used: an input set says what
+    MP *would* choose for this structure today, which is not necessarily what
+    the calculation behind the density was run with.
+
+    Returns ``None`` rather than raising if pymatgen cannot build it -- a
+    missing ``INCAR`` beside a density is a smaller loss than a download that
+    stops.
+    """
+    try:
+        from pymatgen.core import Lattice, Structure
+        from pymatgen.io.vasp.sets import MPStaticSet
+
+        # `scaled_positions`, because pymatgen reads `coords` as fractional
+        # unless told otherwise -- handing it Cartesian ones builds a cell that
+        # is silently wrong rather than one that raises.
+        cell = Structure(Lattice(np.asarray(structure.cell, dtype=float)),
+                         list(structure.symbols_per_atom),
+                         np.asarray(structure.scaled_positions, dtype=float))
+        return MPStaticSet(cell)
+    except Exception as error:                                  # noqa: BLE001
+        print(f"  could not build a standard input set "
+              f"({type(error).__name__}: {error})")
+        return None
+
+
 def poscar_from_pymatgen(structure):
     """
     A pymatgen :class:`~pymatgen.core.Structure` as a Poraquê
@@ -1739,6 +2075,11 @@ def build_parser():
     parser.add_argument("--seed", type=int, default=0,
                         help="sampling seed, so the same question twice gives "
                              "the same answer (default: 0)")
+    parser.add_argument("--no-vasp-inputs", action="store_true",
+                        help="do not reconstruct INCAR/KPOINTS/POSCAR beside "
+                             "each density. They are written by default: a "
+                             "material's directory is then one VASP can be "
+                             "pointed at, and nothing in training reads them")
     parser.add_argument("--skip-chgcar", action="store_true",
                         help="write metadata and structures only")
 
@@ -1839,7 +2180,8 @@ def main(argv=None):
                     skip_existing=not args.restart, hdf5=args.hdf5,
                     compression=(None if args.compression == "none"
                                  else args.compression),
-                    compression_level=args.compression_level)
+                    compression_level=args.compression_level,
+                    vasp_inputs=not args.no_vasp_inputs)
     print("\nDone.")
     return 0
 

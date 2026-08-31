@@ -35,6 +35,7 @@ All figures are written to a results directory and the paths returned, so a
 training script can archive them without knowing anything about Matplotlib.
 """
 
+import csv
 import os
 
 import numpy as np
@@ -162,21 +163,68 @@ class TrainingReport:
     """
 
     def __init__(self, output_dir="results/plots", theme="light", dpi=160,
-                 fmt="png", prefix=""):
+                 fmt="png", prefix="", save_data=False):
         self.output_dir = str(output_dir)
         self.theme = theme
         self.dpi = int(dpi)
         self.fmt = str(fmt).lstrip(".")
         self.prefix = str(prefix)
+        self.save_data = bool(save_data)
+        #: Sidecar data files written so far, in order, so a caller can log
+        #: them without re-deriving the names.
+        self.data_files = []
         self.ink = INK["dark" if theme == "dark" else "light"]
 
     # ------------------------------------------------------------------ #
     # Helpers
     # ------------------------------------------------------------------ #
+    def _stem(self, name):
+        return f"{self.prefix}_{name}" if self.prefix else name
+
     def _path(self, name):
         os.makedirs(self.output_dir, exist_ok=True)
-        stem = f"{self.prefix}_{name}" if self.prefix else name
-        return os.path.join(self.output_dir, f"{stem}.{self.fmt}")
+        return os.path.join(self.output_dir, f"{self._stem(name)}.{self.fmt}")
+
+    def _data_path(self, name, suffix):
+        """
+        Sidecar path for a figure: same stem, different extension.
+
+        Sharing the stem is the whole design. A file called
+        ``training_curve_ext2chg.csv`` sitting next to
+        ``ext2chg_loss_curves.png`` is one more thing to work out; sharing the
+        name makes "the numbers behind this figure" a property of the listing
+        rather than of a convention someone has to remember.
+        """
+        os.makedirs(self.output_dir, exist_ok=True)
+        return os.path.join(self.output_dir,
+                            f"{self._stem(name)}.{suffix.lstrip('.')}")
+
+    def _write_csv(self, name, columns, rows):
+        """
+        One table beside one figure.
+
+        ``columns`` are the header; ``rows`` are already-formatted sequences.
+        ``None`` in a cell is written as an empty field rather than as a
+        number: the validation error exists only on the epochs it was measured
+        on, and filling the gaps -- with a zero, or with the last value carried
+        forward -- would put points in the file that the run never measured.
+        """
+        path = self._data_path(name, "csv")
+        with open(path, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(columns)
+            for row in rows:
+                writer.writerow(["" if value is None else value
+                                 for value in row])
+        self.data_files.append(path)
+        return path
+
+    def _write_npz(self, name, **arrays):
+        """Compressed arrays beside a figure whose content *is* arrays."""
+        path = self._data_path(name, "npz")
+        np.savez_compressed(path, **arrays)
+        self.data_files.append(path)
+        return path
 
     def _save(self, figure, name):
         import matplotlib.pyplot as plt
@@ -234,6 +282,10 @@ class TrainingReport:
         val_epochs = np.asarray(history.get("val_epoch", []), dtype=float)
         if val_epochs.size != validation.size:
             val_epochs = np.arange(1, validation.size + 1, dtype=float)
+
+        if self.save_data:
+            self._write_loss_curve_data(name, history, train, validation,
+                                        val_epochs)
 
         with self._context():
             rows = 2 if has_validation else 1
@@ -295,6 +347,42 @@ class TrainingReport:
     # ------------------------------------------------------------------ #
     # 2. Field cross-sections
     # ------------------------------------------------------------------ #
+    def _write_loss_curve_data(self, name, history, train, validation,
+                               val_epochs):
+        r"""
+        The loss curves as a table, one row per epoch.
+
+        Two columns and not three. ``train loss`` is the **total** objective —
+        data fidelity plus every weighted physics term, which is what the
+        optimiser stepped on — and there is no separate physics column to
+        write: the per-term breakdown was removed from ``history`` in
+        2026-08-28 because the components are reported *unweighted* and so
+        never summed to the total. Emitting a ``physics_loss`` column here
+        would mean inventing numbers the run did not record.
+
+        ``val_<metric>`` is blank on the epochs it was not measured on
+        (``eval_epoch > 1``), rather than interpolated. The column header names
+        the norm — ``val_rel_l2``, or ``val_rel_h1`` for a ``loss: sobolev``
+        run — because the two are different quantities and a file that called
+        both "validation loss" would be unreadable a month later.
+        """
+        metric = str(history.get("val_metric", "rel L2"))
+        column = "val_" + metric.lower().replace(" ", "_")
+        by_epoch = {int(epoch): float(value)
+                    for epoch, value in zip(val_epochs, validation)}
+
+        columns = ["epoch", "train_loss"]
+        if validation.size:
+            columns.append(column)
+        rows = []
+        for index, value in enumerate(train, start=1):
+            row = [index, f"{float(value):.10g}"]
+            if validation.size:
+                measured = by_epoch.get(index)
+                row.append(None if measured is None else f"{measured:.10g}")
+            rows.append(row)
+        return self._write_csv(name, columns, rows)
+
     def field_comparison(self, reference, prediction, name="field_slice",
                          axis=2, index=None, label="field", unit="",
                          title=None, log=False, difference_quantile=0.999):
@@ -361,6 +449,24 @@ class TrainingReport:
         metrics = _metrics(prediction_data, reference_data)
         axis_names = ("a", "b", "c")
         remaining = [axis_names[i] for i in range(3) if i != axis]
+
+        if self.save_data:
+            # The three panels, exactly as drawn -- and `error` is stored
+            # rather than left to be recomputed, so a reader who reconstructs
+            # it and gets something else knows the file is inconsistent
+            # instead of silently trusting their own subtraction.
+            self._write_npz(
+                name,
+                reference=reference_slice, prediction=prediction_slice,
+                error=difference,
+                axis=np.asarray(axis), index=np.asarray(index),
+                slice_axes=np.asarray(remaining),
+                colour_limits=np.asarray([float(finite.min()),
+                                          float(finite.max())]),
+                error_limits=np.asarray([float(low), float(high)]),
+                label=np.asarray(label), unit=np.asarray(unit),
+                log_scale=np.asarray(bool(log)),
+            )
 
         with self._context():
             figure, axes = plt.subplots(1, 3, figsize=(13.0, 4.1),
@@ -514,6 +620,67 @@ class TrainingReport:
             figure.tight_layout()
             return self._save(figure, name)
 
+    def _write_parity_data(self, name, drawn, edges, histograms,
+                           scatter=False, max_points=200_000):
+        r"""
+        The parity plot as a table: one row per **occupied** bin.
+
+        Long format — ``split, reference, prediction, count, density`` — rather
+        than a 200x200 matrix, because that is what pivots straight back into a
+        ``pcolormesh`` and what a plotting tool can read without reshaping.
+        Empty bins are dropped: a 200-bin parity grid is 40 000 cells of which
+        a few thousand are occupied, and the zeros carry nothing the edges do
+        not already say. The edges are written in their own two-column file so
+        the grid is still reconstructible exactly.
+
+        ``count`` is voxels; ``density`` is the share of *that split's* voxels,
+        which is the quantity the figure colours by — two structures need not
+        have the same grid size, and raw counts would paint the larger one
+        denser for no physical reason.
+
+        With ``scatter=True`` the figure draws individual points, so that is
+        what is written: the same subsample, drawn with the same fixed seed, so
+        the file holds the points that are actually on the page.
+        """
+        if scatter:
+            rows = []
+            for series_name, x, y, _ in drawn:
+                if x.size > max_points:
+                    picked = np.random.default_rng(0).choice(
+                        x.size, max_points, replace=False)
+                    x, y = x[picked], y[picked]
+                rows.extend([series_name, f"{float(a):.10g}", f"{float(b):.10g}"]
+                            for a, b in zip(x, y))
+            return self._write_csv(name, ["split", "reference", "prediction"],
+                                   rows)
+
+        centres = 0.5 * (edges[:-1] + edges[1:])
+        rows = []
+        for (series_name, x, _, _), shares in zip(drawn, histograms):
+            # `histograms` holds the normalised share, which is what the figure
+            # colours by. The voxel count is that share times the split's own
+            # point total -- written out rather than left as arithmetic for
+            # whoever reads the file.
+            voxels = int(x.size)
+            for i, j in np.argwhere(shares > 0):
+                share = float(shares[i, j])
+                rows.append([series_name,
+                             f"{float(centres[i]):.10g}",
+                             f"{float(centres[j]):.10g}",
+                             int(round(share * voxels)),
+                             f"{share:.10g}"])
+
+        # The edges go in their own file rather than into every row. Occupied
+        # bin *centres* replot as a scatter directly, but a `pcolormesh` needs
+        # the edges, and they cannot be recovered from the centres alone once
+        # the axis may be log-spaced.
+        self._write_csv(f"{name}_bin_edges", ["index", "edge"],
+                        [[index, f"{float(edge):.10g}"]
+                         for index, edge in enumerate(edges)])
+        return self._write_csv(
+            name, ["split", "reference", "prediction", "count", "density"],
+            rows)
+
     def parity(self, reference, prediction, name="parity", label="field",
                unit="", title=None, bins=200, max_points=200_000,
                scatter=False, log=False, validation=None,
@@ -641,6 +808,10 @@ class TrainingReport:
             floor = float(min(p.min() for p in positive if p.size))
             ceiling = float(max(h.max() for h in histograms))
             norm = LogNorm(vmin=floor, vmax=ceiling)
+
+        if self.save_data:
+            self._write_parity_data(name, drawn, edges, histograms,
+                                    scatter=scatter, max_points=max_points)
 
         with self._context():
             if comparing:
