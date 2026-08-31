@@ -193,7 +193,6 @@ CHG
 WAVECAR
 TAUCAR
 EXTCAR
-EXTCAR_NEW
 LOCPOT
 vasprun.xml
 PROCAR
@@ -226,6 +225,7 @@ outputs/
 # Claude Code session context (local only, not part of the repository)
 CLAUDE.md
 FUTURE.md
+DESIGN_PAW.md
 
 # Local reading notes on external literature (not part of the repository)
 report.md
