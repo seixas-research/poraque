@@ -105,9 +105,47 @@ Gaussian model is reached. \\
 \opt{gaussian\_blur} & \opt{null} & Gaussian blur width in \AA{} applied to the
 computed potential. \\
 \opt{blur\_method} & \opt{spectral} & \opt{spectral} or \opt{ndimage}. \\
+\opt{cache\_in\_memory} & \opt{auto} & Keep decoded fields in RAM between
+epochs --- see below. \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\subsection{\opt{cache\_in\_memory}}
+\label{sec:cachememory}
+
+The largest performance setting in the file, and the only one whose effect is
+completely invisible from the results.
+
+With it off, \textbf{every epoch reopens, decompresses and re-parses every
+field from disk}. That produces exactly the same numbers as caching does ---
+and takes about ten times as long. Measured on a V100 with 115 structures at
+$32^3$: \opt{\_\_getitem\_\_} was 59\,\% of the training loop, 78.9\,s over 483
+calls, while the GPU sat at 2--4\,\% utilisation waiting on \opt{zlib} and
+\opt{numpy.array} over a text generator. Turning the cache on took twenty
+epochs from \textbf{168.0\,s to 16.3\,s}, with the validation error identical
+to five decimals.
+
+It is not a GPU setting. The parse is the same on Apple Silicon and on the
+CPU; what an accelerator adds is a fast device left idle by it.
+
+\opt{auto} estimates the decoded size --- grid points $\times$ itemsize
+$\times$ channels, over the input and target fields --- and enables the cache
+below 4\,GiB, logging what it decided and what it costs:
+
+\begin{lstlisting}
+  field cache         : in RAM, ~61.3 MiB (data.cache_in_memory: auto)
+\end{lstlisting}
+
+Set it to \opt{false} when the process shares its memory with something the
+estimate cannot see. What \opt{auto} refuses on its own is the case the old
+default was right about: $128^3$ grids over thousands of materials, where
+caching silently would turn a slow run into a dead one.
+
+\begin{pnote}
+Parallel loading is \textbf{not} the alternative it looks like. See
+\opt{num\_workers} below: added to the cache, workers make training slower.
+\end{pnote}
 
 \subsection{\opt{data\_paths}}
 
@@ -373,6 +411,20 @@ constant rate. \\
 \opt{grad\_clip} & \opt{1.0} & Global gradient-norm clip; \opt{0} disables. \\
 \opt{seed} & \opt{0} & Weight initialisation, batch order and fold shuffling. \\
 \opt{device} & \opt{auto} & \opt{auto}, \opt{cuda}, \opt{mps} or \opt{cpu}. \\
+\opt{strict\_device} & \opt{false} & Abort instead of falling back to the CPU;
+see below. \\
+\opt{num\_workers} & \opt{0} & DataLoader worker processes. Read
+\opt{data.cache\_in\_memory} first. \\
+\opt{pin\_memory} & \opt{auto} & Page-locked staging; \opt{auto} is true on
+CUDA and false elsewhere. \\
+\opt{tf32} & \opt{true} & TensorFloat-32 matmul and convolution; CUDA, Ampere
+and later. \\
+\opt{compile} & \opt{false} & \opt{torch.compile} the training loop; CUDA only,
+and a measurement switch. \\
+\opt{compile\_mode} & \opt{default} & \opt{default}, \opt{reduce-overhead} or
+\opt{max-autotune}. \\
+\opt{compile\_dynamic} & \opt{true} & One graph over symbolic shapes rather
+than one per shape. \\
 \opt{loss} & \opt{relative\_l2} & \opt{absolute\_l2}, \opt{relative\_l2},
 \opt{absolute\_h1} or \opt{relative\_h1}. \\
 \opt{sobolev\_weight} & \opt{0.1} & Gradient-term weight for the two
@@ -477,6 +529,95 @@ Capped \emph{per grid-shape bucket}. Materials whose grids differ in shape
 cannot be stacked into one tensor, so they are grouped by shape and batches
 drawn within a group. A bucket holding a single material yields batches of one
 however large this is set. The training log prints the buckets it found.
+
+That cap is a real ceiling, not a formality: \textbf{above the largest bucket's
+size the setting stops meaning anything}. In the 115-structure set measured on
+a V100 the largest bucket held 70 materials ($\approx$56 after the split), and
+\opt{bs=64} and \opt{bs=128} were the same run --- identical peak memory,
+identical error, identical time. With the field cache on, throughput responded
+to the batch up to 16 and was flat thereafter.
+
+\opt{peak\_vram\_bytes} and \opt{seconds\_per\_epoch} in the metrics JSON are
+what a sweep over this should be read from; before they were recorded there,
+the only route to either was sampling \opt{nvidia-smi} from outside the
+process.
+
+\subsection{\opt{strict\_device}}
+
+\opt{device: auto} prefers CUDA, then Apple Metal, then the CPU. An explicit
+backend that is unavailable \textbf{warns and falls back to the CPU}, so a
+configuration written on a machine with a GPU still runs on a laptop.
+
+That is right on a workstation and expensive in a queue.
+\opt{strict\_device: true} turns the fallback into an error, and
+\textbf{every HPC configuration should set it}. The refusal names the probable
+cause --- no GPU visible, an empty \opt{CUDA\_VISIBLE\_DEVICES}, a driver older
+than the wheel's CUDA runtime, or a build carrying no kernels for this
+architecture --- and prints the full device report into the run's log.
+
+That last case is worth stating on its own, because
+\opt{torch.cuda.is\_available()} cannot detect it: it answers ``is there a
+driver and a device'', not ``can this binary generate code for this device''.
+A \opt{+cu130} wheel on a V100 reports available and then aborts at the first
+kernel launch, since CUDA 13 dropped Volta. Poraqu\^e checks the compute
+capability against the build's own \opt{arch\_list} and refuses before any of
+that. See \S\ref{sec:cuda}.
+
+\subsection{\opt{num\_workers} and \opt{pin\_memory}}
+
+\opt{num\_workers} and \opt{data.cache\_in\_memory} (\S\ref{sec:cachememory})
+are \textbf{alternatives, not complements}, and the measurement is
+unambiguous. Twenty epochs on 115 structures at $32^3$, on a V100:
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Variant & Training time & Speedup \\
+\midrule
+As shipped & 168.0\,s & 1.0$\times$ \\
+\opt{cache\_in\_memory: true} & \textbf{16.3\,s} & \textbf{10.3$\times$} \\
+\opt{num\_workers: 4}, no cache & 120.2\,s & 1.4$\times$ \\
+Both & 18.8\,s & 8.9$\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The validation error was identical in all four, as it must be. Each worker is a
+\emph{process} with a cache of its own, so it re-parses the whole dataset on
+its first epoch --- the parse the cache removes is paid $N$ times instead of
+once. Raise \opt{num\_workers} only when the data genuinely does not fit in
+RAM, which is the case \opt{cache\_in\_memory: false} exists for.
+
+\opt{pin\_memory} is a CUDA transfer optimisation and nothing else: \opt{auto}
+is true there and false everywhere, since it does not help on Metal and some
+PyTorch versions warn when asked for it.
+
+\subsection{\opt{tf32} and \opt{compile}}
+
+\opt{tf32} keeps float32's range and drops its mantissa to ten bits inside the
+tensor cores. It is a real speedup on Ampere and later, and \textbf{exactly
+nothing} before it --- a V100 has no TF32 path --- so it is on by default and
+costs nothing where it does not apply.
+
+\opt{compile} is a measurement switch rather than a recommendation, and it is
+off. The case for it is the kernel profile: at \opt{width=16, modes=8,
+n\_layers=3} on a V100, \textbf{44.4\,\% of GPU time is elementwise work}, and
+the four costliest kernels are \opt{copy\_}, \opt{Memcpy DtoD}, \opt{add\_} and
+\opt{fill\_} --- memory traffic between kernels that each do very little
+arithmetic, which is what fusion removes. Convolution is 23.7\,\%, FFT
+13.7\,\%, and GEMM only 6.1\,\%.
+
+The case against is that batches are bucketed by grid shape and a real dataset
+has many --- 19 distinct shapes in the set measured --- and Inductor
+specialises per shape unless \opt{compile\_dynamic} holds across
+\opt{rfftn}/\opt{irfftn} with a varying \opt{s=}. Whether it does is the open
+question, and the reason this is a flag rather than a default. Compilation is
+charged to the first epoch, where \opt{seconds\_per\_epoch} in the metrics JSON
+makes the trade visible: a 60-epoch run that pays 90\,s of compilation to save
+20\,s is a loss, and a 2000-epoch run is not.
+
+Both are ignored off CUDA. \opt{compile} says so rather than quietly turning on
+Inductor's Metal backend, which is a different proposition and untested here.
 
 \subsection{\opt{loss} and \opt{sobolev\_weight}}
 

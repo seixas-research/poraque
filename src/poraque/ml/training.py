@@ -17,6 +17,7 @@ with :mod:`poraque.fields`.
 """
 
 import os
+import time
 import warnings
 
 import numpy as np
@@ -24,7 +25,7 @@ import torch
 
 from ..fields import ChargeDensity, ExternalPotential, KineticEnergyDensity
 from .data import make_dataloader
-from .device import describe_device, resolve_device
+from .device import describe_device, resolve_device, synchronize
 from .fno import FNO3d
 from .losses import PhysicsInformedLoss, data_error
 from .tasks import resolve_task
@@ -128,6 +129,13 @@ class FieldOperator:
         ``"auto"`` (default) selects CUDA, then Apple MPS, then CPU; an
         explicit backend that is unavailable warns and falls back to CPU. See
         :func:`~poraque.ml.device.resolve_device`.
+    strict_device : bool, optional
+        Raise instead of falling back to the CPU when ``device`` cannot be
+        honoured. Off by default, which is right for a workstation and wrong
+        for a queue — a batch job that quietly moves to the CPU spends its GPU
+        allocation not using a GPU. Forwarded straight to
+        :func:`~poraque.ml.device.resolve_device`; a run sets it from
+        ``training.strict_device``.
     pauli_residual : bool, optional
         Wrap the backbone in a
         :class:`~poraque.ml.heads.PauliResidualOperator`, so the model
@@ -180,9 +188,9 @@ class FieldOperator:
                  target_transform=None, device=None, pauli_residual=False,
                  pauli_scale=1.0, learn_pauli_scale=True,
                  training_resolution=None, init_seed=None, baseline=None,
-                 **model_kwargs):
+                 strict_device=False, **model_kwargs):
         self.task = resolve_task(task)
-        self.device = resolve_device(device)
+        self.device = resolve_device(device, strict=strict_device)
         self.input_transform = input_transform or Identity()
         self.target_transform = target_transform or Identity()
         self.baseline = _resolve_operator_baseline(baseline)
@@ -965,12 +973,80 @@ def build_optimizer(parameters, name="adamw", learning_rate=1e-3,
         f"Unknown optimizer {name!r}; expected one of {list(OPTIMIZERS)}.")
 
 
+def _compiled_forward(operator, requested, mode, dynamic, emit, verbose):
+    """
+    The callable the training loop uses to run the model, compiled or not.
+
+    Returns ``operator.model`` unchanged unless ``requested`` and the device is
+    CUDA. The wrapper is deliberately *not* assigned back onto the operator:
+    :func:`torch.compile` returns a module whose ``state_dict`` keys are
+    prefixed ``_orig_mod.``, so storing it would make every checkpoint this run
+    writes — and the in-memory best-weight restore — silently incompatible with
+    every other code path that loads one.
+
+    Parameters
+    ----------
+    operator : FieldOperator
+    requested : bool
+    mode : str
+        ``torch.compile``'s ``mode``.
+    dynamic : bool
+        ``torch.compile``'s ``dynamic``. One graph over symbolic shapes rather
+        than one per shape, which is what makes this affordable when batches
+        are bucketed by grid shape.
+    emit : callable
+    verbose : bool
+
+    Returns
+    -------
+    callable
+        ``(inputs, cell) -> prediction``.
+    """
+    if not requested:
+        return operator.model
+
+    # Guarded on the device rather than on availability. Inductor has an MPS
+    # backend and it is a different proposition from the CUDA one -- untested
+    # here, and not what the measurement that motivated this flag was about --
+    # so the same flag must not silently turn it on.
+    if operator.device.type != "cuda":
+        warnings.warn(
+            f"training.compile was requested on "
+            f"{describe_device(operator.device)}; torch.compile is enabled "
+            f"only on CUDA here, so the model runs uncompiled.",
+            RuntimeWarning, stacklevel=3,
+        )
+        return operator.model
+
+    compiled = torch.compile(operator.model, mode=mode, dynamic=bool(dynamic))
+    if verbose:
+        emit(f"    torch.compile: mode={mode!r} dynamic={bool(dynamic)} "
+             f"(compilation is charged to the first epoch; compare it against "
+             f"the rest in seconds_per_epoch)")
+    return compiled
+
+
 def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
           weight_decay=1e-4, validation=None, loss=None, scheduler="cosine",
           grad_clip=1.0, eval_every=1, early_stopping=0, checkpoint=None,
-          seed=0, verbose=True, log=None, optimizer="adamw"):
+          seed=0, verbose=True, log=None, optimizer="adamw",
+          num_workers=0, pin_memory="auto", compile_model=False,
+          compile_mode="default", compile_dynamic=True):
     """
     Train a :class:`FieldOperator`.
+
+    **One GPU.** Poraquê trains on a single device; request one. There is no
+    :class:`~torch.nn.parallel.DistributedDataParallel` path and no
+    ``DataParallel``, so a job allocated four GPUs sees four and uses
+    ``cuda:0``. That is a deliberate omission rather than an oversight: for
+    fields of this size the optimiser step is tens of milliseconds on a model of
+    a few megabytes, the constraint is getting data to it, and replicating the
+    loader across ranks would multiply that cost by the rank count. The
+    non-obvious part of ever adding it is that
+    :class:`~poraque.ml.data.ShapeBucketSampler` is a ``batch_sampler`` grouping
+    by grid shape, which a plain ``DistributedSampler`` does not compose with,
+    and partitioning shapes across ranks unbalances the load badly --- the
+    buckets differ by two orders of magnitude in size.
 
     Parameters
     ----------
@@ -1024,6 +1100,30 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         Receives each progress line. Defaults to :func:`print`; pass the
         caller's logger to get training progress into the run log rather than
         only onto the terminal.
+    num_workers : int, optional
+        DataLoader worker processes. Leave at ``0`` unless the dataset's
+        in-memory cache had to be turned off: measured, the two are
+        alternatives and adding workers to a cached dataset makes it *slower*.
+        See :func:`~poraque.ml.data.make_dataloader`.
+    pin_memory : {"auto", True, False}, optional
+        Page-locked staging for the host-to-device copy. ``"auto"`` resolves to
+        ``True`` on CUDA and ``False`` elsewhere, which is the whole decision.
+    compile_model : bool, optional
+        Wrap the model in :func:`torch.compile` **for the training loop only**.
+        Ignored with a warning off CUDA: Inductor's MPS backend is a different
+        proposition and must not be turned on by the same flag.
+
+        The wrapper is used to call the model and is never stored on the
+        operator, so ``state_dict`` keys, the best-weight restore and every
+        checkpoint written are those of the uncompiled module --- a compiled
+        module prefixes them with ``_orig_mod.`` and the checkpoint would not
+        reload.
+    compile_mode : str, optional
+        ``torch.compile``'s ``mode``.
+    compile_dynamic : bool, optional
+        ``torch.compile``'s ``dynamic``. ``True`` asks for one graph over
+        symbolic shapes, which is what makes this affordable at all: batches are
+        bucketed by grid shape and a real dataset has many.
 
     Returns
     -------
@@ -1044,6 +1144,15 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         gradient term. The final per-structure evaluation reports plain
         relative :math:`L^2` whatever the objective was, so the two are
         comparable across runs.
+
+        Always ``seconds_per_epoch`` — wall time per epoch, measured after
+        :func:`~poraque.ml.device.synchronize`, so it is compute and not
+        queueing — and, on CUDA, ``peak_vram_bytes`` and
+        ``peak_vram_reserved_bytes``. Those three are what a ``batch_size``
+        study needs and what previously could only be had by sampling
+        ``nvidia-smi`` from outside the process. ``seconds_per_epoch`` is also
+        where ``compile_model``'s cost shows up: compilation is charged to the
+        first epoch, so the first entry against the rest is the price of it.
     """
     torch.manual_seed(seed)
     criterion = loss or PhysicsInformedLoss(task=operator.task.name)
@@ -1061,13 +1170,38 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         if scheduler == "cosine" else None
     )
 
-    loader = make_dataloader(dataset, batch_size=batch_size, shuffle=True, seed=seed)
+    # Pinning is a CUDA transfer optimisation and nothing else: it does not
+    # help on MPS and some PyTorch versions warn when asked for it there. This
+    # is the layer that knows the device, so this is where "auto" is answered.
+    if isinstance(pin_memory, str):
+        pin_memory = (operator.device.type == "cuda"
+                      if pin_memory.strip().lower() == "auto" else
+                      pin_memory.strip().lower() in ("1", "true", "yes"))
+    pin_memory = bool(pin_memory)
+
+    loader = make_dataloader(dataset, batch_size=batch_size, shuffle=True,
+                             seed=seed, num_workers=num_workers,
+                             pin_memory=pin_memory)
     validation_loader = (
-        make_dataloader(validation, batch_size=batch_size, shuffle=False, seed=seed)
+        make_dataloader(validation, batch_size=batch_size, shuffle=False,
+                        seed=seed, num_workers=num_workers,
+                        pin_memory=pin_memory)
         if validation is not None else None
     )
 
-    history = {"train_loss": [], "val_error": [], "val_epoch": []}
+    # Called instead of `operator.model` inside the loop, never assigned to it.
+    # `torch.compile` returns a wrapper whose `state_dict` keys carry an
+    # `_orig_mod.` prefix; storing it would silently make every checkpoint this
+    # run writes unloadable by every other code path.
+    forward = _compiled_forward(operator, compile_model, compile_mode,
+                                compile_dynamic,
+                                log if log is not None else print,
+                                verbose)
+
+    history = {"train_loss": [], "val_error": [], "val_epoch": [],
+               "seconds_per_epoch": []}
+    if operator.device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(operator.device)
     best_error = float("inf")
     best_epoch, best_state, stopped_early = 0, None, False
     emit = log if log is not None else print
@@ -1136,20 +1270,29 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             loader.batch_sampler.set_epoch(epoch)
 
         operator.model.train()
-        running, batches = 0.0, 0
+        epoch_start = time.perf_counter()
+        # Accumulated **on the device**. `float(loss)` per batch is a
+        # synchronisation per batch: the CPU stops until the queue drains, so a
+        # run pays the latency once per step to record a number it does not
+        # read until the epoch ends. One `.item()` below is enough.
+        running = torch.zeros((), device=operator.device)
+        batches = 0
         for batch in loader:
-            inputs = batch["input"].to(operator.device)
-            targets = batch["target"].to(operator.device)
-            cell = batch["cell"].to(operator.device)
+            # non_blocking only does anything with pin_memory, and is harmless
+            # without it -- an unpinned copy is synchronous whatever is asked.
+            inputs = batch["input"].to(operator.device, non_blocking=pin_memory)
+            targets = batch["target"].to(operator.device, non_blocking=pin_memory)
+            cell = batch["cell"].to(operator.device, non_blocking=pin_memory)
 
             optimizer.zero_grad(set_to_none=True)
-            prediction = operator.model(inputs, cell)
+            prediction = forward(inputs, cell)
 
             # The reference in physical units serves two terms: it is rho for
             # the von Weizsacker bound on chg2tau -- where the *input* is the
             # density -- and its integral is the electron count the
             # charge-conservation term on ext2chg is measured against.
-            physical_target = batch["target_physical"].to(operator.device)
+            physical_target = batch["target_physical"].to(
+                operator.device, non_blocking=pin_memory)
             physical_prediction = operator.target_transform.inverse(prediction)
 
             # Delta-density mode: the data term above compares residuals, which
@@ -1159,7 +1302,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             # makes them true again, and it means no loss term had to change.
             baseline = batch.get("baseline")
             if baseline is not None:
-                baseline = baseline.to(operator.device)
+                baseline = baseline.to(operator.device, non_blocking=pin_memory)
                 physical_prediction = physical_prediction + baseline
                 physical_target = physical_target + baseline
 
@@ -1179,15 +1322,22 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             # differentiated and only `total` is recorded: it is the objective
             # the optimiser stepped on, and the parts are reported *unweighted*
             # so they do not sum to it.
-            running += float(terms["total"].detach())
+            running += terms["total"].detach()
             batches += 1
 
         if lr_schedule is not None:
             lr_schedule.step()
 
         divisor = max(batches, 1)
-        mean_loss = running / divisor
+        # The one synchronisation per epoch that the device-side accumulator
+        # above exists to reduce the count of.
+        mean_loss = float(running / divisor)
         history["train_loss"].append(mean_loss)
+        # After the sync `.item()` forced, so this is compute rather than
+        # queueing -- an unsynchronised clock on an asynchronous backend
+        # measures how fast work was *submitted*.
+        synchronize(operator.device)
+        history["seconds_per_epoch"].append(time.perf_counter() - epoch_start)
 
         # The last epoch always reports, so a run never finishes without a
         # current number just because `epochs` is not a multiple of the
@@ -1244,6 +1394,15 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         # Which norm `val_error` is in, so a figure or a report cannot label a
         # stored series by assuming it.
         history["val_metric"] = val_metric
+
+    # Reported in the run's own JSON rather than sampled from outside it with
+    # `nvidia-smi`, which is how every number in the CUDA work list had to be
+    # obtained and cannot be attributed to one task of a multi-task run.
+    if operator.device.type == "cuda":
+        history["peak_vram_bytes"] = int(
+            torch.cuda.max_memory_allocated(operator.device))
+        history["peak_vram_reserved_bytes"] = int(
+            torch.cuda.max_memory_reserved(operator.device))
 
     return history
 

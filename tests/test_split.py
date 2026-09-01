@@ -597,6 +597,7 @@ class TestHistorySerialisation:
     def test_separates_curves_from_scalars(self, toy):
         history = _train_toy(toy, epochs=4, eval_every=2, validate=True,
                              early_stopping=2)
+        poraque_train.extract_resource_usage(history)
         curves, stopping = poraque_train.split_history(history)
 
         assert set(curves) == {"train_loss", "val_error", "val_epoch"}
@@ -620,6 +621,41 @@ class TestHistorySerialisation:
             {"train_loss": [1.0, 0.5], "best_epoch": 2, "stopped_early": True})
         assert curves == {"train_loss": [1.0, 0.5]}
         assert stopping == {"best_epoch": 2, "stopped_early": True}
+
+
+class TestTheCostMeasurementsAreNotResults:
+    """
+    `train` records what a run cost beside what it achieved, and
+    `split_history` sorts by *type* rather than by meaning: a list becomes a
+    plotted loss curve and a scalar becomes an early-stopping summary. Left in
+    place, `seconds_per_epoch` would be serialised as a second loss curve and a
+    VRAM byte count would be filed under early stopping.
+    """
+
+    def test_the_timings_are_taken_out_of_the_history(self, toy):
+        history = _train_toy(toy, epochs=3, eval_every=1, validate=True)
+        assert len(history["seconds_per_epoch"]) == 3
+
+        resources = poraque_train.extract_resource_usage(history)
+        assert "seconds_per_epoch" not in history
+        assert len(resources["seconds_per_epoch"]) == 3
+
+    def test_every_key_is_present_even_off_cuda(self, toy):
+        """`None` says "not measured here"; a missing key says nothing."""
+        history = _train_toy(toy, epochs=2, eval_every=1, validate=True)
+        resources = poraque_train.extract_resource_usage(history)
+        assert set(resources) == {"seconds_per_epoch", "peak_vram_bytes",
+                                  "peak_vram_reserved_bytes"}
+
+    def test_what_is_left_still_serialises(self, toy):
+        history = _train_toy(toy, epochs=3, eval_every=1, validate=True)
+        resources = poraque_train.extract_resource_usage(history)
+        curves, stopping = poraque_train.split_history(history)
+        payload = json.loads(json.dumps({"history": curves,
+                                         "early_stopping": stopping,
+                                         **resources}))
+        assert "seconds_per_epoch" not in payload["history"]
+        assert len(payload["seconds_per_epoch"]) == 3
 
     def test_no_validation_leaves_no_scalars(self, toy):
         """Without a split `train` adds none, and the key stays null."""

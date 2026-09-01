@@ -28,6 +28,8 @@ stencil would leave a discretization error that the physics losses would then
 try — wrongly — to attribute to the network.
 """
 
+from functools import lru_cache
+
 import numpy as np
 import torch
 
@@ -58,6 +60,15 @@ _HA_TO_EV = HARTREE_TO_EV
 #     unusable on Apple Silicon. See poraque.ml.device.
 #
 # The cost is O(1) per structure against an O(N log N) FFT, i.e. unmeasurable.
+#
+#   Checked on CUDA, not assumed: `.cpu()` on a CUDA tensor synchronises, and
+#   this runs several times per step, so keeping it on the device looked like a
+#   free win. Measured on a V100 with 32^3 grids it is 2 % *slower* -- a 3x3
+#   `linalg.det` costs 0.138 ms on the device against 0.098 ms via the host,
+#   because the kernel launch for 27 numbers costs more than the copy it
+#   avoids, and the synchronisation is cheap because the queue behind it is one
+#   57 ms step. Worth re-measuring only if the grids grow enough for that queue
+#   to get long -- 128^3, or a batch an order of magnitude larger.
 # ---------------------------------------------------------------------- #
 def cell_reciprocal(cell, device=None, dtype=torch.float32):
     r"""
@@ -112,6 +123,47 @@ def cell_volume(cell, device=None, dtype=torch.float32):
 # ---------------------------------------------------------------------- #
 # Spectral differential operators
 # ---------------------------------------------------------------------- #
+@lru_cache(maxsize=64)
+def _integer_mesh(shape, device, dtype):
+    r"""
+    The integer mesh :math:`(m_1, m_2, m_3)` of an FFT grid, ``(3, Nx, Ny, Nz)``.
+
+    Memoised because it depends only on ``(shape, device, dtype)`` and **not on
+    the cell**, while :func:`reciprocal_vectors` is called several times per
+    batch --- once for the model's coordinate channels, again for each spectral
+    gradient in an :math:`H^1` loss, again for the von Weizsäcker bound --- each
+    time allocating and filling :math:`3 N_x N_y N_z` values that were identical
+    to the last ones. Measured on a V100 with the in-RAM dataset cache on: 1.6 %
+    of training time, consistent across repetitions, on every backend and
+    probably most on MPS, where allocation is dearer.
+
+    ``maxsize=64`` is sized against
+    :class:`~poraque.ml.data.ShapeBucketSampler`, which batches by grid shape:
+    the number of distinct shapes in a dataset is therefore small and stable
+    --- 19 for the 115-structure set this was measured on --- and one entry per
+    shape per dtype fits with room to spare.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        Must be a tuple of plain ``int``. A list is unhashable and a
+        :class:`torch.Size` of tensors would key the cache on objects it then
+        keeps alive; :func:`reciprocal_vectors` normalises before calling.
+    device : torch.device
+    dtype : torch.dtype
+
+    Returns
+    -------
+    torch.Tensor
+        ``(3, Nx, Ny, Nz)``. Shared between callers, so **it must not be
+        mutated in place** --- every use downstream is a read.
+    """
+    frequencies = [
+        torch.fft.fftfreq(n, d=1.0 / n, device=device, dtype=dtype) for n in shape
+    ]
+    return torch.stack(torch.meshgrid(*frequencies, indexing="ij"), dim=0)
+
+
 def reciprocal_vectors(cell, shape, device=None, dtype=torch.float32):
     r"""
     Cartesian reciprocal-lattice vectors of the FFT mesh.
@@ -135,11 +187,11 @@ def reciprocal_vectors(cell, shape, device=None, dtype=torch.float32):
     device = device or cell.device
     reciprocal = cell_reciprocal(cell, device=device, dtype=dtype)  # (B, 3, 3)
 
-    frequencies = [
-        torch.fft.fftfreq(n, d=1.0 / n, device=device, dtype=dtype) for n in shape
-    ]
-    mesh = torch.meshgrid(*frequencies, indexing="ij")           # 3 x (Nx,Ny,Nz)
-    integers = torch.stack(mesh, dim=0)                          # (3, Nx, Ny, Nz)
+    # Normalised to a plain tuple of ints before it becomes a cache key: a
+    # `torch.Size` hashes correctly but a list does not, and an entry keyed on
+    # tensors would hold them alive for the life of the process.
+    integers = _integer_mesh(tuple(int(n) for n in shape),
+                             torch.device(device), dtype)  # (3, Nx, Ny, Nz)
 
     # G_alpha = sum_j m_j b_{j alpha}
     return torch.einsum("bja,jxyz->baxyz", reciprocal, integers)

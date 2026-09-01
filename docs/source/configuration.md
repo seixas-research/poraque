@@ -88,6 +88,40 @@ task: ext2chg          # identical to {type: ext2chg}, with the default name
 | `sigma` | `null` | Gaussian pseudo-ion width in Å, where the Gaussian model is reached |
 | `gaussian_blur` | `null` | Gaussian blur width in Å applied to the computed potential |
 | `blur_method` | `spectral` | `spectral` or `ndimage` |
+| `cache_in_memory` | `auto` | keep decoded fields in RAM between epochs — see below |
+
+(cache-in-memory)=
+### `cache_in_memory`
+
+The largest performance setting in the file, and the only one whose effect is
+completely invisible from the results.
+
+With it off, **every epoch reopens, decompresses and re-parses every field from
+disk**. That produces exactly the same numbers as caching does — and takes
+about ten times as long. Measured on a V100 with 115 structures at 32³:
+`__getitem__` was 59 % of the training loop, 78.9 s over 483 calls, while the
+GPU sat at 2–4 % utilisation waiting on `zlib` and `numpy.array` over a text
+generator. Turning the cache on took twenty epochs from **168.0 s to 16.3 s**,
+with the validation error identical to five decimals.
+
+It is not a GPU setting. The parse is the same on Apple Silicon and on the CPU;
+what an accelerator adds is a fast device left idle by it.
+
+`auto` estimates the decoded size — grid points × itemsize × channels, over the
+input and target fields — and enables the cache below 4 GiB, logging what it
+decided and what it costs:
+
+```
+  field cache         : in RAM, ~61.3 MiB (data.cache_in_memory: auto)
+```
+
+Set it to `false` when the process shares its memory with something the
+estimate cannot see. What `auto` refuses on its own is the case the old default
+was right about: 128³ grids over thousands of materials, where caching silently
+would turn a slow run into a dead one.
+
+**Parallel loading is not the alternative it looks like.** See
+[`num_workers`](num-workers-and-pin-memory).
 
 ### `data_paths`
 
@@ -363,9 +397,102 @@ the training log reports any reference points that violate it.
 | `grad_clip` | `1.0` | global gradient-norm clip; `0` disables |
 | `seed` | `0` | weight initialisation, batch order and fold shuffling |
 | `device` | `auto` | `auto`, `cuda`, `mps` or `cpu` |
+| `strict_device` | `false` | abort instead of falling back to the CPU — see below |
+| `num_workers` | `0` | DataLoader worker processes — read `data.cache_in_memory` first |
+| `pin_memory` | `auto` | page-locked staging; `auto` is `true` on CUDA and `false` elsewhere |
+| `tf32` | `true` | TensorFloat-32 matmul and convolution; CUDA, Ampere and later |
+| `compile` | `false` | `torch.compile` the training loop; CUDA only, and a measurement switch |
+| `compile_mode` | `default` | `default`, `reduce-overhead` or `max-autotune` |
+| `compile_dynamic` | `true` | one compiled graph over symbolic shapes rather than one per shape |
 | `loss` | `relative_l2` | `absolute_l2`, `relative_l2`, `absolute_h1` or `relative_h1` |
 | `sobolev_weight` | `0.1` | gradient-term weight for the two `h1` losses |
 | `physics` | all `0.0` | physics-informed loss weights |
+
+### `device` and `strict_device`
+
+`device: auto` prefers CUDA, then Apple Metal, then the CPU. An explicit backend
+that is unavailable **warns and falls back to the CPU**, so a configuration
+written on a machine with a GPU still runs on a laptop.
+
+That is right on a workstation and expensive in a queue. `strict_device: true`
+turns the fallback into an error:
+
+```yaml
+training:
+  device: cuda
+  strict_device: true
+```
+
+**Every HPC configuration should set it.** Without it, a job that cannot reach
+its GPU takes its place in the queue, warns into a log nobody reads until
+afterwards, and trains on the CPU *inside* the GPU allocation until the wall
+clock ends. The refusal names the probable cause — no GPU visible, an empty
+`CUDA_VISIBLE_DEVICES`, a driver older than the wheel's CUDA runtime, or a
+build carrying no kernels for this architecture — and prints the full device
+report into the run's log.
+
+That last case is worth stating on its own, because `torch.cuda.is_available()`
+cannot detect it: it answers "is there a driver and a device", not "can this
+binary generate code for this device". A `+cu130` wheel on a V100 reports
+available and then aborts at the first kernel launch, since CUDA 13 dropped
+Volta. Poraquê checks the compute capability against the build's own
+`arch_list` and refuses before any of that. See
+[NVIDIA GPUs](nvidia-gpus).
+
+(num-workers-and-pin-memory)=
+### `num_workers` and `pin_memory`
+
+`num_workers` and [`data.cache_in_memory`](cache-in-memory) are
+**alternatives, not complements**, and the measurement is unambiguous. Twenty
+epochs on 115 structures at 32³, on a V100:
+
+| variant | training time | speedup |
+| --- | --- | --- |
+| as shipped | 168.0 s | 1.0× |
+| `cache_in_memory: true` | **16.3 s** | **10.3×** |
+| `num_workers: 4`, no cache | 120.2 s | 1.4× |
+| both | 18.8 s | 8.9× |
+
+The validation error was identical in all four, as it must be. Each worker is a
+*process* with a cache of its own, so it re-parses the whole dataset on its
+first epoch — the parse the cache removes is paid N times instead of once.
+Raise `num_workers` only when the data genuinely does not fit in RAM, which is
+the case `cache_in_memory: false` exists for.
+
+`pin_memory` is a CUDA transfer optimisation and nothing else: `auto` is `true`
+there and `false` everywhere, since it does not help on Metal and some PyTorch
+versions warn when asked for it.
+
+### `tf32`, `compile`
+
+`tf32` keeps float32's range and drops its mantissa to ten bits inside the
+tensor cores. It is a real speedup on Ampere and later, and **exactly nothing**
+before it — a V100 has no TF32 path — so it is on by default and costs nothing
+where it does not apply.
+
+`compile` is a measurement switch rather than a recommendation, and it is off.
+The case for it is the kernel profile: at `width=16, modes=8, n_layers=3` on a
+V100, **44.4 % of GPU time is elementwise work**, and the four costliest kernels
+are `copy_`, `Memcpy DtoD`, `add_` and `fill_` — memory traffic between kernels
+that each do very little arithmetic, which is what fusion removes. Convolution
+is 23.7 %, FFT 13.7 %, and GEMM only 6.1 %.
+
+The case against is that batches are bucketed by grid shape and a real dataset
+has many — 19 distinct shapes in the set measured — and Inductor specialises per
+shape unless `compile_dynamic` holds across `rfftn`/`irfftn` with a varying `s=`.
+Whether it does is the open question, and the reason this is a flag rather than
+a default. Compilation is charged to the first epoch, where `seconds_per_epoch`
+in the metrics JSON makes the trade visible: a 60-epoch run that pays 90 s of
+compilation to save 20 s is a loss, and a 2000-epoch run is not.
+
+Both are ignored off CUDA. `compile` says so rather than quietly turning on
+Inductor's Metal backend, which is a different proposition and untested here.
+
+### One GPU
+
+Poraquê trains on **one** GPU; request one. There is no
+`DistributedDataParallel` path, so a job allocated four will see four and use
+`cuda:0`.
 
 ### `valid_fraction`, `enable_kfold`, `k_folds`
 
@@ -464,6 +591,17 @@ Capped *per grid-shape bucket*. Materials whose grids differ in shape cannot be
 stacked into one tensor, so they are grouped by shape and batches drawn within
 a group. A bucket holding a single material yields batches of one however large
 this is set. The training log prints the buckets it found.
+
+That cap is a real ceiling, not a formality: **above the largest bucket's size
+the setting stops meaning anything.** In the 115-structure set measured on a
+V100 the largest bucket held 70 materials (≈56 after the split), and `bs=64`
+and `bs=128` were the same run — identical peak memory, identical error,
+identical time. With the field cache on, throughput responded to the batch up
+to 16 and was flat thereafter.
+
+`peak_vram_bytes` and `seconds_per_epoch` in the metrics JSON are what a sweep
+over this should be read from; before they were recorded there, the only route
+to either was sampling `nvidia-smi` from outside the process.
 
 ### `loss` and `sobolev_weight`
 

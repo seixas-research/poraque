@@ -67,6 +67,22 @@ FIELD_CLASSES = {
     "TAUCAR": KineticEnergyDensity,
 }
 
+#: Above this estimated decoded size, ``cache="auto"`` declines to keep the
+#: dataset in RAM.
+#:
+#: Four gibibytes is chosen to be uncontroversial rather than optimal: it is
+#: comfortably below what a GPU node or a modern workstation has, and it is
+#: enough for the datasets this package is actually used on --- 115 structures
+#: at :math:`32^3` come to about 60 MiB, three orders of magnitude under it. The
+#: budget exists for the other case, a set of :math:`128^3` grids over thousands
+#: of materials, where silently caching would turn a slow run into a dead one.
+#:
+#: It deliberately does *not* consult the machine's free memory. A number read
+#: from the host at construction time would make the same configuration cache
+#: on one run and not on the next, so two runs of one experiment would differ in
+#: speed by 10x for reasons nothing recorded.
+CACHE_MEMORY_BUDGET = 4 * 1024 ** 3
+
 
 @dataclass
 class MaterialRecord:
@@ -198,9 +214,25 @@ class FieldPairDataset(Dataset):
         data.
     materials : list of MaterialRecord, optional
         Explicit record list, bypassing discovery (used for train/val splits).
-    cache : bool, optional
-        Keep decoded arrays in memory. Volumetric files are large; enable only
-        for datasets that fit.
+    cache : {"auto", True, False}, optional
+        Keep decoded fields --- and the tensors made from them --- in memory
+        between epochs. ``"auto"``, the default, enables it when the decoded
+        dataset fits in :data:`CACHE_MEMORY_BUDGET`.
+
+        Uncached, **every epoch re-reads, decompresses and re-parses every
+        field**, and the arithmetic waits on it. Measured on a V100 with 115
+        structures at :math:`32^3`: :meth:`__getitem__` was 59 % of the
+        training loop --- 78.9 s over 483 calls --- with the GPU at 2-4 %
+        utilisation, and turning the cache on took twenty epochs from 168.0 s to
+        16.3 s, a factor of **10.3**, with the validation error identical to
+        five decimals.
+
+        ``"auto"`` rather than a bare ``True`` because the risk the old
+        ``False`` default was guarding is real and the default was still wrong:
+        a set that fits is the common case, and a set of :math:`128^3` grids
+        over thousands of materials is what the budget refuses. What ``"auto"``
+        cannot see is the rest of the machine, so an explicit ``False`` remains
+        the answer when the process shares its RAM with something else.
     dtype : torch.dtype, optional
         Output tensor dtype.
     references : ReferenceEnergies, str or dict, optional
@@ -241,6 +273,9 @@ class FieldPairDataset(Dataset):
     ----------
     spin : bool
         Resolved answer. :attr:`channels` follows from it.
+    cache : bool
+        Resolved answer, so a caller can log what ``"auto"`` decided rather
+        than what it was asked. :attr:`cache_bytes` is the size it decided on.
 
     Notes
     -----
@@ -256,7 +291,7 @@ class FieldPairDataset(Dataset):
     """
 
     def __init__(self, root, task, input_transform=None, target_transform=None,
-                 materials=None, cache=False, dtype=torch.float32,
+                 materials=None, cache="auto", dtype=torch.float32,
                  spin="auto", references=None, baseline=None):
         from .tasks import resolve_task
 
@@ -276,10 +311,94 @@ class FieldPairDataset(Dataset):
 
         self.input_transform = input_transform or Identity()
         self.target_transform = target_transform or Identity()
-        self.cache = bool(cache)
         self.dtype = dtype
         self._cache = {}
+        # Pre-transform tensors, keyed by index. A second level, because the
+        # field cache above removes the parse and leaves the conversion:
+        # `ascontiguousarray` plus `as_tensor` plus the delta-density
+        # subtraction still ran on every access of every epoch.
+        self._tensors = {}
+        self._baseline_tensors = {}
         self.spin = self._resolve_spin(spin)
+        # After spin, which decides the channel count the estimate is over.
+        self._cache_bytes = None
+        self.cache = self._resolve_cache(cache)
+
+    @property
+    def cache_bytes(self):
+        """
+        Estimated RAM cost of caching this dataset, from :meth:`estimate_cache_bytes`.
+
+        Available whether or not the cache was enabled, because "caching was
+        declined" is only actionable beside the number that declined it.
+
+        Computed on first access rather than in ``__init__``: the estimate
+        reads a header per material, and a caller that only wants
+        ``len(dataset)`` should not pay for one.
+        """
+        if self._cache_bytes is None:
+            self._cache_bytes = self.estimate_cache_bytes()
+        return self._cache_bytes
+
+    def estimate_cache_bytes(self):
+        """
+        What caching this dataset's decoded fields would cost in RAM.
+
+        Grid points times itemsize times channels, summed over the input and
+        target fields. Shapes come from :meth:`shapes`, which reads headers
+        rather than data, so the estimate costs a few file seeks.
+
+        Returns
+        -------
+        int
+            Bytes. An estimate of the *decoded* size, which is what matters:
+            a gzipped text ``CHGCAR`` on disk says nothing useful about the
+            float64 array it becomes.
+        """
+        itemsize = torch.empty(0, dtype=self.dtype).element_size()
+        in_channels, out_channels = self.channels
+        # The pre-transform tensor cache holds the same two fields again, and
+        # delta-density mode holds a baseline per material on top. Counting
+        # them is the difference between an estimate and an underestimate.
+        per_point = in_channels + out_channels
+        per_point += in_channels + out_channels
+        if self.baseline is not None and self.task.target_field == "CHGCAR":
+            per_point += 1
+        total = 0
+        for shape in self.shapes():
+            points = 1
+            for extent in shape:
+                points *= int(extent)
+            total += points * itemsize * per_point
+        return int(total)
+
+    def _resolve_cache(self, requested):
+        """
+        Decide whether to keep decoded fields in memory.
+
+        ``"auto"`` compares :attr:`cache_bytes` against
+        :data:`CACHE_MEMORY_BUDGET`. An explicit ``True`` is honoured whatever
+        the size --- the caller may know something the estimate does not, and
+        overriding a deliberate flag would be worse than running out of memory
+        where it was asked for.
+        """
+        if isinstance(requested, str):
+            key = requested.strip().lower()
+            if key == "auto":
+                return self.cache_bytes <= CACHE_MEMORY_BUDGET
+            # A YAML file can spell a boolean as a quoted word, and refusing
+            # `cache: "true"` would be pedantry about a setting whose meaning
+            # is not in doubt. Anything else is a typo and raises: silently
+            # reading an unrecognised word as False would turn it into a 10x
+            # slowdown with nothing said.
+            if key in ("true", "yes", "on", "1"):
+                return True
+            if key in ("false", "no", "off", "0"):
+                return False
+            raise ValueError(
+                f"cache={requested!r} is not a recognised setting; "
+                f"expected 'auto', True or False.")
+        return bool(requested)
 
     def _resolve_spin(self, requested):
         """Decide whether this dataset's densities are two-channel."""
@@ -433,6 +552,46 @@ class FieldPairDataset(Dataset):
             return SpinDensity.read(path, grid=grid)
         return FIELD_CLASSES[name].read(path, grid=grid)
 
+    def sample_tensors(self, index):
+        r"""
+        The **pre-transform** ``(input, target, cell)`` tensors for a material.
+
+        Memoised when :attr:`cache` is on, which removes the second layer of
+        per-epoch work: caching the :class:`~poraque.fields.ScalarField`
+        objects kills the parse, but every access still redid
+        :func:`numpy.ascontiguousarray`, :func:`torch.as_tensor` and --- in
+        delta-density mode --- the subtraction of the baseline.
+
+        **Pre**-transform on purpose. ``input_transform`` and
+        ``target_transform`` are fitted by :meth:`fit_transforms` *after* the
+        dataset exists, and are replaced outright on a validation split, so a
+        cache of normalized tensors would go stale the moment the scale it was
+        built with was superseded --- silently, since the values would still be
+        finite and plausible. What is cached here is the physical field, which
+        no later call can invalidate.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(source, target, cell)``. The first two carry a leading channel
+            axis; the target is :math:`\delta\rho` in delta-density mode.
+        """
+        if index in self._tensors:
+            return self._tensors[index]
+
+        source, _ = self.load_fields(index)
+        tensors = (
+            _with_channel_axis(torch.as_tensor(
+                np.ascontiguousarray(source.data), dtype=self.dtype)),
+            _with_channel_axis(torch.as_tensor(
+                np.ascontiguousarray(self.target_values(index)),
+                dtype=self.dtype)),
+            torch.as_tensor(source.grid.cell, dtype=self.dtype),
+        )
+        if self.cache:
+            self._tensors[index] = tensors
+        return tensors
+
     def __getitem__(self, index):
         """
         Return one sample.
@@ -447,39 +606,75 @@ class FieldPairDataset(Dataset):
             are :attr:`channels`, which is ``(1, 1)`` unless the dataset is
             spin-polarised.
         """
-        source, _ = self.load_fields(index)
-
-        source_values = _with_channel_axis(
-            torch.as_tensor(np.ascontiguousarray(source.data),
-                            dtype=self.dtype))
-        target_values = _with_channel_axis(
-            torch.as_tensor(np.ascontiguousarray(self.target_values(index)),
-                            dtype=self.dtype))
+        # No `load_fields` here: `sample_tensors` is the only reader, so an
+        # uncached dataset opens each file once per access rather than twice,
+        # and a cached one touches no field object at all after the first pass.
+        # `record.shape` is populated either by that first read or by the
+        # header scan `shapes()` does at construction.
+        source_values, target_values, cell = self.sample_tensors(index)
+        record = self.materials[index]
 
         sample = {
             "input": self.input_transform(source_values),
             "target": self.target_transform(target_values),
             "target_physical": target_values,
-            "cell": torch.as_tensor(source.grid.cell, dtype=self.dtype),
-            "shape": tuple(source.grid.shape),
-            "material": self.materials[index].identifier,
+            "cell": cell,
+            "shape": tuple(record.shape),
+            "material": record.identifier,
             "reference_energy": self.reference_energy(index),
         }
 
-        baseline = self.baseline_for(index)
-        if baseline is not None:
-            # Carried, not recomputed downstream: the loop adds it back before
-            # every physics term, and the loss would otherwise have to rebuild
-            # a structure factor per step. Shaped like the target so the two
-            # add without broadcasting surprises on a spin pair.
-            values = torch.as_tensor(np.ascontiguousarray(baseline),
-                                     dtype=self.dtype).unsqueeze(0)
-            if target_values.shape[0] > 1:
-                values = torch.cat(
-                    [values, torch.zeros_like(values).expand(
-                        target_values.shape[0] - 1, -1, -1, -1)])
+        values = self.baseline_tensor(index, target_values.shape[0])
+        if values is not None:
             sample["baseline"] = values
         return sample
+
+    def baseline_tensor(self, index, channels):
+        r"""
+        The atomic superposition as a tensor shaped like the target.
+
+        Carried in the sample rather than recomputed downstream: the training
+        loop adds it back before every physics term, and the loss would
+        otherwise have to rebuild a structure factor per step.
+
+        Memoised on the same terms as :meth:`sample_tensors`. The array behind
+        it is already cached unconditionally by :meth:`baseline_for` --- it is
+        an FFT over a structure that never changes --- so what this saves is
+        only the conversion, but that conversion ran on every access of every
+        epoch and the padding allocates a second full-size block.
+
+        Parameters
+        ----------
+        index : int
+        channels : int
+            The target's channel count. A spin-polarised target is
+            :math:`(\rho, m)` and only :math:`\rho` has a superposition, so the
+            magnetisation channel is padded with zeros --- shaped like the
+            target so the two add without broadcasting surprises.
+
+        Returns
+        -------
+        torch.Tensor or None
+            ``None`` in absolute-density mode, and for any task whose target is
+            not a density.
+        """
+        key = (index, int(channels))
+        if key in self._baseline_tensors:
+            return self._baseline_tensors[key]
+
+        baseline = self.baseline_for(index)
+        if baseline is None:
+            return None
+
+        values = torch.as_tensor(np.ascontiguousarray(baseline),
+                                 dtype=self.dtype).unsqueeze(0)
+        if channels > 1:
+            values = torch.cat(
+                [values, torch.zeros_like(values).expand(
+                    channels - 1, -1, -1, -1)])
+        if self.cache:
+            self._baseline_tensors[key] = values
+        return values
 
     # ------------------------------------------------------------------ #
     def shapes(self):
@@ -710,7 +905,8 @@ def collate_fields(samples):
     return batch
 
 
-def make_dataloader(dataset, batch_size=1, shuffle=True, num_workers=0, seed=0):
+def make_dataloader(dataset, batch_size=1, shuffle=True, num_workers=0, seed=0,
+                    pin_memory=False):
     """
     Build a :class:`torch.utils.data.DataLoader` that tolerates ragged grids.
 
@@ -720,18 +916,41 @@ def make_dataloader(dataset, batch_size=1, shuffle=True, num_workers=0, seed=0):
     batch_size : int, optional
     shuffle : bool, optional
     num_workers : int, optional
+        Worker processes. **Prefer the dataset's in-memory cache to this**; see
+        the note below.
     seed : int, optional
+    pin_memory : bool, optional
+        Stage batches in page-locked host memory. Only useful when the
+        destination is CUDA --- it does nothing on MPS and some PyTorch
+        versions warn there --- so the caller decides, since it is
+        :func:`~poraque.ml.training.train` that knows the operator's device.
 
     Returns
     -------
     torch.utils.data.DataLoader
+
+    Notes
+    -----
+    ``num_workers`` and :attr:`FieldPairDataset.cache` are **alternatives, not
+    complements**. Measured on 115 structures at :math:`32^3`, twenty epochs:
+    the cache alone took 168.0 s to 16.3 s, four workers alone to 120.2 s, and
+    the two together back up to **18.8 s**. Each worker is a process with a
+    cache of its own, so the parse the cache removes is paid once per worker
+    instead of once.
     """
     from torch.utils.data import DataLoader
 
     sampler = ShapeBucketSampler(dataset, batch_size=batch_size, shuffle=shuffle,
                                  seed=seed)
+    options = {}
+    if num_workers:
+        # Rebuilding the worker pool every epoch costs more than the pool saves
+        # on a dataset this small, and prefetching is the only reason to have
+        # paid for the processes at all.
+        options.update(persistent_workers=True, prefetch_factor=2)
     return DataLoader(dataset, batch_sampler=sampler, collate_fn=collate_fields,
-                      num_workers=num_workers)
+                      num_workers=int(num_workers),
+                      pin_memory=bool(pin_memory), **options)
 
 
 def _resolve_references(references):

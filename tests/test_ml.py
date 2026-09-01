@@ -338,6 +338,134 @@ class TestDataset:
 
 
 # --------------------------------------------------------------------- #
+# The in-memory field cache
+# --------------------------------------------------------------------- #
+class TestTheFieldCacheReadsEachFileOnce:
+    """
+    The regression this guards is 59 % of training time, and it is invisible to
+    any test that only checks values: an uncached run and a cached one produce
+    identical numbers, ten times apart in wall clock. `FieldPairDataset` has
+    had the flag since it was written and `poraque_train` passed it in none of
+    its six instantiations, so the `cache=False` default always won and every
+    epoch reopened, decompressed and re-parsed every field.
+    """
+
+    def _passes(self, dataset, monkeypatch, passes=2):
+        """`read_volumetric` calls per full pass over the dataset."""
+        import poraque.fields.vasp.volumetric as volumetric
+
+        calls = []
+        original = volumetric.read_volumetric
+
+        def counted(*args, **kwargs):
+            calls.append(args[0] if args else None)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(volumetric, "read_volumetric", counted)
+        counts = []
+        for _ in range(passes):
+            calls.clear()
+            for index in range(len(dataset)):
+                dataset[index]
+            counts.append(len(calls))
+        return counts
+
+    def test_a_cached_dataset_reads_nothing_on_the_second_pass(
+            self, dataset_root, monkeypatch):
+        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=True)
+        first, second = self._passes(dataset, monkeypatch)
+        assert first >= len(dataset)
+        assert second == 0
+
+    def test_an_uncached_dataset_reads_them_all_again(self, dataset_root,
+                                                     monkeypatch):
+        """The counterfactual: without it the test above proves nothing."""
+        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=False)
+        first, second = self._passes(dataset, monkeypatch)
+        assert second == first > 0
+
+    def test_the_values_are_the_same_either_way(self, dataset_root):
+        """A cache that changed a number would be a bug wearing a speedup."""
+        cached = FieldPairDataset(dataset_root, task="ext2chg", cache=True)
+        plain = FieldPairDataset(dataset_root, task="ext2chg", cache=False)
+        for index in range(len(plain)):
+            for key in ("input", "target", "target_physical", "cell"):
+                torch.testing.assert_close(cached[index][key], plain[index][key])
+
+    def test_auto_enables_it_for_a_dataset_that_fits(self, dataset_root):
+        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        assert dataset.cache is True
+        assert 0 < dataset.cache_bytes < 4 * 1024 ** 3
+
+    def test_auto_declines_when_the_estimate_exceeds_the_budget(
+            self, dataset_root, monkeypatch):
+        """The case the old `False` default was right about, kept."""
+        from poraque.ml import data as data_module
+
+        monkeypatch.setattr(data_module, "CACHE_MEMORY_BUDGET", 1)
+        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        assert dataset.cache is False
+        # Reported either way: "caching was declined" is only actionable
+        # beside the number that declined it.
+        assert dataset.cache_bytes > 1
+
+    def test_an_explicit_true_overrides_the_budget(self, dataset_root, monkeypatch):
+        """The caller may know something the estimate does not."""
+        from poraque.ml import data as data_module
+
+        monkeypatch.setattr(data_module, "CACHE_MEMORY_BUDGET", 1)
+        assert FieldPairDataset(dataset_root, task="ext2chg", cache=True).cache
+
+    def test_an_unrecognised_setting_raises(self, dataset_root):
+        """Reading a typo as False would be a silent 10x slowdown."""
+        with pytest.raises(ValueError, match="not a recognised setting"):
+            FieldPairDataset(dataset_root, task="ext2chg", cache="sometimes")
+
+    def test_a_split_inherits_the_resolved_decision(self, dataset_root):
+        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=False)
+        first, second = dataset.split(0.5, seed=0)
+        assert first.cache is False and second.cache is False
+
+    def test_the_tensors_are_cached_before_the_transforms(self, dataset_root):
+        """
+        `fit_transforms` runs *after* the dataset exists and a validation split
+        is handed different transforms outright, so a cache of normalized
+        tensors would go stale with no error -- the values would still be
+        finite and plausible, at the wrong scale.
+        """
+        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=True)
+        before = dataset[0]["input"].clone()
+        dataset.fit_transforms()
+        after = dataset[0]["input"]
+        assert not torch.allclose(before, after)
+
+
+class TestTheDataLoaderOptionsReachTheDataLoader:
+    """
+    `make_dataloader` took `num_workers` and passed nothing else, and
+    `poraque_train` passed neither -- so both were unreachable from a
+    configuration file. Cheap to assert, and the failure mode is a setting that
+    appears to have been applied.
+    """
+
+    def test_workers_and_pinning_are_forwarded(self, dataset_root):
+        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        loader = make_dataloader(dataset, batch_size=2, num_workers=2,
+                                 pin_memory=True)
+        assert loader.num_workers == 2
+        assert loader.pin_memory is True
+        assert loader.persistent_workers is True
+
+    def test_persistent_workers_is_not_set_without_workers(self, dataset_root):
+        """Asking for it at `num_workers=0` is an error in torch, not a no-op."""
+        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        loader = make_dataloader(dataset, batch_size=2)
+        assert loader.num_workers == 0
+        assert loader.persistent_workers is False
+        assert loader.pin_memory is False
+
+
+# --------------------------------------------------------------------- #
 # End-to-end
 # --------------------------------------------------------------------- #
 class TestTraining:

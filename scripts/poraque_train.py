@@ -152,7 +152,13 @@ from poraque.ml import (  # noqa: E402
     train,
 )
 from poraque.ml.config import TrainingConfig  # noqa: E402
-from poraque.ml.device import describe_device, resolve_device  # noqa: E402
+from poraque.ml.data import CACHE_MEMORY_BUDGET  # noqa: E402
+from poraque.ml.device import (  # noqa: E402
+    describe_device,
+    device_report,
+    enable_tf32,
+    resolve_device,
+)
 from poraque.ml.fno import PRECISIONS  # noqa: E402
 from poraque.ml.training import OPTIMIZERS  # noqa: E402
 from poraque.ml.losses import PhysicsInformedLoss  # noqa: E402
@@ -871,6 +877,7 @@ def build_operator(task, train_set, config, log):
     operator = FieldOperator(
         task, input_transform=source_transform, target_transform=target_transform,
         device=config.training.device,
+        strict_device=config.training.strict_device,
         training_resolution=config.data.resolution,
         init_seed=config.training.init_seed,
         in_channels=in_channels, out_channels=out_channels,
@@ -890,6 +897,99 @@ def build_operator(task, train_set, config, log):
             f"time and memory of the float32 default")
     report_mode_selection(train_set, config, log)
     return operator
+
+
+def resolve_strict_device(config, log):
+    """
+    Resolve ``training.device``, reporting rather than raising a traceback.
+
+    ``strict_device`` exists to stop a run early, and a stack trace is the wrong
+    way to say so: the reader of a job's error file needs the diagnosis and the
+    device report, not the four frames it took to get there. Both go into the
+    log, which is where a batch job's output is actually read.
+
+    Returns
+    -------
+    torch.device
+
+    Raises
+    ------
+    SystemExit
+        When ``strict_device`` is set and the request cannot be honoured.
+    """
+    try:
+        return resolve_device(config.training.device,
+                              strict=config.training.strict_device)
+    except RuntimeError as error:
+        log("")
+        log(f"  {error}")
+        log("")
+        for line in device_report(config.training.device):
+            log(f"    {line}")
+        raise SystemExit(
+            f"training.device: {config.training.device!r} could not be "
+            f"honoured and training.strict_device is set, so this run stops "
+            f"here rather than spending a GPU allocation on the CPU. "
+            f"Set strict_device: false to allow the fallback.") from None
+
+
+def loader_settings(config):
+    """
+    The ``train()`` keywords that govern *how* data reaches the device.
+
+    Collected in one place because both training paths — the split fit and each
+    fold of the cross-validation — must pass all of them, and the k-fold path
+    has already dropped a keyword the split path had (``dtype``, once) and
+    quietly changed what it was measuring.
+
+    Returns
+    -------
+    dict
+    """
+    return {
+        "num_workers": config.training.num_workers,
+        "pin_memory": config.training.pin_memory,
+        "compile_model": config.training.compile,
+        "compile_mode": config.training.compile_mode,
+        "compile_dynamic": config.training.compile_dynamic,
+    }
+
+
+def format_bytes(count):
+    """``12.3 MiB`` for a byte count, in binary units."""
+    value = float(count)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024.0 or unit == "GiB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{value:.0f} B"
+        value /= 1024.0
+    return f"{value:.1f} GiB"  # pragma: no cover - unreachable
+
+
+def report_field_cache(train_set, validation, config, log):
+    """
+    Say whether the decoded fields are held in RAM, and what that costs.
+
+    Worth a line of its own because it is the single largest performance
+    setting in the file and its effect is invisible from the results: a run
+    that re-parses every field every epoch produces exactly the same numbers as
+    one that does not, ten times slower. On the data this was measured on the
+    loader was 59 % of the training loop and the GPU sat at 2-4 %.
+
+    The size is reported whichever way ``auto`` went, since "caching was
+    declined" is only actionable beside the number that declined it.
+    """
+    cost = train_set.cache_bytes + (validation.cache_bytes if validation else 0)
+    requested = config.data.cache_in_memory
+    if train_set.cache:
+        log(f"  field cache         : in RAM, ~{format_bytes(cost)} "
+            f"(data.cache_in_memory: {requested})")
+        return
+    log("  field cache         : OFF -- every epoch re-reads and re-parses "
+        "every field")
+    log(f"                        ~{format_bytes(cost)} decoded "
+        f"(data.cache_in_memory: {requested}"
+        + (f", budget {format_bytes(CACHE_MEMORY_BUDGET)}"
+           if str(requested).lower() == "auto" else "") + ")")
 
 
 def report_mode_selection(train_set, config, log):
@@ -1061,6 +1161,36 @@ def loss_summary(history):
     if not history.get("train_loss"):
         return {}
     return {"final train loss": f"{history['train_loss'][-1]:.5f}"}
+
+
+def extract_resource_usage(history):
+    """
+    Remove the cost measurements from ``history`` and return them.
+
+    :func:`poraque.ml.train` records what the run *cost* — wall time per epoch,
+    and on CUDA the peak allocated and reserved device memory — beside what it
+    *achieved*. They are separated here because :func:`split_history` sorts by
+    type rather than by meaning: a list becomes a plotted curve and a scalar
+    becomes an early-stopping summary, so left in place a byte count would be
+    filed under early stopping and the timings would be serialised a second
+    time as a loss curve.
+
+    Parameters
+    ----------
+    history : dict
+        Mutated: the three keys are popped.
+
+    Returns
+    -------
+    dict
+        Always all three keys, ``None`` where the backend does not report one,
+        so a reader can tell "not measured" from "absent from this version".
+    """
+    return {
+        "seconds_per_epoch": history.pop("seconds_per_epoch", None),
+        "peak_vram_bytes": history.pop("peak_vram_bytes", None),
+        "peak_vram_reserved_bytes": history.pop("peak_vram_reserved_bytes", None),
+    }
 
 
 def split_history(history):
@@ -1398,7 +1528,8 @@ def validate_precision_settings(config):
     # substitution changes the run's speed by an order of magnitude and is the
     # user's call to make.
     if config.model.precision == "float64":
-        device = resolve_device(config.training.device)
+        device = resolve_device(config.training.device,
+                                strict=config.training.strict_device)
         if device.type == "mps":
             raise SystemExit(
                 f"model.precision='float64' cannot run on {describe_device(device)}: "
@@ -1682,7 +1813,8 @@ def run_task(task_name, cache, config, log, n_tasks=1):
 
     baseline = resolve_baseline(task, config, cache, log)
     dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
-                               dtype=compute_dtype(config), baseline=baseline)
+                               dtype=compute_dtype(config), baseline=baseline,
+                               cache=config.data.cache_in_memory)
     validation_names, split_origin = resolve_validation_split(dataset, config)
 
     train_records = [m for m in dataset.materials
@@ -1692,15 +1824,18 @@ def run_task(task_name, cache, config, log, n_tasks=1):
 
     train_set = FieldPairDataset(cache, task=task, materials=train_records,
                                  spin=config.data.spin,
-                                 dtype=compute_dtype(config), baseline=baseline)
+                                 dtype=compute_dtype(config), baseline=baseline,
+                                 cache=config.data.cache_in_memory)
     source_transform, target_transform = train_set.fit_transforms()
     validation = (FieldPairDataset(cache, task=task, materials=test_records,
                                    input_transform=source_transform,
                                    target_transform=target_transform,
                                    spin=config.data.spin,
                                    dtype=compute_dtype(config),
-                                   baseline=baseline)
+                                   baseline=baseline,
+                                   cache=config.data.cache_in_memory)
                   if test_records else None)
+    report_field_cache(train_set, validation, config, log)
 
     shapes = train_set.shapes()
     buckets = {}
@@ -1763,8 +1898,14 @@ def run_task(task_name, cache, config, log, n_tasks=1):
         loss=build_loss(config, task.name), seed=config.training.seed,
         eval_every=config.training.eval_epoch, early_stopping=patience,
         log=log, verbose=True,
+        **loader_settings(config),
     )
     elapsed = time.time() - start
+    # Lifted out before anything else reads `history`: they are run *cost*
+    # rather than run *quality*, and leaving them in would put a byte count
+    # among the early-stopping scalars and a second copy of the per-epoch
+    # timings among the loss curves that `split_history` serialises.
+    resources = extract_resource_usage(history)
     log(f"\n  trained {len(history['train_loss'])}/{config.training.epochs} epochs in {elapsed:.1f} s   "
         f"loss {history['train_loss'][0]:.4f} -> {history['train_loss'][-1]:.4f}")
 
@@ -1943,6 +2084,14 @@ def run_task(task_name, cache, config, log, n_tasks=1):
         "checkpoint": checkpoint,
         "figures": figures,
         "seconds": elapsed,
+        # What a batch-size or compile study needs, recorded by the run that
+        # produced it. Before this the only route to either was sampling
+        # `nvidia-smi` from outside the process, which cannot separate one task
+        # of a two-task run from the other and is gone by the time anyone reads
+        # the results. `seconds_per_epoch` is measured after a device
+        # synchronisation, so it is compute rather than submission, and its
+        # first entry carries any `torch.compile` cost.
+        **resources,
         "final_train_loss": history["train_loss"][-1],
         "history": curves,
         "early_stopping": stopping,
@@ -2001,7 +2150,8 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
     task = resolve_task(task_name)
     baseline = resolve_baseline(task, config, cache, log)
     dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
-                               dtype=compute_dtype(config), baseline=baseline)
+                               dtype=compute_dtype(config), baseline=baseline,
+                               cache=config.data.cache_in_memory)
     names = [m.identifier for m in dataset.materials]
     folds = structure_level_folds(names, config.training.k_folds,
                                   config.training.seed)
@@ -2021,7 +2171,7 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
     log("  split is at the STRUCTURE level: no material appears on both sides")
 
     label_text, unit = FIELD_LABELS[task.target_field]
-    records, figures = [], []
+    records, figures, fold_resources = [], [], []
     # Sized once over every structure, so the column does not shift from fold
     # to fold as different names land in the validation group.
     label_width = metrics_label_width(names)
@@ -2034,16 +2184,22 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
         train_set = FieldPairDataset(cache, task=task, materials=train_records,
                                      spin=config.data.spin,
                                      dtype=compute_dtype(config),
-                                     baseline=baseline)
+                                     baseline=baseline,
+                                     cache=config.data.cache_in_memory)
         source_transform, target_transform = train_set.fit_transforms()
         # dtype was dropped here once, so a float64 run crashed at the first
-        # validation pass with a float/double mismatch.
+        # validation pass with a float/double mismatch. `cache` was dropped
+        # here too, in the change that added it -- with the same shape of
+        # consequence, a fold that silently re-parsed every file every epoch.
         val_set = FieldPairDataset(cache, task=task, materials=val_records,
                                    input_transform=source_transform,
                                    target_transform=target_transform,
                                    spin=config.data.spin,
                                    dtype=compute_dtype(config),
-                                   baseline=baseline)
+                                   baseline=baseline,
+                                   cache=config.data.cache_in_memory)
+        if index == 1:
+            report_field_cache(train_set, val_set, config, log)
         log(f"      train on {len(train_set)}: {[m.identifier for m in train_records]}")
 
         operator = build_operator(task, train_set, config, log)
@@ -2060,8 +2216,14 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
             eval_every=config.training.eval_epoch,
             early_stopping=config.training.early_stopping,
             log=log, verbose=True,
+            **loader_settings(config),
         )
         elapsed = time.time() - start
+        # Per fold, and kept per fold: K models are fitted here, so a single
+        # peak would be whichever fold happened to be largest with nothing
+        # saying which.
+        fold_resources.append({"fold": index, "seconds": elapsed,
+                               **extract_resource_usage(history)})
         log(f"      trained {len(history['train_loss'])}/{config.training.epochs} epochs in {elapsed:.1f} s   "
             f"loss {history['train_loss'][0]:.4f} -> {history['train_loss'][-1]:.4f}")
 
@@ -2140,7 +2302,9 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
                 "structures": str(len(names)),
                 "validation scores": str(len(records)),
                 "epochs per fold": str(config.training.epochs),
-                "device": describe_device(resolve_device(config.training.device)),
+                "device": describe_device(
+                    resolve_device(config.training.device,
+                                   strict=config.training.strict_device)),
                 "mean relative L2": f"{aggregate['relative_l2']['mean']:.5g}"
                                     f" +/- {aggregate['relative_l2']['std']:.3g}",
                 "mean MAE": f"{aggregate['mae']['mean']:.5g}"
@@ -2166,6 +2330,7 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
             "folds": [{"fold": i, "validate_on": g}
                       for i, g in enumerate(folds, 1)],
             "records": records, "aggregate": aggregate,
+            "resources": fold_resources,
             "report": pdf, "figures": figures}
 
 
@@ -2279,6 +2444,28 @@ def build_parser():
                             "build a query-by-committee ensemble")
     group.add_argument("--device", dest="training.device", default=None,
                        help="auto | cuda | mps | cpu")
+    group.add_argument("--strict-device", dest="training.strict_device",
+                       action="store_const", const=True, default=None,
+                       help="abort instead of falling back to the CPU when "
+                            "--device cannot be honoured; put this in every "
+                            "batch job, where a silent fallback spends the GPU "
+                            "allocation not using a GPU")
+    group.add_argument("--cache-in-memory", dest="data.cache_in_memory",
+                       default=None,
+                       help="auto | true | false -- keep decoded fields in RAM "
+                            "between epochs (default auto). Off, every epoch "
+                            "re-parses every file; measured at 10x on real "
+                            "data")
+    group.add_argument("--num-workers", dest="training.num_workers", type=int,
+                       default=None,
+                       help="DataLoader worker processes (default 0). Prefer "
+                            "the in-memory cache: added to it, workers make "
+                            "training slower, not faster")
+    group.add_argument("--compile", dest="training.compile",
+                       action="store_const", const=True, default=None,
+                       help="wrap the model in torch.compile for the training "
+                            "loop (CUDA only; a measurement switch, not a "
+                            "recommendation)")
 
     group = parser.add_argument_group("fine-tuning")
     group.add_argument("--fine-tune", dest="fine_tuning.enable",
@@ -2377,7 +2564,7 @@ def run(argv=None):
         # the volumetric data is held in memory, so it has to be in force
         # before the cache is built rather than applied to fields afterwards.
         set_default_dtype(config.data.precision)
-        device = resolve_device(config.training.device)
+        device = resolve_strict_device(config, log)
         log("=" * 78)
         log("Poraque - Fourier Neural Operator training")
         log("=" * 78)
@@ -2389,6 +2576,21 @@ def run(argv=None):
         log(f"  run    : {model_name(config)}")
         log(f"  device : {describe_device(device)}  (requested "
             f"{config.training.device!r})")
+        # A device that did not resolve to what was asked for is the failure
+        # this run is most likely to be quietly wasting itself on, so when it
+        # happens the full report goes into the log -- torch build, CUDA
+        # runtime, where torch was imported from, the architectures it carries
+        # kernels for -- rather than one line saying it ended up on the CPU.
+        requested_kind = str(config.training.device).split(":")[0].lower()
+        if requested_kind not in ("auto", "", device.type):
+            log(f"  WARNING: {config.training.device!r} was requested and this "
+                f"run is on {device.type}. Set training.strict_device: true to "
+                f"make that an error instead.")
+            for line in device_report(config.training.device):
+                log(f"           {line}")
+        if enable_tf32(device, config.training.tf32):
+            log("  tf32   : enabled for matmul and cudnn (no effect before "
+                "Ampere)")
         log(f"  config : {args.config or '<built-in defaults>'}")
         # Every artefact now lives under one directory, so the four separate
         # path lines this replaces were four repetitions of the same prefix.
@@ -2530,7 +2732,12 @@ def run(argv=None):
                 f"{np.mean([m['r2'] for m in values]):12.4f} "
                 f"{np.mean([m['mae'] for m in values]):14.5g}   {basis}")
 
-        n_materials = len(FieldPairDataset(cache, task=names[0]))
+        # The two `cache`es are different things: the positional one is the
+        # prepared-cache directory, the keyword is the in-RAM field cache.
+        # False rather than the `auto` default, because this instance exists to
+        # be counted and thrown away and `auto` would read a header per
+        # material to size a cache nothing is ever going to fill.
+        n_materials = len(FieldPairDataset(cache, task=names[0], cache=False))
         log("")
         log(f"  NOTE: {chemistry_caveat(n_materials, dataset_elements(cache))}")
         log("  These numbers characterise the pipeline as much as the science.")

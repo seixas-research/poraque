@@ -79,3 +79,10 @@ only-include = [
 [tool.hatch.version]
 path = "src/poraque/version.py"
 
+# `pytest -m "not gpu"` runs the suite on a machine with no accelerator without
+# the accelerator tests being counted as passes they never were. Most of them
+# already skip themselves on their own conditions; the marker is what lets a CI
+# job say so up front instead of reporting coverage it did not have.
+[tool.pytest.ini_options]
+markers = ["gpu: requires a CUDA or MPS device"]
+

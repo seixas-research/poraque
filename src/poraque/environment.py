@@ -53,6 +53,37 @@ def _describe_dependency(name):
     return f"{version}    [{location}]"
 
 
+def _describe_torch():
+    """
+    ``"<version> (<cuda build>)    [<install dir>]"``, or ``"not installed"``.
+
+    Torch gets its own describer because two of its fields answer questions no
+    other dependency raises, and both were learned the expensive way on a
+    cluster:
+
+    * **which CUDA the wheel was built against.** ``2.13.0+cu130`` and
+      ``2.7.1+cu126`` are the same version number to
+      :func:`_describe_dependency` and completely different binaries; the
+      second runs on a V100 and the first cannot.
+    * **where it was imported from.** A ``torch`` in
+      ``~/.local/lib/pythonX.Y/site-packages`` outranks the one in the active
+      conda environment or venv, so the environment a job activated is not
+      necessarily the one it ran. ``PYTHONNOUSERSITE=1`` is the fix; this line
+      is how the problem becomes visible in the log instead of becoming a
+      four-hour CPU run.
+    """
+    from importlib import import_module
+
+    try:
+        module = import_module("torch")
+    except ImportError:
+        return "not installed"
+    version = getattr(module, "__version__", "unknown")
+    build = getattr(getattr(module, "version", None), "cuda", None)
+    location = os.path.dirname(getattr(module, "__file__", "") or "")
+    return f"{version} (cuda {build or 'none'})    [{location}]"
+
+
 def _current_user():
     """The login name, without assuming ``USER`` is set (containers, CI)."""
     try:
@@ -112,7 +143,7 @@ def banner_lines():
         f" ├── numpy version: {_describe_dependency('numpy')}",
         f" ├── scipy version: {_describe_dependency('scipy')}",
         f" ├── matplotlib version: {_describe_dependency('matplotlib')}",
-        f" ├── torch version: {_describe_dependency('torch')}",
+        f" ├── torch version: {_describe_torch()}",
         f" ├── yaml version: {_describe_dependency('yaml')}",
         f" └── pytest version: {_describe_dependency('pytest')}",
         "                                               ",

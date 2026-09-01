@@ -463,6 +463,38 @@ class DataConfig:
         Gzip level, 0-9. Ignored by ``lzf``, which has no levels, rather than
         raising — a run that changes codec should not also have to remember to
         remove the level.
+
+    cache_in_memory : str or bool
+        Whether the dataset keeps decoded fields in RAM between epochs.
+        ``"auto"`` (the default) decides from the size the cache would take;
+        ``true`` and ``false`` force it.
+
+        This is the single largest performance setting in the file, and the
+        reason is that without it **every epoch re-reads, decompresses and
+        re-parses every field from disk**. Measured on a V100 with 115 cached
+        structures at 32³: ``__getitem__`` was 59 % of ``train()``, 78.9 s over
+        483 calls, and the GPU sat at 2-4 % utilisation because it was waiting
+        on ``zlib`` and ``numpy.array`` over a text generator. Turning the cache
+        on took twenty epochs from **168.0 s to 16.3 s — 10.3x** — with the
+        validation error identical to five decimals, and utilisation from 1.9 %
+        to 12.1 % (28.2 % on a 300-epoch run, where the fixed start-up cost is
+        amortised).
+
+        It is not a CUDA setting. The parse is the same on MPS and on the CPU;
+        what CUDA adds is a fast device left idle by it.
+
+        ``"auto"`` estimates the decoded size — grid points × itemsize ×
+        channels, over the input and target fields — and enables the cache below
+        :data:`~poraque.ml.data.CACHE_MEMORY_BUDGET`, logging what it decided
+        and what it costs.
+        A cache of 128³ grids over thousands of materials is what the budget
+        exists to refuse; a set that fits is the common case.
+
+        Parallel loading is *not* the alternative it looks like.
+        ``num_workers=4`` alone buys 1.4x, and added to the cache it makes
+        things **worse** (16.3 s to 18.8 s), because each worker is a process
+        that re-parses the whole set into a cache of its own. See
+        ``training.num_workers``.
     """
 
     data_paths: list = None
@@ -483,6 +515,7 @@ class DataConfig:
     storage: str = "files"
     compression: str = None
     compression_level: int = 4
+    cache_in_memory: str = "auto"
 
     def paths(self):
         """
@@ -1078,6 +1111,85 @@ class TrainingConfig_:
         dataset.
     device : str
         ``"auto"`` (CUDA, then Apple MPS, then CPU), or an explicit backend.
+    strict_device : bool
+        Abort when ``device`` cannot be honoured, instead of falling back to
+        the CPU with a warning. Default ``false``, so nothing changes for a
+        workstation — where the fallback is the right behaviour, since a
+        configuration written on a machine with a GPU should still run on a
+        laptop.
+
+        **Every HPC configuration should set it to ``true``.** In a queue the
+        fallback is not graceful, it is expensive: the job waits for its GPU
+        allocation, the warning goes into a log nobody reads until afterwards,
+        and the run trains on the CPU *inside* the GPU allocation until the
+        wall clock ends. That is a day of queue time to learn that the wrong
+        PyTorch wheel was installed. It has happened on this project.
+
+        The strict message names the probable cause — no GPU visible, an empty
+        ``CUDA_VISIBLE_DEVICES``, a driver older than the wheel's CUDA runtime,
+        or a build with no kernels for this architecture. The last is the one
+        ``torch.cuda.is_available()`` cannot detect on its own; see
+        :func:`~poraque.ml.device.cuda_capability_supported`.
+    num_workers : int
+        DataLoader worker processes. ``0`` (the default) loads in the main
+        process.
+
+        **Read ``data.cache_in_memory`` before raising this.** The two are
+        alternatives, not complements, and the measurement is unambiguous: on a
+        V100 with 115 structures, ``num_workers=4`` alone took twenty epochs
+        from 168.0 s to 120.2 s (1.4x), while the in-memory cache took the same
+        run to 16.3 s (10.3x) — and adding the four workers *to* the cache put
+        it back up to 18.8 s. Each worker is a process with a cache of its own,
+        so it re-parses the whole dataset on its first epoch and the parse is
+        paid N times instead of once.
+
+        It is worth raising only when the data genuinely does not fit in RAM,
+        which is the case ``cache_in_memory: false`` exists for.
+    pin_memory : str or bool
+        Page-locked host staging buffers for the host-to-device copy.
+        ``"auto"`` (the default) means ``true`` on CUDA and ``false``
+        everywhere else, which is the whole of the decision: pinning is a CUDA
+        transfer optimisation, it does nothing on MPS, and some PyTorch
+        versions warn when asked for it there.
+    tf32 : bool
+        Allow TensorFloat-32 matmuls and convolutions. Ignored off CUDA, and a
+        no-op on anything before Ampere — **including the V100 this list was
+        measured on**, which has no TF32 path at all. It is here for the next
+        cluster.
+    compile : bool
+        Wrap the model in :func:`torch.compile` for the training loop.
+        **Default ``false``, and it is a measurement switch rather than a
+        recommendation.**
+
+        The case for it is the kernel profile: at ``width=16, modes=8,
+        n_layers=3`` on a V100, 44.4 % of GPU time is elementwise work and the
+        four most expensive kernels are ``copy_``, ``Memcpy DtoD``, ``add_`` and
+        ``fill_`` — memory traffic between kernels that each do very little
+        arithmetic, which is exactly what fusion removes. Convolution is 23.7 %,
+        FFT 13.7 %, and GEMM only 6.1 %.
+
+        The case against is :class:`~poraque.ml.data.ShapeBucketSampler`: it
+        batches by grid shape, and a real dataset has many. The 115 structures
+        measured here fall into **19 distinct shapes**, and Inductor specialises
+        per shape unless ``compile_dynamic`` holds. Whether it holds across
+        ``rfftn``/``irfftn`` with a varying ``s=`` is an empirical question, and
+        it is the question to answer before this is turned on anywhere.
+
+        Compilation is charged to the first epoch, where ``seconds_per_epoch``
+        in the metrics JSON makes it visible: a 60-epoch run that pays 90 s of
+        compilation to save 20 s is a loss, and a 2000-epoch run is not.
+
+        Only on CUDA. Inductor's MPS backend is not comparable and must not be
+        turned on by the same flag, so the run says it skipped rather than
+        pretending it complied.
+    compile_mode : str
+        ``torch.compile``'s ``mode``: ``"default"``, ``"reduce-overhead"`` or
+        ``"max-autotune"``. Ignored unless ``compile`` is on.
+    compile_dynamic : bool
+        ``torch.compile``'s ``dynamic``. ``true`` (the default when compiling)
+        asks Inductor for one graph with symbolic shapes rather than one per
+        shape, which is the only way this is affordable with 19 buckets.
+        Ignored unless ``compile`` is on.
     loss : str
         The data-fidelity objective. Four names, on two named axes:
 
@@ -1296,6 +1408,13 @@ class TrainingConfig_:
     seed: int = 42
     init_seed: int = None
     device: str = "auto"
+    strict_device: bool = False
+    num_workers: int = 0
+    pin_memory: str = "auto"
+    tf32: bool = True
+    compile: bool = False
+    compile_mode: str = "default"
+    compile_dynamic: bool = True
     loss: str = "relative_l2"
     sobolev_weight: float = 0.1
     physics: dict = field(default_factory=lambda: {

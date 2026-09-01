@@ -52,6 +52,39 @@ are the `main()` of the script of the same name under `scripts/`, so
 `python scripts/poraque_train.py` is equivalent to `poraque-train` and needs
 nothing installed.
 
+### On an NVIDIA GPU
+
+`pyproject.toml` asks for `torch>=2.0` and says nothing about CUDA, because the
+right build depends on the machine and pinning one would break Apple Silicon.
+PyPI then serves PyTorch's *default* wheel, which is not always the right one —
+and **the wrong choice does not raise, it gives a silent CPU run.**
+
+Two things have to line up: the driver has to be new enough for the wheel's
+CUDA runtime (`nvidia-smi`, top right), and the GPU's compute capability has to
+appear in `torch.cuda.get_arch_list()`. The second is the one that catches
+people out, because CUDA 13 dropped Maxwell, Pascal and **Volta**: a `+cu130`
+wheel on a V100 reports `is_available() == True` and then aborts at the first
+kernel launch. For a V100, `pip install torch --index-url
+https://download.pytorch.org/whl/cu126`.
+
+```bash
+python -m poraque.ml.device --check      # three seconds, before the queue
+```
+
+It prints the torch build, its CUDA runtime, where it was imported from, the
+architectures it carries kernels for, and one line per GPU saying whether this
+build can use it — and exits non-zero when the answer is no. In a job script,
+`|| exit 1`; in a configuration, `training.strict_device: true`, which aborts
+rather than spending a GPU allocation on the CPU.
+
+Two settings matter more than the GPU itself. `data.cache_in_memory` (`auto` by
+default) keeps decoded fields in RAM between epochs; without it every epoch
+re-parses every file, which measured **10.3× on a V100** with the validation
+error unchanged to five decimals. And `training.num_workers` is its
+*alternative*, not its complement — added to the cache it makes training slower,
+since each worker re-parses the set into a cache of its own. Poraquê trains on
+one GPU; request one.
+
 ### Faster CPU inference (optional)
 
 Poraquê ships a small C kernel for the spectral contraction — the one part of a
@@ -369,7 +402,18 @@ in its first lines.
 - **Resampling is spectral.** Fourier truncation is the exact band-limited
   projection for a plane-wave field; interpolation would alias and shift the
   electron count.
-- **CUDA, Apple Metal and CPU**, selected automatically.
+- **CUDA, Apple Metal and CPU**, selected automatically — and the run says
+  which, with the compute capability, because a request that quietly fell back
+  to the CPU is the most expensive silent failure this package has.
+- **It is a grid-based operator learner, not an equivariant message-passing
+  network.** That is worth stating because it settles a question people ask:
+  NVIDIA's cuequivariance accelerates arithmetic on irreducible representations
+  of O(3) — tensor products, spherical harmonics, symmetric contractions — and
+  Poraquê has no irreps to accelerate. Profiled by CUDA kernel on a V100, its
+  share of a training step is 0.0 %. The Fourier layer is a complex `einsum`
+  diagonal in the mode index and dense in channels, which cuequivariance cannot
+  express; the NVIDIA library that already accelerates this code is cuFFT,
+  reached through `torch.fft`.
 
 ## Status
 

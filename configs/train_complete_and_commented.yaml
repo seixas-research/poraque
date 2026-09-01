@@ -84,6 +84,16 @@ data:
   compression: null             # null | gzip | lzf; hdf5 only, and raises on a text cache
   compression_level: 4          # gzip only; ignored by lzf
 
+  # The largest performance setting in this file, and the one whose effect is
+  # invisible from the results: off, EVERY EPOCH re-reads, decompresses and
+  # re-parses every field, producing the same numbers ten times slower.
+  # Measured on a V100 with 115 structures at 32^3 -- __getitem__ was 59% of
+  # the training loop and the GPU sat at 2-4%; turning it on took twenty epochs
+  # from 168.0 s to 16.3 s (10.3x) with the validation error identical to five
+  # decimals. `auto` estimates the decoded size and enables it under 4 GiB.
+  # This is not a CUDA setting: the parse is the same on MPS and CPU.
+  cache_in_memory: auto         # auto | true | false
+
 model:
   # width is how much information travels through, modes is how far it travels
   # in space, projection_channels is only how it is read out. Spectral weights
@@ -150,6 +160,36 @@ training:
   seed: 42                      # the validation draw, the fold partition, the batch order
   init_seed: null               # seeds the WEIGHTS only; null reuses `seed`
   device: auto                  # auto (CUDA, then MPS, then CPU) or an explicit backend
+  strict_device: false          # abort instead of falling back to the CPU
+                                #   Off is right for a workstation: a config written on a
+                                #     machine with a GPU should still run on a laptop.
+                                #   TRUE IN EVERY HPC JOB. In a queue the fallback is not
+                                #     graceful -- the job waits for its GPU, the warning goes
+                                #     into a log nobody reads until afterwards, and the run
+                                #     trains on the CPU inside the GPU allocation until the
+                                #     wall clock ends. `python -m poraque.ml.device --check`
+                                #     is the same test for three seconds, before the queue.
+
+  # Getting the data to the device. Read data.cache_in_memory first: these two
+  # are ALTERNATIVES, not complements. Measured, 20 epochs on 115 structures:
+  # the cache alone 168.0 -> 16.3 s, four workers alone -> 120.2 s, and the two
+  # together back up to 18.8 s -- each worker is a process that re-parses the
+  # whole set into a cache of its own.
+  num_workers: 0                # DataLoader worker processes; 0 loads in the main process
+  pin_memory: auto              # auto = true on CUDA, false elsewhere (it is a CUDA optimisation)
+  tf32: true                    # TensorFloat-32 matmul/conv; CUDA only, and nothing before Ampere
+
+  # A measurement switch, not a recommendation. The kernel profile says 44% of
+  # GPU time is elementwise and the four costliest kernels are copy_/memcpy/
+  # add_/fill_ -- traffic between kernels that each do little arithmetic, which
+  # is what fusion removes. Against it: batches are bucketed by grid shape and a
+  # real dataset has many (19 in the set measured), and Inductor specialises per
+  # shape unless `compile_dynamic` holds across rfftn/irfftn with a varying s=.
+  # That is the open question. Compilation is charged to the first epoch, where
+  # seconds_per_epoch in the metrics JSON makes the trade visible.
+  compile: false                # CUDA only; warns and runs uncompiled elsewhere
+  compile_mode: default         # default | reduce-overhead | max-autotune
+  compile_dynamic: true         # one graph over symbolic shapes rather than one per shape
 
   # Physics-informed terms for the NEURAL OPERATOR: total = data + sum_i w_i * term_i.
   # Only the total is reported. Introduce one at a time against a measured

@@ -23,19 +23,27 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="poraque.ml requires PyTorch")
 
+from poraque.ml import device as device_module  # noqa: E402
 from poraque.ml.device import (  # noqa: E402
     PREFERENCE_ORDER,
     available_devices,
     cuda_available,
+    cuda_capability_supported,
     describe_device,
+    device_report,
     empty_cache,
+    enable_tf32,
     mps_available,
     resolve_device,
     supports_float64,
     synchronize,
 )
 from poraque.ml.fno import FNO3d, SpectralConv3d, complex_contract  # noqa: E402
-from poraque.ml.physics import cell_reciprocal, cell_volume  # noqa: E402
+from poraque.ml.physics import (  # noqa: E402
+    cell_reciprocal,
+    cell_volume,
+    reciprocal_vectors,
+)
 
 ACCELERATORS = [name for name in ("cuda", "mps") if
                 (cuda_available() if name == "cuda" else mps_available())]
@@ -97,6 +105,154 @@ class TestResolveDevice:
 
 
 # --------------------------------------------------------------------- #
+# Is this build able to run on this GPU at all?
+# --------------------------------------------------------------------- #
+class TestBuildCapability:
+    """
+    `torch.cuda.is_available()` answers "is there a driver and a device", not
+    "can this binary generate code for this device". CUDA 13 dropped Volta, so
+    a `+cu130` wheel on a V100 reports available and then aborts on the first
+    kernel launch — after the job has spent its time in the GPU queue. That is
+    what this pair of checks exists to make cheap.
+    """
+
+    @pytest.mark.skipif(not cuda_available(), reason="no CUDA here")
+    @pytest.mark.gpu
+    def test_this_build_has_kernels_for_this_gpu(self):
+        """The failure this catches costs a queue slot, not a test run."""
+        assert cuda_capability_supported()
+
+    @pytest.mark.skipif(cuda_available(), reason="CUDA is present here")
+    def test_capability_check_is_false_without_cuda(self):
+        """Safe to call anywhere, so callers need no CUDA guard of their own."""
+        assert cuda_capability_supported() is False
+
+    def test_a_capability_below_every_listed_one_is_unsupported(self, monkeypatch):
+        """sm_70 against a build listing sm_75 upwards: the V100 case."""
+        monkeypatch.setattr(device_module, "cuda_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "get_arch_list",
+                            lambda: ["sm_75", "sm_80", "sm_90", "compute_90"])
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda i=0: (7, 0))
+        assert cuda_capability_supported() is False
+
+    def test_a_capability_above_the_oldest_listed_one_is_supported(self, monkeypatch):
+        """A build ships PTX for its newest architecture, which JITs forward."""
+        monkeypatch.setattr(device_module, "cuda_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "get_arch_list",
+                            lambda: ["sm_50", "sm_70", "sm_80"])
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda i=0: (9, 0))
+        assert cuda_capability_supported() is True
+
+    def test_an_empty_arch_list_is_not_read_as_a_refusal(self, monkeypatch):
+        """Absence of evidence: a build that lists nothing blocks nothing."""
+        monkeypatch.setattr(device_module, "cuda_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "get_arch_list", lambda: ["compute_80"])
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda i=0: (3, 5))
+        assert cuda_capability_supported() is True
+
+
+class TestStrictDevice:
+    """
+    Graceful degradation is right on a workstation and expensive in a queue:
+    the job waits for its GPU, `resolve_device` warns into a log nobody reads
+    until afterwards, and the run trains on the CPU inside the GPU allocation
+    until the wall clock ends. `strict=True` turns that into an error at the
+    first second instead of the last.
+    """
+
+    @pytest.mark.skipif(cuda_available(), reason="CUDA is present here")
+    def test_strict_raises_instead_of_falling_back(self):
+        with pytest.raises(RuntimeError, match="CUDA"):
+            resolve_device("cuda", strict=True)
+
+    @pytest.mark.skipif(cuda_available(), reason="CUDA is present here")
+    def test_non_strict_still_warns_and_falls_back(self):
+        with pytest.warns(RuntimeWarning, match="CUDA was requested"):
+            assert resolve_device("cuda").type == "cpu"
+
+    @pytest.mark.skipif(cuda_available(), reason="CUDA is present here")
+    def test_the_message_names_a_probable_cause(self):
+        """"It did not work" and "install cu126" are different messages."""
+        with pytest.raises(RuntimeError) as error:
+            resolve_device("cuda", strict=True)
+        text = str(error.value)
+        assert "torch" in text
+        assert any(word in text for word in
+                   ("CPU-only", "driver", "CUDA_VISIBLE_DEVICES", "sm_"))
+
+    def test_an_unknown_backend_raises_too(self):
+        """Every branch that warns has to be a branch that can refuse."""
+        with pytest.raises(RuntimeError, match="Unknown device"):
+            resolve_device("tpu", strict=True)
+
+    @pytest.mark.skipif(mps_available(), reason="MPS is present here")
+    def test_a_missing_mps_raises_too(self):
+        with pytest.raises(RuntimeError, match="MPS was requested"):
+            resolve_device("mps", strict=True)
+
+    def test_an_available_device_is_unaffected_by_strict(self):
+        assert resolve_device("cpu", strict=True).type == "cpu"
+        for name in ACCELERATORS:
+            assert resolve_device(name, strict=True).type == name
+
+
+class TestTheDeviceReport:
+    """
+    Written for a log read after the fact, when the question is "why did this
+    run on the CPU?". Two of its lines answer questions no other part of the
+    banner does: which CUDA the wheel was built against, and where torch was
+    imported from — on a cluster a `~/.local` install outranks the activated
+    environment and is the one that gets used.
+    """
+
+    def test_it_names_the_build_and_where_it_came_from(self):
+        text = "\n".join(device_report())
+        assert torch.__version__ in text
+        assert "cuda build" in text
+        assert "installed" in text
+
+    def test_it_says_what_the_request_resolved_to(self):
+        text = "\n".join(device_report("cpu"))
+        assert "cpu" in text.split("requested")[-1]
+
+    def test_it_does_not_warn_while_reporting(self, recwarn):
+        """A report about a fallback must not itself trigger the fallback's
+        warning: the reader asked a question, not for the run to proceed."""
+        device_report("tpu")
+        assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)]
+
+    def test_every_gpu_is_labelled_usable_or_not(self):
+        lines = device_report()
+        if not cuda_available():
+            assert any("cuda devices : none" in line for line in lines)
+            return
+        entries = [line for line in lines if line.strip().startswith("cuda:")]
+        assert entries
+        assert all("usable" in line.lower() for line in entries)
+
+
+class TestTf32:
+    """
+    Ampere and later only, and a no-op on the V100 this was measured on. It is
+    here for the next cluster, and the return value exists so a run can log
+    what happened rather than what was asked for.
+    """
+
+    def test_it_declines_off_cuda(self):
+        assert enable_tf32("cpu", True) is False
+
+    @pytest.mark.skipif(not cuda_available(), reason="no CUDA here")
+    @pytest.mark.gpu
+    def test_it_sets_both_flags_on_cuda(self):
+        try:
+            assert enable_tf32("cuda", True) is True
+            assert torch.backends.cuda.matmul.allow_tf32 is True
+            assert torch.backends.cudnn.allow_tf32 is True
+        finally:
+            enable_tf32("cuda", False)
+
+
+# --------------------------------------------------------------------- #
 # Cell metric: the float64 / linalg.det workaround
 # --------------------------------------------------------------------- #
 class TestCellMetric:
@@ -133,9 +289,76 @@ class TestCellMetric:
 
 
 # --------------------------------------------------------------------- #
+# The memoised integer mesh
+#
+# There is deliberately no test here asserting that the cell metric stays on
+# the host, or that any other operation happens on a particular device. That
+# was measured (keeping it on the device is 2 % *slower* on a V100, because a
+# 3x3 `linalg.det` costs more in kernel launch than in the copy it avoids), and
+# a test pinning the rejected choice would turn the next measurement into
+# "fixing a broken test". Where the device changes the *answer* -- float64 and
+# complex einsum on MPS -- there are tests above. Where it changes only the
+# speed, the place is a benchmark.
+# --------------------------------------------------------------------- #
+class TestTheIntegerMeshIsMemoised:
+    """
+    `reciprocal_vectors` rebuilds `(3, Nx, Ny, Nz)` of integers on every call,
+    and it is called several times per batch while depending only on
+    `(shape, device, dtype)`. Memoising it is 1.6 % of training time -- small,
+    consistent, and free. What it must not change is a single number.
+    """
+
+    @pytest.mark.parametrize("device", ["cpu"] + ACCELERATORS)
+    def test_reciprocal_vectors_match_cpu(self, device):
+        """The memoised mesh must be identical to the rebuilt one.
+
+        On a triclinic cell, which is the ill-conditioned case the float64
+        host round-trip exists for.
+        """
+        cell = torch.tensor([[4.0, 0.2, 0.1], [0.3, 5.0, 0.4], [0.1, 0.2, 6.0]],
+                            dtype=torch.float32).unsqueeze(0)
+        reference = reciprocal_vectors(cell, (8, 10, 12), device="cpu")
+        result = reciprocal_vectors(cell.to(device), (8, 10, 12), device=device)
+        torch.testing.assert_close(result.cpu(), reference,
+                                   rtol=1e-6, atol=1e-6)
+
+    def test_a_second_call_returns_the_same_mesh(self):
+        """The point of the cache, stated as an identity rather than a timing."""
+        from poraque.ml.physics import _integer_mesh
+
+        first = _integer_mesh((6, 6, 6), torch.device("cpu"), torch.float32)
+        second = _integer_mesh((6, 6, 6), torch.device("cpu"), torch.float32)
+        assert first is second
+
+    def test_a_list_shape_keys_the_same_entry_as_a_tuple(self):
+        """A list is unhashable, so `reciprocal_vectors` must normalise before
+        it reaches the cache -- and a `torch.Size` must not key a second one."""
+        cell = torch.eye(3).unsqueeze(0) * 5.0
+        as_list = reciprocal_vectors(cell, [4, 4, 4])
+        as_size = reciprocal_vectors(cell, torch.Size([4, 4, 4]))
+        torch.testing.assert_close(as_list, as_size)
+
+    def test_the_shapes_of_one_dataset_fit_in_the_cache(self):
+        """
+        `ShapeBucketSampler` batches by grid shape, so the number of distinct
+        shapes is small and stable -- 19 in the set this was measured on. The
+        cache is sized against that, and an entry per shape must not evict the
+        one before it.
+        """
+        from poraque.ml.physics import _integer_mesh
+
+        _integer_mesh.cache_clear()
+        cell = torch.eye(3).unsqueeze(0) * 5.0
+        for n in range(4, 23):
+            reciprocal_vectors(cell, (n, n, n))
+        assert _integer_mesh.cache_info().currsize == 19
+
+
+# --------------------------------------------------------------------- #
 # Cross-backend numerical agreement
 # --------------------------------------------------------------------- #
 @requires_accelerator
+@pytest.mark.gpu
 @pytest.mark.parametrize("device", ACCELERATORS)
 class TestBackendAgreement:
     def test_complex_contract_on_contiguous_operands(self, device):
