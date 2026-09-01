@@ -26,8 +26,7 @@ from ..fields import ChargeDensity, ExternalPotential, KineticEnergyDensity
 from .data import make_dataloader
 from .device import describe_device, resolve_device
 from .fno import FNO3d
-from .losses import (PhysicsInformedLoss, relative_error,
-                     relative_h1_error)
+from .losses import PhysicsInformedLoss, data_error
 from .tasks import resolve_task
 from .transforms import FieldTransform, Identity
 
@@ -187,6 +186,10 @@ class FieldOperator:
         self.input_transform = input_transform or Identity()
         self.target_transform = target_transform or Identity()
         self.baseline = _resolve_operator_baseline(baseline)
+        #: LoRA settings when this operator has been adapted, else ``None``.
+        #: Set by the fine-tuning path; read by :meth:`state` so the record can
+        #: say where the frozen base lives.
+        self.lora = None
         self.training_resolution = (None if training_resolution is None
                                     else int(training_resolution))
         self.init_seed = None if init_seed is None else int(init_seed)
@@ -427,9 +430,23 @@ class FieldOperator:
                         "kan_rational_den_degree", "kan_use_base")
             if hasattr(backbone, key)
         }
+        # A LoRA fine-tune stores its adapter and *not* the base it adapts.
+        # That is the whole economy of the method: the frozen tensors are
+        # already on disk in the checkpoint being adapted, and writing them
+        # again per fine-tune is precisely the cost LoRA exists to avoid --
+        # 12 MB against 8 kB on this project's own model. What the record has
+        # to carry instead is where the base lives, or the file names weights
+        # it cannot reconstruct.
+        from .lora import is_adapted, lora_state_dict
+
+        adapted = is_adapted(self.model)
         return {
             "task": self.task.name,
-            "model_state": self.model.state_dict(),
+            "model_state": ({} if adapted else self.model.state_dict()),
+            "lora": (None if not adapted else {
+                **dict(self.lora or {}),
+                "state": lora_state_dict(self.model),
+            }),
             "model_class": type(self.model).__name__,
             # Recorded rather than inferred: the lifting layer cannot tell
             # in_channels apart from the coordinate channels, so a spin model
@@ -482,6 +499,11 @@ class FieldOperator:
         -------
         FieldOperator
         """
+        lora = state.get("lora")
+        if lora:
+            return cls._from_lora_state(state, lora, device=device,
+                                        **model_kwargs)
+
         inferred = infer_backbone_kwargs(state["model_state"])
         architecture = dict(state.get("architecture") or {})
         # The read-out's nonlinearity followed a hard-coded GELU until
@@ -521,6 +543,54 @@ class FieldOperator:
         )
         operator.model.load_state_dict(state["model_state"])
         return operator
+
+    @classmethod
+    def _from_lora_state(cls, state, lora, device=None, **model_kwargs):
+        """
+        Rebuild an adapted operator: the recorded base, then the adapter.
+
+        The base is loaded from the checkpoint the fine-tune named. That
+        indirection is the price of a small file, and it is stated in the
+        error rather than left to be discovered: a LoRA checkpoint whose base
+        has moved cannot reconstruct weights it never stored.
+        """
+        import os
+
+        from .lora import apply_lora, load_lora_state_dict
+
+        base_path = lora.get("base_checkpoint")
+        if not base_path or not os.path.exists(str(base_path)):
+            raise FileNotFoundError(
+                f"This is a LoRA checkpoint: it holds a "
+                f"{len(lora.get('state') or {})}-tensor adapter and not the "
+                f"weights it adapts, which live in "
+                f"{base_path!r}. That file is missing, so the model cannot be "
+                f"rebuilt. Point fine_tuning.pretrained_checkpoint at it "
+                f"again, or re-run the fine-tune with fine_tuning.use_lora "
+                f"disabled to get a self-contained bundle.")
+
+        base = load_bundle(str(base_path), state["task"], device=device,
+                           **model_kwargs)
+        # The transforms, the baseline and the task come from *this* record:
+        # a fine-tune may have been trained against a different normalisation
+        # than the base was, and taking them from the base would decode the
+        # adapted model's outputs with the wrong scale.
+        base.input_transform = FieldTransform.from_state_dict(
+            state["input_transform"])
+        base.target_transform = FieldTransform.from_state_dict(
+            state["target_transform"])
+        if state.get("baseline") is not None:
+            base.baseline = _resolve_operator_baseline(state["baseline"])
+
+        settings = apply_lora(base.model, rank=int(lora.get("rank", 8)),
+                              alpha=float(lora.get("alpha", 16.0)),
+                              dropout=float(lora.get("dropout", 0.0)))
+        load_lora_state_dict(base.model, lora.get("state") or {})
+        base.lora = {key: value for key, value in lora.items()
+                     if key != "state"}
+        base.lora.update(adapters=settings["adapters"])
+        base.model.to(base.device)
+        return base
 
     def save(self, path):
         """
@@ -1021,14 +1091,16 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     # units -- and reading the second as if it were the first is an easy and
     # expensive mistake.
     validating = validation_loader is not None
-    # The validation column names the norm it is actually measured in. A
-    # `loss: sobolev` run constrains the gradient as well as the values, so
-    # watching it on a plain L2 reports a quantity the optimiser is not
-    # minimising -- and early stopping then selects against the wrong one.
-    # `sobolev_weight` is read off the criterion rather than passed in, so the
-    # label cannot disagree with the objective it describes.
+    # The validation column names the norm it is actually measured in. An H1
+    # objective constrains the gradient as well as the values and an absolute
+    # one does not normalise per sample, so watching any of the four on a plain
+    # relative L2 reports a quantity the optimiser is not minimising -- and
+    # early stopping then selects against the wrong one. Both are read off the
+    # criterion rather than passed in, so the label cannot disagree with the
+    # objective it describes.
+    data_loss_name = str(getattr(criterion, "loss", "relative_l2"))
     sobolev_weight = float(getattr(criterion, "sobolev_weight", 0.0) or 0.0)
-    val_metric = "rel H1" if sobolev_weight > 0.0 else "rel L2"
+    val_metric = str(getattr(criterion, "metric_label", "rel L2"))
     # One number for the objective, whatever it is made of. A physics-informed
     # run's `train loss` is the total the optimiser actually stepped on --
     # data plus every weighted constraint -- and that total is the only
@@ -1042,10 +1114,12 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             legend += (f"   |   val {val_metric}: held-out error, "
                        f"physical units")
             if sobolev_weight > 0.0:
-                legend += (f"\n    val rel H1 = rel L2 + {sobolev_weight:g} x "
-                           f"the relative L2 of the gradient, matching the "
-                           f"objective; the final per-structure table below "
-                           f"reports plain rel L2")
+                norm = "relative" if val_metric.startswith("rel") else "absolute"
+                base = val_metric.replace("H1", "L2")
+                legend += (f"\n    val {val_metric} = {base} + "
+                           f"{sobolev_weight:g} x the {norm} L2 of the "
+                           f"gradient, matching the objective; the final "
+                           f"per-structure table below reports plain rel L2")
         else:
             legend += "   |   no validation split: this is a TRAINING FIT"
         emit(legend)
@@ -1127,6 +1201,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         exhausted = False
         if validating:
             error = evaluate(operator, validation_loader,
+                             loss=data_loss_name,
                              sobolev_weight=sobolev_weight)
             history["val_error"].append(error)
             history["val_epoch"].append(epoch + 1)
@@ -1174,9 +1249,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
 
 @torch.no_grad()
-def evaluate(operator, loader, sobolev_weight=0.0):
+def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0):
     r"""
-    Mean relative error over a loader, in *physical* units.
+    Mean held-out error over a loader, in *physical* units.
 
     Evaluating in physical units matters: a small error in a compressed
     (asinh) representation can hide a large error in the density itself.
@@ -1185,12 +1260,12 @@ def evaluate(operator, loader, sobolev_weight=0.0):
     ----------
     operator : FieldOperator
     loader : torch.utils.data.DataLoader
+    loss : str, optional
+        Which of :data:`~poraque.ml.losses.DATA_LOSSES` to measure. Pass the
+        run's own, so the number watched is the number optimised — the
+        checkpoint and early stopping are decided on it.
     sobolev_weight : float, optional
-        When positive, report the relative :math:`H^1` error
-        (:func:`~poraque.ml.losses.relative_h1_error`) with this gradient
-        weight instead of the relative :math:`L^2`. Pass the weight the
-        objective was built with, so the number watched is the number
-        optimised. Zero — the default — is the plain :math:`L^2`.
+        Gradient weight, for the two :math:`H^1` forms.
 
     Returns
     -------
@@ -1217,11 +1292,8 @@ def evaluate(operator, loader, sobolev_weight=0.0):
             prediction = prediction + baseline
             physical_target = physical_target + baseline
 
-        if sobolev_weight > 0.0:
-            error = relative_h1_error(prediction, physical_target, cell,
-                                      weight=sobolev_weight)
-        else:
-            error = relative_error(prediction, physical_target)
-        errors.append(error.cpu())
+        errors.append(data_error(prediction, physical_target, cell,
+                                 loss=loss,
+                                 sobolev_weight=sobolev_weight).cpu())
 
     return float(torch.cat(errors).mean()) if errors else float("nan")

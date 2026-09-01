@@ -24,13 +24,10 @@ import numpy as np
 import pytest
 
 from poraque.data import (
-    BulkDensitySource,
+    DATA_FORMATS,
     CalculationSource,
     MixedFieldDataset,
-    PreparedFieldsSource,
-    available_formats,
     build_field_cache,
-    detect_source,
     discover_records,
     resolve_source,
 )
@@ -159,13 +156,23 @@ def write_calculation(directory, shape=(12, 12, 12), cell=None, seed=0,
 
 def write_bulk(directory, identifiers=("mp-1", "mp-2"), shape=(12, 12, 12),
                compress=True, element="Si"):
-    """A flat archive of standalone densities, gzipped like a real download."""
+    """
+    Densities with no inputs beside them: one directory each, gzipped.
+
+    What a published archive ships, and what a ``poraque-mp --no-vasp-inputs``
+    download looks like. The directory layout is the same as a run tree's --
+    that is the point of there being one schema -- and the *content* is what
+    makes it different: no ``POSCAR``, so the structure comes from the
+    density's own header, and no ``POTCAR``, so the valence charges are
+    inferred unless a library is configured.
+    """
     directory = str(directory)
-    os.makedirs(directory, exist_ok=True)
     for index, identifier in enumerate(identifiers):
+        child = os.path.join(directory, identifier)
+        os.makedirs(child, exist_ok=True)
         _, _, _, density = _material(np.eye(3) * (5.0 + index), shape,
                                      seed=index + 10, element=element)
-        path = os.path.join(directory, f"CHGCAR_{identifier}")
+        path = os.path.join(child, "CHGCAR")
         density.write(path)
         if compress:
             with open(path, "rb") as source, \
@@ -244,10 +251,22 @@ def prepared(tmp_path):
 # Detection
 # ---------------------------------------------------------------------- #
 class TestDetection:
-    def test_each_layout_is_recognised(self, calculations, bulk, prepared):
-        assert detect_source(calculations) is CalculationSource
-        assert detect_source(bulk) is BulkDensitySource
-        assert detect_source(prepared) is PreparedFieldsSource
+    r"""
+    There is one source class, and one question: does this directory hold
+    materials?
+
+    A material is **a directory with a density in it**. Until 2026-08-31 three
+    classes competed to claim a directory — ``CalculationSource`` on a
+    ``POSCAR``, ``BulkDensitySource`` on a bare density, ``PreparedFieldsSource``
+    on cached fields — and detection order decided which won. All that is gone:
+    the density identifies the material, and what else is in its directory
+    changes how the *fields* are built, not who builds them.
+    """
+
+    def test_every_dataset_is_read_by_the_one_source(self, calculations, bulk,
+                                                     prepared):
+        for root in (calculations, bulk, prepared):
+            assert isinstance(resolve_source(root), CalculationSource)
 
     def test_a_single_calculation_directory_is_one_material(self, calculations):
         one = os.path.join(calculations, "struct_000")
@@ -257,16 +276,20 @@ class TestDetection:
         assert isinstance(source, CalculationSource)
         assert [record.identifier for record in source.discover()] == ["struct_000"]
 
-    def test_a_calculation_is_not_mistaken_for_a_bulk_archive(self, calculations):
-        """It contains a CHGCAR too; the POSCAR is what tells them apart."""
-        one = os.path.join(calculations, "struct_000")
+    def test_a_directory_with_inputs_and_no_density_holds_no_material(self,
+                                                                      tmp_path):
+        """A calculation that has not run. The density is the qualification."""
+        run = tmp_path / "runs" / "structure_000"
+        run.mkdir(parents=True)
+        (run / "POSCAR").write_text("Si\n1.0\n")
+        (run / "INCAR").write_text("ENCUT = 400\n")
 
-        assert not BulkDensitySource.detect(one)
-        assert CalculationSource.detect(one)
+        with pytest.raises(ValueError, match="No materials under"):
+            resolve_source(str(tmp_path / "runs"))
 
     def test_metadata_files_are_not_mistaken_for_densities(self, tmp_path):
         """`chgcar_estimate.csv` sits in every real download."""
-        root = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",))
+        root = write_bulk(tmp_path / "MP", identifiers=("mp-1",))
         with open(os.path.join(root, "chgcar_estimate.csv"), "w") as handle:
             handle.write("material_id,size_mb\nmp-1,1.0\n")
 
@@ -274,26 +297,31 @@ class TestDetection:
 
         assert [record.identifier for record in records] == ["mp-1"]
 
-    def test_an_unrecognisable_directory_says_what_was_looked_for(self, tmp_path):
+    def test_an_empty_directory_says_what_was_looked_for(self, tmp_path):
         (tmp_path / "empty").mkdir()
 
-        with pytest.raises(ValueError, match="POSCAR or CONTCAR"):
-            detect_source(tmp_path / "empty")
+        with pytest.raises(ValueError, match="one subdirectory per material"):
+            resolve_source(tmp_path / "empty")
 
-    def test_a_missing_directory_is_not_an_unknown_format(self, tmp_path):
+    def test_a_missing_directory_is_not_an_empty_one(self, tmp_path):
         with pytest.raises(FileNotFoundError):
-            detect_source(tmp_path / "nope")
+            resolve_source(tmp_path / "nope")
 
-    def test_an_explicit_format_is_checked_against_the_directory(self, bulk):
-        with pytest.raises(ValueError, match="not laid out as a vasp dataset"):
-            resolve_source(bulk, format="vasp")
-
-    def test_an_unknown_format_lists_the_known_ones(self, bulk):
+    def test_an_unknown_format_lists_the_two_that_exist(self, bulk):
         with pytest.raises(ValueError, match="Unknown data format"):
             resolve_source(bulk, format="hdf5")
 
-    def test_available_formats_are_in_detection_order(self):
-        assert available_formats() == ["vasp", "prepared", "bulk"]
+    @pytest.mark.parametrize("name", ("bulk", "prepared", "mp", "cache"))
+    def test_the_retired_layout_names_are_not_accepted(self, bulk, name):
+        """
+        They named *layouts*, and there are none to choose between. Silently
+        accepting one would suggest it still selected something.
+        """
+        with pytest.raises(ValueError, match="Unknown data format"):
+            resolve_source(bulk, format=name)
+
+    def test_there_are_exactly_two_formats(self):
+        assert DATA_FORMATS == ("auto", "vasp")
 
 
 class TestADownloadIsOneDirectoryPerMaterial:
@@ -310,8 +338,8 @@ class TestADownloadIsOneDirectoryPerMaterial:
     it is *computed*, and only :class:`BulkDensitySource` knows to compute it.
     """
 
-    def test_it_is_detected_as_a_bulk_archive(self, download):
-        assert detect_source(download) is BulkDensitySource
+    def test_it_is_read_like_any_other_dataset(self, download):
+        assert isinstance(resolve_source(download), CalculationSource)
 
     def test_the_directory_names_the_material(self, download):
         records = resolve_source(download).discover()
@@ -327,23 +355,18 @@ class TestADownloadIsOneDirectoryPerMaterial:
         source = resolve_source(download)
         assert "EXTCAR" in source.provides(source.discover()[0])
 
-    def test_a_prepared_cache_is_still_a_prepared_cache(self, prepared):
-        """The same tree shape; the extra field is what separates them."""
-        assert detect_source(prepared) is PreparedFieldsSource
-
-    def test_a_cache_holding_only_densities_reads_as_an_archive(self, tmp_path):
+    def test_the_deck_changes_nothing_about_how_it_is_read(self, tmp_path):
         """
-        Which is what it is. A cache always writes more than the density --
-        `EXTCAR` for ext2chg, `TAUCAR` for chg2tau -- so a directory of lone
-        densities has never been one.
+        With or without the reconstructed inputs, the same materials come back
+        and the same fields are offered. The deck is for VASP.
         """
-        root = write_download(tmp_path / "lone", identifiers=("a",),
-                              compress=False)
-        assert detect_source(root) is BulkDensitySource
+        bare = write_download(tmp_path / "bare", identifiers=("mp-1",))
+        source = resolve_source(bare)
+        record = source.discover()[0]
 
-    def test_a_vasp_run_still_wins_over_both(self, calculations):
-        """It holds a CHGCAR in a per-material directory too."""
-        assert detect_source(calculations) is CalculationSource
+        assert record.identifier == "mp-1"
+        assert set(record.files) == {"CHGCAR"}
+        assert "EXTCAR" in source.provides(record)
 
     def test_loose_files_beside_directories_are_all_found(self, tmp_path):
         """
@@ -365,14 +388,18 @@ class TestADownloadIsOneDirectoryPerMaterial:
         to make silently.
         """
         root = tmp_path / "odd"
-        write_bulk(root / "several", identifiers=("mp-1", "mp-2"))
-        (root / "keep").mkdir()
-        write_bulk(root / "keep", identifiers=("mp-9",))
+        good = root / "mp-1"
+        good.mkdir(parents=True)
+        _, _, _, density = _material(np.eye(3) * 5.0, (8, 8, 8))
+        density.write(str(good / "CHGCAR"))
 
-        # `several/` holds two, so it is not a material; `keep/` holds one, but
-        # its file still carries the id, which is the flat spelling.
-        source = resolve_source(root)
-        assert "several" not in [r.identifier for r in source.discover()]
+        ambiguous = root / "two"
+        ambiguous.mkdir()
+        density.write(str(ambiguous / "CHGCAR"))
+        density.write(str(ambiguous / "CHGCAR_other"))
+
+        found = [r.identifier for r in resolve_source(root).discover()]
+        assert found == ["mp-1"]
 
     def test_an_hdf5_download_is_read_the_same_way(self, tmp_path):
         pytest.importorskip("h5py")
@@ -386,11 +413,166 @@ class TestADownloadIsOneDirectoryPerMaterial:
                                          (8, 8, 8), seed=index)
             write_fields(str(child / "fields.h5"), {"CHGCAR": density})
 
-        assert detect_source(root) is BulkDensitySource
         records = resolve_source(root).discover()
         assert [r.identifier for r in records] == ["mp-1", "mp-2"]
         assert all(r.files["CHGCAR"].endswith("fields.h5::CHGCAR")
                    for r in records)
+
+
+class TestOneSchemaForEveryOrigin:
+    r"""
+    ``data.data_paths`` names directories, and every entry has the same shape:
+    subdirectories, one per material, each holding that material's volumetric
+    files. A local run tree, a ``poraque-mp`` download and a cache are the same
+    thing to a config.
+
+    What differs is the *content* of a material's directory, and content is
+    read rather than declared. These tests pin the three properties that makes
+    load-bearing: the same directory yields the same materials whatever
+    produced it, ``TAUCAR`` is optional per material, and an external potential
+    can be built in every case.
+    """
+
+    def test_the_three_layouts_agree_on_what_a_material_is(
+            self, calculations, download, prepared):
+        """One subdirectory per material, in all three."""
+        for root, expected in ((calculations, 3), (download, 2), (prepared, 2)):
+            source = resolve_source(root)
+            records = source.discover()
+            assert len(records) == expected
+            assert all(os.path.isdir(record.directory) for record in records)
+            assert all(os.path.basename(record.directory) == record.identifier
+                       for record in records)
+
+    def test_every_origin_offers_an_external_potential(
+            self, calculations, download, prepared):
+        """
+        Computed from the inputs, computed from the density's own header, or
+        read from a cached EXTCAR -- three routes to one field, and a config
+        chooses none of them.
+        """
+        for root in (calculations, download, prepared):
+            source = resolve_source(root)
+            assert "EXTCAR" in source.provides(source.discover()[0])
+
+    def test_tau_is_optional_material_by_material(self, tmp_path):
+        """
+        Not directory by directory. One calculation in a tree may have written
+        a TAUCAR while its neighbour did not, and the one that did should still
+        reach `chg2tau`.
+        """
+        root = tmp_path / "runs"
+        write_calculation(root / "structure_000", seed=0)
+        write_calculation(root / "structure_001", seed=1, tau=False)
+
+        source = resolve_source(str(root))
+        records = {record.identifier: set(source.provides(record))
+                   for record in source.discover()}
+
+        assert records["structure_000"] >= {"EXTCAR", "CHGCAR", "TAUCAR"}
+        assert "TAUCAR" not in records["structure_001"]
+
+    def test_a_pooled_set_keeps_everything_for_ext2chg(self, tmp_path):
+        """The point of the unified schema: a download with no tau still
+        trains the task it can."""
+        runs = tmp_path / "runs"
+        write_calculation(runs / "structure_000", seed=0)
+        write_calculation(runs / "structure_001", seed=1, tau=False)
+        mp = write_download(tmp_path / "MP", identifiers=("mp-1", "mp-2"))
+
+        sources = [resolve_source(str(runs)), resolve_source(mp)]
+
+        assert len(discover_records(sources, required=("CHGCAR",))) == 4
+        assert len(discover_records(sources, required=("EXTCAR", "CHGCAR"))) == 4
+        for_tau = discover_records(sources, required=("CHGCAR", "TAUCAR"))
+        assert [record.identifier for record in for_tau] == ["structure_000"]
+
+    def test_a_single_run_directly_under_a_path_is_one_material(self,
+                                                                calculations):
+        """So a lone calculation needs no wrapper directory."""
+        one = os.path.join(calculations, "struct_000")
+        assert [r.identifier for r in resolve_source(one).discover()] \
+            == ["struct_000"]
+
+
+class TestTheValenceChargesDoNotDependOnHowAPathIsRead:
+    r"""
+    A directory of bare densities infers :math:`Z^{
+m val}` from them; the
+    same directory with structure files beside the densities used to raise
+    ``No valence charge for ['Si']``.
+
+    Nothing about the physics differs between those two — the densities are
+    identical and the inference reads only them — so the answer should not
+    have. The fallback now lives on :class:`MaterialSource` and every source
+    reaches it, which is what makes "the external potential still works" true
+    of the unified schema rather than of one layout in it.
+    """
+
+    def _stripped(self, tmp_path):
+        """
+        Calculations with no ``POTCAR`` -- what an archived run ships, since
+        pseudopotentials are routinely stripped for licensing. ``TAUCAR`` is
+        left out so the directories reduce to densities plus inputs, which is
+        the pair the argument here is about.
+        """
+        root = tmp_path / "runs"
+        for index in range(2):
+            write_calculation(root / f"structure_{index:03d}", seed=index,
+                              tau=False)
+        return str(root)
+
+    def test_a_stripped_calculation_still_builds_a_potential(self, tmp_path):
+        source = resolve_source(self._stripped(tmp_path))
+        record = source.discover()[0]
+
+        potential = source.read(record, "EXTCAR", source.grid(record))
+
+        assert np.isfinite(np.asarray(potential.data)).all()
+        assert np.ptp(np.asarray(potential.data)) > 0
+
+    def test_it_agrees_with_reading_the_same_densities_as_an_archive(
+            self, tmp_path):
+        """
+        The counterfactual, made concrete: delete the structure files and the
+        same directories are a bulk archive. The potential must not move.
+        """
+        runs = self._stripped(tmp_path)
+        source = resolve_source(runs)
+        record = source.discover()[0]
+        from_calculation = np.asarray(
+            source.read(record, "EXTCAR", source.grid(record)).data)
+
+        for entry in sorted(os.listdir(runs)):
+            for name in ("POSCAR", "CONTCAR", "INCAR"):
+                path = os.path.join(runs, entry, name)
+                if os.path.exists(path):
+                    os.remove(path)
+
+        archive = resolve_source(runs)
+        record = archive.discover()[0]
+        from_archive = np.asarray(
+            archive.read(record, "EXTCAR", archive.grid(record)).data)
+
+        assert np.allclose(from_calculation, from_archive, rtol=1e-10)
+
+    def test_an_explicit_charge_still_wins(self, tmp_path):
+        source = resolve_source(self._stripped(tmp_path), charges={"Si": 4.0})
+        assert source.charges == {"Si": 4.0}
+
+    def test_a_run_with_its_own_potcar_infers_nothing(self, tmp_path,
+                                                      potcar_library):
+        """
+        The tabulated route reads ZVAL from the POTCAR and needs no inference,
+        and inference parses densities -- so it must not run where its answer
+        would be thrown away.
+        """
+        run = tmp_path / "runs" / "structure_000"
+        write_calculation(run, tau=False, element="Pt",
+                          potcar=os.path.join(potcar_library, "Pt", "POTCAR"))
+        source = resolve_source(str(tmp_path / "runs"))
+
+        assert source._modelled_charges(source.discover()[0]) is None
 
 
 # ---------------------------------------------------------------------- #
@@ -428,11 +610,11 @@ class TestProvides:
 
         assert source.provides(source.discover()[0]) == ("EXTCAR", "CHGCAR")
 
-    def test_asking_a_bulk_archive_for_tau_explains_why_not(self, bulk):
+    def test_asking_for_a_tau_that_is_not_there_explains_why_not(self, bulk):
         source = resolve_source(bulk, charges=CHARGES)
         record = source.discover()[0]
 
-        with pytest.raises(FileNotFoundError, match="publishes no TAUCAR"):
+        with pytest.raises(FileNotFoundError, match="has no TAUCAR"):
             source.read(record, "TAUCAR", source.grid(record))
 
     def test_a_prepared_cache_offers_what_is_on_disk(self, tmp_path):
@@ -474,16 +656,18 @@ class TestReading:
         assert source.shape(record) == (12, 12, 12)
         assert source.shape(record) == tuple(source.grid(record).shape)
 
-    def test_the_bulk_potential_comes_from_the_density_header(self, bulk):
+    def test_a_density_only_potential_comes_from_the_density_header(self,
+                                                                    bulk):
+        """No POSCAR to read, so the structure is the one the CHGCAR carries."""
         source = resolve_source(bulk, charges=CHARGES)
         record = source.discover()[0]
 
         potential = source.read(record, "EXTCAR", source.grid(record))
 
-        assert potential.metadata["derived_from"] == "CHGCAR header"
         assert potential.data.mean() == pytest.approx(0.0, abs=1e-8)
+        assert np.ptp(np.asarray(potential.data)) > 0
 
-    def test_bulk_charges_are_inferred_when_not_supplied(self, bulk):
+    def test_charges_are_inferred_when_not_supplied(self, bulk):
         source = resolve_source(bulk)
 
         assert set(source.charges) == {"Si"}
@@ -776,19 +960,22 @@ class TestMixedFieldDataset:
 
         assert data.shapes() == [(12, 12, 12)] * 3
 
-    def test_one_format_per_path_may_be_given(self, calculations, bulk):
+    def test_one_format_covers_every_path(self, calculations, bulk):
+        """
+        It names the *code*, not a layout, so there is nothing to vary between
+        paths: one dataset is one code's files.
+        """
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             data = MixedFieldDataset([calculations, bulk], task="ext2chg",
-                                     format=["vasp", "bulk"], resolution=8,
+                                     format="vasp", resolution=8,
                                      charges=CHARGES)
 
         assert len(data) == 5
 
-    def test_a_format_list_of_the_wrong_length_is_refused(self, calculations,
-                                                          bulk):
-        with pytest.raises(ValueError, match="one per path"):
-            MixedFieldDataset([calculations, bulk], format=["vasp"],
+    def test_an_unknown_format_is_refused(self, calculations, bulk):
+        with pytest.raises(ValueError, match="Unknown data format"):
+            MixedFieldDataset([calculations, bulk], format="bulk",
                               resolution=8)
 
 

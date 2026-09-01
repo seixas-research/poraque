@@ -47,39 +47,31 @@ from .mp_dataset import (
 )
 from .provenance import code_version, file_hash
 from .sources import (
-    BulkDensitySource,
+    DATA_FORMATS,
     CalculationSource,
     MaterialSource,
-    PreparedFieldsSource,
-    available_formats,
-    detect_source,
     discover_records,
-    register_source,
     resolve_source,
 )
 
 __all__ = [
-    "BulkDensitySource",
+    "DATA_FORMATS",
     "CalculationSource",
     "Estimate",
     "MPChargeDensityDataset",
     "MPDataFetcher",
     "MaterialSource",
     "MixedFieldDataset",
-    "PreparedFieldsSource",
-    "available_formats",
     "available_tasks",
     "build_field_cache",
     "build_mp_cache",
     "build_paw_reference",
     "code_version",
-    "detect_source",
     "discover_mp_chgcars",
     "discover_records",
     "file_hash",
     "infer_valence_charges",
     "load_api_key",
     "load_paw_reference",
-    "register_source",
     "resolve_source",
 ]

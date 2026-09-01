@@ -90,17 +90,13 @@ Key & Default & Meaning \\
 \toprule
 Key & Default & Meaning \\
 \midrule
-\opt{train\_paths} & \opt{null} & List of dataset directories, which may mix
-layouts. Falls back to \opt{root}. \\
-\opt{root} & \opt{data/vasp} & Single dataset directory, used when
-\opt{train\_paths} is \opt{null}. \\
-\opt{source} & \opt{auto} & Layout of each path: \opt{auto}, \opt{vasp},
-\opt{bulk} or \opt{prepared}. \\
+\opt{data\_paths} & \file{data/vasp/structures} & The dataset, as a list of
+directories --- see below. \\
 \opt{cache} & \opt{data/cache} & Where downsampled copies are written. \\
-\opt{pattern} & \opt{struct} & Prefix identifying subdirectories of a
-\opt{vasp} path --- a prefix, not a glob. \\
-\opt{code} & \opt{auto} & DFT code, or \opt{auto} to detect it from the files
-present. \\
+\opt{pattern} & \opt{""} & Prefix filter on the material subdirectories;
+empty takes all of them. \\
+\opt{format} & \opt{auto} & \opt{vasp}, or \opt{auto} to detect the code from
+the files present. Those are the only two values. \\
 \opt{resolution} & \opt{32} & Longest grid axis after spectral downsampling. \\
 \opt{potcar\_dir} & \opt{null} & \file{POTCAR} library, used where the data
 ships no pseudopotentials. \\
@@ -113,8 +109,70 @@ computed potential. \\
 \end{tabular}
 \end{center}
 
-\opt{source} and \opt{train\_paths} are covered in
-Chapter~\ref{ch:data}; \opt{potcar\_dir} and its Gaussian fallback in
+\subsection{\opt{data\_paths}}
+
+\textbf{One key names the dataset, and every entry in it has the same shape:} a
+directory of subdirectories, one per material, each holding that material's
+volumetric files.
+
+\begin{lstlisting}
+data:
+  data_paths:
+    - data/vasp/structures      # structure_0000/, structure_0001/, ...
+    - data/MP                   # mp-124/, mp-81/, ...
+    - data/cache/res32          # a cache from an earlier run
+\end{lstlisting}
+
+That is what a VASP run tree looks like, what \opt{poraque-mp} writes, and what
+the cache builder produces --- so nothing has to be declared about where a path
+came from, and no key says so. Every path is pooled into one dataset.
+
+What \emph{differs} is the \textbf{content} of a material's directory, and
+content is read, not configured:
+
+\begin{center}
+\begin{tabular}{@{}lp{7.4cm}@{}}
+\toprule
+A material's directory holds & Poraqu\^e \\
+\midrule
+inputs beside the density & computes $\vext$ from them --- exactly, with a
+\file{POTCAR} or \opt{potcar\_dir} \\
+a density on its own & computes it from the structure the \file{CHGCAR} carries
+in its own header \\
+an \file{EXTCAR} already & reads it as it stands (a prepared cache) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+$\vext$ is \textbf{always computed} for the first two, never read from an
+\file{EXTCAR} that happens to sit in a run directory: at inference time there is
+no DFT run to read one from, so the input channel has to be Poraqu\^e's own
+arithmetic in both places.
+
+\file{TAUCAR} is \textbf{optional, per material}. A directory that has one joins
+the \opt{chg2tau} set; one that does not still joins \opt{ext2chg} and is simply
+absent from the other. Nothing is declared for it, and a task with no target
+anywhere is skipped with a message rather than failing the run --- which is what
+makes \opt{type: all} sensible on a Materials Project download, where no $\tau$
+exists.
+
+A path holding a \textbf{single} material's run directly --- its files at the
+top level rather than one level down --- is read as that one material, so a lone
+calculation needs no wrapper directory.
+
+\begin{pnote}
+Three keys used to answer this one question: \opt{train\_paths} (a list),
+\opt{root} (a single path used when the list was empty) and \opt{source} (which
+layout each path was). All three were removed on 2026-08-31. The last is the one
+that mattered: it asked the \emph{config} to declare something the
+\emph{directory} already answers, which made ``a VASP run'' and ``a Materials
+Project download'' two different things to write down when they are the same
+thing on disk. A config using any of them now fails and is told what to write
+instead.
+\end{pnote}
+
+Chapter~\ref{ch:data} covers what each kind of directory contains;
+\opt{potcar\_dir} and its Gaussian fallback are in
 Section~\ref{sec:mp-potcar-dir}, which is the setting to read before quoting
 any number from a run on archive data.
 
@@ -315,9 +373,10 @@ constant rate. \\
 \opt{grad\_clip} & \opt{1.0} & Global gradient-norm clip; \opt{0} disables. \\
 \opt{seed} & \opt{0} & Weight initialisation, batch order and fold shuffling. \\
 \opt{device} & \opt{auto} & \opt{auto}, \opt{cuda}, \opt{mps} or \opt{cpu}. \\
-\opt{loss} & \opt{relative\_l2} & \opt{relative\_l2} or \opt{sobolev}. \\
-\opt{sobolev\_weight} & \opt{0.1} & Gradient-term weight when
-\opt{loss: sobolev}. \\
+\opt{loss} & \opt{relative\_l2} & \opt{absolute\_l2}, \opt{relative\_l2},
+\opt{absolute\_h1} or \opt{relative\_h1}. \\
+\opt{sobolev\_weight} & \opt{0.1} & Gradient-term weight for the two
+\opt{h1} losses. \\
 \opt{physics} & all \opt{0.0} & Physics-informed loss weights; see
 below. \\
 \bottomrule
@@ -421,19 +480,39 @@ however large this is set. The training log prints the buckets it found.
 
 \subsection{\opt{loss} and \opt{sobolev\_weight}}
 
-\opt{relative\_l2} normalises the error per sample, so materials whose fields
-differ by orders of magnitude contribute equally and the reported value reads
-directly as a fraction.
+Four objectives, on two named axes:
 
-\opt{sobolev} adds a relative gradient term weighted by \opt{sobolev\_weight}.
-Worth enabling when the derivative matters --- $\tauvW$ depends on
-$\nabla\rho$, so gradient noise is amplified in low-density regions.
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\opt{loss} & normalised per sample & gradients in the objective \\
+\midrule
+\opt{absolute\_l2} & no  & no  \\
+\opt{relative\_l2} & yes & no  \\
+\opt{absolute\_h1} & no  & yes \\
+\opt{relative\_h1} & yes & yes \\
+\bottomrule
+\end{tabular}
+\end{center}
 
-\textbf{The validation column follows the objective.} With \opt{loss: sobolev}
-the progress table reports \opt{val rel H1} rather than \opt{val rel L2}, and
-the number behind it is the objective's own data term evaluated on the held-out
-set --- \opt{rel L2} plus \opt{sobolev\_weight} times the relative $L^2$ of the
-gradient:
+\textbf{Relative} divides each sample's error by its own target norm, so
+materials whose fields differ by orders of magnitude contribute equally and the
+value reads directly as a fraction. \textbf{Absolute} does not, so every
+\emph{voxel} counts equally and a denser system contributes proportionally more
+gradient --- right for a set whose materials are genuinely comparable in
+magnitude, and usually wrong for a heterogeneous one, which is why
+\opt{relative\_l2} is the default.
+
+\textbf{H1} adds \opt{sobolev\_weight} times the same error on the spatial
+gradients. Worth enabling when the derivative matters --- $\tauvW$ depends on
+$\nabla\rho$, so gradient noise is amplified in low-density regions. Both
+halves are taken in the \emph{same} norm, so the weight is a pure ratio between
+values and derivatives rather than also absorbing a change of scale.
+
+\textbf{The validation column follows the objective.} The progress table
+reports \opt{val abs L2}, \opt{val rel L2}, \opt{val abs H1} or
+\opt{val rel H1} --- whichever is running --- and the number behind it is the
+objective's own data term evaluated on the held-out set:
 
 \begin{lstlisting}
     train loss: mean PhysicsInformedLoss per batch   |   val rel H1: held-out error, physical units
@@ -443,13 +522,19 @@ gradient:
 \end{lstlisting}
 
 That is not only a label. Early stopping and the checkpoint are decided on this
-number, and while it read \opt{val rel L2} a Sobolev run was selecting the model
-that minimised a functional it was not training on. An $H^1$ error is a larger
-number than the $L^2$ of the same prediction, so the two columns are not
-comparable --- which is why the \emph{per-structure table at the end of a run
-reports relative $L^2$ whatever the objective was}. That is the number to
-quote, and the one that lets two runs with different losses be put side by
-side.
+number, and while it read \opt{val rel L2} regardless a gradient-constrained run
+was selecting the model that minimised a functional it was not training on. The
+four are not comparable with each other --- which is why the
+\emph{per-structure table at the end of a run reports relative $L^2$ whatever
+the objective was}. That is the number to quote, and the one that lets two runs
+be put side by side.
+
+\begin{pnote}
+\opt{loss: sobolev} was renamed on 2026-08-31. It named the gradient term and
+left the norm implicit, and offered no unnormalised form at all. It now raises,
+naming \opt{relative\_h1} (what it did) and \opt{absolute\_h1} as its
+replacements.
+\end{pnote}
 
 \subsection{\opt{physics}}
 
@@ -531,7 +616,7 @@ neither smaller nor easier to read back.
 \begin{description}
   \item[The loss curve] is one row per epoch: \opt{epoch}, \opt{train\_loss},
     and the validation column \emph{named for the norm it holds}
-    (\opt{val\_rel\_l2}, or \opt{val\_rel\_h1} for a \opt{loss: sobolev} run).
+    (\opt{val\_rel\_l2}, or \opt{val\_abs\_h1} for an \opt{absolute\_h1} run).
     Epochs on which validation was not measured leave that cell \textbf{empty}
     rather than interpolated: filling them would put points in the file the run
     never measured. There is no physics column --- \opt{train\_loss} is the

@@ -85,10 +85,66 @@ a fresh initialisation. \\
 \opt{learning\_rate} & \opt{1e-05} & Replaces \opt{training.learning\_rate} for
 this run. \\
 \opt{freeze\_lifting\_} \opt{layers} & \opt{false} & Hold the input lifting
-path fixed. \\
+path fixed. Ignored under \opt{use\_lora}. \\
+\opt{use\_lora} & \opt{false} & Freeze everything and learn a low-rank
+correction; see below. \\
+\opt{lora\_rank} & \opt{8} & $r$; cost and capacity are both linear in it. \\
+\opt{lora\_alpha} & \opt{16.0} & The update is scaled by
+\opt{lora\_alpha / lora\_rank}. \\
+\opt{lora\_dropout} & \opt{0.0} & Dropout on the adapter's input. \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\section{LoRA --- adapting a model that does not fit}
+
+\opt{use\_lora: true} freezes every trained weight and learns a rank-$r$
+correction beside the model's \textbf{dense ($1\times1\times1$) lifting and
+projection} convolutions:
+
+\begin{equation*}
+  W' = W + \frac{\alpha}{r}\, B A ,
+  \qquad A \in \mathbb{R}^{r \times d_{\mathrm{in}}},
+  \quad B \in \mathbb{R}^{d_{\mathrm{out}} \times r} .
+\end{equation*}
+
+On the shipped model that is \textbf{1\,320 trainable parameters against
+3\,152\,353 frozen --- 0.042\,\%}, so the optimiser state and the saved file
+shrink by three orders of magnitude and the fine-tune fits where a full one
+does not:
+
+\begin{lstlisting}
+      LoRA             : 3 adapted layer(s), rank 8, alpha 16
+      trainable        : 1,320 of 3,153,673 parameters (0.042%); the rest is frozen
+      NOTE: the checkpoint will hold the ADAPTER only and name this base;
+            it cannot be loaded without poraque_models.pfno.
+\end{lstlisting}
+
+$B$ starts at \textbf{zero}, so $BA = 0$ and the adapted model \emph{is} the
+base model until the first optimiser step --- a fine-tune that began anywhere
+else would already have discarded some of what it set out to adapt.
+
+\begin{pwarn}
+\textbf{The spectral weights are not adapted.} They hold ${\sim}99.8\,\%$ of
+the parameters and look like the obvious target, but a rank-$r$ factorisation
+of a 5-index complex kernel is a \emph{choice of which axes to pair} rather
+than one decomposition, and adapting them would also stop being cheap.
+
+What LoRA says here is precise: \emph{keep the learned operator, re-fit how
+fields enter and leave it.} A family whose operator genuinely differs from the
+base model's --- not merely its input and output scales --- is out of its
+reach, and the honest answer there is a full fine-tune. It buys memory, not
+generality.
+\end{pwarn}
+
+\begin{pnote}
+\textbf{A LoRA checkpoint is not self-contained.} It holds the adapter and
+records where its base lives, which is the whole economy of the method --- the
+frozen tensors are already on disk in the model being adapted. Move or delete
+that base and the fine-tune cannot be loaded; the error says so and names the
+file. \opt{freeze\_lifting\_layers} is ignored under LoRA, which freezes
+everything anyway, and the run says so rather than appearing to apply both.
+\end{pnote}
 
 The fine-tuning learning rate is much smaller by design: the base rate would
 walk the weights away from the solution being adapted before a small dataset

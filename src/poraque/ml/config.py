@@ -97,6 +97,37 @@ class TaskConfig:
                 else [str(self.type)])
 
 
+#: Keys that were removed, and what replaced them. Named in the error so a
+#: config written against the older schema is corrected rather than merely
+#: rejected.
+#:
+#: They went when the data schema was unified (2026-08-31). ``data_paths`` is
+#: the single list; every entry is a directory of per-material subdirectories,
+#: and what a material holds is read rather than declared. ``source`` and
+#: ``code`` were two keys for one question and are now one, ``format``, whose
+#: only values are ``"vasp"`` and ``"auto"`` -- the dataset *layouts* it used
+#: to select between no longer exist.
+RETIRED_KEYS = {
+    "code": "format ('vasp' or 'auto')",
+    "train_paths": "data_paths",
+    "root": "data_paths (a list; the single-path fallback is gone)",
+    "source": "nothing -- the layout of every path is detected, and every "
+              "path now has the same layout",
+}
+
+#: Assumed when ``data.data_paths`` is unset: this project's own bulk cells.
+#:
+#: It names the *structures* subdirectory rather than ``data/vasp`` itself,
+#: because a material is one subdirectory of a listed path and no deeper. The
+#: Pt dataset keeps its bulk cells in ``data/vasp/structures`` and its isolated
+#: atoms in ``data/vasp/isolated_atoms``, and that separation is the point: a
+#: single atom in a 10 A box is the *reference* for the delta-density baseline
+#: and the PAW records, never a training sample. A default naming the parent
+#: would either find nothing or, if the walk were deepened, quietly train on
+#: the atom.
+DEFAULT_DATA_PATH = "data/vasp/structures"
+
+
 @dataclass
 class DataConfig:
     r"""
@@ -104,81 +135,82 @@ class DataConfig:
 
     Attributes
     ----------
-    train_paths : list of str or None
-        The dataset, as a **list of directories**, which may mix layouts::
+    data_paths : list of str
+        The dataset, as a **list of directories** — the only way a dataset is
+        named, whatever produced it::
 
             data:
-              train_paths:
-                - data/vasp             # local DFT runs
-                - data/MP/chgcar        # a Materials Project download
+              data_paths:
+                - data/vasp/structures      # local DFT runs
+                - data/MP                   # a Materials Project download
+                - data/cache/res32          # a cache from an earlier run
 
-        Each entry is auto-detected (see ``source``) and everything found is
-        pooled into one training set. ``null`` falls back to ``root``, so a
-        config written before this key existed keeps working unchanged.
+        **Every entry has the same shape: a directory of subdirectories, one
+        per material, each holding that material's volumetric files.** That is
+        what a VASP run tree looks like, what ``poraque-mp`` writes, and what
+        the cache builder produces, so one key describes all three and there is
+        nothing to declare about where a path came from. What differs between
+        them is the *content* of a material's directory, and content is read,
+        not configured:
+
+        =====================  ==========================================
+        A material holds       Poraquê
+        =====================  ==========================================
+        inputs + ``CHGCAR``    computes :math:`V_{\rm ext}` from the inputs
+        ``CHGCAR`` alone       computes it from the density's own header
+        ``EXTCAR`` + fields    reads them as they stand
+        =====================  ==========================================
+
+        ``TAUCAR`` is **optional in every case and per material**. A directory
+        that has one contributes to ``chg2tau``; one that does not still
+        contributes to ``ext2chg``, and is simply absent from the other task's
+        set. Nothing has to be declared, and no run is refused for a
+        :math:`\tau` that was never going to exist — the Materials Project
+        publishes none at all.
+
+        A path holding a **single** material's run directly (its inputs at the
+        top level rather than one level down) is read as that one material, so
+        a single calculation needs no wrapper directory.
 
         .. warning::
 
-           Mixing a calculation archive with a bulk density archive mixes two
-           *definitions* of the external potential — the tabulated local
-           pseudopotential and the Gaussian pseudo-ion model, which differ by
-           roughly 0.1 relative :math:`L_2`. The run warns when it happens. It
-           is a legitimate trade (far more data, a fuzzier input) but never a
-           good accident.
-    root : str
-        Single dataset directory, used when ``train_paths`` is ``null``.
-
-        The default points at the *structures* subdirectory rather than at
-        ``data/vasp`` itself, because a calculation source recognises run
-        directories in a path or one level below it and no further. The Pt
-        dataset keeps its bulk cells in ``data/vasp/structures`` and its
-        isolated atoms in ``data/vasp/isolated_atoms``, one directory per
-        element, and that separation is the point: a single atom in a 10 Å box
-        is the *reference* for the baseline and the PAW records, never a
-        training sample. Pointing ``root`` at the parent would either find
-        nothing or, if the walk were deepened, quietly train on the atom.
-    source : str
-        Layout of each path, or ``"auto"`` (the default) to detect it.
-
-        ``"vasp"`` is the classic layout: one calculation directory per
-        material, selected by ``pattern``, each holding the inputs and
-        volumetric outputs of a run. The external potential is computed from
-        those inputs; ``TAUCAR`` is used where a run wrote one and simply not
-        offered where it did not.
-
-        ``"bulk"`` is an archive of standalone ``CHGCAR`` files, compressed or
-        not — what the Materials Project ships. The potential is built from the
-        structure each density carries in its own header, exactly when
-        ``potcar_dir`` supplies the pseudopotentials and by the Gaussian
-        pseudo-ion model otherwise. ``chg2tau`` is not trainable on such an
-        archive: no public archive publishes :math:`\\tau`.
-
-        ``"prepared"`` is a directory of per-material ``EXTCAR``/``CHGCAR``/
-        ``TAUCAR`` folders — a cache from an earlier run, read as it stands.
-
-        A single name applies to every path; pass a list to set them
-        individually.
+           Mixing a directory of full calculations with one of standalone
+           densities mixes two *definitions* of the external potential — the
+           tabulated local pseudopotential and the Gaussian pseudo-ion model,
+           which differ by roughly 0.1 relative :math:`L_2`. The run warns when
+           it happens. It is a legitimate trade (far more data, a fuzzier
+           input) but never a good accident, and ``potcar_dir`` removes it
+           entirely by giving the standalone densities the same tabulated
+           construction.
     cache : str
         Where spectrally downsampled copies are written.
     pattern : str
-        Prefix identifying calculation folders inside a ``vasp`` path. Ignored
-        by the other layouts, which have no subdirectories to select.
+        Prefix filter on the material subdirectories of every path. **Empty by
+        default, which takes all of them** — the only sensible default once one
+        key names every kind of dataset: ``"structure"`` would have excluded
+        every ``mp-124/`` in a Materials Project download, silently, leaving a
+        run to report a dataset of nothing.
 
         It is a **prefix, not a glob**: matching is
         ``os.path.basename(child).startswith(pattern)``, so ``"structure"``
-        selects ``structure_0042`` and an empty string selects every
-        subdirectory.
+        selects ``structure_0042`` and ``""`` selects everything. Set it to
+        exclude a sibling directory that must not be trained on.
 
-        The default names this project's own layout
-        (``data/vasp/structures/structure_00NN``). It was ``"struct"`` until
-        2026-08-28 — a prefix of the current one, so it selected exactly the
-        same directories, which is why the two are interchangeable on this
-        data and why the change is safe. It is **part of the cache
-        fingerprint** even so: two prefixes that happen to agree on one dataset
-        need not agree on the next, and a cache that silently held a different
-        set of materials than the config describes is the failure the
+        It is **part of the cache fingerprint**: a cache silently holding a
+        different set of materials than the config describes is the failure the
         fingerprint exists to prevent.
-    code : str
-        DFT code name, or ``"auto"`` to detect it.
+    format : str
+        ``"vasp"``, or ``"auto"`` (the default) to detect the code from the
+        files present. Those are the only two values
+        (:data:`~poraque.data.sources.DATA_FORMATS`).
+
+        Until 2026-08-31 this key — then spelled ``source``, beside a separate
+        ``code`` — also chose between three dataset *layouts*: ``"bulk"`` for
+        an archive of standalone densities, ``"prepared"`` for a cache of
+        already-built fields. Both are gone. There is one layout, a directory
+        of per-material subdirectories, and what a material's directory holds
+        is read rather than declared, so the only thing left to name is the
+        code that wrote the files.
     potcar_dir : str or None
         A ``POTCAR`` **library** — one subdirectory per pseudopotential, as
         VASP ships them (``<potcar_dir>/Ag/POTCAR``, optionally ``.gz``/``.Z``;
@@ -433,12 +465,10 @@ class DataConfig:
         remove the level.
     """
 
-    train_paths: list = None
-    root: str = "data/vasp/structures"
-    source: str = "auto"
+    data_paths: list = None
     cache: str = "data/cache"
-    pattern: str = "structure"
-    code: str = "auto"
+    pattern: str = ""
+    format: str = "auto"
     resolution: int = 32
     potcar_dir: str = None
     sigma: float = None
@@ -456,33 +486,22 @@ class DataConfig:
 
     def paths(self):
         """
-        The directories to train on, however they were specified.
+        The directories to train on.
 
-        ``train_paths`` wins when it is set; ``root`` is the single-path
-        fallback that keeps every config written before it existed working.
+        A bare string is accepted and wrapped, because a single-path dataset is
+        the common case and writing ``data_paths: data/vasp/structures``
+        without the list dashes is the obvious mistake to make. It means
+        exactly what the one-item list means, so refusing it would be pedantry.
 
         Returns
         -------
         list of str
         """
-        if not self.train_paths:
-            return [self.root]
-        if isinstance(self.train_paths, str):
-            return [self.train_paths]
-        return [str(path) for path in self.train_paths]
-
-    def formats(self):
-        """
-        The layout of each path: one name, one per path, or ``"auto"``.
-
-        Returns
-        -------
-        str or list of str
-            Handed straight to :func:`~poraque.data.sources.resolve_source`.
-        """
-        if isinstance(self.source, (list, tuple)):
-            return [str(name) for name in self.source]
-        return str(self.source)
+        if not self.data_paths:
+            return [DEFAULT_DATA_PATH]
+        if isinstance(self.data_paths, str):
+            return [self.data_paths]
+        return [str(path) for path in self.data_paths]
 
 
 #: The learnable activations ``model.kan_setup.variant`` chooses between. Each
@@ -1060,15 +1079,36 @@ class TrainingConfig_:
     device : str
         ``"auto"`` (CUDA, then Apple MPS, then CPU), or an explicit backend.
     loss : str
-        ``"relative_l2"`` or ``"sobolev"``.
+        The data-fidelity objective. Four names, on two named axes:
 
-        The progress table names the norm it is watching, so the two are told
-        apart at a glance: ``val rel L2`` for the first, ``val rel H1`` for the
-        second, where the ``H1`` number is the objective's own data term on the
-        held-out set. It is the number early stopping and the checkpoint are
-        decided on, which is why it has to be the one the run is minimising.
-        The per-structure table at the end of a run reports relative
-        :math:`L^2` whatever the objective was, so two runs remain comparable.
+        ==================  ==========  ==========================
+        ``loss``            normalised  gradients in the objective
+        ==================  ==========  ==========================
+        ``absolute_l2``     no          no
+        ``relative_l2``     yes         no
+        ``absolute_h1``     no          yes
+        ``relative_h1``     yes         yes
+        ==================  ==========  ==========================
+
+        **Relative** divides each sample's error by its own target norm, so
+        every material counts equally and the number reads as a fraction;
+        **absolute** does not, so every voxel counts equally and a dense system
+        contributes proportionally more gradient. **H1** adds
+        ``sobolev_weight`` times the same error on the spatial gradients.
+
+        Both halves of an :math:`H^1` are taken in the same norm, so the weight
+        is a pure ratio between values and derivatives rather than also
+        absorbing a change of scale.
+
+        The progress table names the norm it is watching --- ``val rel L2``,
+        ``val abs H1`` and so on --- and the number behind it is the
+        objective's own data term on the held-out set. It has to be, because
+        early stopping and the checkpoint are decided on it. The per-structure
+        table at the end of a run reports relative :math:`L^2` whatever the
+        objective was, so two runs remain comparable.
+
+        Replaces ``"sobolev"`` (2026-08-31), which named the gradient term and
+        left the norm implicit, and offered no unnormalised form at all.
     optimizer : str
         ``adamw`` (default), ``adam`` or ``sgd``.
 
@@ -1088,11 +1128,12 @@ class TrainingConfig_:
 
         ``sgd`` (momentum 0.9) is the non-adaptive control.
     sobolev_weight : float
-        Weight of the gradient term when ``loss: sobolev``. It also scales the
-        reported ``val rel H1``, which is
-        ``rel L2 + sobolev_weight * relL2(grad)`` -- at zero the objective and
-        the column are both a plain relative :math:`L^2`, and the log says so
-        rather than claiming an :math:`H^1` the run is not measuring.
+        Weight of the gradient term for the two :math:`H^1` losses; ignored by
+        the two :math:`L^2` ones. It scales the reported column too, which is
+        ``<L2 term> + sobolev_weight * <L2 of the gradient>`` in the same
+        norm -- so at zero the objective and the column are both a plain
+        :math:`L^2`, and the log says so rather than claiming an :math:`H^1`
+        the run is not measuring.
     physics : dict
         Weights of the physics-informed terms for the **neural operator**. All
         default to zero, so the objective is the supervised baseline until one
@@ -1631,12 +1672,52 @@ class FineTuningConfig:
         The projection head is deliberately *not* frozen: it decodes to
         physical units, which is exactly what differs between material
         families.
+
+        Ignored when ``use_lora`` is on, which freezes everything.
+    use_lora : bool
+        **Low-Rank Adaptation**: freeze every trained weight and learn a
+        rank-:math:`r` correction :math:`W' = W + \frac{\alpha}{r}BA` beside
+        the dense (:math:`1\times1\times1`) lifting and projection
+        convolutions.
+
+        On this project's shipped model that is **1 320 trainable parameters
+        against 3 152 353 frozen — 0.042 %** — so the optimiser state and the
+        saved file shrink by three orders of magnitude (12.0 MB to 7.6 kB) and
+        the fine-tune fits where a full one does not.
+
+        :math:`B` starts at zero, so the adapted model *is* the base model
+        until the first step: a fine-tune that began anywhere else would have
+        discarded some of what it set out to adapt.
+
+        .. warning::
+
+           The spectral weights are **not** adapted. They hold ~99.8 % of the
+           parameters, but a rank-:math:`r` factorisation of a 5-index complex
+           kernel is a choice of which axes to pair rather than one
+           decomposition, and adapting them would also stop being cheap. What
+           LoRA says here is *keep the learned operator, re-fit how fields
+           enter and leave it* — so a family whose operator genuinely differs
+           is out of its reach, and the honest answer there is a full
+           fine-tune. It buys memory, not generality.
+    lora_rank : int
+        :math:`r`, the rank of the correction. Cost and capacity are both
+        linear in it.
+    lora_alpha : float
+        Scaling numerator; the update is multiplied by ``lora_alpha /
+        lora_rank``, which is what keeps a learning rate roughly transferable
+        between ranks.
+    lora_dropout : float
+        Dropout on the adapter's input. Off by default.
     """
 
     enable: bool = False
     pretrained_checkpoint: str = "models/poraque_models.pfno"
     learning_rate: float = 1e-5
     freeze_lifting_layers: bool = False
+    use_lora: bool = False
+    lora_rank: int = 8
+    lora_alpha: float = 16.0
+    lora_dropout: float = 0.0
 
 
 @dataclass
@@ -1729,9 +1810,16 @@ class TrainingConfig:
             valid = {f.name for f in fields(section_class)}
             bad = sorted(set(values) - valid)
             if bad:
+                # A key that was removed rather than never existing gets its
+                # replacement named. "Unknown key: root" beside a list of
+                # twenty valid ones says the config is wrong; it does not say
+                # what to write instead, and this one has a precise answer.
+                retired = [f"'{key}' -> {RETIRED_KEYS[key]}"
+                           for key in bad if key in RETIRED_KEYS]
                 raise ValueError(
                     f"Unknown key(s) in section '{name}': {bad}. "
-                    f"Valid keys: {sorted(valid)}."
+                    + (f"Replaced: {'; '.join(retired)}. " if retired else "")
+                    + f"Valid keys: {sorted(valid)}."
                 )
             sections[name] = section_class(**values)
 
@@ -2058,8 +2146,8 @@ class TrainingConfig:
           type = all
           name = poraque_models
         data:
-          train_paths = null
-          root        = data/vasp
+          data_paths = null
+          cache      = data/cache
           ...
         """
         lines = []

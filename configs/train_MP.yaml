@@ -13,9 +13,10 @@ task:
   name: mp_ag_au_pt             # names models/<name>/ and everything inside it
 
 data:
-  train_paths:
-    - data/MP/Pt-Pd-Ni          # a poraque-mp download: one mp-<id>/ directory per
-                                #   material, auto-detected as a bulk archive
+  data_paths:                   # one entry per dataset root; each holds one subdirectory
+                                #   per material. Nothing here says "this is MP data" --
+                                #   a download has the same shape as a run tree.
+    - data/MP/Pt-Pd-Ni          # mp-124/, mp-81/, ... each with a CHGCAR and no TAUCAR
   resolution: 40                # coarser than the raw grids, finer than the default; the
                                 #   downsample is exact for band-limited fields
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # essential here: an MP download ships

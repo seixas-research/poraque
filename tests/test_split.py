@@ -409,10 +409,11 @@ class TestTheValidationColumnNamesItsOwnNorm:
     what makes two runs comparable at all.
     """
 
-    def _sobolev(self, weight=0.1):
+    def _objective(self, name="relative_h1", weight=0.1):
         from poraque.ml.losses import PhysicsInformedLoss
 
-        return PhysicsInformedLoss(task="chg2tau", sobolev_weight=weight)
+        return PhysicsInformedLoss(task="chg2tau", loss=name,
+                                   sobolev_weight=weight)
 
     def test_a_plain_run_still_says_rel_l2(self, toy):
         lines = []
@@ -421,22 +422,39 @@ class TestTheValidationColumnNamesItsOwnNorm:
         assert history["val_metric"] == "rel L2"
         assert "val rel L2" in next(line for line in lines if "epoch" in line)
 
-    def test_a_sobolev_run_says_rel_h1(self, toy):
+    @pytest.mark.parametrize("name,label", (
+        ("absolute_l2", "abs L2"),
+        ("relative_l2", "rel L2"),
+        ("absolute_h1", "abs H1"),
+        ("relative_h1", "rel H1"),
+    ))
+    def test_each_objective_names_its_own_norm(self, toy, name, label):
         lines = []
         history = _train_toy(toy, epochs=2, eval_every=1, validate=True,
-                             log=lines.append, loss=self._sobolev())
-        assert history["val_metric"] == "rel H1"
+                             log=lines.append,
+                             loss=self._objective(name))
+
+        assert history["val_metric"] == label
         header = next(line for line in lines if "epoch" in line)
-        assert "val rel H1" in header and "val rel L2" not in header
+        assert f"val {label}" in header
 
     def test_the_legend_says_what_the_h1_is_made_of(self, toy):
         """A reader who has never seen the column needs the definition once."""
         lines = []
         _train_toy(toy, epochs=1, eval_every=1, validate=True,
-                   log=lines.append, loss=self._sobolev(weight=0.25))
+                   log=lines.append,
+                   loss=self._objective("relative_h1", weight=0.25))
         legend = " ".join(lines)
-        assert "rel L2 + 0.25 x" in legend
+        assert "rel H1 = rel L2 + 0.25 x" in legend
         assert "reports plain rel L2" in legend
+
+    def test_an_absolute_h1_says_absolute_in_its_legend(self, toy):
+        lines = []
+        _train_toy(toy, epochs=1, eval_every=1, validate=True,
+                   log=lines.append,
+                   loss=self._objective("absolute_h1", weight=0.5))
+        legend = " ".join(lines)
+        assert "abs H1 = abs L2 + 0.5 x the absolute L2 of the gradient" in legend
 
     def test_the_number_is_not_the_l2_relabelled(self, toy):
         """
@@ -447,7 +465,8 @@ class TestTheValidationColumnNamesItsOwnNorm:
         plain = _train_toy(toy, epochs=2, eval_every=1, validate=True,
                            verbose=False)
         sobolev = _train_toy(toy, epochs=2, eval_every=1, validate=True,
-                             verbose=False, loss=self._sobolev(weight=0.5))
+                             verbose=False,
+                             loss=self._objective("relative_h1", weight=0.5))
         assert sobolev["val_error"][-1] > plain["val_error"][-1]
 
     def test_it_is_the_objective_evaluated_on_the_held_out_set(self, toy):
@@ -457,19 +476,26 @@ class TestTheValidationColumnNamesItsOwnNorm:
         """
         import torch
 
-        from poraque.ml.losses import SobolevLoss, relative_h1_error
+        from poraque.ml.losses import DATA_LOSSES, build_data_loss, data_error
 
         torch.manual_seed(0)
         prediction = torch.randn(2, 1, 8, 8, 8)
         target = torch.randn(2, 1, 8, 8, 8)
         cell = torch.eye(3).expand(2, 3, 3) * 5.0
 
-        per_sample = relative_h1_error(prediction, target, cell, weight=0.3)
-        assert per_sample.shape == (2,)
-        assert float(per_sample.mean()) == pytest.approx(
-            float(SobolevLoss(0.3)(prediction, target, cell)), rel=1e-5)
+        for name in DATA_LOSSES:
+            objective = build_data_loss(name, sobolev_weight=0.3)
+            reduced = (objective(prediction, target, cell)
+                       if DATA_LOSSES[name]["gradient"]
+                       else objective(prediction, target))
+            per_sample = data_error(prediction, target, cell, loss=name,
+                                    sobolev_weight=0.3)
 
-    def test_zero_weight_is_exactly_the_l2(self, toy):
+            assert per_sample.shape == (2,), name
+            assert float(per_sample.mean()) == pytest.approx(
+                float(reduced), rel=1e-5), name
+
+    def test_zero_weight_is_exactly_the_l2_number(self, toy):
         """
         `sobolev_weight: 0` is a relative L2 by construction, and the label
         follows the weight rather than the config keyword — so a run that asks
@@ -478,19 +504,24 @@ class TestTheValidationColumnNamesItsOwnNorm:
         """
         import torch
 
-        from poraque.ml.losses import relative_error, relative_h1_error
+        from poraque.ml.losses import data_error, relative_error
 
         torch.manual_seed(0)
         prediction = torch.randn(2, 1, 6, 6, 6)
         target = torch.randn(2, 1, 6, 6, 6)
         cell = torch.eye(3).expand(2, 3, 3) * 5.0
         assert torch.allclose(
-            relative_h1_error(prediction, target, cell, weight=0.0),
+            data_error(prediction, target, cell, loss="relative_h1",
+                       sobolev_weight=0.0),
             relative_error(prediction, target))
 
+        # The *label* still says H1: the objective was asked for, and a run
+        # that weights the gradient at nothing has chosen a degenerate H1
+        # rather than an L2. Renaming it would hide the setting.
         history = _train_toy(toy, epochs=1, eval_every=1, validate=True,
-                             verbose=False, loss=self._sobolev(weight=0.0))
-        assert history["val_metric"] == "rel L2"
+                             verbose=False,
+                             loss=self._objective("relative_h1", weight=0.0))
+        assert history["val_metric"] == "rel H1"
 
     def test_the_figure_labels_the_axis_it_actually_plotted(self, toy, tmp_path):
         """
@@ -502,7 +533,7 @@ class TestTheValidationColumnNamesItsOwnNorm:
 
         report = TrainingReport(str(tmp_path))
         history = _train_toy(toy, epochs=2, eval_every=1, validate=True,
-                             verbose=False, loss=self._sobolev())
+                             verbose=False, loss=self._objective())
         report.loss_curves(history, name="sobolev")
 
         import matplotlib.pyplot as plt

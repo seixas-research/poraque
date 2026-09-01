@@ -209,7 +209,7 @@ that writes hundreds of megabytes puts them where you ran it. Files stay
 gzipped; Poraquê reads compressed volumetric files in place.
 
 A download is **one directory per material, named by its id** — the shape of a
-VASP run, and the shape `data.train_paths` already reads:
+VASP run, and the shape `data.data_paths` already reads:
 
 ```text
 data/MP/
@@ -232,18 +232,22 @@ and the external potential stays *computed* — `mp.json` is what keeps the
 directory from being mistaken for a VASP run now that it looks like one.
 `--no-vasp-inputs` skips the three.
 
-Then train. `train_paths` is a list, so a download can be trained on alone or
-beside your own runs:
+Then train. **`data_paths` is the only key that names a dataset**, and a
+download goes in it exactly as a run tree does — every entry is a directory of
+per-material subdirectories, and nothing says which is which:
 
 ```yaml
 task: ext2chg              # MP publishes no tau, so chg2tau is not trainable
 data:
-  train_paths:
-    - data/MP              # a bulk archive of standalone CHGCARs
-    - data/vasp            # optional: your own calculation directories
+  data_paths:
+    - data/MP              # mp-124/, mp-81/, ...
+    - data/vasp/structures # optional: your own runs, pooled into the same set
   potcar_dir: /opt/vasp/potpaw_PBE     # see below
   resolution: 32
 ```
+
+`TAUCAR` is optional per material, so `type: all` on a mixture trains `ext2chg`
+on everything and `chg2tau` on whichever materials have a τ.
 
 ```bash
 poraque-train --config configs/train_materialsproject.yaml

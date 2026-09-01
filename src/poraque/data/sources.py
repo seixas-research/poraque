@@ -132,30 +132,27 @@ def _is_density_file(entry, prefixes=BULK_PREFIXES):
     return not os.path.splitext(stem)[1]
 
 
-def _lone_density(directory, prefixes=BULK_PREFIXES):
-    """
-    The single density file in a per-material directory, or ``None``.
+def _material_density(directory, prefixes=BULK_PREFIXES):
+    r"""
+    Path to this material's density, or ``None``.
 
-    This is what distinguishes ``data/MP/mp-124/CHGCAR.gz`` — one material,
-    named by its directory — from ``data/MP/chgcar/``, the flat archive that
-    holds every material at once. **Exactly one** density is the test: a
-    directory with two is not one material's, whatever it is, and guessing
-    which of them to train on is not a decision to make silently.
+    **A material is a directory with a density in it.** The density carries the
+    grid every other field is placed on and the structure they are all built
+    at, so nothing downstream can do anything without one; inputs beside it are
+    a bonus, not the qualification. A directory holding a ``POSCAR`` and no
+    ``CHGCAR`` is a calculation that has not run.
 
-    A calculation directory is excluded outright. It also holds one density,
-    but it holds the *inputs* as well, and reading it here would build the
-    external potential from a model when the ``POTCAR`` to do it exactly is
-    sitting beside the file. An archive entry is *not* excluded, whatever
-    input files ``poraque-mp`` reconstructed into it — those are for VASP, not
-    for training, and only the density is recorded.
+    Whichever storage the directory uses: a ``CHGCAR`` — compressed or not,
+    named exactly or with the material id appended — or ``fields.h5::CHGCAR``.
+    **Exactly one** is the test: a directory with two is not one material's,
+    whatever it is, and choosing between them silently is not a decision to
+    make on the reader's behalf.
 
     Returns
     -------
     str or None
-        Path to the density, in whichever storage layout the directory uses:
-        a ``CHGCAR`` (compressed or not) or ``fields.h5::CHGCAR``.
     """
-    if not os.path.isdir(directory) or _is_calculation_directory(directory):
+    if not os.path.isdir(directory):
         return None
 
     entries = [entry for entry in sorted(os.listdir(directory))
@@ -199,41 +196,16 @@ def _hdf5_store(directory):
     return None
 
 
-def _is_archive_entry(directory):
-    r"""
-    Whether ``directory`` is one entry of a published density archive.
-
-    ``poraque-mp`` reconstructs a ``POSCAR``, ``INCAR`` and ``KPOINTS`` beside
-    each downloaded density, so the directory can be handed straight to VASP.
-    That makes it indistinguishable *by its files* from a calculation
-    directory — the marker is what tells them apart, and it is written by the
-    thing that knows.
-
-    The distinction is not bookkeeping. Read as a calculation, an archive entry
-    loses two things at once: the valence charges
-    :class:`BulkDensitySource` infers from the densities, which are the only
-    source of :math:`Z^{\rm val}` when no ``POTCAR`` is present; and the
-    reconstructed ``POSCAR`` becomes a *training input* rather than a
-    convenience — and it was written from the density's own header, so a
-    pipeline reading it would be taking the long way round to the same
-    geometry while pretending it came from somewhere independent.
-    """
-    from .materials_project import ENTRY_MARKER
-
-    return os.path.isfile(os.path.join(directory, ENTRY_MARKER))
-
-
 def _is_calculation_directory(path):
     """
     Whether ``path`` holds the input files of a DFT run, in any code.
 
-    An archive entry is excluded however many input files were reconstructed
-    into it; see :func:`_is_archive_entry`.
+    No longer what identifies a *material* — :func:`_material_density` is —
+    but still what says a material's inputs are there to build the external
+    potential from, rather than only its density.
     """
-    if not any(os.path.exists(os.path.join(path, name))
-               for name in calculation_markers()):
-        return False
-    return not _is_archive_entry(path)
+    return any(os.path.exists(os.path.join(path, name))
+               for name in calculation_markers())
 
 
 def _subdirectories(root):
@@ -270,6 +242,11 @@ class MaterialSource(ABC):
 
     def __init__(self, root, **options):
         self.root = str(root)
+        # Seeded from the explicit option, resolved lazily otherwise -- see
+        # `charges`. On the base class because every source builds the same
+        # potential from the same numbers.
+        self._charges = (dict(options["charges"])
+                         if options.get("charges") else None)
         self.options = dict(options)
 
     def __repr__(self):
@@ -412,6 +389,80 @@ class MaterialSource(ABC):
         return field.smooth(width, self.options.get("blur_method", "spectral"))
 
     # -- POTCAR library -------------------------------------------------- #
+    @property
+    def charges(self):
+        r"""
+        ``{element: Z_val}`` in force for this source.
+
+        Three answers, in order, and the third is what makes the schema
+        genuinely uniform:
+
+        1. an explicit ``charges`` option;
+        2. the ``ZVAL`` of each species in the ``potcar_dir`` library, which is
+           where the number actually comes from;
+        3. **inference from the densities** — a pseudopotential ``CHGCAR``
+           integrates to its cell's valence electron count, giving one linear
+           equation per material in the per-element charges, and a set with
+           more compositions than elements over-determines them.
+
+        (3) used to belong to :class:`BulkDensitySource` alone, which made the
+        same directory answerable or not depending on how it was read: a folder
+        of bare densities inferred its charges, and the identical folder with a
+        ``POSCAR`` added raised ``No valence charge for ['Si']``. Nothing about
+        the physics changed between those two, so nothing about the answer
+        should have.
+
+        Deferred rather than resolved in ``__init__``, because (2) and (3) read
+        files and a caller that only wants to enumerate the source should never
+        pay for that. (3) is reached only where a potential actually has to be
+        *modelled*: with a ``POTCAR`` or a library entry the tabulated route
+        needs no ``Z_val`` at all.
+        """
+        if self._charges is None:
+            self._charges = self._resolve_charges()
+        return self._charges
+
+    def _resolve_charges(self):
+        """Valence charges from the library where it has them, else inferred."""
+        from .mp_dataset import infer_valence_charges
+
+        records = self.discover()
+        log = self.options.get("log")
+
+        from_library = {}
+        if self.options.get("potcar_dir"):
+            from ..fields.vasp.potcar import Potcar
+            from ..fields.vasp.volumetric import read_structure_header
+
+            # Header reads only: a few hundred bytes per material.
+            elements = sorted({element for record in records
+                               for element in read_structure_header(
+                                   self.reference_file(record)).elements})
+            for element in elements:
+                try:
+                    entry = Potcar.from_library(
+                        self.options["potcar_dir"], [element],
+                        parse_tables=False)[0]
+                except (FileNotFoundError, ValueError, OSError):
+                    continue        # inference covers it below
+                from_library[element] = float(entry.zval)
+
+            if from_library and log:
+                log("      valence charges from the POTCAR library: "
+                    + ", ".join(f"{e}={z:g}"
+                                for e, z in sorted(from_library.items())))
+
+        try:
+            return infer_valence_charges(records, overrides=from_library,
+                                         log=log)
+        except ValueError:
+            # The compositions cannot determine what the library did not
+            # supply. That is only fatal if something still needs a charge,
+            # and the tabulated path does not -- so hand back what is known.
+            if from_library:
+                return from_library
+            raise
+
     def library_potcar(self, structure):
         r"""
         The ``POTCAR`` for ``structure``, assembled from ``potcar_dir``.
@@ -557,39 +608,59 @@ class CalculationSource(MaterialSource):
 
     @classmethod
     def detect(cls, root):
-        if _is_calculation_directory(root):
+        """
+        Whether ``root`` holds materials: one directly, or one per child.
+
+        Keyed on the **density**, not on a ``POSCAR``. A directory of MP
+        downloads and a directory of full VASP runs are then the same thing to
+        the reader, which is the point of there being one source class — and
+        the alternative, keying on the inputs, would refuse a density-only
+        material that the class can perfectly well read.
+        """
+        if _material_density(root) is not None:
             return True
-        return any(_is_calculation_directory(child)
+        return any(_material_density(child) is not None
                    for child in _subdirectories(root))
 
     def _reader(self, directory):
         from ..fields.io import resolve_reader
 
-        return resolve_reader(directory, self.options.get("code", "auto"))
+        return resolve_reader(directory, self.options.get("format", "auto"))
 
     def discover(self):
         pattern = self.options.get("pattern") or ""
-        if _is_calculation_directory(self.root):
+        if _material_density(self.root) is not None:
             directories = [self.root]
         else:
             directories = [child for child in _subdirectories(self.root)
                            if os.path.basename(child).startswith(pattern)
-                           and _is_calculation_directory(child)]
+                           and _material_density(child) is not None]
 
         records = []
         for directory in directories:
             reader = self._reader(directory)
-            files = {}
-            for kind, name in (("density", "CHGCAR"), ("kinetic", "TAUCAR")):
-                path = reader.field_path(directory, kind)
-                if os.path.exists(path):
-                    files[name] = path
-            if "CHGCAR" not in files:
-                # No density, no material: every field of a run is placed on
-                # the density's mesh, and there is nothing to learn without it.
+            # The density first, from wherever it is -- a bare `CHGCAR`, a
+            # compressed one, or a field store. `field_path` names the reader's
+            # own convention and covers the common case; `_material_density`
+            # covers the rest, including `mp-124/CHGCAR.gz` and `fields.h5`.
+            density = reader.field_path(directory, "density")
+            if not os.path.exists(density):
+                density = _material_density(directory)
+            if density is None:
                 continue
-            records.append(self._record(os.path.basename(os.path.normpath(directory)),
-                                        directory, files))
+            files = {"CHGCAR": density}
+
+            # TAUCAR is read where the run wrote one and simply not offered
+            # where it did not. A material with a density and no kinetic energy
+            # density is a perfectly good `ext2chg` sample, and demanding one
+            # would exclude every published archive.
+            kinetic = reader.field_path(directory, "kinetic")
+            if os.path.exists(kinetic):
+                files["TAUCAR"] = kinetic
+
+            records.append(
+                self._record(os.path.basename(os.path.normpath(directory)),
+                             directory, files))
         return records
 
     def provides(self, record):
@@ -722,7 +793,14 @@ class CalculationSource(MaterialSource):
         library stands in for it, which keeps the *same* construction rather
         than silently dropping to a model form factor.
 
-        Both routes are handed the geometry :meth:`geometry` resolves, so the
+        With neither, the Gaussian pseudo-ion model is used, and the valence
+        charges it needs come from :attr:`~MaterialSource.charges`: the
+        explicit option, or **inferred from the densities**. Without that last
+        step a stripped run directory raised where a directory of the same
+        densities with the structure files deleted would have succeeded --
+        which is not a difference the data justifies.
+
+        Every route is handed the geometry :meth:`geometry` resolves, so the
         potential is built at the positions the density was computed at.
         """
         reader = self._reader(record.directory)
@@ -743,9 +821,29 @@ class CalculationSource(MaterialSource):
         return ExternalPotential.from_calculation(
             record.directory, code=reader.code, grid=grid,
             sigma=self.options.get("sigma"),
-            zval=self.options.get("charges"),
+            zval=self.options.get("charges") or self._modelled_charges(record),
             structure=structure,
         )
+
+    def _modelled_charges(self, record):
+        """
+        Valence charges for the Gaussian fallback, or ``None``.
+
+        ``None`` where the run carries its own ``POTCAR``: the tabulated route
+        reads ``ZVAL`` from it and needs nothing from here, and inferring
+        charges to hand it a number it will not use would parse every density
+        in the set for nothing.
+
+        Inference that cannot succeed is not an error *here* either --
+        ``from_calculation`` raises a better message a moment later, naming the
+        elements it could not place.
+        """
+        if os.path.exists(os.path.join(record.directory, "POTCAR")):
+            return None
+        try:
+            return self.charges or None
+        except (ValueError, OSError):
+            return None
 
     def read(self, record, name, grid, spin=False):
         if name == "EXTCAR":
@@ -763,517 +861,68 @@ class CalculationSource(MaterialSource):
 
 
 # ---------------------------------------------------------------------- #
-# B: a bulk archive of standalone densities
-# ---------------------------------------------------------------------- #
-class BulkDensitySource(MaterialSource):
-    r"""
-    Bulk layout: standalone densities, one material each, nothing beside them.
-
-    This is what a public archive ships — the Materials Project serves one
-    ``CHGCAR`` per material and no inputs at all. Two arrangements are read,
-    and a directory may hold both::
-
-        data/MP/mp-124/CHGCAR.gz        one directory per material, named by it
-        data/MP/mp-126/fields.h5        the same, stored as a field store
-        archive/CHGCAR_mp-81.gz         standalone files, id in the filename
-
-    The first is what :class:`~poraque.data.materials_project.MPDataFetcher`
-    writes and is the layout to point a config at: a directory is what lets
-    anything be added *beside* a density later, where a filename can only ever
-    say one thing. The second is for an archive that arrives as loose files —
-    unpacked from a tarball, or assembled by hand — which is a shape no amount
-    of convention here controls.
-
-    Compression is transparent, so nothing is ever expanded on disk.
-
-    The structure comes from the density's own header — a ``CHGCAR`` carries
-    its ``POSCAR`` in its first lines — and the external potential is built
-    from it. The valence charges that needs are not in the archive either, and
-    are recovered from the densities by
-    :func:`~poraque.data.mp_dataset.infer_valence_charges`.
-
-    .. important::
-
-       With no ``POTCAR`` there is no tabulated local pseudopotential, so this
-       source uses the **Gaussian pseudo-ion model**, whose residual against a
-       reference VASP ``EXTCAR`` is of order 0.1 relative :math:`L_2`. A model
-       trained here learns *model potential* :math:`\to` *DFT density*, which
-       is self-consistent — inference builds the same potential — but is not
-       the same map a :class:`CalculationSource` dataset teaches. Mixing the
-       two in one training set mixes two definitions of the input field; see
-       :class:`~poraque.data.dataset.MixedFieldDataset`, which says so out
-       loud rather than letting it pass unnoticed.
-
-    Options
-    -------
-    potcar_dir : str
-        A ``POTCAR`` library. **This is what closes the gap above.** The
-        archive supplies the structure and the library supplies the
-        pseudopotentials, which together are everything the exact tabulated
-        construction needs — so with it the caveat does not apply and the
-        potential is VASP's own to a relative :math:`2\times10^{-5}`.
-    charges : dict
-        ``{element: Z_val}``. Taken from the library when one is configured,
-        and otherwise inferred from the densities.
-    prefixes : sequence of str
-        Filename prefixes identifying a density.
-    sigma, gaussian_blur, blur_method
-        Passed to the Gaussian construction, which is only reached without a
-        library.
-    """
-
-    name = "bulk"
-
-    def __init__(self, root, **options):
-        super().__init__(root, **options)
-        self._charges = (dict(options["charges"])
-                         if options.get("charges") else None)
-
-    @staticmethod
-    def _holds_flat_densities(root):
-        """Whether ``root`` holds standalone density *files*."""
-        return os.path.isdir(root) and any(
-            _is_density_file(entry) and os.path.isfile(os.path.join(root, entry))
-            for entry in os.listdir(root))
-
-    @classmethod
-    def _holds_material_directories(cls, root):
-        """Whether ``root`` holds per-material *directories* of densities."""
-        return any(_lone_density(child) for child in _subdirectories(root))
-
-    @classmethod
-    def _holds_densities(cls, root):
-        """Whether ``root`` holds densities at all, in either arrangement."""
-        return (cls._holds_flat_densities(root)
-                or cls._holds_material_directories(root))
-
-    @classmethod
-    def detect(cls, root):
-        if not os.path.isdir(root) or _is_calculation_directory(root):
-            return False
-        return cls._holds_densities(root)
-
-    def discover(self):
-        """
-        Every material under the root, in whichever arrangement it uses.
-
-        Both are scanned in one pass rather than one being chosen: an archive
-        assembled by hand may well hold some of each, and a source that picked
-        an arrangement and then ignored the other would drop materials without
-        saying so. A material found both ways wins from its own directory,
-        since that is the arrangement carrying the most information about it.
-        """
-        from ..fields.io.compressed import strip_compression_suffix
-
-        prefixes = tuple(self.options.get("prefixes") or BULK_PREFIXES)
-        records = {}
-        for entry in sorted(os.listdir(self.root)):
-            path = os.path.join(self.root, entry)
-            if not os.path.isfile(path) or not _is_density_file(entry, prefixes):
-                continue
-            stem = strip_compression_suffix(entry)
-            # `CHGCAR_mp-124` -> `mp-124`; a bare `CHGCAR` keeps its own name.
-            identifier = stem.split("_", 1)[1] if "_" in stem else stem
-            records[identifier] = self._record(identifier, self.root,
-                                               {"CHGCAR": path})
-
-        # `data/MP/mp-124/CHGCAR.gz`: the directory names the material, so the
-        # file inside it does not have to, and a second field could be dropped
-        # beside it tomorrow without renaming anything.
-        for child in _subdirectories(self.root):
-            density = _lone_density(child, prefixes)
-            if density is None:
-                continue
-            identifier = os.path.basename(os.path.normpath(child))
-            records[identifier] = self._record(identifier, child,
-                                               {"CHGCAR": density})
-        return [records[key] for key in sorted(records)]
-
-    @property
-    def charges(self):
-        r"""
-        ``{element: Z_val}`` in force.
-
-        Three sources, in order:
-
-        1. an explicit ``charges`` option;
-        2. the ``ZVAL`` of each species in the ``potcar_dir`` library, which is
-           where the number actually comes from;
-        3. inference from the densities — a ``CHGCAR`` integrates to its cell's
-           valence electron count, giving one linear equation per material in
-           the per-element charges. This is what makes an archive usable with
-           no pseudopotentials at all.
-
-        Deferred rather than resolved in ``__init__``, because both (2) and (3)
-        read files and a caller that only wants to enumerate the archive should
-        never pay for that.
-        """
-        if self._charges is None:
-            self._charges = self._resolve_charges()
-        return self._charges
-
-    def _resolve_charges(self):
-        """Valence charges from the library where it has them, else inferred."""
-        from .mp_dataset import infer_valence_charges
-
-        records = self.discover()
-        log = self.options.get("log")
-
-        from_library = {}
-        if self.options.get("potcar_dir"):
-            from ..fields.vasp.volumetric import read_structure_header
-            from ..fields.vasp.potcar import Potcar
-
-            # Header reads only: a few hundred bytes per material.
-            elements = sorted({element for record in records
-                               for element in
-                               read_structure_header(
-                                   record.files["CHGCAR"]).elements})
-            for element in elements:
-                try:
-                    entry = Potcar.from_library(
-                        self.options["potcar_dir"], [element],
-                        parse_tables=False)[0]
-                except (FileNotFoundError, ValueError, OSError):
-                    continue        # inference covers it below
-                from_library[element] = float(entry.zval)
-
-            if from_library and log:
-                log("      valence charges from the POTCAR library: "
-                    + ", ".join(f"{e}={z:g}"
-                                for e, z in sorted(from_library.items())))
-
-        try:
-            return infer_valence_charges(records, overrides=from_library,
-                                         log=log)
-        except ValueError:
-            # The compositions cannot determine what the library did not
-            # supply. That is only fatal if something still needs a charge,
-            # and the tabulated path does not -- so hand back what is known.
-            if from_library:
-                return from_library
-            raise
-
-    def provides(self, record):
-        return ("EXTCAR", "CHGCAR")
-
-    def reference_file(self, record):
-        return record.files["CHGCAR"]
-
-    def read(self, record, name, grid, spin=False):
-        path = record.files["CHGCAR"]
-        if name == "CHGCAR":
-            return self._read_density(path, grid, spin)
-        if name != "EXTCAR":
-            raise FileNotFoundError(
-                f"{record.identifier}: a bulk density archive holds only "
-                f"{list(self.provides(record))}; it publishes no {name}. "
-                f"Nothing can reconstruct one from a density alone."
-            )
-        return self._blur(self._external_potential(record, grid))
-
-    def _external_potential(self, record, grid):
-        r"""
-        Build :math:`V_{\rm ext}` from the structure the density carries.
-
-        Two constructions, and which one runs is the single most consequential
-        thing about a model trained on this data:
-
-        **With a ``potcar_dir``** the tabulated local pseudopotential is used —
-        VASP's own ``POTION`` formula, reproducing a reference ``EXTCAR`` to a
-        relative :math:`2\times10^{-5}`. The archive supplies the structure and
-        the library supplies the pseudopotentials, which together are
-        everything the exact construction needs.
-
-        **Without one** the Gaussian pseudo-ion model is used, whose residual
-        against that reference is of order :math:`0.1` relative :math:`L_2`.
-        The map learned is then *model potential* :math:`\to` *DFT density* —
-        well-posed and self-consistent, since inference builds the same
-        potential, but not VASP's :math:`V_{\rm ext}`.
-        """
-        from ..fields.external import _widths_from_pseudopotentials
-        from ..fields.vasp.volumetric import read_structure_header
-
-        structure = read_structure_header(record.files["CHGCAR"])
-
-        potcar = self.library_potcar(structure)
-        if potcar is not None:
-            return ExternalPotential.from_potcar_tables(
-                structure, grid, potcar,
-                metadata={"source": "bulk density archive", "code": "vasp",
-                          "derived_from": "CHGCAR header + POTCAR library",
-                          "potcar_dir": str(self.options["potcar_dir"])},
-            )
-
-        charges = self.charges
-        missing = sorted({element for element in structure.elements
-                          if element not in charges})
-        if missing:
-            raise ValueError(
-                f"{record.identifier}: no valence charge for {missing}. Pass "
-                f"charges={{'X': Z}} or potcar_dir=, or include materials "
-                f"whose compositions determine them."
-            )
-
-        widths = _widths_from_pseudopotentials(
-            structure, {}, self.options.get("sigma"), 0.5, "gaussian")
-        return ExternalPotential.compute(
-            structure, grid, charges, widths=widths, model="gaussian",
-            metadata={"source": "bulk density archive", "code": "vasp",
-                      "derived_from": "CHGCAR header"},
-        )
-
-    def describe(self):
-        # "where it reaches" rather than a flat claim: a library that misses a
-        # species falls back for that species alone, and the line must not
-        # promise a construction some of the materials did not get.
-        origin = (f"V_ext tabulated from {self.options['potcar_dir']} where it "
-                  f"reaches, Gaussian otherwise"
-                  if self.potential_model() == "tabulated"
-                  else "V_ext from the Gaussian pseudo-ion model")
-        return (f"{self.name}: {self.root} (structures from the CHGCAR "
-                f"headers, {origin})")
-
-
-# ---------------------------------------------------------------------- #
-# C: a prepared cache
-# ---------------------------------------------------------------------- #
-class PreparedFieldsSource(MaterialSource):
-    """
-    Prepared layout: one directory per material, holding the fields themselves.
-
-    This is what the cache builder writes and what
-    :class:`~poraque.ml.data.FieldPairDataset` has always read — no inputs, no
-    pseudopotentials, just ``EXTCAR``/``CHGCAR``/``TAUCAR`` already on the grid
-    they will be trained on::
-
-        cache/res32/mp-124/{EXTCAR,CHGCAR}
-        cache/res32/struct_000/{EXTCAR,CHGCAR,TAUCAR}
-
-    Nothing is computed. The distinction from :class:`CalculationSource` is the
-    absence of a ``POSCAR``: a directory with one is a calculation whose
-    potential must be rebuilt, a directory without one is a prepared field set
-    to be read as it stands.
-
-    **Either storage layout.** The same cache can keep its fields as
-    ``CHGCAR``-format text files or as one chunked, optionally compressed
-    ``fields.h5`` per material::
-
-        cache/res32/mp-124/{EXTCAR,CHGCAR}          # storage: files
-        cache/res32/mp-124/fields.h5                # storage: hdf5
-
-    Only :meth:`discover` knows the difference, and only far enough to write
-    ``…/fields.h5::CHGCAR`` into the record instead of ``…/CHGCAR``. Every
-    reader below that point takes both spellings
-    (:mod:`poraque.fields.hdf5`), so :meth:`read` is one method and not two,
-    and a cache holding some materials in each layout works without anyone
-    having intended it to.
-    """
-
-    name = "prepared"
-
-    def potential_model(self):
-        """
-        ``"cached"`` --- whatever wrote the ``EXTCAR`` decided, and it is not
-        recoverable from the file.
-        """
-        return "cached"
-
-    @classmethod
-    def detect(cls, root):
-        """
-        A prepared cache: per-material directories holding *prepared fields*.
-
-        The rule is that a material's directory carries something more than a
-        density. That is what separates this layout from a bulk archive, which
-        since the per-material download layout has exactly the same shape:
-        ``data/MP/mp-124/CHGCAR.gz`` and ``cache/res32/mp-124/CHGCAR`` are
-        indistinguishable as directory trees, and only the contents say which
-        is which.
-
-        A cache always has more, whichever task it was built for — ``EXTCAR``
-        with ``CHGCAR`` for ``ext2chg``, ``CHGCAR`` with ``TAUCAR`` for
-        ``chg2tau`` — because :data:`~poraque.data.cache.CACHED_FIELDS` writes
-        every field its source provides. An archive publishes the density and
-        nothing else. So a directory of lone densities is declined here and
-        falls through to :class:`BulkDensitySource`, which is the class that
-        knows an external potential still has to be *built* for it.
-
-        Getting this backwards is not a detection nicety: read as a cache, an
-        MP download would offer ``CHGCAR`` alone, and every ``ext2chg`` run on
-        it would fail for want of an input field that was never missing.
-        """
-        if not os.path.isdir(root) or _is_calculation_directory(root):
-            return False
-        for child in _subdirectories(root):
-            if _is_calculation_directory(child):
-                return False
-            if set(cls._fields_in(child)) - {"CHGCAR"}:
-                return True
-        return False
-
-    def discover(self):
-        records = []
-        for child in _subdirectories(self.root):
-            files = self._fields_in(child)
-            if "CHGCAR" in files:
-                records.append(self._record(os.path.basename(child), child,
-                                            files))
-        return records
-
-    @staticmethod
-    def _fields_in(directory):
-        """``{field: path}`` for one material, in whichever layout it uses."""
-        from ..ml.data import prepared_fields
-
-        return prepared_fields(directory, FIELD_CLASSES)
-
-    def provides(self, record):
-        return tuple(name for name in FIELD_CLASSES if name in record.files)
-
-    def reference_file(self, record):
-        return record.files["CHGCAR"]
-
-    def read(self, record, name, grid, spin=False):
-        path = record.files.get(name)
-        if path is None:
-            raise FileNotFoundError(
-                f"{record.identifier}: {name} is not in {record.directory}. "
-                f"It holds {list(self.provides(record))}."
-            )
-        if name == "CHGCAR":
-            return self._read_density(path, grid, spin)
-        return FIELD_CLASSES[name].read(path, grid=grid)
-
-
-# ---------------------------------------------------------------------- #
 # The factory
 # ---------------------------------------------------------------------- #
-#: Registered sources, in detection order.
-_SOURCES = []
-
-#: Other names for a format. ``mp`` is here because "a Materials Project
-#: download" is what most people mean by a bulk density archive, and reaching
-#: for that word in a config should not be an error.
-FORMAT_ALIASES = {
-    "mp": "bulk",
-    "materials-project": "bulk",
-    "materials_project": "bulk",
-    "chgcar": "bulk",
-    "calculation": "vasp",
-    "cache": "prepared",
-}
-
-
-def register_source(source_class):
-    """
-    Register a source so :func:`detect_source` will consider it.
-
-    Order matters and is registration order: the most specific layout must be
-    asked first. A calculation directory contains a ``CHGCAR`` too, so
-    :class:`CalculationSource` is asked before :class:`BulkDensitySource`, and
-    the two would otherwise both claim it.
-
-    Parameters
-    ----------
-    source_class : type
-        A :class:`MaterialSource` subclass.
-
-    Returns
-    -------
-    type
-        ``source_class``, so this works as a decorator.
-    """
-    if not issubclass(source_class, MaterialSource):
-        raise TypeError(f"{source_class!r} is not a MaterialSource subclass.")
-    _SOURCES.append(source_class)
-    return source_class
+#: Values ``data.format`` accepts.
+#:
+#: ``"vasp"`` names the only DFT code whose files Poraquê reads, and ``"auto"``
+#: works it out from what is in the directory. There is no third option and no
+#: layout to choose: every dataset is a directory of per-material
+#: subdirectories, and what a material's directory *holds* is read rather than
+#: declared.
+#:
+#: Until 2026-08-31 this key chose between three *layouts* as well --
+#: ``"bulk"`` for an archive of standalone densities and ``"prepared"`` for a
+#: cache of already-built fields. Both are gone, and with them the question a
+#: config had to answer about a directory it could simply be shown.
+DATA_FORMATS = ("auto", "vasp")
 
 
-def available_formats():
-    """Names accepted by ``format=`` , in detection order."""
-    return [source.name for source in _SOURCES]
-
-
-def detect_source(root):
-    """
-    Identify the layout of ``root``.
-
-    Parameters
-    ----------
-    root : str or pathlib.Path
-
-    Returns
-    -------
-    type
-        The :class:`MaterialSource` subclass that recognises it.
-
-    Raises
-    ------
-    FileNotFoundError
-        If ``root`` does not exist.
-    ValueError
-        If nothing recognises it — the message lists what was looked for,
-        because the answer is almost always one missing file.
-    """
-    root = str(root)
-    if not os.path.isdir(root):
-        raise FileNotFoundError(f"No such directory: {root}")
-
-    for source_class in _SOURCES:
-        if source_class.detect(root):
-            return source_class
-
-    raise ValueError(
-        f"Cannot tell what kind of dataset {root!r} is. Expected one of: a "
-        f"calculation directory or a directory of them (a POSCAR or CONTCAR "
-        f"somewhere); a bulk archive of standalone CHGCAR files, compressed or "
-        f"not; or a prepared cache of per-material EXTCAR/CHGCAR/TAUCAR "
-        f"directories. Pass format= explicitly if the layout is one of these "
-        f"under another name."
-    )
-
-
-def resolve_source(root, format="auto", **options):
+def resolve_source(root, **options):
     """
     Build the source for ``root``.
 
     Parameters
     ----------
     root : str or pathlib.Path
-        Directory to read.
-    format : str, optional
-        ``"auto"`` to detect, or one of :func:`available_formats` (or an alias
-        from :data:`FORMAT_ALIASES`). An explicit name is checked against the
-        directory and a mismatch raises, so a typo is not silently honoured
-        into an empty dataset.
+        Directory to read. It holds either one material's files directly, or
+        one subdirectory per material.
     **options
-        Passed to the source; see each class.
+        Passed to :class:`CalculationSource`; ``format`` selects the reader
+        (``"vasp"``, or ``"auto"`` to detect it per directory).
 
     Returns
     -------
-    MaterialSource
+    CalculationSource
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``root`` does not exist.
+    ValueError
+        If it holds no materials -- the message says what was looked for,
+        because the answer is almost always one missing file.
     """
     root = str(root)
-    if format is None or str(format).lower() in ("auto", ""):
-        return detect_source(root)(root, **options)
+    if not os.path.isdir(root):
+        raise FileNotFoundError(f"No such directory: {root}")
 
-    key = str(format).lower()
-    key = FORMAT_ALIASES.get(key, key)
-    for source_class in _SOURCES:
-        if source_class.name == key:
-            if not source_class.detect(root):
-                raise ValueError(
-                    f"format={format!r} was requested for {root!r}, but that "
-                    f"directory is not laid out as a {key} dataset. Detected: "
-                    f"{detect_source(root).name!r}."
-                )
-            return source_class(root, **options)
+    fmt = str(options.get("format") or "auto").lower()
+    if fmt not in DATA_FORMATS:
+        raise ValueError(
+            f"Unknown data format {options.get('format')!r}; "
+            f"expected one of {list(DATA_FORMATS)}."
+        )
 
-    raise ValueError(
-        f"Unknown data format {format!r}; available: {available_formats()} "
-        f"(or 'auto')."
-    )
+    if not CalculationSource.detect(root):
+        raise ValueError(
+            f"No materials under {root!r}. A dataset directory holds one "
+            f"subdirectory per material, each with that material's CHGCAR "
+            f"(and optionally a TAUCAR and the run's inputs); a directory "
+            f"holding one material's files directly is read as that single "
+            f"material."
+        )
+    return CalculationSource(root, **options)
 
 
 def discover_records(sources, required=(), log=None):
@@ -1336,8 +985,3 @@ def _disambiguate(record, seen, emit):
          f"{record.identifier!r}; this one is now {candidate!r}")
     return candidate
 
-
-# Registration order is detection order; see register_source.
-register_source(CalculationSource)
-register_source(PreparedFieldsSource)
-register_source(BulkDensitySource)

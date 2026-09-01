@@ -79,19 +79,69 @@ task: ext2chg          # identical to {type: ext2chg}, with the default name
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `train_paths` | `null` | list of dataset directories, which may mix layouts; falls back to `root` |
-| `root` | `data/vasp` | single dataset directory, used when `train_paths` is `null` |
-| `source` | `auto` | layout of each path: `auto`, `vasp`, `bulk` or `prepared` |
+| `data_paths` | `data/vasp/structures` | the dataset, as a list of directories — see below |
 | `cache` | `data/cache` | where downsampled copies are written |
-| `pattern` | `struct` | prefix identifying subdirectories of a `vasp` path — a prefix, not a glob |
-| `code` | `auto` | DFT code, or `auto` to detect it from the files present |
+| `pattern` | `""` | prefix filter on the material subdirectories; empty takes all of them |
+| `format` | `auto` | `vasp`, or `auto` to detect the code from the files present |
 | `resolution` | `32` | longest grid axis after spectral downsampling |
 | `potcar_dir` | `null` | POTCAR library, used where the data ships no pseudopotentials |
 | `sigma` | `null` | Gaussian pseudo-ion width in Å, where the Gaussian model is reached |
 | `gaussian_blur` | `null` | Gaussian blur width in Å applied to the computed potential |
 | `blur_method` | `spectral` | `spectral` or `ndimage` |
 
-See {doc}`data/index` for the layouts `source` recognises and for training
+### `data_paths`
+
+**One key names the dataset, and every entry in it has the same shape:** a
+directory of subdirectories, one per material, each holding that material's
+volumetric files.
+
+```yaml
+data:
+  data_paths:
+    - data/vasp/structures      # structure_0000/, structure_0001/, ...
+    - data/MP                   # mp-124/, mp-81/, ...
+    - data/cache/res32          # a cache from an earlier run
+```
+
+That is what a VASP run tree looks like, what `poraque-mp` writes, and what the
+cache builder produces — so nothing has to be declared about where a path came
+from, and no key says so. Every path is pooled into one dataset.
+
+What *differs* is the **content** of a material's directory, and content is
+read, not configured:
+
+| A material's directory holds | Poraquê |
+| --- | --- |
+| inputs beside the density | computes $V_\mathrm{ext}$ from them — exactly, with a `POTCAR` or `potcar_dir` |
+| a density on its own | computes it from the structure the `CHGCAR` carries in its own header |
+| an `EXTCAR` already | reads it as it stands (a prepared cache) |
+
+$V_\mathrm{ext}$ is **always computed** for the first two, never read from an
+`EXTCAR` that happens to sit in a run directory: at inference time there is no
+DFT run to read one from, so the input channel has to be Poraquê's own
+arithmetic in both places.
+
+`TAUCAR` is **optional, per material.** A directory that has one joins the
+`chg2tau` set; one that does not still joins `ext2chg` and is simply absent
+from the other. Nothing is declared for it, and a task with no target anywhere
+is skipped with a message rather than failing the run — which is what makes
+`type: all` sensible on a Materials Project download, where no $\tau$ exists.
+
+A path holding a **single** material's run directly — its files at the top
+level rather than one level down — is read as that one material, so a lone
+calculation needs no wrapper directory.
+
+```{note}
+Three keys used to answer this one question: `train_paths` (a list), `root`
+(a single path used when the list was empty) and `source` (which layout each
+path was). All three were removed on 2026-08-31. The last is the one that
+mattered: it asked the *config* to declare something the *directory* already
+answers, which made "a VASP run" and "a Materials Project download" two
+different things to write down when they are the same thing on disk. A config
+using any of them now fails and is told what to write instead.
+```
+
+See {doc}`data/index` for what each kind of directory contains and for training
 across a mixture of them.
 
 ### `resolution`
@@ -313,8 +363,8 @@ the training log reports any reference points that violate it.
 | `grad_clip` | `1.0` | global gradient-norm clip; `0` disables |
 | `seed` | `0` | weight initialisation, batch order and fold shuffling |
 | `device` | `auto` | `auto`, `cuda`, `mps` or `cpu` |
-| `loss` | `relative_l2` | `relative_l2` or `sobolev` |
-| `sobolev_weight` | `0.1` | gradient-term weight when `loss: sobolev` |
+| `loss` | `relative_l2` | `absolute_l2`, `relative_l2`, `absolute_h1` or `relative_h1` |
+| `sobolev_weight` | `0.1` | gradient-term weight for the two `h1` losses |
 | `physics` | all `0.0` | physics-informed loss weights |
 
 ### `valid_fraction`, `enable_kfold`, `k_folds`
@@ -417,18 +467,32 @@ this is set. The training log prints the buckets it found.
 
 ### `loss` and `sobolev_weight`
 
-`relative_l2` normalises the error per sample, so materials whose fields differ
-by orders of magnitude contribute equally and the reported value reads directly
-as a fraction.
+Four objectives, on two named axes:
 
-`sobolev` adds a relative gradient term weighted by `sobolev_weight`. Worth
-enabling when the derivative matters — $\tau_\mathrm{vW}$ depends on
-$\nabla\rho$, so gradient noise is amplified in low-density regions.
+| `loss` | normalised per sample | gradients in the objective |
+| --- | --- | --- |
+| `absolute_l2` | no | no |
+| `relative_l2` | yes | no |
+| `absolute_h1` | no | yes |
+| `relative_h1` | yes | yes |
 
-**The validation column follows the objective.** With `loss: sobolev` the
-progress table reports `val rel H1` rather than `val rel L2`, and the number
-behind it is the objective's own data term evaluated on the held-out set —
-`rel L2` plus `sobolev_weight` times the relative $L^2$ of the gradient:
+**Relative** divides each sample's error by its own target norm, so materials
+whose fields differ by orders of magnitude contribute equally and the value
+reads directly as a fraction. **Absolute** does not, so every *voxel* counts
+equally and a denser system contributes proportionally more gradient — right
+for a set whose materials are genuinely comparable in magnitude, and usually
+wrong for a heterogeneous one, which is why `relative_l2` is the default.
+
+**H1** adds `sobolev_weight` times the same error on the spatial gradients.
+Worth enabling when the derivative matters — $\tau_\mathrm{vW}$ depends on
+$\nabla\rho$, so gradient noise is amplified in low-density regions. Both
+halves are taken in the *same* norm, so the weight is a pure ratio between
+values and derivatives rather than also absorbing a change of scale.
+
+**The validation column follows the objective.** The progress table reports
+`val abs L2`, `val rel L2`, `val abs H1` or `val rel H1` — whichever is
+running — and the number behind it is the objective's own data term evaluated
+on the held-out set:
 
 ```text
     train loss: mean PhysicsInformedLoss per batch   |   val rel H1: held-out error, physical units
@@ -438,12 +502,18 @@ behind it is the objective's own data term evaluated on the held-out set —
 ```
 
 That is not only a label. Early stopping and the checkpoint are decided on this
-number, and while it read `val rel L2` a Sobolev run was selecting the model
-that minimised a functional it was not training on. An $H^1$ error is a larger
-number than the $L^2$ of the same prediction, so the two columns are not
-comparable — which is why the **per-structure table at the end of a run reports
-relative $L^2$ whatever the objective was**. That is the number to quote, and
-the one that lets two runs with different losses be put side by side.
+number, and while it read `val rel L2` regardless a gradient-constrained run
+was selecting the model that minimised a functional it was not training on. The
+four are not comparable with each other — which is why the **per-structure
+table at the end of a run reports relative $L^2$ whatever the objective was**.
+That is the number to quote, and the one that lets two runs be put side by
+side.
+
+```{note}
+`loss: sobolev` was renamed on 2026-08-31. It named the gradient term and left
+the norm implicit, and offered no unnormalised form at all. It now raises,
+naming `relative_h1` (what it did) and `absolute_h1` as its replacements.
+```
 
 ### `physics`
 
@@ -541,7 +611,7 @@ read back.
 
 - **The loss curve** is one row per epoch: `epoch`, `train_loss`, and the
   validation column *named for the norm it holds* (`val_rel_l2`, or
-  `val_rel_h1` for a `loss: sobolev` run). Epochs on which validation was not
+  `val_abs_h1` for an `absolute_h1` run). Epochs on which validation was not
   measured leave that cell **empty** rather than interpolated — filling them
   would put points in the file the run never measured. There is no physics
   column: `train_loss` is the total the optimiser stepped on, and the per-term

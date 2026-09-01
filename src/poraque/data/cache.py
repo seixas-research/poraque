@@ -108,10 +108,10 @@ def cached_paths(destination, fields, storage="files"):
     return {name: os.path.join(destination, name) for name in fields}
 
 
-def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
+def build_field_cache(paths, cache, resolution=32, fields=None,
                       charges=None, potcar_dir=None, sigma=None,
                       gaussian_blur=None, blur_method="spectral", pattern=None,
-                      code="auto", spin=False, limit=None,
+                      format="auto", spin=False, limit=None,
                       storage="files", compression=None, compression_level=4,
                       log=None):
     r"""
@@ -124,20 +124,18 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
     Parameters
     ----------
     paths : str or sequence of str
-        Directories to ingest. Each is auto-detected unless ``format`` says
-        otherwise, so a mixture of layouts is one call.
+        Directories to ingest. Each holds one subdirectory per material --
+        whatever produced it -- and all of them are pooled.
     cache : str or pathlib.Path
         Destination.
     resolution : int, optional
         Longest grid axis after spectral downsampling.
-    format : str or sequence of str, optional
-        ``"auto"``, one name for every path, or one per path.
     fields : sequence of str, optional
         Which fields to write. Defaults to all of :data:`CACHED_FIELDS`; each
         is written for the materials that can supply it and skipped, without
         complaint, for those that cannot.
     charges : dict, optional
-        ``{element: Z_val}`` for bulk archives, which carry no ``POTCAR``.
+        ``{element: Z_val}``, for materials that carry no ``POTCAR``.
     potcar_dir : str, optional
         A ``POTCAR`` library, used wherever the data itself ships none. With it
         the external potential is the exact tabulated one; without it, the
@@ -150,8 +148,8 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
         ``"spectral"`` or ``"ndimage"``.
     pattern : str, optional
         Subdirectory prefix filter for calculation archives.
-    code : str, optional
-        DFT code name, or ``"auto"``.
+    format : str, optional
+        ``"vasp"``, or ``"auto"`` to detect the code from the files present.
     spin : {"auto", True, False}, optional
         Whether to cache the magnetisation channel alongside the total density.
         ``"auto"`` — the default everywhere above this function — **reads the
@@ -187,18 +185,10 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
     paths = [str(paths)] if isinstance(paths, (str, os.PathLike)) else \
         [str(path) for path in paths]
 
-    formats = ([format] * len(paths)
-               if isinstance(format, (str, type(None))) else list(format))
-    if len(formats) != len(paths):
-        raise ValueError(
-            f"Got {len(formats)} format(s) for {len(paths)} path(s). Pass one "
-            f"name for all of them, or one per path.")
-
     options = {"charges": charges, "potcar_dir": potcar_dir, "sigma": sigma,
                "gaussian_blur": gaussian_blur, "blur_method": blur_method,
-               "pattern": pattern, "code": code, "log": emit}
-    sources = [resolve_source(path, fmt, **options)
-               for path, fmt in zip(paths, formats)]
+               "pattern": pattern, "format": format, "log": emit}
+    sources = [resolve_source(path, **options) for path in paths]
 
     records = discover_records(sources, required=("CHGCAR",), log=emit)
     if not records:
@@ -227,7 +217,7 @@ def build_field_cache(paths, cache, resolution=32, format="auto", fields=None,
 
     cache = str(cache)
     os.makedirs(cache, exist_ok=True)
-    _check_fingerprint(cache, _fingerprint(paths, resolution, formats, fields,
+    _check_fingerprint(cache, _fingerprint(paths, resolution, fields,
                                            options, spin, storage, compression,
                                            compression_level))
 
@@ -395,14 +385,13 @@ def _range_text(bounds):
     return f"{low:.3g} .. {high:.3g}"
 
 
-def _fingerprint(paths, resolution, formats, fields, options, spin,
+def _fingerprint(paths, resolution, fields, options, spin,
                  storage="files", compression=None, compression_level=4):
     """Everything that decides what a cache directory's files contain."""
     potcar_dir = options.get("potcar_dir")
     return {
         "paths": sorted(os.path.abspath(path) for path in paths),
         "resolution": int(resolution) if resolution else None,
-        "formats": [fmt or "auto" for fmt in formats],
         "fields": sorted(fields),
         "spin": bool(spin),
         "charges": options.get("charges"),
@@ -411,7 +400,7 @@ def _fingerprint(paths, resolution, formats, fields, options, spin,
         "gaussian_blur": options.get("gaussian_blur"),
         "blur_method": options.get("blur_method"),
         "pattern": options.get("pattern"),
-        "code": options.get("code"),
+        "format": options.get("format"),
         # Storage is in the fingerprint because the two layouts are not
         # interchangeable on disk: half a cache as text and half as HDF5 would
         # load, and every reuse check would then be answering about the wrong

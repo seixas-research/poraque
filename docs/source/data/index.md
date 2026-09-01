@@ -5,23 +5,45 @@ whichever of its two models the data can actually support. Those two facts are
 what let a public archive of charge densities — hundreds of thousands of them,
 and not a single kinetic energy density among them — become training data.
 
-## Three layouts, one dataset
+## One schema, whatever produced the data
 
-`data.train_paths` is a **list**, and each entry is detected independently:
+`data.data_paths` is a **list of directories**, and every entry has the same
+shape: subdirectories, one per material, each holding that material's
+volumetric files.
 
 ```yaml
 data:
-  train_paths:
-    - data/vasp             # local DFT runs
-    - data/MP/chgcar        # a Materials Project download
+  data_paths:
+    - data/vasp/structures  # structure_0000/, structure_0001/, ...
+    - data/MP               # mp-124/, mp-81/, ...
+    - data/cache/res32      # a cache from an earlier run
   resolution: 32
 ```
 
-| Layout | Recognised by | $V_\mathrm{ext}$ from | $\tau$ |
+Nothing in the config says which is which, because on disk they are the same
+kind of thing. What differs is the **content** of a material's directory, and
+content is read rather than declared:
+
+| A material's directory holds | Recognised by | $V_\mathrm{ext}$ from | $\tau$ |
 | --- | --- | --- | --- |
-| `vasp` — a DFT calculation, or a directory of them | a `POSCAR` or `CONTCAR` | `POSCAR` + `POTCAR` tables, **exact** | read from `TAUCAR` when the run wrote one |
-| `bulk` — standalone `CHGCAR` files, compressed or not | density files with no `POSCAR` | the density's own header, plus `potcar_dir` if set | never — no archive publishes it |
-| `prepared` — per-material field directories | `EXTCAR`/`CHGCAR`/`TAUCAR` inside subdirectories | read from `EXTCAR` | read from `TAUCAR` |
+| a full DFT run | a `POSCAR` or `CONTCAR` | its own inputs — `POTCAR` tables, **exact** | read from `TAUCAR` when the run wrote one |
+| a density and nothing else | a `CHGCAR` with no inputs | the density's own header, plus `potcar_dir` if set | absent — no archive publishes it |
+| prepared fields | an `EXTCAR` beside the density | read from `EXTCAR` | read from `TAUCAR` |
+
+A path holding a **single** material's run directly — its files at the top
+level rather than one level down — is read as that one material.
+
+`TAUCAR` is optional **per material, not per directory**: one run in a tree may
+have written one while its neighbour did not, and the one that did still
+reaches `chg2tau` while both reach `ext2chg`. A task with no target anywhere is
+skipped with a message rather than failing the run.
+
+```{note}
+Three keys used to answer this one question — `train_paths`, `root` and
+`source` — and all three were removed on 2026-08-31. `source` is the one that
+mattered: it asked the *config* to declare something the *directory* already
+answers. A config using any of them fails and is told what to write instead.
+```
 
 Detection is by content, never by name, and `source: auto` is the default. Set
 `source: bulk` (or a list, one name per path) to state it explicitly; a name
@@ -105,8 +127,8 @@ poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
 poraque-train --config configs/train_materialsproject.yaml
 ```
 
-and to specialise it on your own chemistry afterwards, point `train_paths` at
-both archives, or fine-tune (see {doc}`../fine_tuning/index`).
+and to specialise it on your own chemistry afterwards, point `data_paths` at
+both directories, or fine-tune (see {doc}`../fine_tuning/index`).
 
 ## The third missing piece: pseudopotentials
 
@@ -117,7 +139,7 @@ built from. This is the one gap the data cannot close by itself, and
 
 ```yaml
 data:
-  train_paths: [data/MP]
+  data_paths: [data/MP]
   potcar_dir: /opt/vasp/potpaw_PBE
 ```
 
@@ -133,7 +155,7 @@ the layouts recognised.
 
 ```{warning}
 **Mixing archives can mix two definitions of $V_\mathrm{ext}$.** A calculation
-directory has a `POTCAR`, so its potential is tabulated. A bulk archive with no
+directory has a `POTCAR`, so its potential is tabulated. A material with no
 `potcar_dir` uses the Gaussian model. Train across both and the input field is
 two different quantities under one name; the operator spends capacity
 reconciling them, and any comparison against a model trained on tabulated

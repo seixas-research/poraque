@@ -32,17 +32,23 @@ trains what it can.
 
 Data sources
 ------------
-``data.train_paths`` is a **list of directories**, and each is detected
-independently::
+``data.data_paths`` is a **list of directories**, and every entry has the same
+shape: subdirectories, one per material, each holding that material's
+volumetric files::
 
     data:
-      train_paths:
-        - data/vasp             # DFT calculation directories
-        - data/MP/chgcar        # an archive of standalone CHGCARs
+      data_paths:
+        - data/vasp/structures  # local DFT runs
+        - data/MP               # a poraque-mp download
+        - data/cache/res32      # a cache from an earlier run
 
-so local runs and a Materials Project download train as one dataset. See
-:mod:`poraque.data.sources` for the layouts, and note the caveat there about
-mixing two definitions of :math:`V_{\rm ext}` — the run warns when it happens.
+so local runs and a Materials Project download train as one dataset with
+nothing said about where either came from. What a material's directory *holds*
+decides how it is read — inputs beside the density mean the external potential
+is computed from them, a density alone means it is computed from the density's
+own header — and ``TAUCAR`` is optional per material throughout. See
+:mod:`poraque.data.sources`, and note the caveat there about mixing two
+definitions of :math:`V_{\rm ext}` — the run warns when it happens.
 
 Method notes
 ------------
@@ -295,24 +301,14 @@ def resolved_spin(data):
     options = {"potcar_dir": data.potcar_dir, "sigma": data.sigma,
                "gaussian_blur": data.gaussian_blur,
                "blur_method": data.blur_method, "pattern": data.pattern,
-               "code": data.code}
+               "format": data.format}
     try:
-        sources = [resolve_source(path, fmt, **options)
-                   for path, fmt in zip(data.paths(),
-                                        _formats_for(data))]
+        sources = [resolve_source(path, **options) for path in data.paths()]
         records = discover_records(sources, required=("CHGCAR",))
         return any(record.source.is_spin_polarized(record)
                    for record in records)
     except Exception:                                   # noqa: BLE001
         return False
-
-
-def _formats_for(data):
-    """``data.formats()`` broadcast to one entry per path."""
-    formats = data.formats()
-    if isinstance(formats, (str, type(None))):
-        return [formats] * len(data.paths())
-    return list(formats)
 
 
 def cache_tag(data):
@@ -352,7 +348,7 @@ def cache_tag(data):
 
 def build_cache(config, log):
     """
-    Downsample every material under ``data.train_paths`` into one dataset.
+    Downsample every material under ``data.data_paths`` into one dataset.
 
     Each path is detected independently — a directory of DFT runs, an archive
     of standalone ``CHGCAR`` files, or a prepared cache — and all of them land
@@ -380,10 +376,10 @@ def build_cache(config, log):
     log(f"  sources: {len(paths)} path(s)")
 
     build_field_cache(
-        paths, target, resolution=data.resolution, format=data.formats(),
+        paths, target, resolution=data.resolution,
         potcar_dir=data.potcar_dir, sigma=data.sigma,
         gaussian_blur=data.gaussian_blur, blur_method=data.blur_method,
-        pattern=data.pattern, code=data.code, log=log,
+        pattern=data.pattern, format=data.format, log=log,
         # Passed through as given, INCLUDING "auto", which build_field_cache
         # resolves against the sources. It used to be flattened here with
         # `data.spin is True`, which made "auto" -- the default -- mean *no
@@ -402,11 +398,9 @@ def build_cache(config, log):
     # it. They come from the *native-resolution* sources, not the cache: the
     # one-centre terms are on-site quantities and do not live on the FFT grid
     # at all, so downsampling neither changes nor carries them.
-    formats = data.formats()
-    formats = formats if isinstance(formats, list) else [formats] * len(paths)
-    sources = [resolve_source(path, fmt, pattern=data.pattern, code=data.code,
+    sources = [resolve_source(path, pattern=data.pattern, format=data.format,
                               potcar_dir=data.potcar_dir)
-               for path, fmt in zip(paths, formats)]
+               for path in paths]
     # The augmentation records now come from the ISOLATED ATOMS by default
     # (data.paw_source), not from averaging the training set. They are a
     # per-element, transferable, provenance-carrying quantity, which is what
@@ -733,8 +727,8 @@ def build_loss(config, task_name):
         )
     return PhysicsInformedLoss(
         task=task_name,
-        sobolev_weight=(config.training.sobolev_weight
-                        if config.training.loss == "sobolev" else 0.0),
+        loss=config.training.loss,
+        sobolev_weight=config.training.sobolev_weight,
         electron_count_weight=physics.get("electron_count_weight", 0.0),
         positivity_weight=physics.get("positivity_weight", 0.0),
         von_weizsacker_weight=physics.get("von_weizsacker_weight", 0.0),
@@ -996,8 +990,43 @@ def load_pretrained_operator(task, train_set, validation, config, log):
         f"(in {operator.input_transform}  out {operator.target_transform})")
 
     counts = {"frozen": 0, "trainable": operator.model.n_parameters()}
-    if settings.freeze_lifting_layers:
+    adaptation = "full fine-tune"
+    if settings.use_lora:
+        from poraque.ml.lora import apply_lora
+
+        # Everything is frozen and the adapters added; `freeze_lifting_layers`
+        # would be a no-op on top of that and is skipped rather than applied
+        # to nothing, so the report cannot claim two mechanisms are running.
+        counts = apply_lora(operator.model, rank=settings.lora_rank,
+                            alpha=settings.lora_alpha,
+                            dropout=settings.lora_dropout)
+        # Recorded on the operator so `state()` can write a checkpoint that
+        # holds the adapter and names the base, instead of the whole model.
+        operator.lora = {
+            "rank": int(settings.lora_rank),
+            "alpha": float(settings.lora_alpha),
+            "dropout": float(settings.lora_dropout),
+            "base_checkpoint": os.path.abspath(path),
+        }
+        adaptation = (f"LoRA r={settings.lora_rank} "
+                      f"alpha={settings.lora_alpha:g}")
+        share = 100.0 * counts["trainable"] / max(
+            counts["trainable"] + counts["frozen"], 1)
+        log(f"      LoRA             : {counts['adapters']} adapted layer(s), "
+            f"rank {settings.lora_rank}, alpha {settings.lora_alpha:g}")
+        log(f"      trainable        : {counts['trainable']:,} of "
+            f"{counts['trainable'] + counts['frozen']:,} parameters "
+            f"({share:.3f}%); the rest is frozen")
+        log("      NOTE: the checkpoint will hold the ADAPTER only and name "
+            "this base;")
+        log(f"            it cannot be loaded without {os.path.basename(path)}.")
+        if settings.freeze_lifting_layers:
+            log("      NOTE: fine_tuning.freeze_lifting_layers is ignored "
+                "under LoRA, which")
+            log("            freezes every base weight already.")
+    elif settings.freeze_lifting_layers:
         counts = freeze_lifting_layers(operator.model)
+        adaptation = "full fine-tune, lifting frozen"
         log(f"      frozen           : lifting path, "
             f"{counts['frozen']:,} parameters; {counts['trainable']:,} "
             f"remain trainable")
@@ -1005,8 +1034,10 @@ def load_pretrained_operator(task, train_set, validation, config, log):
     return operator, {
         "pretrained checkpoint": path,
         "fine-tuned": "yes",
+        "adaptation": adaptation,
         "fine-tuning learning rate": f"{settings.learning_rate:g}",
-        "lifting layers": ("frozen" if settings.freeze_lifting_layers
+        "lifting layers": ("frozen" if (settings.freeze_lifting_layers
+                                        or settings.use_lora)
                            else "trainable"),
         "trainable parameters": f"{counts['trainable']:,}",
         "frozen parameters": f"{counts['frozen']:,}",
@@ -1293,6 +1324,21 @@ def validate_fine_tuning_settings(config):
             f"fine_tuning.learning_rate={settings.learning_rate!r} must be "
             f"positive.")
 
+    if settings.use_lora:
+        if settings.lora_rank <= 0:
+            raise SystemExit(
+                f"fine_tuning.lora_rank={settings.lora_rank!r} must be "
+                f"positive: a rank-0 correction is identically zero, so the "
+                f"run would train nothing and report a flat loss curve.")
+        if settings.lora_alpha <= 0:
+            raise SystemExit(
+                f"fine_tuning.lora_alpha={settings.lora_alpha!r} must be "
+                f"positive; it scales the correction by alpha / rank.")
+        if not 0.0 <= settings.lora_dropout < 1.0:
+            raise SystemExit(
+                f"fine_tuning.lora_dropout={settings.lora_dropout!r} must be "
+                f"in [0, 1).")
+
     destination = bundle_path(config)
     if destination:
         if os.path.abspath(destination) == os.path.abspath(
@@ -1361,6 +1407,22 @@ def validate_precision_settings(config):
                 f"model.precision: float32 to keep the accelerator.\n"
                 f"  (data.precision is unaffected — fields may still be held "
                 f"in float64 while the operator computes in float32.)")
+
+
+def validate_loss_settings(config):
+    """
+    Check ``training.loss`` before the cache is built, not an hour in.
+
+    A typo in an objective is a run that trains on the wrong thing or, with the
+    old ``"sobolev"`` spelling, on the right thing under a name that no longer
+    says which norm. Either way the place to find out is in the first second.
+    """
+    from poraque.ml.losses import resolve_data_loss
+
+    try:
+        resolve_data_loss(config.training.loss)
+    except ValueError as error:
+        raise SystemExit(f"training.{error}") from None
 
 
 def validate_activation_settings(config):
@@ -2131,23 +2193,20 @@ def build_parser():
                              "reports/NAME_report.pdf and a NAME/ subdirectory "
                              "of the plot directory (default: poraque_models)")
     group = parser.add_argument_group("data overrides")
-    group.add_argument("--train-paths", dest="data.train_paths", nargs="+",
+    group.add_argument("--data-paths", dest="data.data_paths", nargs="+",
                        default=None, metavar="DIR",
-                       help="one or more dataset directories, which may mix "
-                            "formats; overrides --root")
-    group.add_argument("--source", dest="data.source", default=None,
-                       choices=["auto", "vasp", "bulk", "prepared"],
-                       help="layout of every path: 'vasp' = one calculation "
-                            "directory per material; 'bulk' = an archive of "
-                            "standalone CHGCAR[.gz] files; 'prepared' = a "
-                            "cache of per-material field directories; 'auto' "
-                            "detects each one (default)")
-    group.add_argument("--root", dest="data.root", default=None,
-                       help="single dataset directory; ignored when "
-                            "--train-paths is given")
+                       help="one or more dataset directories. Each holds one "
+                            "subdirectory per material, whatever produced it "
+                            "-- a VASP run tree, a poraque-mp download, a "
+                            "cache from an earlier run -- and all of them are "
+                            "pooled. What a material's directory holds is "
+                            "read, not declared")
     group.add_argument("--cache", dest="data.cache", default=None)
     group.add_argument("--pattern", dest="data.pattern", default=None)
-    group.add_argument("--code", dest="data.code", default=None)
+    group.add_argument("--format", dest="data.format", default=None,
+                       choices=["auto", "vasp"],
+                       help="the DFT code that wrote the files, or 'auto' to "
+                            "detect it per directory (default)")
     group.add_argument("--resolution", dest="data.resolution", type=int, default=None)
     group.add_argument("--potcar-dir", dest="data.potcar_dir", default=None,
                        metavar="DIR",
@@ -2305,6 +2364,7 @@ def run(argv=None):
     validate_fine_tuning_settings(config)
     validate_symbolic_settings(config.symbolic)
     validate_precision_settings(config)
+    validate_loss_settings(config)
     validate_activation_settings(config)
 
     log = Tee(config.log_path())

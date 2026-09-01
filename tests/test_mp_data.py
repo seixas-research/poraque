@@ -95,15 +95,23 @@ def compress(path, suffix):
     return target
 
 
+def _material_dir(root, identifier):
+    """``<root>/<id>/CHGCAR`` — the path one material's density belongs at."""
+    directory = root / identifier
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / "CHGCAR"
+
+
 @pytest.fixture
 def mp_download(tmp_path):
     """
-    A miniature Materials Project download: gzipped densities, nothing else.
+    A miniature Materials Project download: one directory per material, each
+    holding a gzipped density and nothing else.
 
     Compositions are chosen so the electron counts determine all three valence
     charges — Ag 11, Pd 10, Pt 10, the values the POTCARs state.
     """
-    root = tmp_path / "MP" / "chgcar"
+    root = tmp_path / "MP"
     root.mkdir(parents=True)
     entries = [
         ("mp-124", ["Ag"], [1], 11),
@@ -113,7 +121,8 @@ def mp_download(tmp_path):
         ("mp-30353", ["Ag", "Pt"], [1, 3], 41),
     ]
     for identifier, symbols, counts, electrons in entries:
-        plain = root / f"CHGCAR_{identifier}"
+        (root / identifier).mkdir()
+        plain = root / identifier / "CHGCAR"
         make_chgcar(plain, symbols, counts, electrons)
         compress(plain, ".gz")
     return root
@@ -217,14 +226,15 @@ class TestDiscovery:
         assert all(set(r.files) == {"CHGCAR"} for r in records), \
             "a record must not name files the download does not have"
 
-    def test_accepts_the_parent_directory(self, mp_download):
-        assert (len(discover_mp_chgcars(mp_download.parent))
-                == len(discover_mp_chgcars(mp_download)))
+    def test_a_prefix_filters_the_material_directories(self, mp_download):
+        assert [r.identifier for r in
+                discover_mp_chgcars(mp_download, pattern="mp-12")] == [
+                    "mp-124", "mp-126"]
 
     def test_empty_directory_says_what_to_do(self, tmp_path):
-        (tmp_path / "chgcar").mkdir()
+        (tmp_path / "MP").mkdir()
         with pytest.raises(FileNotFoundError, match="poraque-mp"):
-            discover_mp_chgcars(tmp_path)
+            discover_mp_chgcars(tmp_path / "MP")
 
 
 class TestValenceCharges:
@@ -268,7 +278,7 @@ class TestValenceCharges:
         """One binary cannot split its electrons between its two elements."""
         root = tmp_path / "chgcar"
         root.mkdir()
-        make_chgcar(root / "CHGCAR_mp-1", ["Ag", "Pt"], [1, 1], 22)
+        make_chgcar(_material_dir(root, "mp-1"), ["Ag", "Pt"], [1, 1], 22)
 
         with pytest.raises(ValueError, match="independent directions"):
             infer_valence_charges(discover_mp_chgcars(root))
@@ -276,7 +286,7 @@ class TestValenceCharges:
     def test_that_same_system_is_solvable_with_one_override(self, tmp_path):
         root = tmp_path / "chgcar"
         root.mkdir()
-        make_chgcar(root / "CHGCAR_mp-1", ["Ag", "Pt"], [1, 1], 22)
+        make_chgcar(_material_dir(root, "mp-1"), ["Ag", "Pt"], [1, 1], 22)
 
         charges = infer_valence_charges(discover_mp_chgcars(root),
                                         overrides={"Ag": 11.0})
@@ -304,7 +314,10 @@ class TestMPChargeDensityDataset:
 
         assert potential.structure.symbols == density.structure.symbols
         assert potential.grid.shape == density.grid.shape
-        assert potential.metadata["derived_from"] == "CHGCAR header"
+        # The structure is the density's, which is the property that matters;
+        # `derived_from` was a label the removed bulk source wrote and there is
+        # no second geometry left for it to distinguish this one from.
+        assert np.allclose(potential.structure.cell, density.structure.cell)
         # A neutralising background fixes the cell average at zero.
         assert potential.data.mean() == pytest.approx(0.0, abs=1e-8)
 
@@ -349,8 +362,8 @@ class TestMPChargeDensityDataset:
     def test_spin_channel_is_available_when_the_file_has_one(self, tmp_path):
         root = tmp_path / "chgcar"
         root.mkdir()
-        make_chgcar(root / "CHGCAR_mp-1", ["Pt"], [1], 10, spin=True)
-        make_chgcar(root / "CHGCAR_mp-2", ["Pt"], [2], 20, spin=True)
+        make_chgcar(_material_dir(root, "mp-1"), ["Pt"], [1], 10, spin=True)
+        make_chgcar(_material_dir(root, "mp-2"), ["Pt"], [2], 20, spin=True)
 
         total_only = MPChargeDensityDataset(root)
         both = MPChargeDensityDataset(root, spin=True)
@@ -422,9 +435,9 @@ class TestOperatorOnMPData:
 
         root = tmp_path / "chgcar"
         root.mkdir()
-        make_chgcar(root / "CHGCAR_mp-1", ["Ag"], [1], 11, shape=(8, 8, 8))
-        make_chgcar(root / "CHGCAR_mp-2", ["Ag"], [2], 22, shape=(8, 8, 12))
-        make_chgcar(root / "CHGCAR_mp-3", ["Pt"], [1], 11, shape=(8, 8, 8))
+        make_chgcar(_material_dir(root, "mp-1"), ["Ag"], [1], 11, shape=(8, 8, 8))
+        make_chgcar(_material_dir(root, "mp-2"), ["Ag"], [2], 22, shape=(8, 8, 12))
+        make_chgcar(_material_dir(root, "mp-3"), ["Pt"], [1], 11, shape=(8, 8, 8))
 
         data = MPChargeDensityDataset(root, charges={"Ag": 11, "Pt": 11})
         sampler = ShapeBucketSampler(data, batch_size=4, shuffle=False)

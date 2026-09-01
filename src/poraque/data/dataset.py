@@ -69,25 +69,25 @@ class MixedFieldDataset(FieldPairDataset):
     Parameters
     ----------
     paths : str or sequence of str
-        One directory or several. Each is auto-detected unless ``format``
-        says otherwise.
+        One directory or several. Each holds one subdirectory per material --
+        whatever produced it -- and all of them are pooled.
     task : str or TaskSpec, optional
         The mapping to serve; see :mod:`poraque.ml.tasks`.
     resolution : int, optional
         Longest grid axis after spectral downsampling — a Fourier truncation,
         exact for a band-limited plane-wave field. ``None`` keeps each
         material's native grid, which for a public archive is 48³ upwards.
-    format : str or sequence of str, optional
-        ``"auto"`` (default), one name applied to every path, or one name per
-        path. See :func:`~poraque.data.sources.available_formats`.
+    format : str, optional
+        ``"vasp"``, or ``"auto"`` (default) to detect the code that wrote each
+        directory. See :data:`~poraque.data.sources.DATA_FORMATS`.
     spin : bool, optional
         ``False`` (default) serves the total density as one channel. ``True``
         serves :math:`(\rho, m)` and requires every source to carry a
         magnetisation block.
     charges : dict, optional
-        ``{element: Z_val}`` for the bulk sources, which have no ``POTCAR`` to
-        read them from. Taken from ``potcar_dir`` when one is given, and
-        inferred from the densities otherwise.
+        ``{element: Z_val}`` for materials with no ``POTCAR`` to read them
+        from. Taken from ``potcar_dir`` when one is given, and inferred from
+        the densities otherwise.
     potcar_dir : str, optional
         A ``POTCAR`` library, used wherever the data itself ships none. With it
         the external potential is VASP's exact tabulated one; without it, the
@@ -169,17 +169,9 @@ class MixedFieldDataset(FieldPairDataset):
     # Construction
     # ------------------------------------------------------------------ #
     def _build_sources(self, format):
-        """One source per path, with the format applied or detected."""
-        formats = ([format] * len(self.paths)
-                   if isinstance(format, (str, type(None)))
-                   else list(format))
-        if len(formats) != len(self.paths):
-            raise ValueError(
-                f"Got {len(formats)} format(s) for {len(self.paths)} path(s). "
-                f"Pass one name for all of them, or one per path."
-            )
-        return [resolve_source(path, fmt, **self._source_options)
-                for path, fmt in zip(self.paths, formats)]
+        """One source per path. ``format`` names the code, or detects it."""
+        return [resolve_source(path, format=format, **self._source_options)
+                for path in self.paths]
 
     def _discover(self, task):
         """

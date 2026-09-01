@@ -104,7 +104,7 @@ poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
 \end{lstlisting}
 
 A download is \textbf{one directory per material, named by its id} --- the
-shape of a VASP run, and the shape \opt{data.train\_paths} already reads:
+shape of a VASP run, and the shape \opt{data.data\_paths} already reads:
 
 \begin{lstlisting}
 data/MP/
@@ -153,7 +153,7 @@ a time. Expanding them buys nothing and costs roughly three times the storage.
 It contains one compressed \file{CHGCAR} per material directory and nothing
 else --- no \file{POSCAR}, \file{INCAR}, \file{POTCAR}, \file{OUTCAR} or
 \file{TAUCAR}. (That emptiness is also what tells the directory apart from a
-prepared cache, which has the same shape and always holds more than a density.)
+run whose inputs are there to build $\vext$ from exactly.)
 Three consequences, and Poraqu\^e handles the first two for you:
 
 \begin{description}
@@ -184,7 +184,7 @@ per species, as VASP distributes them:
 
 \begin{lstlisting}
 data:
-  train_paths:
+  data_paths:
     - data/MP
   potcar_dir: /opt/vasp/potpaw_PBE     # <dir>/Ag/POTCAR, <dir>/Pt/POTCAR, ...
   resolution: 32
@@ -233,25 +233,35 @@ quoted.
 
 \section{Training on several sources at once}
 
-\opt{data.train\_paths} is a list, and each entry is detected from its contents
---- a directory of DFT runs, an archive of standalone \file{CHGCAR}s, or a
-prepared cache from an earlier run:
+\opt{data.data\_paths} is a list of directories, and \textbf{every entry has
+the same shape}: subdirectories, one per material, each holding that material's
+volumetric files. Nothing in the config says which is which, because on disk
+they are the same kind of thing:
 
 \begin{lstlisting}
 data:
-  train_paths:
-    - data/vasp             # your own calculations
-    - data/MP               # a Materials Project download
+  data_paths:
+    - data/vasp/structures  # structure_0000/, structure_0001/, ...
+    - data/MP               # mp-124/, mp-81/, ...
+    - data/cache/res32      # a cache from an earlier run
   potcar_dir: /opt/vasp/potpaw_PBE
 \end{lstlisting}
 
+What differs is the \emph{content} of a material's directory --- inputs beside
+the density mean $\vext$ is built from them, a density alone means it is built
+from the structure the \file{CHGCAR} carries in its own header --- and content
+is read, not declared.
+
 Everything found is pooled into one training set, and identifiers that collide
-between archives are prefixed with their directory so no material is silently
-dropped.
+between directories are prefixed with their own so no material is silently
+dropped. \file{TAUCAR} is optional \textbf{per material}: one run may have
+written one while its neighbour did not, and the one that did still reaches
+\opt{chg2tau} while both reach \opt{ext2chg}.
 
 \begin{pwarn}
-Without \opt{potcar\_dir}, mixing a calculation archive with a bulk archive
-mixes \emph{two definitions of} $\vext$ under one name, and the operator spends
+Without \opt{potcar\_dir}, mixing materials that carry their own
+pseudopotentials with materials that carry only a density mixes \emph{two
+definitions of} $\vext$ under one name, and the operator spends
 capacity reconciling them. Poraqu\^e warns when it detects this. Setting
 \opt{potcar\_dir} makes both sources use the tabulated construction, which
 resolves the warning correctly rather than merely silencing it.

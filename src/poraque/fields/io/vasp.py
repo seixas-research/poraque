@@ -41,6 +41,26 @@ class VaspReader(CalculationReader):
         "kinetic": "TAUCAR",
     }
 
+    @classmethod
+    def detect(cls, directory):
+        """
+        A ``POSCAR``/``CONTCAR``, **or a ``CHGCAR`` on its own**.
+
+        The base heuristic asks for a structure file, which is right for a code
+        whose outputs are ambiguous and wrong for this one: the ``CHGCAR``
+        format is VASP's, it carries its own ``POSCAR`` in its first lines, and
+        a directory holding one and nothing else is a VASP density however it
+        was obtained. Refusing it meant a published archive -- a material with
+        a density and no inputs -- could not be identified at all, and the
+        failure surfaced as "Could not identify the DFT code", which names
+        neither the cause nor the fix.
+        """
+        if super().detect(directory):
+            return True
+        from ...data.sources import _material_density
+
+        return _material_density(directory) is not None
+
     def read_structure(self, directory):
         """Read ``POSCAR`` (falling back to ``CONTCAR``)."""
         return Poscar.from_file(self.structure_path(directory))

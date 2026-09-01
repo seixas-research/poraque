@@ -1004,18 +1004,16 @@ class TestTheReconstructedVaspInputs:
 
 class TestTheDeckDoesNotBecomeTrainingData:
     r"""
-    A reconstructed ``POSCAR`` makes a material directory indistinguishable
-    from a VASP run, and ``CalculationSource`` is asked first.
+    A reconstructed ``POSCAR``, ``INCAR`` and ``KPOINTS`` are for VASP. The
+    loader records the density and nothing else.
 
-    Claimed there, an archive entry loses the valence charges
-    ``BulkDensitySource`` infers from the densities — the only source of
-    :math:`Z^{
-m val}` when no ``POTCAR`` is present — and the reconstructed
-    POSCAR becomes a training input, which is the long way round to a geometry
-    that came from the density in the first place.
-
-    So each entry carries a marker saying what it is. These tests assert that
-    the marker is doing the work, by checking what happens without it.
+    There used to be a second thing to get right here: the deck made a
+    download's directory indistinguishable from a VASP run, and a *different
+    source class* would have claimed it and lost the valence charges inferred
+    from the densities. That distinction is gone -- one class reads every
+    dataset, and the inference is on its base -- so the ``mp.json`` marker is
+    now provenance beside the data rather than a detection hint, and deleting
+    it changes nothing about how the directory is read.
     """
 
     def _downloaded(self, tmp_path, monkeypatch):
@@ -1027,11 +1025,12 @@ m val}` when no ``POTCAR`` is present — and the reconstructed
         fetcher.download()
         return fetcher
 
-    def test_it_is_still_read_as_a_bulk_archive(self, tmp_path, monkeypatch):
-        from poraque.data.sources import BulkDensitySource, detect_source
+    def test_it_is_read_like_any_other_dataset(self, tmp_path, monkeypatch):
+        from poraque.data.sources import CalculationSource, resolve_source
 
         fetcher = self._downloaded(tmp_path, monkeypatch)
-        assert detect_source(str(fetcher.outdir)) is BulkDensitySource
+        assert isinstance(resolve_source(str(fetcher.outdir)),
+                          CalculationSource)
 
     def test_only_the_density_reaches_the_record(self, tmp_path, monkeypatch):
         from poraque.data.sources import resolve_source
@@ -1053,20 +1052,25 @@ m val}` when no ``POTCAR`` is present — and the reconstructed
 
         assert "EXTCAR" in source.provides(source.discover()[0])
 
-    def test_without_the_marker_it_would_be_taken_for_a_calculation(
-            self, tmp_path, monkeypatch):
+    def test_the_marker_no_longer_changes_what_is_read(self, tmp_path,
+                                                       monkeypatch):
         """
-        The regression this guards, stated as the counterfactual. If this ever
-        stops holding, the marker has become dead weight and can go; while it
-        holds, deleting it silently changes which source reads the data.
+        It once did, and that was worth a test. Now it is provenance: removing
+        it must leave the same materials with the same fields, or it has
+        quietly become load-bearing again.
         """
-        from poraque.data.sources import CalculationSource, detect_source
+        from poraque.data.sources import resolve_source
 
         fetcher = self._downloaded(tmp_path, monkeypatch)
+        before = {r.identifier: sorted(r.files)
+                  for r in resolve_source(str(fetcher.outdir)).discover()}
+
         for identifier in ("mp-1", "mp-2"):
             (fetcher.material_dir(identifier) / "mp.json").unlink()
 
-        assert detect_source(str(fetcher.outdir)) is CalculationSource
+        after = {r.identifier: sorted(r.files)
+                 for r in resolve_source(str(fetcher.outdir)).discover()}
+        assert before == after == {"mp-1": ["CHGCAR"], "mp-2": ["CHGCAR"]}
 
 
 class TestStoringAsHDF5:

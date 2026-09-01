@@ -17,12 +17,58 @@ task:
   name: pt_w16_m8_l3            # names models/<name>/ and everything inside it
 
 data:
-  train_paths: null             # list of dataset dirs, layouts may be mixed; null uses `root`
-  root: data/vasp/structures    # single dataset dir; runs are found here or one level below
-  source: auto                  # auto | vasp | bulk | prepared (one name, or one per path)
+  # ------------------------------------------------------------------------
+  # ONE key names the dataset, and every entry in it has the SAME shape:
+  #
+  #     <a path listed here>/
+  #         <material>/         one subdirectory per structure
+  #             CHGCAR          required -- the density, and the grid every
+  #                             other field of that material is placed on
+  #             TAUCAR          OPTIONAL, and optional per material
+  #             POSCAR INCAR    optional; when present the external potential
+  #             POTCAR ...      is built from them exactly
+  #
+  # That is what a VASP run tree looks like, what `poraque-mp` writes, and what
+  # the cache builder produces -- so there is nothing to declare about where a
+  # path came from, and no key that says so. Paths are pooled into one dataset.
+  #
+  # What DIFFERS between them is the CONTENT of a material's directory, and
+  # content is read, not configured:
+  #
+  #     inputs beside the density  ->  V_ext computed from them (exact with a
+  #                                    POTCAR, or with `potcar_dir` below)
+  #     a density on its own       ->  V_ext computed from the structure the
+  #                                    CHGCAR carries in its own header
+  #
+  # V_ext is ALWAYS computed, never read from an EXTCAR that happens to sit in
+  # a directory: at inference time there is no DFT run to read one from, so the
+  # input channel has to be Poraque's own arithmetic in both places.
+  #
+  # TAUCAR is optional per material and needs no declaring. A material that has
+  # one joins the chg2tau set; one that does not still joins ext2chg and is
+  # simply absent from the other. A whole task with no target anywhere is
+  # skipped with a message rather than failing the run -- which is what makes
+  # `type: all` sensible on a Materials Project download, where no tau exists.
+  #
+  # A path holding ONE material's run directly -- its files at the top level
+  # rather than one level down -- is read as that single material, so a lone
+  # calculation needs no wrapper directory.
+  # ------------------------------------------------------------------------
+  data_paths:                   # null uses data/vasp/structures
+    - data/vasp/structures      # local runs:   structure_0000/, structure_0001/, ...
+  # - data/MP                   # an MP download: mp-124/, mp-81/, ...  (no TAUCAR)
+  # - data/MP                   # (any other dataset root, pooled with the first)
   cache: data/cache             # where the downsampled copies are written
-  pattern: structure            # prefix of run folders inside a `vasp` path
-  code: auto                    # DFT code name, or auto
+  pattern: ""                   # prefix filter on the material subdirectories. EMPTY takes
+                                #   all of them, which is the only sensible default now that
+                                #   one key names every kind of dataset: "structure" would
+                                #   silently exclude every mp-124/ in a download. Set it to
+                                #   skip a sibling folder that must not be trained on; it is
+                                #   part of the cache fingerprint.
+  format: auto                  # auto | vasp -- the code that wrote the files, and NOTHING
+                                #   else. There is no layout to choose: every path is a
+                                #   directory of per-material subdirectories, and what a
+                                #   material holds is read, not declared.
   resolution: 32                # longest grid axis after spectral downsampling
   potcar_dir: null              # POTCAR library; without one V_ext falls back to the Gaussian model
   sigma: null                   # Gaussian pseudo-ion width in Ang; null derives it per species
@@ -86,8 +132,16 @@ training:
   optimizer: adamw              # adamw | adam | sgd; identical to adam at weight_decay 0
   scheduler: cosine             # cosine | null
   grad_clip: 1.0                # global gradient-norm clip; 0 disables
-  loss: relative_l2             # relative_l2 | sobolev
-  sobolev_weight: 0.1           # weight of the gradient term when loss: sobolev
+  loss: relative_l2             # absolute_l2 | relative_l2 | absolute_h1 | relative_h1
+                                #   'relative' divides each sample by its own target norm, so
+                                #     every MATERIAL counts equally; 'absolute' does not, so
+                                #     every VOXEL does and a dense cell weighs more.
+                                #   'h1' adds sobolev_weight * the same error on the spatial
+                                #     gradients -- both halves in the SAME norm, so the weight
+                                #     is a pure ratio and not also a change of scale.
+                                #   The progress table names whichever one is running, and
+                                #     early stopping is decided on it.
+  sobolev_weight: 0.1           # w_Sob; read only by the two h1 losses
   valid_fraction: 0.2           # held out at the STRUCTURE level; 0 trains on everything
   eval_epoch: 10                # evaluate and log every this many epochs
   early_stopping: 300           # epochs without improvement before stopping; 0 disables
@@ -155,4 +209,23 @@ fine_tuning:
                                 #   from the checkpoint, never refitted on the new data
   pretrained_checkpoint: models/poraque_models.pfno
   learning_rate: 1.0e-05        # much lower than a fresh fit, which is the point
-  freeze_lifting_layers: false  # keep the input embedding fixed and adapt only the operator
+  freeze_lifting_layers: false  # keep the input embedding fixed and adapt only the operator;
+                                #   ignored under use_lora, which freezes everything anyway
+  use_lora: false               # LoRA: freeze every trained weight and learn a rank-r
+                                #   correction  W' = W + (alpha/r) B A  beside the DENSE
+                                #   (1x1x1) lifting and projection convolutions.
+                                #   On the shipped model that is 1320 trainable parameters
+                                #   against 3152353 frozen -- 0.042% -- and the saved file
+                                #   goes from 12.0 MB to 7.6 kB.
+                                #   B starts at zero, so the adapted model IS the base model
+                                #   until the first step.
+                                #   CAVEAT: the spectral weights are NOT adapted, so this
+                                #     re-fits how fields enter and leave the operator and
+                                #     leaves the operator itself alone. A family whose
+                                #     operator genuinely differs needs a full fine-tune.
+                                #   The checkpoint holds the ADAPTER ONLY and names its base,
+                                #     so it cannot be loaded without that base file.
+  lora_rank: 8                  # r; cost and capacity are both linear in it
+  lora_alpha: 16.0              # the update is scaled by alpha / r, which keeps a learning
+                                #   rate roughly transferable between ranks
+  lora_dropout: 0.0             # dropout on the adapter's input

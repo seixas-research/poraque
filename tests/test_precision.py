@@ -467,6 +467,117 @@ def _shipped_configs():
                                         recursive=True))
 
 
+class TestOneDataSchemaForEveryOrigin:
+    r"""
+    ``data.data_paths`` is the only way a dataset is named, and every entry in
+    it has the same shape.
+
+    Before 2026-08-31 there were three keys for one question — ``train_paths``
+    (a list), ``root`` (a single path used when the list was empty) and
+    ``source`` (which layout each path was). The last is the one that mattered:
+    it asked the *config* to declare something the *directory* already answers,
+    and so made "a VASP run" and "a Materials Project download" two different
+    kinds of thing to write down when they are the same kind of thing on disk.
+
+    All three are gone. What a material's directory holds is read, not
+    declared.
+    """
+
+    import os as _os
+
+    ROOT = _os.path.join(_os.path.dirname(__file__), "..", "configs")
+
+    def _load(self, name):
+        import os
+
+        from poraque.ml.config import TrainingConfig
+
+        return TrainingConfig.from_yaml(os.path.join(self.ROOT, f"{name}.yaml"))
+
+    @pytest.mark.parametrize("key", ("train_paths", "root", "source"))
+    def test_the_retired_keys_are_gone(self, key):
+        from dataclasses import fields
+
+        from poraque.ml.config import DataConfig
+
+        assert key not in {f.name for f in fields(DataConfig)}
+
+    @pytest.mark.parametrize("key,replacement", (
+        ("train_paths", "data_paths"),
+        ("root", "data_paths"),
+        ("source", "detected"),
+    ))
+    def test_a_config_written_against_the_old_schema_is_told_what_to_write(
+            self, key, replacement):
+        """
+        "Unknown key: root" beside twenty valid ones says the config is wrong.
+        It does not say what to write instead, and this one has an answer.
+        """
+        from poraque.ml.config import TrainingConfig
+
+        with pytest.raises(ValueError, match="Replaced"):
+            TrainingConfig.from_dict({"data": {key: "anything"}})
+
+        try:
+            TrainingConfig.from_dict({"data": {key: "anything"}})
+        except ValueError as error:
+            assert replacement in str(error)
+
+    @pytest.mark.parametrize("name", _shipped_configs())
+    def test_no_shipped_config_mentions_a_retired_key(self, name):
+        import os
+        import re
+
+        with open(os.path.join(self.ROOT, f"{name}.yaml"),
+                  encoding="utf-8") as handle:
+            text = handle.read()
+        # Key position only: `paw_source` is a different key that happens to
+        # end in one of these words, and `root:` is still an `output` setting.
+        data = text.split("\ndata:", 1)[-1].split("\nmodel:", 1)[0]
+        for key in ("train_paths", "source", "root"):
+            assert not re.search(rf"^\s{{2}}{key}\s*:", data, re.M)
+
+    def test_the_mixed_config_pools_both_origins_under_one_key(self):
+        """The example the unification exists for: local runs and a download,
+        in one list, with nothing distinguishing them."""
+        paths = self._load("train_mixed").data.paths()
+
+        assert len(paths) == 2
+        assert any("vasp" in path for path in paths)
+        assert any("MP" in path for path in paths)
+
+    def test_a_bare_string_means_the_one_item_list(self):
+        """Writing a single path without the list dashes is the obvious
+        mistake, and it means exactly what the list means."""
+        from poraque.ml.config import TrainingConfig
+
+        config = TrainingConfig.from_dict({"data": {"data_paths": "one/dir"}})
+        assert config.data.paths() == ["one/dir"]
+
+    def test_an_unset_list_still_has_a_dataset(self):
+        from poraque.ml.config import DEFAULT_DATA_PATH, TrainingConfig
+
+        assert TrainingConfig.from_dict({}).data.paths() == [DEFAULT_DATA_PATH]
+
+    def test_the_annotated_reference_explains_the_directory_logic(self):
+        """
+        `train_complete_and_commented.yaml` is where a reader learns the
+        schema. The unified shape is the one thing it must not leave implicit.
+        """
+        import os
+
+        with open(os.path.join(self.ROOT,
+                               "train_complete_and_commented.yaml"),
+                  encoding="utf-8") as handle:
+            text = handle.read()
+
+        block = text.split("\ndata:", 1)[1].split("\nmodel:", 1)[0]
+        assert "data_paths:" in block
+        for phrase in ("one subdirectory per structure", "OPTIONAL",
+                       "TAUCAR", "V_ext"):
+            assert phrase in block, f"the data block never mentions {phrase!r}"
+
+
 class TestShippedConfigs:
     """The committed examples must load, and must stay short."""
 

@@ -472,9 +472,9 @@ class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
 
         root = _runs(tmp_path / "runs", grid, poscar, polarized=True)
         auto = TrainingConfig.from_dict(
-            {"data": {"root": root, "spin": "auto"}})
+            {"data": {"data_paths": [root], "spin": "auto"}})
         off = TrainingConfig.from_dict(
-            {"data": {"root": root, "spin": False}})
+            {"data": {"data_paths": [root], "spin": False}})
 
         assert cache_tag(auto.data).endswith("_spin")
         assert not cache_tag(off.data).endswith("_spin")

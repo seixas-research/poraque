@@ -80,7 +80,6 @@ import numpy as np
 
 from ..fields import ChargeDensity, FieldGrid
 from ..fields.vasp.volumetric import read_structure_header
-from ..ml.data import MaterialRecord
 from .dataset import MixedFieldDataset
 
 #: Prefix of a Materials Project charge-density file, as written by
@@ -97,55 +96,50 @@ AVAILABLE_FIELDS = ("CHGCAR",)
 INTEGER_TOLERANCE = 0.05
 
 
-def discover_mp_chgcars(root, pattern=CHGCAR_PREFIX):
+def discover_mp_chgcars(root, pattern=""):
     """
     Find the charge densities in a Materials Project download directory.
+
+    A download is one directory per material, named by its id, holding that
+    material's ``CHGCAR`` — the same shape as every other dataset, so this is
+    :func:`~poraque.data.sources.resolve_source` with a message that names the
+    downloader when the directory is empty. The generic one would only say it
+    found no materials, which is true and unhelpful in the one place where the
+    cause is always "nothing has been downloaded yet".
 
     Parameters
     ----------
     root : str or pathlib.Path
-        Directory holding ``CHGCAR_<material_id>[.gz]`` files — typically
-        ``data/MP/chgcar``. A parent directory containing a ``chgcar/``
-        subdirectory is accepted too, so ``data/MP`` also works.
+        The download directory, e.g. ``data/MP``.
     pattern : str, optional
-        Filename prefix identifying a density.
+        Prefix filter on the material directories. Empty takes all of them.
 
     Returns
     -------
     list of MaterialRecord
-        One record per file, identified by its material id and sorted for
-        reproducible ordering. ``files`` holds only ``CHGCAR``: naming a file
-        that is not there would turn a known absence into a crash on first
-        access.
+        One record per material, sorted by identifier.
 
     Raises
     ------
     FileNotFoundError
-        If ``root`` does not exist, or holds no matching file. The message
-        names the directory that was searched — the usual cause is pointing at
-        ``data/MP`` before anything has been downloaded.
+        If ``root`` does not exist or holds no material.
     """
+    from .sources import resolve_source
+
     root = Path(root)
-    if root.is_dir() and (root / "chgcar").is_dir():
-        root = root / "chgcar"
     if not root.is_dir():
         raise FileNotFoundError(f"No such directory: {root}")
 
-    records = []
-    for entry in sorted(os.listdir(root)):
-        path = root / entry
-        if not entry.startswith(pattern) or not path.is_file():
-            continue
-        from ..fields.io.compressed import strip_compression_suffix
-
-        identifier = strip_compression_suffix(entry)[len(pattern):]
-        records.append(MaterialRecord(identifier, str(root),
-                                      files={"CHGCAR": str(path)}))
+    try:
+        records = resolve_source(str(root), pattern=pattern).discover()
+    except ValueError:
+        records = []
 
     if not records:
         raise FileNotFoundError(
-            f"No {pattern}* files under {root}. Download some first: "
-            f"poraque-mp --elements Pt Pd Ni --outdir {root.parent}"
+            f"No materials under {root}. A download is one directory per "
+            f"material, each holding its CHGCAR. Download some first: "
+            f"poraque-mp --elements Pt Pd Ni --outdir {root}"
         )
     return records
 
@@ -384,14 +378,11 @@ class MPChargeDensityDataset(MixedFieldDataset):
                 f"density, so only {available_tasks()} is trainable on it."
             )
 
-        # Resolve `data/MP` to `data/MP/chgcar` before the source sees it, and
-        # fail with a message naming the downloader when the directory is empty
-        # -- the generic detector would only say it does not recognise it.
+        # Checked here, so an empty download fails with a message naming the
+        # downloader rather than the generic "no materials under ...".
         if kwargs.get("materials") is None:
-            root = os.path.dirname(
-                discover_mp_chgcars(root)[0].files["CHGCAR"])
+            discover_mp_chgcars(root)
 
-        kwargs.setdefault("format", "bulk")
         super().__init__(root, task, **kwargs)
 
     @property
@@ -447,7 +438,6 @@ def build_mp_cache(root, cache, resolution=32, charges=None, sigma=None,
 
     emit = log or (lambda *_: None)
     records = discover_mp_chgcars(root)
-    directory = os.path.dirname(records[0].files["CHGCAR"])
 
     charges = charges or infer_valence_charges(records, log=emit)
     emit("  valence charges: "
@@ -460,7 +450,7 @@ def build_mp_cache(root, cache, resolution=32, charges=None, sigma=None,
     emit("  poraque.data.mp_dataset for what that does and does not license.")
 
     return build_field_cache(
-        directory, cache, resolution=resolution, format="bulk",
+        root, cache, resolution=resolution,
         fields=("EXTCAR", "CHGCAR"), charges=charges, sigma=sigma,
         gaussian_blur=gaussian_blur, blur_method=blur_method, limit=limit,
         log=emit,

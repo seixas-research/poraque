@@ -302,9 +302,11 @@ class TrainingReport:
                 # The series is whatever `train()` measured it in -- an H1 for
                 # a `loss: sobolev` run -- and a figure that assumed L2 would
                 # mislabel it silently.
-                norm = "H^1" if history.get("val_metric") == "rel H1" else "L^2"
+                metric = str(history.get("val_metric", "rel L2"))
+                norm = "H^1" if metric.endswith("H1") else "L^2"
+                kind = "absolute" if metric.startswith("abs") else "relative"
                 panels.append((axes[1], validation, val_epochs,
-                               f"Validation relative ${norm}$ "
+                               f"Validation {kind} ${norm}$ "
                                f"(physical units)", 1))
 
             for axis, values, epochs, label, slot in panels:

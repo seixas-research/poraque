@@ -66,22 +66,78 @@ class RelativeL2Loss(nn.Module):
         return ratio.mean()
 
 
+class AbsoluteL2Loss(nn.Module):
+    r"""
+    Per-sample **absolute** :math:`L^2` error,
+    :math:`\lVert \hat f - f\rVert_2`.
+
+    The unnormalised counterpart of :class:`RelativeL2Loss`, and the honest
+    choice for a dataset whose materials are genuinely comparable in magnitude:
+    it weights every *voxel* equally rather than every *material* equally, so a
+    system with a larger field contributes proportionally more gradient.
+
+    On a heterogeneous set that is usually wrong — fields differ by orders of
+    magnitude between materials, and a handful of dense systems would dominate
+    — which is why the relative form is the default. It is offered because
+    "which of these two the optimiser stepped on" is a real question about a
+    run, and it should be answerable from the config rather than inferred.
+
+    Parameters
+    ----------
+    reduction : {"mean", "sum", "none"}, optional
+        Reduction over the batch.
+    """
+
+    def __init__(self, reduction="mean"):
+        super().__init__()
+        self.reduction = reduction
+
+    def forward(self, prediction, target):
+        """Compare ``(B, C, Nx, Ny, Nz)`` tensors."""
+        norms = (prediction - target).flatten(1).norm(dim=1)
+        if self.reduction == "sum":
+            return norms.sum()
+        if self.reduction == "none":
+            return norms
+        return norms.mean()
+
+
 class SobolevLoss(nn.Module):
     r"""
-    Relative :math:`H^1` loss: values *and* spectral gradients.
+    :math:`H^1` loss: values *and* spectral gradients.
+
+    .. math::
+
+        \mathcal{L} = \mathcal{L}_{L^2}
+                    + w_{\rm Sob}\,\mathcal{L}_{L^2}[\nabla]
+
+    in whichever of the two norms ``relative`` selects — both halves in the
+    same one, so the weight is a pure ratio between values and derivatives and
+    does not also have to absorb a change of scale.
+
+    Matching :math:`\nabla\rho` matters because the von Weizsäcker kinetic
+    energy — the dominant term in the inhomogeneous regions the model must get
+    right — depends on the gradient, not on the density alone. A model with a
+    small pointwise error but noisy derivatives is useless downstream.
 
     Parameters
     ----------
     weight : float, optional
-        Weight of the gradient term relative to the value term.
+        Weight of the gradient term relative to the value term
+        (``training.sobolev_weight``).
+    relative : bool, optional
+        Normalise each term by the target's own norm (the default).
     epsilon : float, optional
-        Floor on the target norms.
+        Floor on the target norms, used only when ``relative``.
     """
 
-    def __init__(self, weight=0.1, epsilon=1e-8):
+    def __init__(self, weight=0.1, relative=True, epsilon=1e-8):
         super().__init__()
         self.weight = float(weight)
-        self.value_loss = RelativeL2Loss(epsilon)
+        self.relative = bool(relative)
+        self.epsilon = float(epsilon)
+        self.value_loss = (RelativeL2Loss(epsilon) if relative
+                           else AbsoluteL2Loss())
 
     def forward(self, prediction, target, cell):
         r"""
@@ -97,12 +153,81 @@ class SobolevLoss(nn.Module):
         """
         loss = self.value_loss(prediction, target)
         if self.weight > 0.0:
-            predicted_gradient = spectral_gradient(prediction, cell)
-            target_gradient = spectral_gradient(target, cell)
-            difference = (predicted_gradient - target_gradient).flatten(1).norm(dim=1)
-            scale = target_gradient.flatten(1).norm(dim=1).clamp_min(1e-8)
-            loss = loss + self.weight * (difference / scale).mean()
+            loss = loss + self.weight * _gradient_error(
+                prediction, target, cell, relative=self.relative,
+                epsilon=self.epsilon).mean()
         return loss
+
+
+def _gradient_error(prediction, target, cell, relative=True, epsilon=1e-8):
+    """Per-sample :math:`L^2` error of the spectral gradients."""
+    difference = (spectral_gradient(prediction, cell)
+                  - spectral_gradient(target, cell)).flatten(1).norm(dim=1)
+    if not relative:
+        return difference
+    scale = spectral_gradient(target, cell).flatten(1).norm(dim=1)
+    return difference / scale.clamp_min(epsilon)
+
+
+#: The objectives ``training.loss`` accepts, and what each one is.
+#:
+#: Two axes, named rather than implied: **absolute or relative** (is each
+#: sample normalised by its own target norm?) and **L2 or H1** (are spatial
+#: gradients part of the objective?). The old spelling had one axis explicit
+#: and the other hidden — ``"sobolev"`` said "gradients" and said nothing about
+#: the norm, and there was no way to ask for an unnormalised error at all.
+#:
+#: ``sobolev_weight`` scales the gradient term of the two :math:`H^1` forms and
+#: is ignored by the two :math:`L^2` ones.
+DATA_LOSSES = {
+    "absolute_l2": {"relative": False, "gradient": False, "label": "abs L2"},
+    "relative_l2": {"relative": True, "gradient": False, "label": "rel L2"},
+    "absolute_h1": {"relative": False, "gradient": True, "label": "abs H1"},
+    "relative_h1": {"relative": True, "gradient": True, "label": "rel H1"},
+}
+
+
+def resolve_data_loss(name):
+    """
+    The settings behind one of :data:`DATA_LOSSES`, by name.
+
+    Raises
+    ------
+    ValueError
+        Naming the four that exist. ``"sobolev"`` — the spelling this replaced
+        — is called out on its own, because it had no norm in its name and the
+        two possible readings of it are both offered now.
+    """
+    key = str(name).lower()
+    if key in DATA_LOSSES:
+        return DATA_LOSSES[key]
+    hint = ""
+    if key == "sobolev":
+        hint = (" 'sobolev' was renamed: it named the gradient term and not "
+                "the norm. Use 'relative_h1' for what it did, or "
+                "'absolute_h1' for the unnormalised form.")
+    raise ValueError(
+        f"Unknown loss {name!r}; expected one of {sorted(DATA_LOSSES)}.{hint}")
+
+
+def build_data_loss(name="relative_l2", sobolev_weight=0.1):
+    """
+    The data-fidelity module for one of :data:`DATA_LOSSES`.
+
+    Parameters
+    ----------
+    name : str
+    sobolev_weight : float, optional
+        Gradient weight, used by the :math:`H^1` forms only.
+
+    Returns
+    -------
+    nn.Module
+    """
+    spec = resolve_data_loss(name)
+    if spec["gradient"]:
+        return SobolevLoss(sobolev_weight, relative=spec["relative"])
+    return RelativeL2Loss() if spec["relative"] else AbsoluteL2Loss()
 
 
 def _total_density(field):
@@ -141,8 +266,10 @@ class PhysicsInformedLoss(nn.Module):
         applicable.
     data_loss : nn.Module, optional
         Fidelity term; defaults to :class:`RelativeL2Loss`.
+    loss : str, optional
+        Which data-fidelity term to use: one of :data:`DATA_LOSSES`.
     sobolev_weight : float, optional
-        If positive, use :class:`SobolevLoss` with this gradient weight.
+        Gradient weight for the two :math:`H^1` forms; ignored by the others.
     electron_count_weight : float, optional
         Weight of the **charge-conservation** term :math:`\int\rho = N`
         (``ext2chg`` only). :math:`N` is taken from ``n_electrons`` when the
@@ -160,16 +287,24 @@ class PhysicsInformedLoss(nn.Module):
         von Weizsäcker fraction in the kinetic functional used by that residual.
     """
 
-    def __init__(self, task="ext2chg", data_loss=None, sobolev_weight=0.0,
+    def __init__(self, task="ext2chg", data_loss=None, loss="relative_l2",
+                 sobolev_weight=0.1,
                  electron_count_weight=0.0, positivity_weight=0.0,
                  von_weizsacker_weight=0.0, euler_lagrange_weight=0.0,
                  euler_lagrange_lambda=1.0 / 9.0):
         super().__init__()
         self.task = str(task)
-        self.sobolev_weight = float(sobolev_weight)
-        self.data_loss = data_loss or (
-            SobolevLoss(sobolev_weight) if sobolev_weight > 0 else RelativeL2Loss()
-        )
+        # Recorded so the training loop can label its validation column with
+        # the norm it is actually measuring, without re-deriving it from a
+        # config it does not see. `loss` names the objective; `metric_label`
+        # names it for a human.
+        spec = resolve_data_loss(loss)
+        self.loss = str(loss).lower()
+        self.metric_label = spec["label"]
+        self.sobolev_weight = (float(sobolev_weight) if spec["gradient"]
+                               else 0.0)
+        self.data_loss = data_loss or build_data_loss(self.loss,
+                                                      self.sobolev_weight)
         self.electron_count_weight = float(electron_count_weight)
         self.positivity_weight = float(positivity_weight)
         self.von_weizsacker_weight = float(von_weizsacker_weight)
@@ -273,32 +408,30 @@ def relative_error(prediction, target):
     return RelativeL2Loss(reduction="none")(prediction, target)
 
 
-def relative_h1_error(prediction, target, cell, weight=0.1, epsilon=1e-8):
+def data_error(prediction, target, cell=None, loss="relative_l2",
+               sobolev_weight=0.1, epsilon=1e-8):
     r"""
-    Per-sample relative :math:`H^1` error, for reporting.
+    Per-sample held-out error **in the norm the run is optimising**.
 
-    The same combination :class:`SobolevLoss` minimises — the relative
-    :math:`L^2` on the values plus ``weight`` times the relative :math:`L^2` on
-    the spectral gradients — evaluated per sample rather than reduced. That
-    identity is the point of the function: a run whose objective includes the
-    gradient term should be *watched* on the quantity it is optimising, so the
-    validation curve and the training curve describe the same thing and early
-    stopping selects the model the objective prefers.
-
-    It is deliberately not the textbook
-    :math:`\lVert u\rVert_{H^1}^2 = \lVert u\rVert^2 + \lVert\nabla u\rVert^2`,
-    which would be a third quantity agreeing with neither the objective nor the
-    reported :math:`L^2`.
+    The same combination :func:`build_data_loss` minimises, evaluated per
+    sample rather than reduced — that identity is the point. A run should be
+    *watched* on the quantity it is minimising, so the validation curve and the
+    training curve describe the same thing and early stopping selects the model
+    the objective prefers. Reporting a relative :math:`L^2` for an
+    :math:`H^1` run means the checkpoint is chosen against a functional the
+    optimiser never saw.
 
     Parameters
     ----------
     prediction, target : torch.Tensor
         ``(B, C, Nx, Ny, Nz)`` fields, in physical units for reporting.
-    cell : torch.Tensor
-        ``(B, 3, 3)`` lattice vectors in Å; the gradient is spectral, so it
-        needs the cell.
-    weight : float, optional
-        Weight of the gradient term. Pass the run's ``sobolev_weight``.
+    cell : torch.Tensor, optional
+        ``(B, 3, 3)`` lattice vectors in Å. Required by the :math:`H^1` forms,
+        whose gradient is spectral.
+    loss : str, optional
+        One of :data:`DATA_LOSSES`.
+    sobolev_weight : float, optional
+        Gradient weight, for the :math:`H^1` forms.
     epsilon : float, optional
         Floor on the target norms.
 
@@ -307,11 +440,18 @@ def relative_h1_error(prediction, target, cell, weight=0.1, epsilon=1e-8):
     torch.Tensor
         ``(B,)`` errors.
     """
-    value = RelativeL2Loss(epsilon, reduction="none")(prediction, target)
-    if weight <= 0.0:
+    spec = resolve_data_loss(loss)
+    if spec["relative"]:
+        value = RelativeL2Loss(epsilon, reduction="none")(prediction, target)
+    else:
+        value = AbsoluteL2Loss(reduction="none")(prediction, target)
+
+    if not spec["gradient"] or sobolev_weight <= 0.0:
         return value
-    predicted_gradient = spectral_gradient(prediction, cell)
-    target_gradient = spectral_gradient(target, cell)
-    difference = (predicted_gradient - target_gradient).flatten(1).norm(dim=1)
-    scale = target_gradient.flatten(1).norm(dim=1).clamp_min(epsilon)
-    return value + weight * (difference / scale)
+    if cell is None:
+        raise ValueError(f"loss={loss!r} needs the cell: its gradient is "
+                         f"spectral and cannot be taken without one.")
+    return value + sobolev_weight * _gradient_error(
+        prediction, target, cell, relative=spec["relative"], epsilon=epsilon)
+
+

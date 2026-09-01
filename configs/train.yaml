@@ -13,6 +13,8 @@ task:
   name: platinum_W16-M8-L3      # names models/<name>/ and everything inside it
 
 data:
+  data_paths:                                            # one entry per dataset root; each holds
+    - ./data/vasp/structures                             #   one subdirectory per material
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # without a library V_ext is the Gaussian model
   atomic_reference: ./data/vasp/isolated_atoms           # the Pt atom: the baseline and the PAW records
   delta_density: true                                    # ext2chg learns rho - rho_sup; predict() still returns the full rho
@@ -24,7 +26,7 @@ model:
   modes: 8                      # retained Fourier modes per axis
   n_layers: 3                   # Fourier layers
   projection_channels: 64       # hidden width of the read-out head
-  mode_selection: fixed         # fixed keeps `modes` per axis; physical keeps a fixed band
+  mode_selection: fixed         # Options: 'fixed' | 'physical'.
   activation: silu              # stateless; `kan` moves the hyperparameters into kan_setup
   projection_activation: null   # read-out nonlinearity; null follows `activation`
 
@@ -35,8 +37,10 @@ training:
   weight_decay: 0.0001
   optimizer: adamw              # adamw | adam | sgd; identical to adam at weight_decay 0
   scheduler: cosine             # cosine | null
-  loss: sobolev                 # relative_l2 | sobolev (int (|f|^2 + w_Sob |grad f|^2) )
-  sobolev_weight: 0.1           # weight of the gradient term when loss: sobolev (w_Sob)
+  loss: relative_l2             # absolute_l2 | relative_l2 | absolute_h1 | relative_h1
+  sobolev_weight: 0.1           # w_Sob: read only by the two h1 losses, so inert here.
+                                #   In an h1, L = L2(f) + w_Sob * L2(grad f), both terms in
+                                #   the same norm
   valid_fraction: 0.2           # held out at the STRUCTURE level; 0 trains on everything
   eval_epoch: 10                # evaluate and log every this many epochs
   early_stopping: 300           # epochs without improvement before stopping; 0 disables
