@@ -55,19 +55,46 @@ storage multiplier when used.
 
 The whole database
 ------------------
-``--all`` (or an omitted ``elements``) selects **every** material the index says
-has a charge density, not a chemical space. That is one query, not :math:`2^n`:
+``--all`` selects **every** material the index says has a charge density, not a
+chemical space. That is one query, not :math:`2^n`:
 the summary endpoint takes ``has_props=["charge_density"]`` and answers
 server-side, so the alternative — pulling every summary document in the database
 and discarding the ones without a density — never happens. The search filters
 still apply, which is how a subset of the whole database is taken.
 
-Sizing that set exactly would mean one S3 ``HEAD`` per object, tens of thousands
-of them. ``--sample N`` measures ``N`` randomly chosen objects instead and
-extrapolates from the sample mean, and the report states which method it used —
-an estimate whose method is unstated is a number nobody can plan against. The
-sample is drawn with a fixed seed, because charge-density sizes are strongly
-right-tailed and an estimate that moved every time it was asked would be useless.
+Omitting ``--elements`` is *not* a second spelling of it. A command line naming
+neither is refused, because ``--elements`` was required for most of this
+module's life and reading a forgotten flag as *the whole database* would turn a
+typo into a multi-terabyte transfer. The library API is the deliberate
+exception: :class:`MPDataFetcher` with ``elements=None`` is the whole database,
+since a constructor argument that was never passed is a choice in a way a
+missing flag is not.
+
+``--sample N`` narrows that to **N materials drawn at random**, and it is the
+flag that makes ``--all`` usable. It is a *selection*, not only a sizing trick:
+with ``--estimate`` it measures those N exactly, and without ``--estimate`` it
+downloads them. Everything the run writes into ``--outdir`` --- the summary,
+the CIFs, the densities --- is about that subset, so a sampled directory never
+carries an index of a set it does not hold.
+
+Sizing the whole database exactly would mean one S3 ``HEAD`` per object, tens
+of thousands of them, so a sampled estimate also **projects**: the sample mean
+times the number the index advertises, reported on its own line and labelled as
+a projection. Both numbers are in the report because they answer different
+questions --- "what will this fetch" and "what would all of it cost" --- and an
+estimate that stated only one of them would be read as the other.
+
+The sample is drawn with a fixed ``--seed``, and that is what makes it a set
+rather than a lottery: the same seed selects the same materials, so an
+interrupted sampled download resumes onto the same subset instead of starting a
+fresh draw beside it. Charge-density sizes are also strongly right-tailed, so
+two draws of twenty can differ by tens of percent, and a projection that moved
+every time it was asked would be useless for planning.
+
+.. note::
+   Before 2026-09-01 ``--sample`` reached :meth:`MPDataFetcher.dry_run` alone.
+   Used without ``--estimate`` it was **silently ignored**, and the command
+   downloaded the whole matching set.
 
 Two routes to the same bytes
 ----------------------------
@@ -101,13 +128,27 @@ Command line
     # every material with a charge density, sized from a sample of 20
     poraque-mp --all --estimate --sample 20
 
+    # ... and then fetch exactly those 20
+    poraque-mp --all --sample 20 --outdir data/MP
+
     # the trainable subset of the whole database, as compressed HDF5
     poraque-mp --all --num-sites 1 12 --max-size-mb 20 \
         --outdir data/MP --hdf5 --compression gzip
 
+    # the same cap said in the unit that suits a large download
+    poraque-mp --all --max-size-gb 0.5 --outdir data/MP
+
 ``--estimate`` is a **pure dry run**: it reports to the console and leaves no
 file behind. Everything else writes into ``--outdir`` (``--output`` is accepted
 too), which defaults to the current directory.
+
+The per-object size cap has **two spellings, and they are the same cap**:
+``--max-size-mb`` and ``--max-size-gb``, related by the decimal factor of 1000
+this module uses everywhere it prints a size. One `CHGCAR` is an MB-scale
+object and a whole download is a GB-scale one, so which unit reads naturally
+depends on which of the two you are thinking about. Passing both is refused
+rather than resolved --- two caps is a question about which one wins, and no
+answer to it is worth guessing.
 
 What a download leaves behind
 -----------------------------
@@ -165,9 +206,18 @@ as normal:
 ``--hdf5`` stores each density as a chunked, compressed Poraquê field store
 (:mod:`poraque.fields.hdf5`) instead of a ``CHGCAR``. The values are identical —
 pymatgen holds :math:`\rho\Omega` on the grid, which is exactly the convention
-the store keeps, so it is a re-encoding and not a conversion. What is lost is
-the PAW augmentation block, which no HDF5 layout here carries: a store trains
-perfectly well and cannot seed a VASP ``ICHARG=1`` restart.
+the store keeps, so it is a re-encoding and not a conversion.
+
+**Nothing is lost in it**, which was not true before 2026-09-01: the store took
+``data["total"]`` and wrote no augmentation, so one download produced two
+different datasets depending on the flag. The magnetisation block reached
+training — ``data.spin: auto`` resolves against what is on disk, so the same
+materials trained a two-channel operator as ``CHGCAR``\ s and a one-channel one
+as stores — and the PAW records reached VASP, or rather did not: no store could
+seed an ``ICHARG = 1`` restart. Both are kept now, and
+:func:`~poraque.fields.vasp.templates.write_chgcar` (``poraque-vasp chgcar``)
+writes a store back out as a ``CHGCAR`` VASP can open, since no VASP build
+reads HDF5.
 """
 
 from __future__ import annotations
@@ -409,24 +459,32 @@ class Estimate:
     n_materials : int
         Materials matching the search.
     n_advertised : int
-        Materials whose ``has_props`` claims a charge density.
+        Materials whose ``has_props`` claims a charge density --- **the whole
+        matching set**, whether or not a sample was taken from it. It is the
+        denominator of :attr:`projected_bytes` and nothing else; every other
+        figure here describes what was actually selected.
     n_available : int
-        Materials whose S3 object is actually present. The two differ: the
-        index can advertise a density the bucket does not hold.
+        Selected materials whose S3 object is actually present. It differs from
+        :attr:`sampled` because the index can advertise a density the bucket
+        does not hold.
     sizes : dict
-        ``{material_id: bytes}``, with ``-1`` for an advertised but absent
-        object.
+        ``{material_id: bytes}`` for the selected materials, with ``-1`` for an
+        advertised but absent object.
     rows : list of dict
         Per-material records, largest first.
     method : str
-        ``"exact"`` when every object was measured with an S3 ``HEAD``, or
-        ``"sampled"`` when a random subset was measured and the total
-        extrapolated. Reported in :meth:`__str__` because an estimate whose
-        method is unstated is a number nobody can act on: the difference here
-        is between "1.9 TB" and "1.9 TB, give or take a few hundred GB".
+        ``"exact"`` when every matching object was measured, ``"sampled"`` when
+        ``N`` were drawn at random and measured. Both are measurements ---
+        every size in :attr:`sizes` came from an S3 ``HEAD`` --- and the
+        difference is *what set they describe*, which is why :meth:`__str__`
+        always says which one it is.
     sampled : int
-        How many objects were actually measured. Equals :attr:`n_available` for
-        an exact estimate.
+        How many objects were selected and measured. Equals the size of the
+        matching set for an exact estimate.
+    seed : int
+        The draw. Recorded so a sampled report names the set it describes: two
+        seeds select two different twenty-material subsets, and nothing else in
+        the output would tell them apart.
     """
 
     elements: list
@@ -437,6 +495,7 @@ class Estimate:
     rows: list = field(repr=False, default_factory=list)
     method: str = "exact"
     sampled: int = 0
+    seed: int = 0
 
     @property
     def label(self):
@@ -457,24 +516,42 @@ class Estimate:
 
     @property
     def is_sampled(self):
-        """Whether the totals below are extrapolated rather than measured."""
+        """Whether these figures describe a random subset of the matching set."""
         return self.method == "sampled"
 
     @property
     def download_bytes(self):
         """
-        Bytes that would cross the network.
+        Bytes that would cross the network, **for the selected materials**.
 
-        Measured exactly when every object was HEADed, and extrapolated from
-        the sample's mean otherwise. The extrapolation is a mean and not a
-        median on purpose: what is being predicted is a *total*, and a total is
-        the mean times the count however skewed the distribution is. The median
-        would understate it badly here, because charge-density sizes are heavily
-        right-tailed — a handful of large cells carry a large share of the bytes.
+        Always a measurement and never a projection, in both modes: a sampled
+        estimate HEADs every object it selected, so the total of a sample of
+        twenty is as exact as the total of a space of twenty. What changes with
+        ``--sample`` is which materials are being talked about, not how well
+        they are known.
+
+        See :attr:`projected_bytes` for what the whole matching set would cost.
         """
-        if self.is_sampled:
-            return self.mean_bytes * self.n_advertised
         return self.measured_bytes
+
+    @property
+    def projected_bytes(self):
+        """
+        What the **whole matching set** would cost, projected from the sample.
+
+        The sample mean times the number of materials the index advertises.
+        It is a mean and not a median on purpose: what is being predicted is a
+        *total*, and a total is the mean times the count however skewed the
+        distribution is. The median would understate it badly here, because
+        charge-density sizes are heavily right-tailed --- a handful of large
+        cells carry a large share of the bytes.
+
+        Equal to :attr:`download_bytes` when nothing was sampled, since then
+        the selection *is* the matching set.
+        """
+        if not self.is_sampled:
+            return self.measured_bytes
+        return self.mean_bytes * self.n_advertised
 
     @property
     def gz_disk_bytes(self):
@@ -488,22 +565,29 @@ class Estimate:
 
     @property
     def n_missing(self):
-        """Advertised by the index but not actually fetchable."""
-        return self.n_advertised - self.n_available
+        """
+        Selected and advertised, but not actually fetchable.
+
+        Counted straight off :attr:`sizes`, where an absent object is a ``-1``.
+        It is deliberately not ``n_advertised - n_available``: a sample of
+        twenty knows nothing about the objects it did not look at, and
+        subtracting from the matching set would report the rest of the database
+        as missing on no observation at all.
+        """
+        return sum(1 for size in self.sizes.values() if size <= 0)
 
     def files_under(self, max_size_mb):
         """
-        ``(count, bytes)`` of the objects at or below a size cap.
+        ``(count, bytes)`` of the **selected** objects at or below a size cap.
 
-        Scaled up from the sample when the estimate is a sampled one, so the
-        row means the same thing in both modes: how many of the *whole* set
-        would survive the cap, and what they would weigh.
+        A count of measured objects in both modes, never scaled up. The row
+        exists to answer "what would this cap leave me with", and with a sample
+        the answer is about the twenty materials that are going to be
+        downloaded --- extrapolating it to the database would put a number in
+        the column that no run of this command will ever produce.
         """
         kept = [s for s in self.sizes.values() if 0 < s <= max_size_mb * 1e6]
-        if not self.is_sampled or not self.sampled:
-            return len(kept), sum(kept)
-        scale = self.n_advertised / self.sampled
-        return int(round(len(kept) * scale)), sum(kept) * scale
+        return len(kept), sum(kept)
 
     def __str__(self):
         good = sorted(size for size in self.sizes.values() if size > 0)
@@ -522,17 +606,24 @@ class Estimate:
             f"  Advertising a charge density : {self.n_advertised}",
         ]
         if self.is_sampled:
+            share = 100 * self.sampled / max(self.n_advertised, 1)
             lines += [
-                f"  Objects measured (sample)    : {self.sampled}"
-                f"  ({100 * self.sampled / max(self.n_advertised, 1):.1f}%)",
+                f"  SAMPLED AT RANDOM            : {self.sampled} "
+                f"({share:.1f}%, seed {self.seed})",
+                f"  FILES TO DOWNLOAD            : {self.n_available}",
+                f"  TOTAL DOWNLOAD               : "
+                f"{_format_bytes(self.download_bytes)}",
+                "  method: every sampled object measured exactly with an S3 "
+                "HEAD request.",
+                "          The figures below describe the sample, which is "
+                "what a",
+                "          download would fetch -- not the whole matching set.",
+                "-" * 66,
                 f"  Mean measured object         : "
                 f"{_format_bytes(self.mean_bytes)}",
-                f"  TOTAL DOWNLOAD (ESTIMATED)   : "
-                f"{_format_bytes(self.download_bytes)}",
-                "  method: sizes of a random sample read with S3 HEAD "
-                "requests, no",
-                "          payload transferred; total = mean x "
-                f"{self.n_advertised} advertised.",
+                f"  Whole set, if it were fetched: ~"
+                f"{_format_bytes(self.projected_bytes)}  "
+                f"(mean x {self.n_advertised})",
             ]
         else:
             lines += [
@@ -551,10 +642,10 @@ class Estimate:
             f"{_format_bytes(percentile(0.5))} / {_format_bytes(good[-1])}",
             f"  90th percentile              : {_format_bytes(percentile(0.9))}",
         ]
-        if self.n_missing > 0 and not self.is_sampled:
+        if self.n_missing > 0:
             lines.append(f"  Advertised but unavailable   : {self.n_missing}")
         lines.append("-" * 66)
-        lines.append("  If you cap file size (--max-size-mb):")
+        lines.append("  If you cap file size (--max-size-mb / --max-size-gb):")
         for cap in (5, 10, 20, 50, 100, 200):
             count, total = self.files_under(cap)
             if count:
@@ -629,6 +720,11 @@ class MPDataFetcher:
         # index says has a charge density, which is the set this project wants
         # to size before deciding what subset to train on.
         self.elements = sorted(set(elements)) if elements else []
+        # Set by `estimate(sample=N)`: the material ids this run is about, or
+        # None for "everything that matched". Everything written into `outdir`
+        # honours it, so a sampled directory never carries a summary of a set
+        # it does not hold.
+        self._selected = None
         self.retries = int(retries)
         self.retry_delay = float(retry_delay)
 
@@ -808,8 +904,10 @@ class MPDataFetcher:
         print(f"  -> {len(kept)} materials found")
         self._documents = kept
         self._fields = fields
-        # The resolved keys and sizes belong to the previous document set.
+        # The resolved keys, sizes and selection belong to the previous
+        # document set.
         self._keys = self._estimate = None
+        self._selected = None
         return kept
 
     def _passes_local_filters(self, document):
@@ -842,6 +940,22 @@ class MPDataFetcher:
     def with_charge_density(self):
         """The subset advertising a charge density."""
         return [d for d in self.search() if self._has_charge_density(d)]
+
+    @property
+    def selected(self):
+        """
+        The documents this run is about: the sample, or everything matching.
+
+        ``--sample N`` makes the estimate a *selection* and not only a
+        measurement, and this is where the rest of the command reads it from.
+        It is empty until :meth:`estimate` has run, in the sense that it then
+        means "everything" --- which is the right answer before a sample has
+        been drawn.
+        """
+        documents = self.search()
+        if self._selected is None:
+            return documents
+        return [d for d in documents if str(d.material_id) in self._selected]
 
     # ------------------------------------------------------------------ #
     # Object resolution and sizing
@@ -966,22 +1080,29 @@ class MPDataFetcher:
         """
         Download size and storage projection. Downloads no density.
 
-        Two methods, and the report says which one it used.
+        Two selections, and the report says which one it describes.
 
-        **Exact** (``sample=None``): every object's size is read with an
-        unsigned S3 ``HEAD``, which transfers no payload. One request per
-        material, so a few-hundred-material space is a few seconds and the
-        whole database — some tens of thousands of objects — is not.
+        **Everything** (``sample=None``): every matching object's size is read
+        with an unsigned S3 ``HEAD``, which transfers no payload. One request
+        per material, so a few-hundred-material space is a few seconds and the
+        whole database --- some tens of thousands of objects --- is not.
 
-        **Sampled** (``sample=N``): ``N`` materials are chosen at random, their
-        objects HEADed, and the total taken as the sample mean times the number
-        advertised. This is the practical method for sizing the full set, and
-        it is what ``--sample`` exists for.
+        **A random subset** (``sample=N``): ``N`` materials are drawn at
+        random and *those* become the working set. Their objects are HEADed,
+        and every figure the estimate reports is a measurement of them ---
+        including :attr:`Estimate.download_bytes`, because a download after a
+        sampled estimate fetches exactly this set. The projection to the whole
+        matching set is still reported, as :attr:`Estimate.projected_bytes` and
+        as one line of the table, since sizing the database from a sample is
+        what one usually wants to know *before* choosing to fetch a subset of
+        it.
 
-        The sample is drawn with a fixed ``seed`` so the same question twice
-        gives the same answer; charge-density sizes are strongly right-tailed,
-        so two different draws of twenty can differ by tens of percent and an
-        estimate that moved every time it was asked would be useless for
+        The sample is drawn with a fixed ``seed``, and that is what makes it a
+        set rather than a lottery: the same seed selects the same materials, so
+        an interrupted download resumes onto the same subset and a second run
+        adds nothing new. Charge-density sizes are strongly right-tailed, so
+        two draws of twenty can also differ by tens of percent, and a
+        projection that moved every time it was asked would be useless for
         planning.
 
         Parameters
@@ -989,9 +1110,9 @@ class MPDataFetcher:
         refresh : bool, optional
             Re-query rather than reuse the cached result.
         sample : int, optional
-            Measure this many objects instead of all of them.
+            Select this many materials at random instead of all of them.
         seed : int, optional
-            Sampling seed.
+            Sampling seed. Two seeds are two different subsets.
 
         Returns
         -------
@@ -1013,12 +1134,16 @@ class MPDataFetcher:
             method = "sampled"
             picked = random.Random(seed).sample(sorted(advertised), int(sample))
             print(f"Sampling {len(picked)} of {len(advertised)} materials "
-                  f"(seed {seed}) and extrapolating ...")
+                  f"(seed {seed}) ...")
             chosen = self._resolve_keys(refresh=refresh, identifiers=picked)
-            resolvable = len(advertised)
+            # The selection, not just a sizing trick: everything this run
+            # writes into `outdir` -- the summary, the CIFs, the densities --
+            # is about these materials, so a directory sampled at N never
+            # describes a set it does not hold.
+            self._selected = set(chosen)
         else:
             chosen = self._resolve_keys(refresh=refresh)
-            resolvable = len(chosen)
+            self._selected = None
 
         sizes = self._head_sizes(chosen)
 
@@ -1041,15 +1166,17 @@ class MPDataFetcher:
         self._estimate = Estimate(
             elements=self.elements,
             n_materials=len(documents),
-            # The denominator the mean is multiplied by. In exact mode it is
-            # the number of objects actually resolved; in sampled mode the
-            # number the index advertises, since only a sample was resolved.
-            n_advertised=resolvable,
+            # The whole matching set in both modes -- the denominator of the
+            # projection and of nothing else. It used to double as "the number
+            # the mean is multiplied by", which is why every other figure had
+            # to be scaled to match it.
+            n_advertised=len(advertised),
             n_available=sum(1 for size in sizes.values() if size > 0),
             sizes=sizes,
             rows=rows,
             method=method,
             sampled=len(sizes),
+            seed=int(seed),
         )
         return self._estimate
 
@@ -1098,8 +1225,15 @@ class MPDataFetcher:
         }
 
     def write_summary(self, basename="summary"):
-        """Write ``summary.csv`` and ``summary.json`` for the whole space."""
-        records = [self._flatten(d) for d in self.search()]
+        """
+        Write ``summary.csv`` and ``summary.json`` for the selected materials.
+
+        The selection, not the search: with ``--sample 20`` a summary of forty
+        thousand materials would describe a directory holding twenty, and the
+        file most likely to be read as an index of what is here would be the
+        one thing in it that is not.
+        """
+        records = [self._flatten(d) for d in self.selected]
         self.outdir.mkdir(parents=True, exist_ok=True)
         csv_path = self.outdir / f"{basename}.csv"
         with csv_path.open("w", newline="") as handle:
@@ -1113,10 +1247,16 @@ class MPDataFetcher:
         return csv_path
 
     def write_structures(self):
-        """Write one CIF per material. Returns how many were written."""
+        """
+        Write one CIF per selected material. Returns how many were written.
+
+        Per *selected* material: a sampled run that wrote a CIF for every
+        match would leave forty thousand files beside twenty densities.
+        """
         self.structure_dir.mkdir(parents=True, exist_ok=True)
+        self.search(fields=SUMMARY_FIELDS)
         written = 0
-        for document in self.search(fields=SUMMARY_FIELDS):
+        for document in self.selected:
             if document.structure is not None:
                 document.structure.to(filename=str(
                     self.structure_dir / f"{document.material_id}.cif"))
@@ -1216,10 +1356,12 @@ class MPDataFetcher:
         hdf5 : bool, optional
             Convert each density to a Poraquê HDF5 field store
             (``mp-124/fields.h5``) instead of writing a ``CHGCAR``. The values
-            are identical; what is gained is that the file is read without
-            parsing millions of numbers, and what is lost is the PAW
-            augmentation block, which no HDF5 layout here carries — so a store
-            cannot seed a VASP ``ICHARG=1`` restart and a ``CHGCAR`` can.
+            are identical, and so is everything beside them --- both spin
+            blocks and the PAW augmentation records. What is gained is that
+            the file is read without parsing millions of numbers; what is
+            still true is that no VASP build opens one, so a run needs
+            :func:`~poraque.fields.vasp.templates.write_chgcar`
+            (``poraque-vasp chgcar``) first.
         compression : str, optional
             HDF5 codec: ``"gzip"``, ``"lzf"`` or ``None``.
         compression_level : int, optional
@@ -1248,6 +1390,9 @@ class MPDataFetcher:
         self.outdir.mkdir(parents=True, exist_ok=True)
 
         by_id = {str(d.material_id): d for d in self.search()}
+        # Keyed off the estimate's own sizes, which is what makes `--sample`
+        # a download filter for free: a sampled estimate measured only the
+        # materials it selected, so only those have a size to sort by.
         targets = [by_id[i] for i, size in estimate.sizes.items()
                    if size > 0 and i in by_id]
         targets.sort(key=lambda d: estimate.sizes[str(d.material_id)])
@@ -1263,6 +1408,9 @@ class MPDataFetcher:
         planned = sum(estimate.sizes[str(d.material_id)] for d in targets)
         on_disk = planned * DISK_PER_DOWNLOAD * (1 if compress else UNZIP_EXPANSION)
         store = "HDF5 stores" if hdf5 else "CHGCARs"
+        if estimate.is_sampled:
+            print(f"Sampled run: {estimate.sampled} of "
+                  f"{estimate.n_advertised} materials (seed {estimate.seed}).")
         print(f"Downloading {len(targets)} {store} "
               f"(~{_format_bytes(planned)} transfer, ~{_format_bytes(on_disk)} "
               f"on disk {'gzipped' if compress else 'unzipped'}) ...")
@@ -1625,16 +1773,30 @@ class MPDataFetcher:
         # pymatgen holds rho*Omega on the grid, which is exactly the file
         # convention the store keeps, so this is a re-encoding and not a
         # conversion: no value changes, only how it is written down.
-        from ..fields import ChargeDensity, FieldGrid
+        from ..fields import ChargeDensity, FieldGrid, SpinDensity
         from ..fields.hdf5 import write_fields
 
         values = np.asarray(chgcar.data["total"], dtype=float)
         structure = poscar_from_pymatgen(chgcar.structure)
         grid = FieldGrid(values.shape, structure.cell)
-        field = ChargeDensity(values / grid.volume, grid, structure,
-                              dtype="float64")
+
+        # An ISPIN = 2 download carries a magnetisation block, and the text
+        # path keeps it because pymatgen writes the whole object. Dropping it
+        # here would make the two formats different datasets from one
+        # download -- `data.spin: auto` resolves against what is on disk, so
+        # the same materials would train a two-channel operator as CHGCARs
+        # and a one-channel one as stores.
+        difference = chgcar.data.get("diff")
+        if difference is not None:
+            field = SpinDensity(values / grid.volume,
+                                np.asarray(difference, dtype=float) / grid.volume,
+                                grid, structure)
+        else:
+            field = ChargeDensity(values / grid.volume, grid, structure,
+                                  dtype="float64")
         write_fields(str(path), {"CHGCAR": field}, compression=compression,
-                     level=level)
+                     level=level,
+                     augmentation={"CHGCAR": augmentation_records(chgcar)})
         return tuple(int(n) for n in values.shape)
 
     def load_manifest(self):
@@ -1826,12 +1988,12 @@ class MPDataFetcher:
         self.search(fields=ESTIMATE_FIELDS)
         estimate = self.estimate(sample=sample, seed=seed)
         print("\n" + str(estimate) + "\n")
-        count = (estimate.n_advertised if estimate.is_sampled
-                 else estimate.n_available)
-        print(f"  {count} file(s) to download, "
-              f"{'~' if estimate.is_sampled else ''}"
+        print(f"  {estimate.n_available} file(s) to download, "
               f"{_format_bytes(estimate.download_bytes)} total "
               f"({_format_bytes(estimate.gz_disk_bytes)} on disk gzipped).")
+        if estimate.is_sampled:
+            print(f"  That is the sample. All {estimate.n_advertised} would be "
+                  f"~{_format_bytes(estimate.projected_bytes)}.")
         print("  Dry run: nothing downloaded, nothing written.")
         return estimate
 
@@ -1850,6 +2012,18 @@ class MPDataFetcher:
         decompress : bool, optional
             Expand the CHGCARs afterwards. Rarely wanted; see
             :meth:`decompress`.
+        sample : int, optional
+            Fetch a random subset of this many materials instead of every
+            match. It reaches :meth:`estimate`, which draws the sample and
+            makes it the working set; the summary, the CIFs and the densities
+            then all describe that set. Until 2026-09-01 it was passed only to
+            :meth:`dry_run`, so ``--sample`` without ``--estimate`` was
+            silently ignored and the whole database was fetched.
+        seed : int, optional
+            Which subset. The same seed selects the same materials, which is
+            what makes an interrupted sampled download resumable: a second run
+            asks for the set the first was working on rather than a fresh
+            draw.
         **download_kwargs
             Passed to :meth:`download`.
 
@@ -1861,8 +2035,10 @@ class MPDataFetcher:
             return self.dry_run(sample=sample, seed=seed)
 
         self.search()
+        estimate = self.estimate(sample=sample, seed=seed)
+        # After the estimate, never before: the sample is drawn there, and a
+        # summary written first would be a summary of the whole matching set.
         self.write_summary()
-        estimate = self.estimate()
         self.write_estimate()
         print("\n" + str(estimate) + "\n")
 
@@ -1873,6 +2049,65 @@ class MPDataFetcher:
                 print()
                 self.decompress()
         return estimate
+
+
+def augmentation_records(chgcar):
+    """
+    The PAW augmentation records of a downloaded density, as VASP writes them.
+
+    ``mp-api`` hands back a :class:`pymatgen.io.vasp.outputs.Chgcar` whose
+    ``data_aug`` is **parsed**: ``{"total": {atom: array}, "diff": {...}}``,
+    numbers rather than the text a ``CHGCAR`` holds. The store keeps text, so
+    they are rendered here --- through Poraquê's own
+    :func:`~poraque.fields.vasp.augmentation.format_augmentation`, which
+    mirrors VASP's ``WRT_RHO_PAW`` (``2I4`` header, then ``5E15.7``) rather
+    than pymatgen's wider writer.
+
+    One block per spin channel, in file order, because that is the order a
+    spin-polarised ``CHGCAR`` carries them in and the order
+    :meth:`~poraque.fields.spin.SpinDensity.write` writes them back.
+
+    Parameters
+    ----------
+    chgcar : pymatgen.io.vasp.outputs.Chgcar
+
+    Returns
+    -------
+    list of list of str
+        Empty when the object carries none --- a norm-conserving calculation
+        has no one-centre terms, and neither has anything reconstructed from a
+        grid alone.
+    """
+    from ..fields.vasp.augmentation import format_augmentation
+
+    data_aug = getattr(chgcar, "data_aug", None) or {}
+    blocks = []
+    for channel in ("total", "diff"):
+        records = data_aug.get(channel)
+        if not records:
+            continue
+        if isinstance(records, dict):
+            # Keyed by the atom index VASP numbers from 1. Sorting by that key
+            # rather than by insertion order is what keeps the records paired
+            # with the atoms when a dict has been round-tripped through JSON,
+            # where the ordering is whatever the encoder chose.
+            records = [records[key] for key in sorted(records, key=_atom_index)]
+        blocks.append(format_augmentation(records))
+    return blocks
+
+
+def _atom_index(key):
+    """
+    Sort key for a ``data_aug`` entry, whose atom index may be a string.
+
+    The tuple is what keeps the sort total: a JSON round trip turns ``1`` into
+    ``"1"`` for some entries and not others, and comparing an ``int`` with a
+    ``str`` raises rather than ordering them.
+    """
+    try:
+        return (0, int(key), "")
+    except (TypeError, ValueError):
+        return (1, 0, str(key))
 
 
 def _field(document, name):
@@ -2048,9 +2283,9 @@ def build_parser():
         description="Fetch Materials Project charge densities for training.")
     parser.add_argument("--elements", nargs="+", default=None,
                         metavar="EL",
-                        help="elements spanning the chemical space; omit (or "
-                             "pass --all) to take every material in the "
-                             "database that has a charge density")
+                        help="elements spanning the chemical space. Required "
+                             "unless --all is given: a call naming neither is "
+                             "refused rather than read as the whole database")
     parser.add_argument("--all", action="store_true",
                         help="every material with a charge density, whatever "
                              "its composition. The search filters below still "
@@ -2068,13 +2303,15 @@ def build_parser():
                         help="dry run: report the size on the console and "
                              "write nothing at all")
     parser.add_argument("--sample", type=int, metavar="N",
-                        help="with --estimate, measure N randomly chosen "
-                             "objects and extrapolate instead of measuring "
-                             "every one. The practical way to size the whole "
-                             "database; the report says which method it used")
+                        help="work on N randomly chosen materials instead of "
+                             "every match -- the practical way to use --all. "
+                             "With --estimate it sizes those N exactly, and "
+                             "also projects what the whole set would cost; "
+                             "without --estimate it downloads them")
     parser.add_argument("--seed", type=int, default=0,
-                        help="sampling seed, so the same question twice gives "
-                             "the same answer (default: 0)")
+                        help="which sample. The same seed selects the same "
+                             "materials, so an interrupted sampled download "
+                             "resumes onto the same subset (default: 0)")
     parser.add_argument("--no-vasp-inputs", action="store_true",
                         help="do not reconstruct INCAR/KPOINTS/POSCAR beside "
                              "each density. They are written by default: a "
@@ -2094,10 +2331,22 @@ def build_parser():
                        help="sites-per-cell window, applied server-side")
 
     group = parser.add_argument_group("download limits")
-    group.add_argument("--limit", type=int, help="download at most N, smallest first")
+    group.add_argument("--limit", type=int,
+                       help="download at most N, smallest first. Not the same "
+                            "as --sample N, which takes N at random and sizes "
+                            "them too")
     group.add_argument("--max-sites", type=int, help="skip cells larger than this")
-    group.add_argument("--max-size-mb", type=float,
-                       help="skip objects larger than this")
+    # Two spellings of one cap. A single CHGCAR is an MB-scale object and a
+    # whole download is a GB-scale one, so which unit reads naturally depends
+    # on whether you are thinking about a file or about a disk. They are
+    # mutually exclusive rather than additive: two caps is a question about
+    # which one wins, and there is no answer worth guessing.
+    cap = group.add_mutually_exclusive_group()
+    cap.add_argument("--max-size-mb", type=float,
+                     help="skip objects larger than this, in MB")
+    cap.add_argument("--max-size-gb", type=float,
+                     help="the same cap in GB (1 GB = 1000 MB, decimal, as "
+                          "everywhere else in this report)")
     group.add_argument("--workers", type=int, default=16,
                        help="parallel S3 HEAD requests while sizing")
     group.add_argument("--retries", type=int, default=4,
@@ -2114,10 +2363,11 @@ def build_parser():
     group = parser.add_argument_group("storage")
     group.add_argument("--hdf5", action="store_true",
                        help="store each density as a chunked HDF5 field store "
-                            "(mp-124.h5) instead of a CHGCAR. Same values, "
-                            "read without parsing text; no PAW augmentation "
-                            "block, so a store cannot seed a VASP ICHARG=1 "
-                            "restart")
+                            "(mp-124/fields.h5) instead of a CHGCAR. The same "
+                            "values, both spin blocks and the PAW "
+                            "augmentation records, read without parsing text. "
+                            "VASP cannot open one: `poraque-vasp chgcar` "
+                            "writes it back out when a run needs it")
     group.add_argument("--compression", choices=("none", "gzip", "lzf"),
                        default="gzip",
                        help="HDF5 dataset filter, with --hdf5 (default: gzip). "
@@ -2136,6 +2386,25 @@ def build_parser():
     group.add_argument("--dry-run", action="store_true",
                        help="with --decompress, only report the projected size")
     return parser
+
+
+def resolve_max_size_mb(args):
+    """
+    The per-object size cap in MB, whichever unit it was written in.
+
+    ``--max-size-gb`` is not a second cap: it is the same number said in the
+    unit that suits a large download, converted here so that everything below
+    the command line --- :meth:`MPDataFetcher.download`, the estimate report,
+    the manifest --- keeps working in one unit. The conversion is decimal
+    (1 GB = 1000 MB), matching :func:`_format_bytes` and the ``1e6`` the cap is
+    ultimately compared in; a binary factor here would make a cap of 1 GB skip
+    files the report had just called 1000 MB.
+    """
+    if args.max_size_mb is not None:
+        return args.max_size_mb
+    if args.max_size_gb is not None:
+        return args.max_size_gb * 1000.0
+    return None
 
 
 def main(argv=None):
@@ -2176,7 +2445,7 @@ def main(argv=None):
         fetcher.run(estimate_only=args.estimate, skip_chgcar=args.skip_chgcar,
                     sample=args.sample, seed=args.seed,
                     limit=args.limit, max_sites=args.max_sites,
-                    max_size_mb=args.max_size_mb,
+                    max_size_mb=resolve_max_size_mb(args),
                     skip_existing=not args.restart, hdf5=args.hdf5,
                     compression=(None if args.compression == "none"
                                  else args.compression),

@@ -25,8 +25,8 @@ Hamiltonian built from *that* density. If a Poraquê prediction is good enough,
 that is a band structure — or a density of states, or an energy — obtained
 without an SCF cycle ever running.
 
-The three modes
----------------
+The three deck modes
+--------------------
 ``bands``
     Eigenvalues along a **path** through the Brillouin zone: a line-mode
     ``KPOINTS``, ``ISMEAR = 0``, ``LORBIT = 11`` for fat bands.
@@ -40,6 +40,20 @@ The three modes
 
 ``energy``
     The energy from that same mesh. Read the caveat below before quoting it.
+
+And one mode that writes no deck
+--------------------------------
+``chgcar``
+    The density itself, written out as a ``CHGCAR`` VASP can open --- with its
+    magnetisation block and both sets of PAW augmentation records. A Poraquê
+    field store (``fields.h5``) holds everything a ``CHGCAR`` does and no VASP
+    build reads one, so this is the step between a ``poraque-mp --hdf5``
+    download and any ``ICHARG = 1`` or ``ICHARG = 11`` run at all.
+
+    Every mode accepts a store where it accepts a ``CHGCAR`` --- address one
+    field as ``fields.h5::CHGCAR`` when the store holds several --- and
+    ``--copy-density`` converts rather than copies, so a deck never ends up
+    holding a density VASP cannot read.
 
 What ``energy`` actually computes
 ---------------------------------
@@ -119,12 +133,13 @@ from poraque.fields.vasp.templates import (                   # noqa: E402
     fcc_band_path,
     kpoint_mesh_from_spacing,
     write_band_structure_deck,
+    write_chgcar,
     write_dos_deck,
     write_total_energy_deck,
 )
 
 #: The subcommands, in the order they appear in ``--help``.
-MODES = ("bands", "dos", "energy")
+MODES = ("bands", "dos", "energy", "chgcar")
 
 
 def describe_density(path, log=print):
@@ -321,8 +336,24 @@ def run_energy(args, info, encut, log=print):
         gamma=not args.monkhorst_pack, system=args.system)
 
 
+def run_chgcar(args, info, encut, log=print):
+    """Write a VASP-readable ``CHGCAR`` and no deck at all."""
+    log("")
+    written = write_chgcar(args.chgcar, args.output)
+    log(f"    wrote      {written}")
+    if info["augmentation_records"]:
+        log(f"               with {info['augmentation_records']} augmentation "
+            f"records, so ICHARG = 1 can start from it")
+    else:
+        log("               with no augmentation records: fine for "
+            "ICHARG = 11,")
+        log("               not enough for ICHARG = 1.")
+    return {"CHGCAR": written}
+
+
 #: Which writer each subcommand dispatches to.
-_RUNNERS = {"bands": run_bands, "dos": run_dos, "energy": run_energy}
+_RUNNERS = {"bands": run_bands, "dos": run_dos, "energy": run_energy,
+            "chgcar": run_chgcar}
 
 
 def run(args, log=print):
@@ -335,6 +366,12 @@ def run(args, log=print):
         ``{name: path}`` of the files written.
     """
     info = describe_density(args.chgcar, log)
+
+    # `chgcar` writes one file and no deck, so it asks none of the questions a
+    # deck asks -- there is no ENCUT to reconcile and no POTCAR to warn about.
+    if args.mode == "chgcar":
+        return _RUNNERS[args.mode](args, info, None, log)
+
     encut = resolve_encut(args, log)
 
     written = _RUNNERS[args.mode](args, info, encut, log)
@@ -414,7 +451,8 @@ def build_parser():
                     "a total energy.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="No VASP run happens here, and no POTCAR is written.")
-    modes = parser.add_subparsers(dest="mode", metavar="{bands,dos,energy}")
+    modes = parser.add_subparsers(dest="mode",
+                                  metavar="{bands,dos,energy,chgcar}")
 
     bands = modes.add_parser(
         "bands", help="ICHARG = 11 band structure along a k-path",
@@ -465,6 +503,20 @@ def build_parser():
     energy.add_argument("--ediff", type=float, default=1e-6,
                         help="EDIFF, electronic convergence (default: 1e-6)")
 
+    chgcar = modes.add_parser(
+        "chgcar", help="write a VASP-readable CHGCAR from a field store",
+        description="Write a density out as a CHGCAR that VASP can open, "
+                    "carrying its magnetisation block and its PAW "
+                    "augmentation records. No deck is written; this is the "
+                    "step between a `poraque-mp --hdf5` store and any "
+                    "ICHARG = 1 or ICHARG = 11 run, since no VASP build "
+                    "reads HDF5.")
+    chgcar.add_argument("chgcar",
+                        help="the density: a field store (fields.h5, or "
+                             "fields.h5::CHGCAR) or a CHGCAR")
+    chgcar.add_argument("--output", default="CHGCAR",
+                        help="the file to write (default: CHGCAR)")
+
     return parser
 
 
@@ -503,7 +555,11 @@ def main(argv=None):
         print("\n  note: no mode given, assuming `bands` (this is the "
               "poraque-bands\n        spelling; poraque-vasp bands ... is the "
               "current one).")
-    if not os.path.exists(args.chgcar):
+    # A density may be addressed inside a store as `fields.h5::CHGCAR`, which
+    # is a path plus a selector and not a filename anything can stat.
+    from poraque.fields.hdf5 import split_target
+
+    if not os.path.exists(split_target(args.chgcar)[0]):
         print(f"\n  {args.chgcar}: no such file.")
         return 1
     run(args)

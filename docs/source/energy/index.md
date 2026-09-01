@@ -30,6 +30,7 @@ $$
 | $E_\mathrm{xc}$ | PBE by default; LDA available — see [below](#exchange-correlation) |
 | $E_\mathrm{Ewald}$ | Ewald sum over the pseudo-ions with a neutralizing background |
 
+(the-g-0-bookkeeping)=
 ### The $\mathbf G = 0$ bookkeeping
 
 Each of the three electrostatic terms diverges at $\mathbf G = 0$ and the

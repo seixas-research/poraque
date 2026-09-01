@@ -34,13 +34,41 @@ Layout
 One file per material, one dataset per field::
 
     mp-124/fields.h5
-        /                 attrs: format, version, created, comment,
-                                 cell (3,3), symbols, counts,
-                                 scaled_positions, selective_dynamics
-        /CHGCAR           (Nx, Ny, Nz) float64   attrs: units, volume_scaled
-        /CHGCAR_extra0    the magnetisation block of a spin-polarised density
-        /EXTCAR           (Nx, Ny, Nz) float64
-        /TAUCAR           (Nx, Ny, Nz) float64
+        /                        attrs: format, version, created, comment,
+                                        cell (3,3), symbols, counts,
+                                        scaled_positions, selective_dynamics
+        /CHGCAR                  (Nx, Ny, Nz) float64  attrs: units,
+                                                              volume_scaled
+        /CHGCAR_extra0           the magnetisation block of a spin-polarised
+                                 density
+        /CHGCAR_augmentation0    the PAW records that follow the block above it
+        /CHGCAR_augmentation1    ... and the ones that follow ``_extra0``
+        /EXTCAR                  (Nx, Ny, Nz) float64
+        /TAUCAR                  (Nx, Ny, Nz) float64
+
+The ``_extraN`` and ``_augmentationN`` datasets belong to the field they are
+named after rather than standing beside it, so :func:`field_names` does not
+offer them as fields and nothing downstream can mistake one for an input.
+
+The PAW records
+---------------
+A ``CHGCAR`` is more than a grid: after each density block come the **PAW
+augmentation occupancies**, the one-centre terms living inside the core radius
+that no plane-wave grid represents. ``ICHARG = 1`` will not restart without
+them.
+
+They are stored here as the **text** they are, one variable-length string per
+line, under ``<field>_augmentationN`` --- one block per grid block, so a
+spin-polarised density has two. Text rather than parsed numbers for the same
+reason :func:`~poraque.fields.vasp.volumetric.write_volumetric` appends them
+verbatim: they are a fixed-format Fortran read on VASP's side, and copying the
+characters is the only transformation that cannot produce a file VASP declines
+to parse.
+
+What a store still cannot do is be opened by VASP. That is what
+:func:`~poraque.fields.vasp.templates.write_chgcar` is for, and it is why
+keeping the records matters: a store is a complete container for a density, so
+writing one back out gives VASP everything it had before.
 
 Addressing
 ----------
@@ -103,6 +131,12 @@ CHUNK_TARGET_BYTES = 1 << 20
 
 #: Names of the additional grid blocks a field may carry (a spin channel).
 _EXTRA_PATTERN = re.compile(r".+_extra\d+$")
+
+#: Names of the PAW augmentation blocks a field may carry, one per grid block.
+_AUGMENTATION_PATTERN = re.compile(r".+_augmentation\d+$")
+
+#: Datasets that belong to a field without being one.
+_ANCILLARY_PATTERNS = (_EXTRA_PATTERN, _AUGMENTATION_PATTERN)
 
 
 def _h5py():
@@ -340,7 +374,8 @@ def _structure_from_attributes(attributes, path):
 
 
 def write_field(path, name, field, compression=None, level=4, chunks=True,
-                extra=(), attributes=None, values=None, shuffle=True):
+                extra=(), attributes=None, values=None, shuffle=True,
+                augmentation=None):
     """
     Write one field into a store, creating or updating the file.
 
@@ -377,11 +412,28 @@ def write_field(path, name, field, compression=None, level=4, chunks=True,
         :func:`write_fields` to store the two channels of a spin density as a
         main block and an extra one, which is how a spin-polarised ``CHGCAR``
         carries them too.
+    augmentation : sequence, optional
+        PAW augmentation records, as the verbatim text lines
+        :func:`~poraque.fields.vasp.volumetric.read_augmentation` returns.
+        Either one block --- a flat sequence of ``str`` --- or one block per
+        grid block, which is what a spin-polarised ``CHGCAR`` carries: a set
+        of records after the total and another after the magnetisation. They
+        are stored as ``<name>_augmentation0``, ``_augmentation1``, ...,
+        indexed to match the grid block each one follows.
 
     Returns
     -------
     str
         ``path::name``, the address of what was written.
+
+    Notes
+    -----
+    The records go in as **text**, not as parsed numbers, for the same reason
+    :func:`~poraque.fields.vasp.volumetric.write_volumetric` appends them
+    verbatim: they are a fixed-format Fortran read on VASP's side, and copying
+    the characters is the only transformation that cannot introduce a file
+    VASP declines to parse. A store is a container for them, not a second
+    opinion about their layout.
     """
     h5py = _h5py()
     filename, in_path = split_target(path)
@@ -406,10 +458,15 @@ def write_field(path, name, field, compression=None, level=4, chunks=True,
         # uncompressed would make --compression a no-op that reports success.
         chunks = chunk_shape(values.shape, values.dtype.itemsize)
 
+    blocks = augmentation_blocks(augmentation)
+
     with h5py.File(filename, "a") as handle:
         _write_header(handle, field.structure, filename)
-        for dataset_name in (name, *(f"{name}_extra{i}"
-                                     for i in range(len(tuple(extra))))):
+        # Every ancillary dataset of this field goes, not just the ones about
+        # to be rewritten: a store updated from two blocks to one would
+        # otherwise keep the orphan and hand it back on the next read.
+        for dataset_name in [name, *(key for key in handle
+                                     if key.startswith(f"{name}_"))]:
             if dataset_name in handle:
                 del handle[dataset_name]
 
@@ -427,7 +484,57 @@ def write_field(path, name, field, compression=None, level=4, chunks=True,
             handle.create_dataset(f"{name}_extra{index}", data=block,
                                   chunks=chunks or None, **options)
 
+        for index, lines in enumerate(blocks):
+            _write_augmentation(handle, f"{name}_augmentation{index}", lines,
+                                compression, level)
+
     return join_target(filename, name)
+
+
+def augmentation_blocks(augmentation):
+    """
+    Normalise augmentation records to a list of blocks.
+
+    A caller may hand over one block --- a flat sequence of lines, which is
+    what a spin-unpolarised ``CHGCAR`` has and what
+    :func:`~poraque.fields.vasp.volumetric.read_augmentation` returns --- or
+    a sequence of such blocks, one per grid block. Both spellings are
+    accepted, because requiring the nested one for the overwhelmingly common
+    single-block case would be a wrapper every caller had to remember.
+
+    Parameters
+    ----------
+    augmentation : sequence or None
+
+    Returns
+    -------
+    list of list of str
+        Empty when there is nothing to store. Empty blocks are dropped: a
+        block of no records is not a record of no occupancies, it is the
+        absence of one, and storing it would make ``ICHARG=1`` read zeros.
+    """
+    if not augmentation:
+        return []
+    first = next(iter(augmentation))
+    if isinstance(first, str):
+        augmentation = [augmentation]
+    blocks = [[str(line) for line in block] for block in augmentation]
+    return [block for block in blocks if block]
+
+
+def _write_augmentation(handle, dataset_name, lines, compression, level):
+    """One block of augmentation records, as variable-length UTF-8 strings."""
+    h5py = _h5py()
+    if not lines:
+        return
+    options = compression_options(compression, level, shuffle=False)
+    # The shuffle filter reorders the bytes of fixed-width items and a
+    # variable-length string is not one, so it is dropped here rather than
+    # passed to h5py, which would refuse the combination.
+    data = np.array([str(line) for line in lines],
+                    dtype=h5py.string_dtype("utf-8"))
+    handle.create_dataset(dataset_name, data=data,
+                          chunks=(len(data),) if options else None, **options)
 
 
 def _write_header(handle, structure, path):
@@ -459,7 +566,7 @@ def _write_header(handle, structure, path):
 
 
 def write_fields(path, fields, compression=None, level=4, chunks=True,
-                 shuffle=True):
+                 shuffle=True, augmentation=None):
     """
     Write a whole material in one call.
 
@@ -473,19 +580,26 @@ def write_fields(path, fields, compression=None, level=4, chunks=True,
         as a spin-polarised ``CHGCAR`` carries it as a second grid block.
     compression, level, chunks, shuffle
         See :func:`write_field`.
+    augmentation : dict, optional
+        ``{name: blocks}``, the PAW records belonging to each field. Only a
+        density has any --- there is no augmentation of a kinetic energy
+        density or of an external potential --- so this is keyed by field
+        rather than given once for the store.
 
     Returns
     -------
     dict
         ``{name: address}``.
     """
+    augmentation = augmentation or {}
     written = {}
     for name, field in fields.items():
         values, extra, attributes = _file_blocks(field)
         written[name] = write_field(path, name, field, values=values,
                                     compression=compression, level=level,
                                     chunks=chunks, extra=extra,
-                                    attributes=attributes, shuffle=shuffle)
+                                    attributes=attributes, shuffle=shuffle,
+                                    augmentation=augmentation.get(name))
     return written
 
 
@@ -557,6 +671,70 @@ def read_volumetric(path, read_all=False):
     return structure, data, extra
 
 
+def read_augmentation(path):
+    """
+    The PAW augmentation records stored beside a field.
+
+    The counterpart of
+    :func:`poraque.fields.vasp.volumetric.read_augmentation`, and the function
+    that one hands off to when it is given an HDF5 path.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        ``file.h5::DATASET``, or a store holding one field.
+
+    Returns
+    -------
+    shape : tuple of int
+        The grid the field is stored on, so the return value matches the text
+        reader's contract exactly.
+    blocks : list of list of str
+        One block of verbatim record lines per grid block --- one for a
+        spin-unpolarised density, two for a spin-polarised one. Empty when the
+        store carries none, which is what a ``TAUCAR``, an ``EXTCAR`` and any
+        density written before this became storable all have.
+    """
+    h5py = _h5py()
+    filename, dataset_name = split_target(path)
+    if not os.path.exists(filename):
+        raise FileNotFoundError(f"No such file: {filename}")
+
+    with h5py.File(filename, "r") as handle:
+        dataset_name = _resolve_dataset(handle, dataset_name, filename)
+        shape = tuple(int(n) for n in handle[dataset_name].shape)
+
+        blocks = []
+        index = 0
+        while f"{dataset_name}_augmentation{index}" in handle:
+            raw = handle[f"{dataset_name}_augmentation{index}"][...]
+            blocks.append([_as_text(line) for line in raw])
+            index += 1
+
+    return shape, blocks
+
+
+def _as_text(value):
+    """One stored line as ``str``, whether h5py handed back bytes or not."""
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
+
+
+def has_augmentation(path):
+    """Whether the addressed field carries PAW augmentation records."""
+    h5py = _h5py()
+    filename, dataset_name = split_target(path)
+    if not os.path.exists(filename):
+        return False
+    with h5py.File(filename, "r") as handle:
+        try:
+            dataset_name = _resolve_dataset(handle, dataset_name, filename)
+        except (KeyError, ValueError):
+            return False
+        return f"{dataset_name}_augmentation0" in handle
+
+
 def _resolve_dataset(handle, dataset_name, path):
     """The dataset to read, checked against what the file holds."""
     if dataset_name is not None:
@@ -579,7 +757,12 @@ def _resolve_dataset(handle, dataset_name, path):
 
 def field_names(handle_or_path):
     """
-    The field datasets in a store, excluding the ``_extraN`` blocks.
+    The field datasets in a store, excluding the ancillary blocks.
+
+    A field's ``_extraN`` grid blocks and ``_augmentationN`` PAW records
+    belong to it rather than standing beside it, so neither is a field in its
+    own right and neither may be offered as one to a reader asking what the
+    store holds.
 
     Parameters
     ----------
@@ -592,7 +775,7 @@ def field_names(handle_or_path):
     """
     def _names(handle):
         return sorted(key for key in handle
-                      if not _EXTRA_PATTERN.match(key))
+                      if not any(p.match(key) for p in _ANCILLARY_PATTERNS))
 
     if hasattr(handle_or_path, "keys"):
         return _names(handle_or_path)

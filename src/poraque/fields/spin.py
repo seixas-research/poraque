@@ -371,14 +371,31 @@ class SpinDensity:
         columns, width, decimals : int, optional
             Passed through to
             :func:`~poraque.fields.vasp.volumetric.write_volumetric`.
-        augmentation : sequence of str, optional
-            PAW records, written between the two blocks exactly as VASP does.
+        augmentation : sequence, optional
+            PAW records. A spin-polarised ``CHGCAR`` carries **two** sets, one
+            after each grid block, because the occupancies are resolved by
+            spin channel exactly as the densities are; pass them as a list of
+            two blocks, from
+            :func:`~poraque.fields.vasp.volumetric.read_augmentation_blocks`.
+            A single flat block is accepted and written after the total, which
+            is what the one-block reader returns and is enough for a file only
+            being read back, not restarted from.
 
         Returns
         -------
         str
             The path written.
+
+        Notes
+        -----
+        Writing one set where the file should carry two does not produce a
+        file VASP rejects --- it produces one VASP reads, taking the second
+        block's occupancies from wherever the parse lands. That is why the
+        blocks are indexed rather than concatenated.
         """
+        from .hdf5 import augmentation_blocks
+
+        blocks = augmentation_blocks(augmentation)
         path = str(path if path is not None else self.default_filename)
         if comment is None:
             formula = "".join(f"{s}{c}" for s, c in
@@ -388,7 +405,8 @@ class SpinDensity:
         volume = self.grid.volume
         write_volumetric(path, self.structure, self.total * volume,
                          comment=comment, columns=columns, width=width,
-                         decimals=decimals, augmentation=augmentation)
+                         decimals=decimals,
+                         augmentation=(blocks[0] if blocks else None))
 
         # The second block repeats the grid header and carries no structure
         # header -- the file has exactly one. Written through the same
@@ -399,6 +417,9 @@ class SpinDensity:
             handle.write("  {:d}  {:d}  {:d}\n".format(*self.grid.shape))
             handle.write(_format_block(self.magnetization * volume,
                                        columns, width, decimals))
+            if len(blocks) > 1:
+                handle.write("\n".join(blocks[1]))
+                handle.write("\n")
         return path
 
     def __repr__(self):

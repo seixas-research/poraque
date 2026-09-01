@@ -169,10 +169,21 @@ def read_augmentation(path):
     Notes
     -----
     A spin-polarised ``CHGCAR`` continues past the augmentation with a second
-    grid block. That belongs to the reference's magnetisation, not to a
-    prediction, so extraction stops at the next grid header rather than
-    dragging it along.
+    grid block, and past *that* with a second set of records. This function
+    returns the first set only, which is what a spin-unpolarised file has and
+    all a single-block writer can use; :func:`read_augmentation_blocks`
+    returns every set, which is what writing a spin-polarised ``CHGCAR`` back
+    needs.
+
+    An HDF5 store is read through here too, exactly as :func:`read_volumetric`
+    is, so the caller does not branch on the layout.
     """
+    from ..hdf5 import is_hdf5_path
+
+    if is_hdf5_path(path):
+        shape, blocks = read_augmentation_blocks(path)
+        return shape, (blocks[0] if blocks else [])
+
     with _open_text(path) as handle:
         lines = (line.rstrip("\n") for line in handle)
 
@@ -199,6 +210,82 @@ def read_augmentation(path):
     while block and not block[-1].strip():
         block.pop()
     return shape, block
+
+
+def read_augmentation_blocks(path):
+    r"""
+    Every set of PAW augmentation records in a volumetric file.
+
+    A spin-polarised ``CHGCAR`` carries two: one after the total density and
+    one after the magnetisation, because the occupancies are resolved by spin
+    channel just as the grid blocks are. :func:`read_augmentation` returns the
+    first alone, which is the whole story for an ``ISPIN = 1`` file and half of
+    it for an ``ISPIN = 2`` one --- and writing that half back produces a
+    density VASP starts from and then reads the wrong occupancies for.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        A ``CHGCAR``-format file, gzipped or not, or an HDF5 field store
+        addressed as ``file.h5::CHGCAR``.
+
+    Returns
+    -------
+    shape : tuple of int
+        The grid the records were written beside.
+    blocks : list of list of str
+        The record lines of each set, verbatim and in file order. Empty when
+        the file carries none.
+
+    Notes
+    -----
+    The grid blocks are walked **by value count**, not by line count: how many
+    values a line holds is a formatting choice (five in a ``CHGCAR``, ten in a
+    ``CHG``) and counting lines lands in the wrong place on either.
+    """
+    from ..hdf5 import is_hdf5_path
+
+    if is_hdf5_path(path):
+        from ..hdf5 import read_augmentation as read_hdf5_augmentation
+
+        return read_hdf5_augmentation(path)
+
+    with _open_text(path) as handle:
+        lines = (line.rstrip("\n") for line in handle)
+
+        _read_header(lines, path)
+        shape = _read_shape(lines, path)
+        count = int(np.prod(shape))
+
+        blocks = []
+        pending = None
+        while True:
+            remaining = count
+            for line in lines:
+                remaining -= len(line.split())
+                if remaining <= 0:
+                    break
+            else:
+                break                       # the file ended inside a block
+
+            block = []
+            pending = None
+            for line in lines:
+                tokens = line.split()
+                if (len(tokens) == 3 and all(_is_int(token) for token in tokens)
+                        and tuple(int(token) for token in tokens) == shape):
+                    pending = line          # the next grid block starts here
+                    break
+                block.append(line)
+
+            while block and not block[-1].strip():
+                block.pop()
+            if block:
+                blocks.append(block)
+            if pending is None:
+                break
+
+    return shape, blocks
 
 
 def count_augmentation_records(block):

@@ -69,9 +69,9 @@ space} --- a set of elements --- into a local dataset of charge densities.
 Every material whose composition uses only those elements is fetched, across
 all stoichiometries and structures.
 
-Size it before committing to the transfer. The estimate is exact rather than
-modelled: charge densities are objects in a public S3 bucket, so their sizes
-are read with \opt{HEAD} requests that move no payload.
+Size it before committing to the transfer. Over a chemical space the estimate
+is exact rather than modelled: charge densities are objects in a public S3
+bucket, so their sizes are read with \opt{HEAD} requests that move no payload.
 
 \begin{lstlisting}
 poraque-mp --elements Pt Pd Ni --estimate
@@ -135,6 +135,12 @@ data.
 Useful filters: \opt{--band-gap MIN MAX} (\opt{0 0} selects metals),
 \opt{--crystal-system}, \opt{--stable-only}, \opt{--num-sites MIN MAX}, and
 \opt{--max-sites} / \opt{--max-size-mb} / \opt{--limit} to cap the download.
+The size cap has \textbf{two spellings and they are the same cap}:
+\opt{--max-size-gb 0.02} is \opt{--max-size-mb 20}, a decimal factor of 1000
+apart, matching every size the report prints. A single \file{CHGCAR} is an
+MB-scale object and a whole download is a GB-scale one, so the unit that reads
+naturally depends on which of the two you are thinking about; passing both is
+refused rather than resolved.
 The run is resumable and one failure never aborts the batch; \file{manifest.csv}
 records what landed, what was cached and what failed.
 
@@ -147,6 +153,102 @@ shell history.
 \file{.xz} and \file{.zip} volumetric files in place, streaming them a line at
 a time. Expanding them buys nothing and costs roughly three times the storage.
 \end{ptip}
+
+\section{The whole database, not a chemical space}
+\label{sec:mp-all}
+
+\opt{--all} asks the other question: every material the index says has a charge
+density, whatever it is made of. It is a single server-side query ---
+\opt{has\_props=["charge\_density"]} on the summary endpoint --- rather than one
+query per chemical system, and rather than pulling every summary document in
+the database and discarding the ones without a density.
+
+\begin{lstlisting}
+poraque-mp --all --estimate --sample 20   # what would 20 of them cost?
+poraque-mp --all --sample 20 --output data/MP    # fetch exactly those 20
+\end{lstlisting}
+
+\begin{pwarn}
+\textbf{It has to be written out.} Omitting \opt{--elements} does not mean
+\emph{everything}: a command line naming neither it nor \opt{--all} is refused.
+That flag was required for most of this tool's life, and reading its absence as
+the whole database would turn a forgotten argument into a multi-terabyte
+transfer.
+\end{pwarn}
+
+Every filter from the previous section still applies, so \opt{--all} is also
+how a \emph{subset} of the whole archive is chosen --- not 150\,000 materials
+but the ones small enough to be worth training on:
+
+\begin{lstlisting}
+poraque-mp --all --num-sites 1 12 --max-size-mb 20 \
+    --output data/MP --hdf5 --compression gzip
+\end{lstlisting}
+
+\subsection*{\opt{--hdf5} keeps everything, and VASP still cannot read it}
+
+\opt{--hdf5} writes each density as a chunked, compressed field store rather
+than a \file{CHGCAR}. It is a re-encoding, not a conversion --- pymatgen
+already holds $\rho\Omega$, which is the convention the store keeps --- and it
+carries \textbf{everything the text file does}: the magnetisation block of a
+spin-polarised density, and the PAW augmentation records, the one-centre terms
+\opt{ICHARG = 1} will not restart without.
+
+\begin{pwarn}
+\textbf{A store written before 2026-09-01 has neither.} It kept the total block
+alone and wrote no records, so one download produced two different datasets:
+\opt{data.spin: auto} resolves against what is on disk, and the same materials
+trained a two-channel operator as \file{CHGCAR}s and a one-channel one as
+stores. Re-fetch the material if you need what the old store dropped.
+\end{pwarn}
+
+What no store can do is be opened by VASP, so a run needs the density written
+back out:
+
+\begin{lstlisting}
+poraque-vasp chgcar data/MP/mp-124/fields.h5 --output CHGCAR
+
+# or straight into a deck, which converts rather than copies
+poraque-vasp energy data/MP/mp-124/fields.h5 --like <run> --copy-density
+\end{lstlisting}
+
+Every mode of \opt{poraque-vasp} takes a store where it takes a \file{CHGCAR};
+address one field as \opt{fields.h5::CHGCAR} when the store holds several. A
+text source is copied byte for byte rather than parsed and re-emitted ---
+re-rendering a file that was already correct can only lose digits or shift a
+column, and the density block is a column-positional Fortran read.
+
+\subsection*{A sample is a selection, not just a sizing trick}
+
+\opt{--sample N} draws \opt{N} materials at random and \textbf{those become the
+working set}. With \opt{--estimate} it sizes exactly those \opt{N}; without
+\opt{--estimate} it downloads them. Everything the run writes into
+\opt{--output} is about that subset --- \file{summary.csv} and the CIFs
+included --- so a sampled directory never carries an index of a set it does not
+hold.
+
+\begin{pwarn}
+\textbf{Before 2026-09-01 \opt{--sample} reached the dry run alone.} Used
+without \opt{--estimate} it was silently ignored, and the command fetched the
+whole matching set --- with \opt{--all}, the entire database.
+\end{pwarn}
+
+Sizing changes with it. Over a chemical space every object is \opt{HEAD}ed and
+the total is exact; over the database that is tens of thousands of requests for
+a number nobody needs to four digits. A sampled estimate measures its \opt{N}
+exactly --- so \opt{TOTAL DOWNLOAD} is a measurement of what a fetch would
+actually transfer, not an extrapolation --- and \emph{also} projects to the
+whole set, as the sample mean times the number advertised, on its own line and
+labelled as a projection. Both are printed because they answer different
+questions, \emph{what will this fetch} and \emph{what would all of it cost},
+and a report stating one of them gets read as the other.
+
+\opt{--seed} decides \emph{which} subset, and that is what makes a sampled
+download resumable: the same seed selects the same materials, so an interrupted
+run resumes onto the same subset rather than fetching \opt{N} more beside it.
+Sizes are also strongly right-tailed, so two draws of twenty can differ by tens
+of percent, and a projection that moved every time it was asked could not be
+planned against.
 
 \section{What an MP download does and does not contain}
 

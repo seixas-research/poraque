@@ -46,7 +46,10 @@ from poraque.data.materials_project import (
     MANIFEST_JSON,
     Estimate,
     MPDataFetcher,
+    augmentation_records,
+    build_parser,
     poscar_from_pymatgen,
+    resolve_max_size_mb,
     retrieval_provenance,
     with_retries,
 )
@@ -108,7 +111,8 @@ class FakeChgcar:
     thing it stands for tests nothing.
     """
 
-    def __init__(self, shape=(8, 8, 8), lattice=4.0):
+    def __init__(self, shape=(8, 8, 8), lattice=4.0, spin=False,
+                 data_aug=None):
         self.dim = shape
         self.structure = FakeStructure(
             np.eye(3) * lattice,
@@ -121,6 +125,16 @@ class FakeChgcar:
         values = 8.0 / volume * (1.0 + 0.5 * np.sin(
             np.arange(int(np.prod(shape)), dtype=float)).reshape(shape))
         self.data = {"total": values * volume}
+        if spin:
+            self.data["diff"] = values * volume * 0.1
+        # pymatgen parses the records into numbers keyed by VASP's own 1-based
+        # atom index, one dict per spin channel -- not into the text lines a
+        # CHGCAR holds. A double that carried text would never exercise the
+        # rendering the store depends on.
+        self.data_aug = data_aug if data_aug is not None else (
+            {"total": {1: np.arange(4.0), 2: np.arange(4.0) + 10.0},
+             **({"diff": {1: np.arange(4.0) * 0.5,
+                          2: np.arange(4.0) * 0.5 + 5.0}} if spin else {})})
 
     def write_file(self, path):
         """
@@ -137,10 +151,17 @@ class FakeChgcar:
 
         from poraque.data.materials_project import poscar_from_pymatgen
 
+        from poraque.fields import SpinDensity
+
         structure = poscar_from_pymatgen(self.structure)
         grid = FieldGrid(self.dim, structure.cell)
-        density = ChargeDensity(self.data["total"] / grid.volume, grid,
-                                structure)
+        if "diff" in self.data:
+            density = SpinDensity(self.data["total"] / grid.volume,
+                                  self.data["diff"] / grid.volume, grid,
+                                  structure)
+        else:
+            density = ChargeDensity(self.data["total"] / grid.volume, grid,
+                                    structure)
         path = str(path)
         if not path.endswith(".gz"):
             density.write(path)
@@ -366,14 +387,36 @@ class TestTheSampledEstimate:
         assert estimate.method == "sampled"
         assert estimate.sampled == 5
 
-    def test_the_total_is_the_mean_times_the_count(self, tmp_path,
-                                                   monkeypatch):
+    def test_the_total_is_what_the_sample_weighs(self, tmp_path, monkeypatch):
+        """
+        ``download_bytes`` is a measurement in both modes. A sampled run
+        fetches exactly the materials it measured, so quoting an extrapolated
+        total there would name a transfer no run of this command produces.
+        """
         sizes = {f"mp-{n}": n * 1_000_000 for n in range(1, 21)}
         f = fetcher_with(list(sizes), tmp_path, sizes=sizes,
                          monkeypatch=monkeypatch)
         estimate = f.estimate(sample=8)
-        assert estimate.download_bytes == pytest.approx(
+        assert estimate.download_bytes == estimate.measured_bytes
+        assert estimate.sampled == 8
+
+    def test_the_whole_set_is_still_projected(self, tmp_path, monkeypatch):
+        """
+        The extrapolation did not go away; it moved to its own name and its
+        own line. Sizing the database from a sample is what one wants to know
+        *before* choosing to fetch a subset of it.
+        """
+        sizes = {f"mp-{n}": n * 1_000_000 for n in range(1, 21)}
+        f = fetcher_with(list(sizes), tmp_path, sizes=sizes,
+                         monkeypatch=monkeypatch)
+        estimate = f.estimate(sample=8)
+        assert estimate.projected_bytes == pytest.approx(
             estimate.mean_bytes * 20)
+
+    def test_an_exact_estimate_projects_to_itself(self, fetcher):
+        """With nothing sampled the selection is the matching set."""
+        estimate = fetcher.estimate()
+        assert estimate.projected_bytes == estimate.download_bytes
 
     def test_the_same_seed_gives_the_same_answer(self, tmp_path, monkeypatch):
         sizes = {f"mp-{n}": n * 1_000_000 for n in range(1, 41)}
@@ -398,24 +441,36 @@ class TestTheSampledEstimate:
             for s in range(6)}
         assert len(totals) > 1
 
-    def test_the_report_says_it_extrapolated(self, fetcher):
-        text = str(fetcher.estimate(sample=5))
-        assert "ESTIMATED" in text
-        assert "random sample" in text
+    def test_the_report_says_what_set_it_describes(self, fetcher):
+        """
+        Both numbers are printed because they answer different questions ---
+        "what will this fetch" and "what would all of it cost". A report
+        stating only one of them gets read as the other.
+        """
+        text = str(fetcher.estimate(sample=5, seed=3))
+        assert "SAMPLED AT RANDOM" in text
+        assert "seed 3" in text
+        assert "Whole set, if it were fetched" in text
 
     def test_asking_for_more_than_there_is_measures_everything(self, fetcher):
         estimate = fetcher.estimate(sample=500)
         assert estimate.method == "exact"
 
-    def test_the_size_caps_are_scaled_to_the_whole_set(self, tmp_path,
-                                                       monkeypatch):
-        """A cap row must mean the same thing in both modes."""
+    def test_the_size_caps_describe_the_sample(self, tmp_path, monkeypatch):
+        """
+        Not the whole set. The cap row answers "what would this cap leave me
+        with", and with a sample the answer is about the ten materials that
+        are going to be downloaded. It was scaled up to the matching set while
+        ``--sample`` meant "measure a few and extrapolate"; now that it selects
+        the working set, scaling would put a number in the column that no run
+        of this command will produce.
+        """
         sizes = {f"mp-{n}": 1_000_000 for n in range(1, 41)}
         f = fetcher_with(list(sizes), tmp_path, sizes=sizes,
                          monkeypatch=monkeypatch)
         count, total = f.estimate(sample=10).files_under(5)
-        assert count == 40
-        assert total == pytest.approx(40_000_000)
+        assert count == 10
+        assert total == pytest.approx(10_000_000)
 
     def test_a_dry_run_writes_nothing(self, tmp_path, fetcher):
         before = set(os.listdir(tmp_path))
@@ -1111,3 +1166,289 @@ class TestStoringAsHDF5:
         f.download(hdf5=True)
 
         assert fetched == []
+
+
+# ===================================================================== #
+# The size cap
+# ===================================================================== #
+class TestTheSizeCapHasTwoSpellings:
+    r"""
+    ``--max-size-mb`` and ``--max-size-gb`` are one cap said two ways.
+
+    A single ``CHGCAR`` is an MB-scale object and a whole-database download is
+    a GB-scale one, so the unit that reads naturally depends on which of the
+    two is being thought about. Only one number reaches
+    :meth:`MPDataFetcher.download`, and the conversion is decimal --- the same
+    factor ``_format_bytes`` and the ``1e6`` in :meth:`Estimate.files_under`
+    use. A binary factor here would make ``--max-size-gb 1`` skip files the
+    report had just printed as 1000 MB, which is the kind of disagreement
+    nobody looks for because nobody expects it.
+    """
+
+    def test_a_gigabyte_is_a_thousand_megabytes(self):
+        parser = build_parser()
+        assert resolve_max_size_mb(
+            parser.parse_args(["--all", "--max-size-gb", "0.5"])) == 500.0
+        assert resolve_max_size_mb(
+            parser.parse_args(["--all", "--max-size-mb", "20"])) == 20.0
+
+    def test_neither_flag_means_no_cap(self):
+        """``None`` is what ``download`` reads as "keep everything"."""
+        assert resolve_max_size_mb(build_parser().parse_args(["--all"])) is None
+
+    def test_passing_both_is_refused(self):
+        """
+        Two caps is a question about which one wins. Resolving it silently ---
+        smaller wins, last wins, MB wins --- would be a rule nobody could
+        guess from the command they typed.
+        """
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(
+                ["--all", "--max-size-mb", "20", "--max-size-gb", "1"])
+
+    def test_the_two_spellings_select_the_same_files(self, fetcher):
+        """The conversion is only worth anything if it survives to the filter."""
+        estimate = fetcher.estimate()
+        assert (estimate.files_under(50)
+                == estimate.files_under(0.05 * 1000))
+
+    def test_the_report_names_both_spellings(self, fetcher):
+        """
+        The cap table exists to tell you what to pass. Naming one flag when
+        there are two sends half the readers to the wrong one.
+        """
+        report = str(fetcher.estimate())
+        assert "--max-size-mb / --max-size-gb" in report
+
+
+# ===================================================================== #
+# What a store keeps
+# ===================================================================== #
+class TestAnHdf5DownloadIsNotLossy:
+    r"""
+    ``--hdf5`` must fetch the same material the text path fetches.
+
+    It did not until 2026-09-01. ``_store_density`` built a ``ChargeDensity``
+    from ``data["total"]`` alone and wrote no augmentation, while the text path
+    handed the whole object to pymatgen --- so one download produced two
+    different datasets. The magnetisation half is the one that reaches
+    training: ``data.spin: auto`` resolves against what is on disk, so the same
+    materials trained a two-channel operator as CHGCARs and a one-channel one
+    as stores. The PAW half is the one that reaches VASP: without the records
+    no store could ever seed ``ICHARG = 1``.
+    """
+
+    def test_the_paw_records_reach_the_store(self, tmp_path, monkeypatch):
+        pytest.importorskip("h5py")
+        from poraque.fields.hdf5 import has_augmentation, read_augmentation
+
+        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch)
+        f.download(hdf5=True)
+        target = str(f.material_dir("mp-1") / "fields.h5") + "::CHGCAR"
+
+        assert has_augmentation(target)
+        blocks = read_augmentation(target)[1]
+        assert len(blocks) == 1
+        assert sum(1 for line in blocks[0]
+                   if "augmentation occupancies" in line) == 2
+
+    def test_a_spin_download_keeps_both_channels(self, tmp_path, monkeypatch):
+        """
+        Two grid blocks and two sets of records, matching what the text path
+        writes for the same object.
+        """
+        pytest.importorskip("h5py")
+        from poraque.fields.hdf5 import is_spin_polarized, read_augmentation
+
+        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch,
+                         chgcar=FakeChgcar(spin=True))
+        f.download(hdf5=True)
+        target = str(f.material_dir("mp-1") / "fields.h5") + "::CHGCAR"
+
+        assert is_spin_polarized(target)
+        assert len(read_augmentation(target)[1]) == 2
+
+    def test_both_layouts_agree_on_spin(self, tmp_path, monkeypatch):
+        """
+        The question `data.spin: auto` asks must get one answer from one
+        download, whichever format it was written in.
+        """
+        pytest.importorskip("h5py")
+        from poraque.fields import is_spin_polarized as text_is_spin
+        from poraque.fields.hdf5 import is_spin_polarized as store_is_spin
+
+        binary = fetcher_with(["mp-1"], tmp_path / "h5", monkeypatch=monkeypatch,
+                              chgcar=FakeChgcar(spin=True))
+        binary.download(hdf5=True)
+        text = fetcher_with(["mp-1"], tmp_path / "text", monkeypatch=monkeypatch,
+                            chgcar=FakeChgcar(spin=True))
+        text.download(compress=False)
+
+        assert store_is_spin(str(binary.material_dir("mp-1") / "fields.h5")
+                             + "::CHGCAR")
+        assert text_is_spin(text._chgcar_path("mp-1", compress=False))
+
+    def test_a_store_becomes_a_chgcar_vasp_can_read(self, tmp_path,
+                                                    monkeypatch):
+        """The point of keeping the records: getting them back out."""
+        pytest.importorskip("h5py")
+        from poraque.fields.vasp.templates import write_chgcar
+        from poraque.fields.vasp.volumetric import read_augmentation_blocks
+
+        f = fetcher_with(["mp-1"], tmp_path, monkeypatch=monkeypatch,
+                         chgcar=FakeChgcar(spin=True))
+        f.download(hdf5=True)
+
+        out = str(tmp_path / "CHGCAR")
+        write_chgcar(str(f.material_dir("mp-1") / "fields.h5"), out)
+
+        assert len(read_augmentation_blocks(out)[1]) == 2
+
+
+class TestRenderingThePymatgenRecords:
+    def test_the_atoms_keep_their_order(self):
+        """
+        ``data_aug`` is keyed by VASP's 1-based atom index, and a JSON round
+        trip turns those keys into strings. Sorting on the raw key would put
+        atom 10 before atom 2 and hand every atom its neighbour's occupancies.
+        """
+        records = {str(i): np.full(2, float(i)) for i in range(1, 12)}
+        block = augmentation_records(
+            SimpleNamespace(data_aug={"total": records}))[0]
+        values = [float(line.split()[0]) for line in block
+                  if "augmentation" not in line]
+        assert values == [float(i) for i in range(1, 12)]
+
+    def test_an_object_with_no_records_yields_none(self):
+        assert augmentation_records(SimpleNamespace(data_aug=None)) == []
+        assert augmentation_records(SimpleNamespace()) == []
+
+    def test_one_block_per_spin_channel(self):
+        chgcar = FakeChgcar(spin=True)
+        assert len(augmentation_records(chgcar)) == 2
+
+
+# ===================================================================== #
+# A sample is a selection
+# ===================================================================== #
+class TestASampleIsWhatGetsFetched:
+    r"""
+    ``--sample N`` selects N materials; without ``--estimate`` it fetches them.
+
+    It used to reach :meth:`MPDataFetcher.dry_run` alone. ``run()`` called
+    ``self.estimate()`` with no arguments before downloading, so ``--sample 20``
+    on a real run was **silently ignored** and the command fetched the whole
+    matching set --- which, with ``--all``, is the entire database. The flag
+    that exists to make ``--all`` usable was the one flag ``--all`` ignored.
+
+    Nothing new filters the download: a sampled estimate measures only the
+    materials it selected, and ``download`` builds its targets from
+    ``estimate.sizes``. The fix was to let the sample reach the estimate.
+    """
+
+    def test_only_the_sample_is_downloaded(self, tmp_path, monkeypatch):
+        identifiers = [f"mp-{n}" for n in range(1, 41)]
+        f = fetcher_with(identifiers, tmp_path, monkeypatch=monkeypatch)
+        f.run(sample=6, seed=0, vasp_inputs=False)
+
+        fetched = sorted(p.name for p in tmp_path.iterdir()
+                         if p.is_dir() and p.name != "structures")
+        assert len(fetched) == 6
+
+    def test_without_a_sample_everything_is_downloaded(self, tmp_path,
+                                                       monkeypatch):
+        """The counterfactual: the selection is opt-in, not the new default."""
+        identifiers = [f"mp-{n}" for n in range(1, 13)]
+        f = fetcher_with(identifiers, tmp_path, monkeypatch=monkeypatch)
+        f.run(sample=None, vasp_inputs=False)
+
+        fetched = [p for p in tmp_path.iterdir()
+                   if p.is_dir() and p.name != "structures"]
+        assert len(fetched) == 12
+
+    def test_the_summary_describes_the_sample(self, tmp_path, monkeypatch):
+        """
+        A summary of forty thousand materials beside twenty densities would be
+        the one file in the directory that is not about the directory.
+        """
+        identifiers = [f"mp-{n}" for n in range(1, 41)]
+        f = fetcher_with(identifiers, tmp_path, monkeypatch=monkeypatch)
+        f.run(sample=6, seed=0, vasp_inputs=False)
+
+        with open(tmp_path / "summary.json") as handle:
+            rows = json.load(handle)
+        assert len(rows) == 6
+
+        fetched = {p.name for p in tmp_path.iterdir()
+                   if p.is_dir() and p.name != "structures"}
+        assert {row["material_id"] for row in rows} == fetched
+
+    def test_the_same_seed_resumes_onto_the_same_subset(self, tmp_path,
+                                                        monkeypatch):
+        """
+        What makes a sampled download resumable at all. A fresh draw on the
+        second run would fetch six *more* materials beside the first six, and
+        an interrupted run could never be finished.
+        """
+        identifiers = [f"mp-{n}" for n in range(1, 41)]
+        fetcher_with(identifiers, tmp_path, monkeypatch=monkeypatch).run(
+            sample=6, seed=0, vasp_inputs=False)
+        first = sorted(p.name for p in tmp_path.iterdir()
+                       if p.is_dir() and p.name != "structures")
+
+        again = fetcher_with(identifiers, tmp_path, monkeypatch=monkeypatch)
+        refetched = []
+        again._rester = SimpleNamespace(
+            get_charge_density_from_material_id=lambda i: (
+                refetched.append(i), FakeChgcar())[1],
+            session=SimpleNamespace(close=lambda: None))
+        again.run(sample=6, seed=0, vasp_inputs=False)
+
+        assert refetched == []
+        assert sorted(p.name for p in tmp_path.iterdir()
+                      if p.is_dir() and p.name != "structures") == first
+
+    def test_a_different_seed_selects_a_different_subset(self, tmp_path,
+                                                         monkeypatch):
+        identifiers = [f"mp-{n}" for n in range(1, 41)]
+        picked = []
+        for seed in (0, 7):
+            root = tmp_path / f"seed{seed}"
+            fetcher_with(identifiers, root, monkeypatch=monkeypatch).run(
+                sample=6, seed=seed, vasp_inputs=False)
+            picked.append({p.name for p in root.iterdir()
+                           if p.is_dir() and p.name != "structures"})
+        assert picked[0] != picked[1]
+
+    def test_asking_for_more_than_there_is_takes_everything(self, tmp_path,
+                                                            monkeypatch):
+        """
+        A sample larger than the set is not an error and not a truncation --
+        it is the whole set, reported as exact rather than as sampled.
+        """
+        identifiers = [f"mp-{n}" for n in range(1, 6)]
+        f = fetcher_with(identifiers, tmp_path, monkeypatch=monkeypatch)
+        estimate = f.run(sample=50, vasp_inputs=False)
+
+        assert estimate.method == "exact"
+        assert len([p for p in tmp_path.iterdir()
+                    if p.is_dir() and p.name != "structures"]) == 5
+
+    def test_the_selection_is_reset_by_a_new_search(self, tmp_path,
+                                                    monkeypatch):
+        """
+        A sample belongs to the document set it was drawn from. Surviving a
+        re-query would filter the new results by ids chosen from the old ones
+        --- and with a different search, possibly by ids the new set does not
+        contain at all.
+        """
+        identifiers = [f"mp-{n}" for n in range(1, 21)]
+        f = fetcher_with(identifiers, tmp_path, monkeypatch=monkeypatch)
+        f.estimate(sample=4)
+        assert len(f.selected) == 4
+
+        f._rester.materials = SimpleNamespace(summary=SimpleNamespace(
+            search=lambda **_: [document(i) for i in identifiers]))
+        f.search(refresh=True)
+        assert f._selected is None
+        assert len(f.selected) == 20

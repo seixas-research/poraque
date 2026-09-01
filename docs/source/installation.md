@@ -23,7 +23,7 @@ the environment is active — no path to a script, no `cd` into the repository:
 | `poraque-train` | trains the operators | `python scripts/poraque_train.py` |
 | `poraque-inference` | predicts a new structure | `python scripts/poraque_inference.py` |
 | `poraque-committee` | ranks structures by ensemble disagreement | `python scripts/poraque_committee.py` |
-| `poraque-vasp` | writes VASP inputs that read a prediction back — `bands`, `dos`, `energy` | `python scripts/poraque_vasp.py` |
+| `poraque-vasp` | writes VASP inputs that read a prediction back — `bands`, `dos`, `energy`, and `chgcar` to write a field store out as a `CHGCAR` | `python scripts/poraque_vasp.py` |
 
 Each is the `main()` of the corresponding script, so the two forms take
 identical arguments and behave identically. Relative paths in a configuration

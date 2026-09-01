@@ -756,6 +756,71 @@ def _resolve_mesh(mesh, structure, spacing):
     return kpoint_mesh_from_spacing(structure, spacing)
 
 
+def write_chgcar(source, destination):
+    r"""
+    Write a VASP-readable ``CHGCAR`` from any density Poraquê can read.
+
+    VASP reads text. A Poraquê field store holds the same numbers under the
+    same convention and is a third the size, but no VASP build opens one, so a
+    store that is to seed ``ICHARG = 1`` or be read back by ``ICHARG = 11``
+    has to be written out first. That is all this does.
+
+    What makes it worth a function rather than a copy is what has to come with
+    the values:
+
+    * the **magnetisation block**, when the store carries one, written as the
+      second grid block a spin-polarised ``CHGCAR`` has;
+    * the **PAW augmentation records** --- one set per grid block --- which are
+      the one-centre terms no grid can carry and ``ICHARG = 1`` will not start
+      without.
+
+    A text source is **copied byte for byte** rather than parsed and
+    re-emitted. Re-rendering a file that was already correct can only lose
+    digits or shift a column, and the density block is a column-positional
+    Fortran read.
+
+    Parameters
+    ----------
+    source : str
+        A ``CHGCAR`` (gzipped or not) or a store address,
+        ``fields.h5::CHGCAR``.
+    destination : str
+        The file to write.
+
+    Returns
+    -------
+    str
+        ``destination``.
+
+    Notes
+    -----
+    A store written before augmentation records were storable has none, and
+    this says so by writing a density with no records rather than failing:
+    the file is still exactly what ``ICHARG = 11`` needs for a band structure,
+    and it is only ``ICHARG = 1`` that wants the one-centre terms back.
+    """
+    import shutil
+
+    from ..hdf5 import is_hdf5_path
+
+    if not is_hdf5_path(source):
+        if os.path.abspath(source) != os.path.abspath(destination):
+            shutil.copyfile(source, destination)
+        return destination
+
+    from .. import ChargeDensity, FieldGrid, SpinDensity
+    from ..hdf5 import is_spin_polarized
+    from .volumetric import read_augmentation_blocks
+
+    grid = FieldGrid.from_file(source)
+    reader = SpinDensity if is_spin_polarized(source) else ChargeDensity
+    density = reader.read(source, grid=grid)
+    _, blocks = read_augmentation_blocks(source)
+
+    density.write(destination, augmentation=blocks or None)
+    return destination
+
+
 def _write_deck(directory, incar, kpoints, chgcar, structure):
     """
     Lay one deck down on disk: ``INCAR``, ``KPOINTS``, and what is available.
@@ -765,8 +830,6 @@ def _write_deck(directory, incar, kpoints, chgcar, structure):
     density is copied in is shared, and lived in three copies before it lived
     here.
     """
-    import shutil
-
     os.makedirs(directory, exist_ok=True)
     written = {}
 
@@ -787,10 +850,11 @@ def _write_deck(directory, incar, kpoints, chgcar, structure):
         written["POSCAR"] = path
 
     if chgcar is not None:
-        destination = os.path.join(directory, "CHGCAR")
-        if os.path.abspath(chgcar) != os.path.abspath(destination):
-            shutil.copyfile(chgcar, destination)
-        written["CHGCAR"] = destination
+        # Through `write_chgcar` rather than a copy, because the density may
+        # be an HDF5 store: copying one into a deck would leave a directory
+        # that looks complete and that VASP cannot open.
+        written["CHGCAR"] = write_chgcar(
+            chgcar, os.path.join(directory, "CHGCAR"))
 
     return written
 

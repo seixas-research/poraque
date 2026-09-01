@@ -53,17 +53,26 @@ from poraque.fields import (
     is_spin_polarized,
 )
 from poraque.fields.hdf5 import (
+    augmentation_blocks,
     chunk_shape,
     compression_options,
     describe,
     field_names,
+    has_augmentation,
     is_hdf5_path,
     join_target,
     peek_shape,
+    read_augmentation,
     split_target,
     write_field,
     write_fields,
 )
+from poraque.fields.vasp.templates import write_chgcar
+from poraque.fields.vasp.volumetric import (
+    count_augmentation_records,
+    read_augmentation_blocks,
+)
+from poraque.fields.vasp.volumetric import read_augmentation as read_text_augmentation
 from poraque.fields.vasp.poscar import Poscar
 from poraque.ml.data import (
     FieldPairDataset,
@@ -397,16 +406,219 @@ class TestSpinDensities:
         assert not is_spin_polarized(path + "::CHGCAR")
 
 
-class TestWhatAStoreCannotDo:
-    def test_augmentation_records_are_refused_rather_than_dropped(self,
-                                                                  tmp_path):
+def augmentation(atoms=2, values=8, offset=0.0):
+    """A block of records in the layout VASP writes them in."""
+    from poraque.fields.vasp.augmentation import format_augmentation
+
+    return format_augmentation([
+        np.arange(values, dtype=float) + offset + index
+        for index in range(atoms)])
+
+
+class TestAStoreCarriesThePawRecords:
+    r"""
+    A field store holds the augmentation occupancies, not only the grid.
+
+    They were refused outright until 2026-09-01, on the reasoning that they
+    are text VASP reads out of a ``CHGCAR`` and nothing read them back from
+    HDF5. That made ``poraque-mp --hdf5`` a lossy download: the text path
+    keeps the records (pymatgen writes the whole object) and the store dropped
+    them, so the same materials fetched two ways were two different datasets,
+    and only one of them could seed an ``ICHARG = 1`` restart.
+
+    They go in as **text**, verbatim, for the reason
+    :func:`~poraque.fields.vasp.volumetric.write_volumetric` appends them
+    verbatim: a fixed-format Fortran read on VASP's side is not something to
+    have an opinion about.
+    """
+
+    def test_a_store_keeps_what_it_was_given(self, tmp_path):
+        block = augmentation()
+        path = str(tmp_path / "f.h5")
+        density().write(path, augmentation=block)
+
+        shape, blocks = read_augmentation(path + "::CHGCAR")
+        assert shape == (12, 12, 12)
+        assert blocks == [block]
+
+    def test_the_records_are_not_a_field(self, tmp_path):
         """
-        PAW occupancies are what make a density readable by VASP. Silently
-        dropping them would produce a file that looks complete and cannot seed
-        an ICHARG=1 restart.
+        A reader asking what the store holds must be told ``CHGCAR`` and
+        nothing else. Offering ``CHGCAR_augmentation0`` as a field is how a
+        dataset acquires a fourth input nobody defined.
         """
-        with pytest.raises(ValueError, match="augmentation"):
-            density().write(tmp_path / "f.h5", augmentation=["1 2 3"])
+        path = str(tmp_path / "f.h5")
+        density().write(path, augmentation=augmentation())
+        assert field_names(path) == ["CHGCAR"]
+
+    def test_absence_is_reported_as_absence(self, store):
+        path, _ = store
+        assert not has_augmentation(path + "::CHGCAR")
+        assert read_augmentation(path + "::CHGCAR")[1] == []
+
+    def test_both_spin_blocks_are_kept(self, tmp_path):
+        """
+        A spin-polarised CHGCAR carries one set of records per channel. Keeping
+        the first alone loses the occupancies of the second, which is a file
+        VASP reads rather than one it rejects.
+        """
+        field = density()
+        spin = SpinDensity(field.data, field.data * 0.1, field.grid,
+                           field.structure)
+        blocks = [augmentation(), augmentation(offset=100.0)]
+        path = str(tmp_path / "spin.h5")
+        write_fields(path, {"CHGCAR": spin}, augmentation={"CHGCAR": blocks})
+
+        assert read_augmentation(path + "::CHGCAR")[1] == blocks
+
+    def test_a_rewrite_leaves_no_orphan_block(self, tmp_path):
+        """
+        Two blocks written, then one: the second must go. A stale
+        ``_augmentation1`` would be handed back as the magnetisation's records
+        by a store that no longer has a magnetisation.
+        """
+        path = str(tmp_path / "f.h5")
+        field = density()
+        write_field(path, "CHGCAR", field,
+                    augmentation=[augmentation(), augmentation(offset=1.0)])
+        write_field(path, "CHGCAR", field, augmentation=[augmentation()])
+
+        assert len(read_augmentation(path + "::CHGCAR")[1]) == 1
+
+    def test_one_reader_answers_for_both_layouts(self, tmp_path):
+        """
+        ``read_augmentation`` is the text reader's name, and it has to keep
+        answering for a store too -- the alternative is every caller learning
+        which layout it was handed.
+        """
+        block = augmentation()
+        text = tmp_path / "CHGCAR"
+        density().write(text, augmentation=block)
+        binary = str(tmp_path / "f.h5")
+        density().write(binary, augmentation=block)
+
+        assert read_text_augmentation(text)[1] == block
+        assert read_text_augmentation(binary + "::CHGCAR")[1] == block
+
+    def test_a_single_block_field_refuses_two_sets(self, tmp_path):
+        """One grid block cannot be followed by two sets of records."""
+        with pytest.raises(ValueError, match="one grid block"):
+            density().write(tmp_path / "CHGCAR",
+                            augmentation=[augmentation(), augmentation()])
+
+
+class TestNormalisingAugmentationRecords:
+    def test_one_block_may_be_given_flat(self):
+        block = ["augmentation occupancies   1  2", " 1.0 2.0"]
+        assert augmentation_blocks(block) == [block]
+
+    def test_blocks_may_be_given_nested(self):
+        blocks = [["a"], ["b"]]
+        assert augmentation_blocks(blocks) == blocks
+
+    def test_nothing_is_nothing(self):
+        assert augmentation_blocks(None) == []
+        assert augmentation_blocks([]) == []
+
+    def test_an_empty_block_is_dropped(self):
+        """
+        A block of no records is the absence of a record, not a record of no
+        occupancies -- storing it would have ICHARG=1 read zeros where the
+        one-centre terms belong.
+        """
+        assert augmentation_blocks([[], ["a"]]) == [["a"]]
+
+
+class TestReadingEverySetOfRecords:
+    def test_a_spin_polarised_file_has_two(self, tmp_path):
+        field = density()
+        spin = SpinDensity(field.data, field.data * 0.1, field.grid,
+                           field.structure)
+        blocks = [augmentation(), augmentation(offset=50.0)]
+        path = tmp_path / "CHGCAR"
+        spin.write(path, augmentation=blocks)
+
+        shape, back = read_augmentation_blocks(path)
+        assert shape == (12, 12, 12)
+        assert back == blocks
+
+    def test_an_unpolarised_file_has_one(self, tmp_path):
+        path = tmp_path / "CHGCAR"
+        block = augmentation()
+        density().write(path, augmentation=block)
+        assert read_augmentation_blocks(path)[1] == [block]
+
+    def test_a_file_with_none_has_none(self, tmp_path):
+        path = tmp_path / "CHGCAR"
+        density().write(path)
+        assert read_augmentation_blocks(path)[1] == []
+
+
+class TestWritingAStoreBackOutForVasp:
+    r"""
+    VASP reads text, so a store has to become a ``CHGCAR`` before it is of any
+    use to an ``ICHARG = 1`` or ``ICHARG = 11`` run.
+
+    What the conversion has to carry is everything that is not the main grid:
+    the magnetisation block and both sets of PAW records. A converter that
+    moved only the values would produce a file that looks complete, opens
+    fine, and starts VASP from the wrong one-centre terms.
+    """
+
+    def test_the_records_survive_the_round_trip(self, tmp_path):
+        block = augmentation()
+        store_path = str(tmp_path / "f.h5")
+        density().write(store_path, augmentation=block)
+
+        out = str(tmp_path / "CHGCAR")
+        write_chgcar(store_path, out)
+
+        assert count_augmentation_records(read_text_augmentation(out)[1]) == 2
+        assert read_augmentation_blocks(out)[1] == [block]
+
+    def test_a_spin_store_comes_back_with_both_blocks(self, tmp_path):
+        field = density()
+        spin = SpinDensity(field.data, field.data * 0.1, field.grid,
+                           field.structure)
+        blocks = [augmentation(), augmentation(offset=7.0)]
+        store_path = str(tmp_path / "f.h5")
+        write_fields(store_path, {"CHGCAR": spin},
+                     augmentation={"CHGCAR": blocks})
+
+        out = str(tmp_path / "CHGCAR")
+        write_chgcar(store_path, out)
+
+        back = SpinDensity.read(out)
+        assert np.allclose(back.total, spin.total, rtol=0, atol=1e-9)
+        assert np.allclose(back.magnetization, spin.magnetization,
+                           rtol=0, atol=1e-9)
+        assert read_augmentation_blocks(out)[1] == blocks
+
+    def test_a_text_source_is_copied_not_re_rendered(self, tmp_path):
+        """
+        Re-emitting a file that was already correct can only lose digits or
+        move a column, and the density block is a column-positional read.
+        """
+        source = tmp_path / "CHGCAR"
+        density().write(source, augmentation=augmentation())
+        out = tmp_path / "copy"
+        write_chgcar(str(source), str(out))
+
+        assert out.read_bytes() == source.read_bytes()
+
+    def test_a_store_without_records_still_converts(self, tmp_path):
+        """
+        ICHARG = 11 wants the grid and not the one-centre terms, so a store
+        with no records is still worth writing out -- refusing would block the
+        case that works.
+        """
+        store_path = str(tmp_path / "f.h5")
+        density().write(store_path)
+        out = str(tmp_path / "CHGCAR")
+        write_chgcar(store_path, out)
+
+        assert os.path.exists(out)
+        assert read_augmentation_blocks(out)[1] == []
 
 
 class TestCompressionActuallyCompresses:

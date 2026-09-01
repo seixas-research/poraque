@@ -192,9 +192,9 @@ relaxations.
 ## Training on the Materials Project
 
 `poraque-mp` turns a **chemical space** — a set of elements — into a local
-dataset of charge densities. Size it first; the estimate is exact, because
-charge densities are objects in a public S3 bucket and their sizes are read
-with `HEAD` requests that transfer no payload:
+dataset of charge densities. Size it first; over a chemical space the estimate
+is exact, because charge densities are objects in a public S3 bucket and their
+sizes are read with `HEAD` requests that transfer no payload:
 
 ```bash
 # a pure dry run: prints to the console and writes nothing at all
@@ -207,6 +207,48 @@ poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
 `--output` (or `--outdir`) defaults to the **current directory**, so a command
 that writes hundreds of megabytes puts them where you ran it. Files stay
 gzipped; Poraquê reads compressed volumetric files in place.
+
+The per-object size cap has **two spellings and they are the same cap**:
+`--max-size-mb` and `--max-size-gb`, a decimal factor of 1000 apart, matching
+every size this tool prints. One `CHGCAR` is an MB-scale object and a whole
+download is a GB-scale one, so which unit reads naturally depends on which of
+the two you are thinking about. Passing both is refused rather than resolved.
+
+**The whole database is `--all`, stated explicitly.** It selects every material
+the index says has a charge density — one server-side query rather than 2ⁿ
+chemical systems — and the search filters still apply under it, which is how a
+*subset* of everything is taken. Omitting `--elements` is not a second spelling
+of it: a command naming neither is refused, since a forgotten flag would
+otherwise become a multi-terabyte transfer.
+
+**`--sample N` is what makes `--all` usable.** It draws N materials at random
+and *those* become the working set — with `--estimate` it sizes exactly those
+N, and without `--estimate` it downloads them. Everything the run writes into
+`--output` describes that subset, summary and CIFs included, so a sampled
+directory never carries an index of a set it does not hold.
+
+```bash
+# what would 20 random materials from the whole database cost?
+poraque-mp --all --estimate --sample 20
+
+# fetch exactly those 20
+poraque-mp --all --sample 20 --output data/MP
+
+# the trainable subset of it, as compressed HDF5
+poraque-mp --all --num-sites 1 12 --max-size-mb 20 \
+    --output data/MP --hdf5 --compression gzip
+```
+
+A sampled estimate still **projects** to the whole set — the sample mean times
+the number advertised — on its own line and labelled as a projection, because
+sizing the database is what you usually want to know *before* deciding to fetch
+a piece of it. Both numbers are printed; one alone would be read as the other.
+
+`--seed` decides *which* subset, and it is a set rather than a lottery: the
+same seed selects the same materials, so an interrupted sampled download
+resumes onto the same subset instead of fetching N more beside it. Sizes are
+also strongly right-tailed, so two draws of twenty can differ by tens of
+percent, and a projection that moved on every run could not be planned against.
 
 A download is **one directory per material, named by its id** — the shape of a
 VASP run, and the shape `data.data_paths` already reads:
@@ -231,6 +273,31 @@ None of them is training data. The loader records the density and nothing else,
 and the external potential stays *computed* — `mp.json` is what keeps the
 directory from being mistaken for a VASP run now that it looks like one.
 `--no-vasp-inputs` skips the three.
+
+### `--hdf5` keeps everything, and VASP still cannot read it
+
+`--hdf5` writes each density as a chunked, compressed field store instead of a
+`CHGCAR`. It is a re-encoding rather than a conversion — pymatgen already holds
+ρ·Ω, which is what the store keeps — and it carries **everything the text file
+does**: the magnetisation block of a spin-polarised density, and the PAW
+augmentation records, the one-centre terms `ICHARG = 1` will not restart
+without.
+
+What no store can do is be opened by VASP, so a run needs the density written
+back out:
+
+```bash
+poraque-vasp chgcar data/MP/mp-124/fields.h5 --output CHGCAR
+
+# or straight into a deck, which converts rather than copies
+poraque-vasp energy data/MP/mp-124/fields.h5 --like <run> --copy-density
+```
+
+Every mode takes a store where it takes a `CHGCAR` — address one field as
+`fields.h5::CHGCAR` when the store holds several. A text source is copied byte
+for byte rather than parsed and re-emitted: re-rendering a file that was
+already correct can only lose digits or shift a column, and the density block
+is a column-positional Fortran read.
 
 Then train. **`data_paths` is the only key that names a dataset**, and a
 download goes in it exactly as a run tree does — every entry is a directory of

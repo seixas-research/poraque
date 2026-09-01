@@ -244,10 +244,13 @@ class ScalarField(ABC):
         width, decimals : int, optional
             Fortran ``Ew.d`` field per value; the defaults reproduce VASP's
             ``(1X,E17.11)`` density block exactly.
-        augmentation : sequence of str, optional
-            PAW augmentation records to append, from
-            :func:`~poraque.fields.vasp.volumetric.read_augmentation`. Needed
-            when the file is to seed a VASP run with ``ICHARG=1``.
+        augmentation : sequence, optional
+            PAW augmentation records, from
+            :func:`~poraque.fields.vasp.volumetric.read_augmentation` or
+            :func:`~poraque.fields.vasp.volumetric.read_augmentation_blocks`.
+            Needed when the file is to seed a VASP run with ``ICHARG=1`` or be
+            read back by one with ``ICHARG=11``. Written verbatim to a
+            ``CHGCAR`` and stored verbatim in an HDF5 store.
         compression : str or None, optional
             HDF5 only: ``"none"``, ``"gzip"`` or ``"lzf"``. Ignored for a text
             path, where the format itself fixes the encoding.
@@ -265,27 +268,33 @@ class ScalarField(ABC):
         -----
         An ``.h5``/``.hdf5`` path writes the field into an HDF5 store instead
         (:mod:`poraque.fields.hdf5`), carrying the same values under the same
-        convention. ``augmentation`` has no HDF5 equivalent and is refused
-        rather than dropped: PAW occupancies are what make a density readable
-        by VASP, and losing them silently would produce a file that looks
-        complete and is not.
+        convention **and the same augmentation records**. They go in as the
+        text they are, under ``<dataset>_augmentation0``, and come back out of
+        :func:`~poraque.fields.vasp.volumetric.read_augmentation`, which reads
+        a store and a ``CHGCAR`` through one call. A store is therefore a
+        complete container for a density: what VASP still cannot do is read
+        one, so seeding an ``ICHARG=1`` or ``ICHARG=11`` run means writing the
+        ``CHGCAR`` back out --- with the records that survived the round trip.
         """
         path = path if path is not None else self.default_filename
 
-        from .hdf5 import is_hdf5_path
+        from .hdf5 import augmentation_blocks, is_hdf5_path
+
+        blocks = augmentation_blocks(augmentation)
+        if len(blocks) > 1:
+            raise ValueError(
+                f"{len(blocks)} sets of augmentation records were given for a "
+                f"field with one grid block. A spin-polarised CHGCAR carries "
+                f"one set per channel; write it through SpinDensity, which has "
+                f"both blocks to put them after.")
 
         if is_hdf5_path(path):
             from .hdf5 import split_target, write_field
 
-            if augmentation:
-                raise ValueError(
-                    "PAW augmentation records cannot be stored in an HDF5 "
-                    "field store: they are text records VASP reads out of a "
-                    "CHGCAR, and nothing reads them back from HDF5. Write the "
-                    "density as a CHGCAR when it has to seed a VASP run.")
             _, dataset = split_target(path)
             return write_field(path, dataset or self.default_filename, self,
-                               compression=compression, level=level)
+                               compression=compression, level=level,
+                               augmentation=blocks)
         if comment is None:
             formula = "".join(
                 f"{s}{c}" for s, c in zip(self.structure.symbols, self.structure.counts)
@@ -309,7 +318,7 @@ class ScalarField(ABC):
             columns=columns,
             width=width,
             decimals=decimals,
-            augmentation=augmentation,
+            augmentation=(blocks[0] if blocks else None),
         )
 
     @classmethod

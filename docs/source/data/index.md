@@ -130,6 +130,102 @@ poraque-train --config configs/train_materialsproject.yaml
 and to specialise it on your own chemistry afterwards, point `data_paths` at
 both directories, or fine-tune (see {doc}`../fine_tuning/index`).
 
+### Taking the archive whole
+
+A chemical space is a set of elements. `--all` is the other question — every
+material the index says has a charge density, whatever it is made of:
+
+```bash
+poraque-mp --all --estimate --sample 20      # what would 20 of them cost?
+poraque-mp --all --sample 20 --output data/MP        # fetch exactly those 20
+
+poraque-mp --all --num-sites 1 12 --max-size-mb 20 \
+    --output data/MP --hdf5 --compression gzip
+```
+
+That cap has a second spelling for the scale this mode works at:
+`--max-size-gb 0.02` is the same filter as `--max-size-mb 20`, a decimal factor
+of 1000 apart, matching every size the report prints. One `CHGCAR` is an
+MB-scale object and a whole-database download is a GB-scale one, and the unit
+that reads naturally depends on which you have in mind. Passing both is
+refused rather than resolved — two caps is a question about which one wins,
+and no answer to it is worth guessing.
+
+**It has to be written out.** Omitting `--elements` does not mean "everything";
+a command line naming neither is refused, because that flag was required for
+most of this tool's life and reading its absence as the whole database would
+turn a forgotten argument into a multi-terabyte transfer.
+
+That one flag is a single server-side query — `has_props=["charge_density"]` on
+the summary endpoint — rather than one query per chemical system, and rather
+than pulling every summary document in the database and discarding the ones
+without a density. The search filters still apply, so `--all` is also how a
+*subset* of the whole archive is chosen: the second command above is not
+150 000 materials but the ones small enough to train on.
+
+### `--hdf5` keeps everything, and VASP still cannot read it
+
+`--hdf5` writes each density as a chunked, compressed field store rather than a
+`CHGCAR`. It is a re-encoding, not a conversion — pymatgen already holds
+$\rho\Omega$, which is the convention the store keeps — and it carries
+**everything the text file does**: the magnetisation block of a spin-polarised
+density, and the PAW augmentation records, the one-centre terms `ICHARG = 1`
+will not restart without.
+
+That was not true before 2026-09-01, and the way it was untrue is worth
+knowing if you have stores on disk from before then. The store took the total
+block and wrote no records, so one download produced two different datasets:
+`data.spin: auto` resolves against what is on disk, so the same materials
+trained a two-channel operator as `CHGCAR`s and a one-channel one as stores —
+and no store could seed a VASP restart at all. **A store written before that
+date has no records to give back**; re-fetch the material if you need them.
+
+What no store can do is be opened by VASP, so a run needs the density written
+back out:
+
+```bash
+poraque-vasp chgcar data/MP/mp-124/fields.h5 --output CHGCAR
+
+# or straight into a deck, which converts rather than copies
+poraque-vasp energy data/MP/mp-124/fields.h5 --like <run> --copy-density
+```
+
+Every mode of `poraque-vasp` takes a store where it takes a `CHGCAR`; address
+one field as `fields.h5::CHGCAR` when the store holds several. A text source is
+copied byte for byte rather than parsed and re-emitted — re-rendering a file
+that was already correct can only lose digits or shift a column, and the
+density block is a column-positional Fortran read.
+
+### A sample is a selection, not just a sizing trick
+
+`--sample N` draws N materials at random and **those become the working set**.
+With `--estimate` it sizes exactly those N; without `--estimate` it downloads
+them. Everything the run writes into `--output` is about that subset —
+`summary.csv` and the CIFs included — so a sampled directory never carries an
+index of a set it does not hold.
+
+```{note}
+Before 2026-09-01 `--sample` reached the dry run alone. Used without
+`--estimate` it was **silently ignored**, and the command fetched the whole
+matching set — with `--all`, the entire database.
+```
+
+Sizing changes with it. Over a chemical space every object is `HEAD`ed and the
+total is exact; over the database that is tens of thousands of requests for a
+number nobody needs to four digits. A sampled estimate measures its N exactly
+— so `TOTAL DOWNLOAD` is a measurement of what a fetch would actually transfer,
+not an extrapolation — and **also projects** to the whole set, as the sample
+mean times the number advertised, on its own line and labelled as a projection.
+Both are printed because they answer different questions, "what will this
+fetch" and "what would all of it cost", and a report stating one of them gets
+read as the other.
+
+`--seed` decides *which* subset, and that is what makes a sampled download
+resumable: the same seed selects the same materials, so an interrupted run
+resumes onto the same subset rather than fetching N more beside it. Sizes are
+also strongly right-tailed, so two draws of twenty can differ by tens of
+percent, and a projection that moved on every run could not be planned against.
+
 ## The third missing piece: pseudopotentials
 
 The structure and the valence charges are recoverable from the density. The
