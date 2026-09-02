@@ -100,9 +100,14 @@ interpreters are supported.
 
 \begin{lstlisting}
 pytest
-python -m poraque.ml.device --check
+python -m poraque.ml.device
 python -c "from poraque.ml.device import available_devices; print(available_devices())"
 \end{lstlisting}
+
+Without \opt{--check} this reports and exits 0 whatever it finds, which is what
+a verification step wants: a CPU-only machine is a working installation, not a
+failure. \opt{--check} is the queue guard of
+Section~\ref{sec:cuda}, and it refuses a CPU deliberately.
 
 The device list is ordered by preference, so the first entry is what
 \opt{device: auto} will select --- \opt{cuda}, then \opt{mps}, then \opt{cpu}.
@@ -155,13 +160,20 @@ pass, after the queue time had been spent.
 \subsection{Check before submitting to a queue}
 
 \begin{lstlisting}
-python -m poraque.ml.device --check || exit 1
+python -m poraque.ml.device --check --device cuda || exit 1
 \end{lstlisting}
 
 It prints the torch build, its CUDA runtime, where it was imported from, the
 architectures it carries kernels for, and one line per GPU saying whether this
 build can use it --- then exits non-zero if the requested device is not usable.
 Three seconds, against a slot in the GPU queue.
+
+\opt{--device} defaults to \opt{auto}, and \opt{--check} refuses a CPU under
+\opt{auto} too --- a guard that cannot fail is not a guard, and this one could
+not: it resolved to the CPU and exited 0 on any machine with a working CPU,
+which is every machine. Naming the device the scheduler was actually asked for
+is still the clearer form, because it is the one that also catches
+\opt{cuda:2} on a node where the job was given one GPU.
 
 The same check belongs in the configuration, where it stops the run rather than
 the script:

@@ -100,6 +100,9 @@ the files present. Those are the only two values. \\
 \opt{resolution} & \opt{32} & Longest grid axis after spectral downsampling. \\
 \opt{potcar\_dir} & \opt{null} & \file{POTCAR} library, used where the data
 ships no pseudopotentials. \\
+\opt{strict\_potcar} & \opt{false} & Refuse the Gaussian fallback when a
+configured library cannot serve an element (Section~\ref{sec:strict-potcar}).
+What it \emph{did} serve is in the cache fingerprint either way. \\
 \opt{sigma} & \opt{null} & Gaussian pseudo-ion width in \AA{}, where the
 Gaussian model is reached. \\
 \opt{gaussian\_blur} & \opt{null} & Gaussian blur width in \AA{} applied to the
@@ -423,12 +426,6 @@ is declared failed. \\
 CUDA and false elsewhere. \\
 \opt{tf32} & \opt{true} & TensorFloat-32 matmul and convolution; CUDA, Ampere
 and later. \\
-\opt{compile} & \opt{false} & \opt{torch.compile} the training loop; CUDA only,
-and a measurement switch. \\
-\opt{compile\_mode} & \opt{default} & \opt{default}, \opt{reduce-overhead} or
-\opt{max-autotune}. \\
-\opt{compile\_dynamic} & \opt{true} & One graph over symbolic shapes rather
-than one per shape. \\
 \opt{loss} & \opt{relative\_l2} & \opt{absolute\_l2}, \opt{relative\_l2},
 \opt{absolute\_h1} or \opt{relative\_h1}. \\
 \opt{sobolev\_weight} & \opt{0.1} & Gradient-term weight for the two
@@ -567,6 +564,14 @@ kernel launch, since CUDA 13 dropped Volta. Poraqu\^e checks the compute
 capability against the build's own \opt{arch\_list} and refuses before any of
 that. See \S\ref{sec:cuda}.
 
+\opt{strict\_device} applies to \opt{device: auto} as well, which is the
+default and until 26.9.3 was the case it did \emph{not} cover: the \opt{auto}
+branch returned the best available backend before \opt{strict} was consulted,
+so a configuration that set \opt{strict\_device: true} and left \opt{device}
+alone --- the exact pairing this section recommends --- got no protection at
+all. It now refuses when \opt{auto} resolves to the CPU, and names
+\opt{device: cpu} as the way to ask for CPU training deliberately.
+
 \subsection{\opt{num\_workers} and \opt{pin\_memory}}
 
 \opt{num\_workers} and \opt{data.cache\_in\_memory} (\S\ref{sec:cachememory})
@@ -596,32 +601,60 @@ RAM, which is the case \opt{cache\_in\_memory: false} exists for.
 is true there and false everywhere, since it does not help on Metal and some
 PyTorch versions warn when asked for it.
 
-\subsection{\opt{tf32} and \opt{compile}}
+\subsection{\opt{tf32}}
 
 \opt{tf32} keeps float32's range and drops its mantissa to ten bits inside the
 tensor cores. It is a real speedup on Ampere and later, and \textbf{exactly
 nothing} before it --- a V100 has no TF32 path --- so it is on by default and
-costs nothing where it does not apply.
+costs nothing where it does not apply. Ignored off CUDA.
 
-\opt{compile} is a measurement switch rather than a recommendation, and it is
-off. The case for it is the kernel profile: at \opt{width=16, modes=8,
-n\_layers=3} on a V100, \textbf{44.4\,\% of GPU time is elementwise work}, and
-the four costliest kernels are \opt{copy\_}, \opt{Memcpy DtoD}, \opt{add\_} and
-\opt{fill\_} --- memory traffic between kernels that each do very little
-arithmetic, which is what fusion removes. Convolution is 23.7\,\%, FFT
-13.7\,\%, and GEMM only 6.1\,\%.
+\subsection{There is no \opt{compile} key}
+\label{sec:no-torch-compile}
 
-The case against is that batches are bucketed by grid shape and a real dataset
-has many --- 19 distinct shapes in the set measured --- and Inductor
-specialises per shape unless \opt{compile\_dynamic} holds across
-\opt{rfftn}/\opt{irfftn} with a varying \opt{s=}. Whether it does is the open
-question, and the reason this is a flag rather than a default. Compilation is
-charged to the first epoch, where \opt{seconds\_per\_epoch} in the metrics JSON
-makes the trade visible: a 60-epoch run that pays 90\,s of compilation to save
-20\,s is a loss, and a 2000-epoch run is not.
+There was one, for a version, and it was removed in 26.9.3 after being
+measured. Setting \opt{compile}, \opt{compile\_mode} or
+\opt{compile\_dynamic} now raises and says why, rather than being accepted and
+ignored.
 
-Both are ignored off CUDA. \opt{compile} says so rather than quietly turning on
-Inductor's Metal backend, which is a different proposition and untested here.
+\textbf{Inductor does not generate code for complex operators.} Every compiled
+run said so, in as many words, and \opt{SpectralConv3d}'s weights are complex
+--- it \emph{is} the Fourier neural operator. So the one part of the model
+compilation was invoked to fuse is the part Inductor hands back to eager, while
+the wrapper and the graph breaks are still paid for. 150 epochs, two
+repetitions, one V100:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+arm & s/epoch & first epoch (cold $\to$ warm) & val rel $L^2$ \\
+\midrule
+off & \textbf{0.6289} & 3.8\,s & 0.280563 \\
+\opt{mode="default"} & 0.6785 ($+7.9$\,\%) & 199.8\,s $\to$ 17.6\,s & 0.284980 \\
+\opt{mode="max-autotune"} & 0.6879 ($+9.4$\,\%) & 314.0\,s $\to$ 20.7\,s & 0.272624 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\opt{TORCH\_LOGS=recompiles} emitted nothing, so \opt{dynamic=True} did hold
+one graph across the 19 shapes: the shape-bucketing worry was unfounded and the
+gain still does not exist. The validation error also moved, reproducibly and
+identically across both repetitions, which disqualifies the arms independently
+of their timing.
+
+On four ranks it did not merely lose. With \opt{--distributed auto} and 60
+epochs, in the same allocation as an uncompiled four-rank run that finished in
+86.6\,s, the compiled run sat \textbf{eighteen minutes in the first epoch
+without printing an epoch line} and was cancelled. A configuration key whose
+failure mode is a silent deadlock inside a queue allocation is the hazard
+\opt{strict\_device} exists to remove, pointing the other way.
+
+What was \emph{not} measured, and is worth measuring one day: compiling only
+the real-valued submodules --- \opt{CellEncoder}, FiLM, the pointwise
+convolutions, the projection head, the KAN activations --- and leaving
+\opt{SpectralConv3d} in eager. That is where the 44.4\,\% of elementwise GPU
+time lives. It should come back as an internal decision about which submodules
+to wrap, not as a switch a config file can throw. The condition for re-opening
+whole-model compilation is upstream: Inductor gaining complex-operator codegen.
 
 \subsection{\opt{distributed} and \opt{distributed\_timeout}}
 \label{sec:distributed}

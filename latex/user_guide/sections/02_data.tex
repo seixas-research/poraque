@@ -324,9 +324,39 @@ fallback, because it looks exact.
 Missing or unreadable entries are not fatal. Each such species warns once and
 falls back to the Gaussian model for the structures containing it, so a library
 covering four elements of five still buys the exact potential for everything
-that does not involve the fifth. The run log names the construction per source,
-and the cache directory records it (\file{res32\_potcar}), so a tabulated cache
-and a Gaussian one can never be mistaken for each other.
+that does not involve the fifth. The run log names the construction per source.
+
+\subsection{What the cache records, and \opt{strict\_potcar}}
+\label{sec:strict-potcar}
+
+The cache \emph{directory name} carries \opt{potcar} when a library was
+configured, and until 26.9.3 that was the whole of the record --- which is to
+say it recorded what was \emph{asked for} and nothing about what was
+\emph{got}. The fingerprint had the same gap.
+
+It cost a measurement. A control run on Santos Dumont landed on a node where
+the library's filesystem was not mounted, warned six times on stderr, trained
+against analytic pseudo-ion potentials, and wrote a
+\file{cache\_fingerprint.json} identical to one built from real
+pseudopotentials --- in a directory called \file{res32\_potcar}. Every later
+run reused it silently, on mounted nodes too, and the warning never came back.
+
+The fingerprint now carries \opt{potcar\_source}, per element:
+
+\begin{lstlisting}
+{ "potcar_dir": "/prj/.../POTCARs",
+  "potcar_source": {"Ag": "gaussian", "Pt": "library"} }
+\end{lstlisting}
+
+so a cache built during an outage no longer matches a run that can read the
+library --- it rebuilds rather than being reused --- and the resolved mode is
+in the run log beside the rest of the cache line. It is \opt{null} when no
+library is configured, so a purely Gaussian dataset's fingerprint is unchanged.
+
+\opt{data.strict\_potcar: true} turns the fallback into an error naming the
+elements the library did not serve. Off by default, and meant for queues: the
+failure shape is \opt{training.strict\_device}'s --- a job that holds its
+allocation and quietly computes something other than what was configured.
 
 Without a library the map learned is \emph{model potential} $\to$ \emph{DFT
 density}: well-posed and self-consistent, since inference builds the very same

@@ -71,6 +71,12 @@ data:
                                 #   material holds is read, not declared.
   resolution: 32                # longest grid axis after spectral downsampling
   potcar_dir: null              # POTCAR library; without one V_ext falls back to the Gaussian model
+  strict_potcar: false          # raise instead of falling back when a configured library cannot
+                                #   serve an element. What it DID serve is in the cache
+                                #   fingerprint either way (`potcar_source`, per element), so a
+                                #   cache built while the library was unreachable is rebuilt
+                                #   rather than reused -- `potcar_dir` alone records only the
+                                #   path that was asked for.
   sigma: null                   # Gaussian pseudo-ion width in Ang; null derives it per species
   gaussian_blur: null           # blur width in Ang for the computed potential
   blur_method: spectral         # spectral | ndimage
@@ -203,17 +209,15 @@ training:
   pin_memory: auto              # auto = true on CUDA, false elsewhere (it is a CUDA optimisation)
   tf32: true                    # TensorFloat-32 matmul/conv; CUDA only, and nothing before Ampere
 
-  # A measurement switch, not a recommendation. The kernel profile says 44% of
-  # GPU time is elementwise and the four costliest kernels are copy_/memcpy/
-  # add_/fill_ -- traffic between kernels that each do little arithmetic, which
-  # is what fusion removes. Against it: batches are bucketed by grid shape and a
-  # real dataset has many (19 in the set measured), and Inductor specialises per
-  # shape unless `compile_dynamic` holds across rfftn/irfftn with a varying s=.
-  # That is the open question. Compilation is charged to the first epoch, where
-  # seconds_per_epoch in the metrics JSON makes the trade visible.
-  compile: false                # CUDA only; warns and runs uncompiled elsewhere
-  compile_mode: default         # default | reduce-overhead | max-autotune
-  compile_dynamic: true         # one graph over symbolic shapes rather than one per shape
+  # There is no `compile:` key. torch.compile was measured on a V100 and
+  # removed in 26.9.3: Inductor does not generate code for complex operators,
+  # SpectralConv3d's weights are complex, so the one part of an FNO that
+  # compilation was invoked to fuse is the part it hands back to eager -- while
+  # the wrapper and the graph breaks are still paid for. +7.9% and +9.4% per
+  # epoch over two modes and two repetitions, 200-314 s of cold compilation on
+  # top, a validation error that moved reproducibly, and on four ranks an
+  # eighteen-minute first epoch with no output. Setting the key now raises and
+  # says so. See CUDA_4.md.
 
   # Physics-informed terms for the NEURAL OPERATOR: total = data + sum_i w_i * term_i.
   # Only the total is reported. Introduce one at a time against a measured

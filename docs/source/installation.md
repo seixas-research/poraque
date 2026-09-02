@@ -99,7 +99,7 @@ the first forward pass, after the queue time had been spent.
 ### Check before submitting anything to a queue
 
 ```bash
-python -m poraque.ml.device --check
+python -m poraque.ml.device --check --device cuda
 ```
 
 It prints the torch build, its CUDA runtime, the architectures it carries
@@ -108,8 +108,15 @@ exits non-zero if the requested device is not usable. One line at the top of a
 job script costs three seconds:
 
 ```bash
-python -m poraque.ml.device --check || exit 1
+python -m poraque.ml.device --check --device cuda || exit 1
 ```
+
+`--device` defaults to `auto`, and `--check` refuses a CPU under `auto` too —
+a guard that cannot fail is not a guard, and this one could not: it resolved
+to the CPU and exited 0 on any machine with a working CPU, which is every
+machine. Naming the device you actually asked the scheduler for is still the
+clearer form, because it is the one that also catches `cuda:2` on a node where
+the job was given one GPU.
 
 The same check belongs in the configuration, where it stops the run rather than
 the script:
@@ -213,9 +220,13 @@ differed in a way nothing recorded.
 
 ```bash
 pytest
-python -m poraque.ml.device --check
+python -m poraque.ml.device
 python -c "from poraque.ml.device import available_devices; print(available_devices())"
 ```
+
+Without `--check` this reports and exits 0 whatever it finds, which is what a
+verification step wants: a CPU-only machine is a working installation, not a
+failure. `--check` is the queue guard, and it refuses a CPU deliberately.
 
 The device list is ordered by preference, so the first entry is what
 `device: auto` will select. `pytest -m "not gpu"` skips the tests that need an

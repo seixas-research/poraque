@@ -540,3 +540,78 @@ class ScalarField(ABC):
         return (f"{type(self).__name__}(shape={self.data.shape}, "
                 f"unit={self.unit!r}, range=[{self.data.min():.4g}, "
                 f"{self.data.max():.4g}])")
+
+
+# --------------------------------------------------------------------------- #
+# One-channel or two: the two questions every caller of a prediction asks
+# --------------------------------------------------------------------------- #
+# A field returned by `FieldOperator.predict` is a `ScalarField` when the
+# operator has one output channel and a `SpinDensity` when it has two, and the
+# caller does not choose which -- `data.spin: auto` does, from the data. So
+# every consumer of a prediction has to be able to take either, and the two
+# things it invariably wants are "the one number that summarises this" and
+# "the density channel, as a field".
+#
+# Both had been answered locally, three times, in three files: a `hasattr`
+# check in `scripts/poraque_train.py`, the same decision spelled the other way
+# round in `calculator.py`, and -- in `scripts/poraque_inference.py` -- not at
+# all, which is how a spin-polarised model reached `SpinDensity.integrate` and
+# raised `AttributeError` after the prediction had already succeeded. They live
+# here now because the classes they discriminate between live here.
+
+
+def field_integral(field):
+    """
+    The one number that summarises a predicted field, for either channel count.
+
+    A single-channel field integrates. A :class:`~poraque.fields.SpinDensity`
+    does not, and deliberately offers no ``integrate``: it is two fields, and
+    the integral of :math:`(\\rho, m)` is not a scalar. The quantity meant here
+    is the one the density's *first* channel carries — the electron count — so
+    that is what a spin-polarised field reports, and the magnetisation is left
+    to :meth:`~poraque.fields.SpinDensity.magnetic_moment`, which the caller
+    should report beside it rather than instead of it.
+
+    Parameters
+    ----------
+    field : ScalarField or SpinDensity
+
+    Returns
+    -------
+    float
+
+    Examples
+    --------
+    >>> field_integral(density)                     # doctest: +SKIP
+    320.0
+    """
+    if hasattr(field, "integrate"):
+        return float(field.integrate())
+    return float(field.electron_count())
+
+
+def charge_channel(field):
+    """
+    The density channel of a prediction, as a genuine one-channel field.
+
+    :attr:`SpinDensity.data` is a ``(2, Nx, Ny, Nz)`` stack, so every
+    elementwise statement made about ``field.data`` — a range in
+    :math:`e/\\mathrm{\\AA}^3`, a count of negative voxels, a von Weizsäcker
+    bound — silently acquires the magnetisation as well, and means something
+    else. A magnetisation is legitimately signed and is not in
+    :math:`e/\\mathrm{\\AA}^3`; counting its negative half as an error reports
+    a defect in a model that has none, which is its own kind of harm.
+
+    Returns the field unchanged when it already has one channel, so a call site
+    that does not know which it was handed can be written once.
+
+    Parameters
+    ----------
+    field : ScalarField or SpinDensity
+
+    Returns
+    -------
+    ScalarField
+    """
+    reduce = getattr(field, "as_charge_density", None)
+    return field if reduce is None else reduce()

@@ -33,6 +33,8 @@ Typical use::
 from .base import (
     FIELD_DTYPES,
     ScalarField,
+    charge_channel,
+    field_integral,
     get_default_dtype,
     resolve_dtype,
     set_default_dtype,
@@ -71,7 +73,9 @@ __all__ = [
     "is_spin_polarized",
     "element_of",
     "symbol_to_z",
+    "charge_channel",
     "fft_friendly_size",
+    "field_integral",
     "get_default_dtype",
     "resolve_dtype",
     "set_default_dtype",

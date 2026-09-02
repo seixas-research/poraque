@@ -118,6 +118,20 @@ class TaskConfig:
 #: to select between no longer exist.
 RETIRED_KEYS = {
     "code": "format ('vasp' or 'auto')",
+    # Removed in 26.9.3 after being measured on a V100. Inductor does not
+    # generate code for complex operators -- `SpectralConv3d`'s weights are
+    # complex, so the one part of an FNO compilation was invoked to fuse is the
+    # part it hands back to eager, while the wrapper and the graph breaks are
+    # still paid for. Two modes, two repetitions: +7.9 % and +9.4 % per epoch,
+    # with 200-314 s of cold compilation on top, and a validation error that
+    # moved reproducibly in both arms. On four ranks it did not merely lose, it
+    # sat eighteen minutes in the first epoch without printing an epoch line
+    # and was cancelled. See CUDA_4.md sections 7 and 8.
+    "compile": "nothing -- torch.compile was measured on the FNO backbone and "
+               "removed; Inductor declines complex codegen, which is the whole "
+               "of the model that mattered",
+    "compile_mode": "nothing -- see 'compile'",
+    "compile_dynamic": "nothing -- see 'compile'",
     "train_paths": "data_paths",
     "root": "data_paths (a list; the single-path fallback is gone)",
     "source": "nothing -- the layout of every path is detected, and every "
@@ -243,7 +257,28 @@ class DataConfig:
 
         Missing or unreadable entries fall back to the Gaussian model **with a
         warning** rather than failing the run: it is a quality difference, not
-        an outage.
+        an outage. Which of the two each element got is recorded in the cache
+        fingerprint — see ``strict_potcar``.
+    strict_potcar : bool
+        Refuse the Gaussian fallback instead of taking it, when a
+        ``potcar_dir`` is configured and cannot serve an element. Default
+        ``false``.
+
+        The fallback is right on a workstation and expensive in a queue, and
+        the shape is exactly ``training.strict_device``'s: a job that holds its
+        allocation and quietly computes something other than what was
+        configured. This was found the hard way — a control run on Santos
+        Dumont landed on a node where the library's filesystem was not mounted,
+        warned six times on stderr, trained against analytic pseudo-ion
+        potentials, and produced a validation error that was quoted as a
+        measurement before the cause was noticed.
+
+        Independently of this flag, **what the library actually served is now
+        in the cache fingerprint** (``potcar_source``, per element), so a cache
+        built during an outage no longer matches a later run that can read the
+        library: it rebuilds rather than being reused. ``potcar_dir`` records
+        only the path that was *asked for*, which is what made that cache
+        indistinguishable from the real thing.
     sigma : float or None
         Gaussian pseudo-ion width in Å, used only where the Gaussian model is
         reached — i.e. where no ``POTCAR`` and no ``potcar_dir`` supply a
@@ -512,6 +547,7 @@ class DataConfig:
     format: str = "auto"
     resolution: int = 32
     potcar_dir: str = None
+    strict_potcar: bool = False
     sigma: float = None
     gaussian_blur: float = None
     blur_method: str = "spectral"
@@ -1202,40 +1238,6 @@ class TrainingConfig_:
         no-op on anything before Ampere — **including the V100 this list was
         measured on**, which has no TF32 path at all. It is here for the next
         cluster.
-    compile : bool
-        Wrap the model in :func:`torch.compile` for the training loop.
-        **Default ``false``, and it is a measurement switch rather than a
-        recommendation.**
-
-        The case for it is the kernel profile: at ``width=16, modes=8,
-        n_layers=3`` on a V100, 44.4 % of GPU time is elementwise work and the
-        four most expensive kernels are ``copy_``, ``Memcpy DtoD``, ``add_`` and
-        ``fill_`` — memory traffic between kernels that each do very little
-        arithmetic, which is exactly what fusion removes. Convolution is 23.7 %,
-        FFT 13.7 %, and GEMM only 6.1 %.
-
-        The case against is :class:`~poraque.ml.data.ShapeBucketSampler`: it
-        batches by grid shape, and a real dataset has many. The 115 structures
-        measured here fall into **19 distinct shapes**, and Inductor specialises
-        per shape unless ``compile_dynamic`` holds. Whether it holds across
-        ``rfftn``/``irfftn`` with a varying ``s=`` is an empirical question, and
-        it is the question to answer before this is turned on anywhere.
-
-        Compilation is charged to the first epoch, where ``seconds_per_epoch``
-        in the metrics JSON makes it visible: a 60-epoch run that pays 90 s of
-        compilation to save 20 s is a loss, and a 2000-epoch run is not.
-
-        Only on CUDA. Inductor's MPS backend is not comparable and must not be
-        turned on by the same flag, so the run says it skipped rather than
-        pretending it complied.
-    compile_mode : str
-        ``torch.compile``'s ``mode``: ``"default"``, ``"reduce-overhead"`` or
-        ``"max-autotune"``. Ignored unless ``compile`` is on.
-    compile_dynamic : bool
-        ``torch.compile``'s ``dynamic``. ``true`` (the default when compiling)
-        asks Inductor for one graph with symbolic shapes rather than one per
-        shape, which is the only way this is affordable with 19 buckets.
-        Ignored unless ``compile`` is on.
     loss : str
         The data-fidelity objective. Four names, on two named axes:
 
@@ -1460,9 +1462,6 @@ class TrainingConfig_:
     num_workers: int = 0
     pin_memory: str = "auto"
     tf32: bool = True
-    compile: bool = False
-    compile_mode: str = "default"
-    compile_dynamic: bool = True
     loss: str = "relative_l2"
     sobolev_weight: float = 0.1
     physics: dict = field(default_factory=lambda: {

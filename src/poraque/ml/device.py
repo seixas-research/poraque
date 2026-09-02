@@ -121,10 +121,19 @@ def cuda_capability_supported(index=0):
     Returns
     -------
     bool
-        ``False`` when there is no CUDA at all, so this is safe to call
-        anywhere.
+        ``False`` when there is no CUDA at all, and ``False`` for an ordinal
+        beyond the devices this process can see — so this is safe to call
+        anywhere. The bound matters: ``torch.cuda.get_device_capability(9)``
+        raises a bare ``AssertionError: Invalid device id`` from inside torch,
+        which escapes every refusal path here and reaches the user as a
+        traceback instead of a diagnosis. Under Slurm that is a realistic
+        mistake rather than a contrived one — ``--gres=gpu:1`` gives a process
+        exactly one visible device, ``cuda:0``, however many the login node
+        listed.
     """
     if not cuda_available():
+        return False
+    if int(index) >= torch.cuda.device_count():
         return False
     listed = _listed_capabilities()
     return not listed or torch.cuda.get_device_capability(index) >= listed[0]
@@ -147,14 +156,33 @@ def _driver_version():
     return f"{raw // 1000}.{(raw % 1000) // 10}"
 
 
-def _cuda_diagnosis():
+def _cuda_diagnosis(index=None):
     """
     One sentence naming the probable reason CUDA is unusable here.
 
     This is the difference between "it did not work" and "install ``cu126``".
     Every branch reports something a reader can act on, and the fallthrough
     says plainly that it does not know rather than inventing a cause.
+
+    Parameters
+    ----------
+    index : int, optional
+        A specific CUDA ordinal that was asked for. When it is beyond what this
+        process can see, that is the answer and no other branch applies: an
+        ordinal that does not exist is "no such device", not "unsupported
+        architecture", and the two want different sentences.
     """
+    if (index is not None and torch.cuda.is_available()
+            and int(index) >= torch.cuda.device_count()):
+        count = torch.cuda.device_count()
+        return (f"this process can see {count} CUDA device"
+                f"{'' if count == 1 else 's'} "
+                f"(cuda:0{f'..cuda:{count - 1}' if count > 1 else ''}), so "
+                f"cuda:{index} does not exist here. Under a scheduler the "
+                f"visible set is what the job asked for, not what the node "
+                f"holds: CUDA_VISIBLE_DEVICES="
+                f"{os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')!r}.")
+
     build = f"This build is torch {torch.__version__}"
     cuda_build = getattr(torch.version, "cuda", None)
     if cuda_build is None:
@@ -271,6 +299,23 @@ def resolve_device(preference="auto", verbose=False, strict=False):
 
     if requested in ("auto", ""):
         chosen = torch.device(available_devices()[0])
+        # `strict` used to be unreachable from here, and `auto` is the default
+        # -- so a configuration that set `strict_device: true` and left
+        # `device` alone, which is exactly what the config documentation tells
+        # an HPC user to do, got no protection at all. The job took its place
+        # in the GPU queue, resolved to the CPU, warned nothing, and trained to
+        # the wall clock: the precise failure this flag exists to prevent,
+        # reachable through the documented configuration. It also made
+        # `python -m poraque.ml.device --check` a guard that could not fail on
+        # any machine with a working CPU.
+        #
+        # A workstation that genuinely wants CPU training says `device: cpu`,
+        # which is honest, already supported, and unaffected by `strict`.
+        if strict and chosen.type == "cpu":
+            return _refuse(
+                "No accelerator is available, so device 'auto' resolved to "
+                "the CPU. Set device: cpu to train on the CPU deliberately. "
+                + _cuda_diagnosis(), strict)
         if verbose:
             print(f"[poraque] device: {describe_device(chosen)} (auto)")
         return chosen
@@ -281,19 +326,37 @@ def resolve_device(preference="auto", verbose=False, strict=False):
         return _refuse("CUDA was requested but no CUDA device is available. "
                        + _cuda_diagnosis(), strict)
 
-    # Present, initialised, and unable to run a single kernel. Caught here
-    # rather than left to surface as `no kernel image is available for
-    # execution on the device` from inside the first forward pass, which is
-    # both later and far harder to read.
-    if kind == "cuda" and not cuda_capability_supported(
-            torch.device(requested).index or 0):
-        major, minor = torch.cuda.get_device_capability(
-            torch.device(requested).index or 0)
-        return _refuse(
-            f"CUDA was requested but this PyTorch build ({torch.__version__}) "
-            f"has no kernels for sm_{major}{minor}; it was built for "
-            f"{torch.cuda.get_arch_list()}. Install a wheel that lists this "
-            f"architecture -- see the installation guide.", strict)
+    if kind == "cuda":
+        # Parsed only here. `torch.device("tpu")` raises rather than returning
+        # something with a `.index`, so an unknown backend has to keep falling
+        # through to its own refusal below instead of dying on the way past.
+        index = torch.device(requested).index or 0
+
+        # An ordinal beyond the visible set, caught before it reaches torch.
+        # Left alone, `torch.cuda.get_device_capability(9)` raises a bare
+        # `AssertionError: Invalid device id` from two frames down -- which
+        # breaks both contracts at once: `strict=True` owes a diagnosed
+        # `RuntimeError`, and `strict=False` owes a warning and a CPU, not an
+        # exception at all. A caller that wrapped this in
+        # `try/except RuntimeError`, as `poraque_train.resolve_strict_device`
+        # does, catches neither.
+        if index >= torch.cuda.device_count():
+            return _refuse(
+                f"{requested} was requested but " + _cuda_diagnosis(index),
+                strict)
+
+        # Present, initialised, and unable to run a single kernel. Caught here
+        # rather than left to surface as `no kernel image is available for
+        # execution on the device` from inside the first forward pass, which is
+        # both later and far harder to read.
+        if not cuda_capability_supported(index):
+            major, minor = torch.cuda.get_device_capability(index)
+            return _refuse(
+                f"CUDA was requested but this PyTorch build "
+                f"({torch.__version__}) has no kernels for sm_{major}{minor}; "
+                f"it was built for {torch.cuda.get_arch_list()}. Install a "
+                f"wheel that lists this architecture -- see the installation "
+                f"guide.", strict)
 
     if kind == "mps" and not mps_available():
         backend = getattr(torch.backends, "mps", None)

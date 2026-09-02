@@ -540,6 +540,48 @@ class MaterialSource(ABC):
         cache[element] = entry
         return entry
 
+    def potcar_coverage(self):
+        r"""
+        Which elements the configured library can actually serve.
+
+        Returns ``None`` when no ``potcar_dir`` is configured — there is then
+        nothing to have failed — and otherwise ``{element: bool}`` over the
+        elements this source's own materials contain.
+
+        **This is the difference between what was asked for and what was
+        got.** :meth:`library_potcar` degrades gracefully when the library
+        cannot be read, with a ``RuntimeWarning`` on stderr and an analytic
+        pseudo-ion in place of the tabulated potential. That is defensible. What
+        was not is that nothing downstream recorded it: a cache built during a
+        filesystem outage — a compute node where ``/prj`` was not mounted,
+        which is how this was found — is byte-identical in its fingerprint to
+        one built from real pseudopotentials, is silently reused by every later
+        run including on nodes where the library *is* mounted, and the one
+        warning that would have said so appeared during the build that wrote
+        it and never again.
+
+        The answer is per element because the fallback is per element: a
+        library can hold Pt and not Ag, and the run is then a mixture.
+
+        Cheap by construction — a structure header per material (a few hundred
+        bytes) and one library read per element, memoised on the source, which
+        the build was going to pay for anyway.
+
+        Returns
+        -------
+        dict or None
+        """
+        if not self.options.get("potcar_dir"):
+            return None
+
+        from ..fields.vasp.volumetric import read_structure_header
+
+        elements = sorted({element for record in self.discover()
+                           for element in read_structure_header(
+                               self.reference_file(record)).elements})
+        return {element: self._library_entry(element) is not None
+                for element in elements}
+
     def potential_model(self):
         """
         Which construction this source uses for :math:`V_{\\rm ext}`.
@@ -551,11 +593,19 @@ class MaterialSource(ABC):
         :class:`~poraque.data.dataset.MixedFieldDataset` compares across
         sources before deciding whether a mixture needs a warning.
 
+        Answered from :meth:`potcar_coverage` rather than from the presence of
+        a ``potcar_dir`` option: a library that cannot be read serves nothing,
+        and reporting "tabulated" because one was *configured* is the same
+        mistake the cache fingerprint was making.
+
         Returns
         -------
         str
         """
-        return "tabulated" if self.options.get("potcar_dir") else "gaussian"
+        coverage = self.potcar_coverage()
+        if coverage is None:
+            return "gaussian"
+        return "tabulated" if all(coverage.values()) else "gaussian"
 
 
 # ---------------------------------------------------------------------- #
@@ -679,14 +729,17 @@ class CalculationSource(MaterialSource):
         archive normally carries its own ``POTCAR``\\ s and needs no library,
         but a stripped one falls back to the Gaussian model unless
         ``potcar_dir`` covers it.
+
+        The runs' own files are consulted **first**, which is the order
+        :meth:`_external_potential` actually uses: a directory holding a
+        ``POTCAR`` is tabulated whether or not a library was configured or
+        readable.
         """
-        if self.options.get("potcar_dir"):
-            return "tabulated"
         records = self.discover()
         if records and all(os.path.exists(os.path.join(r.directory, "POTCAR"))
                            for r in records):
             return "tabulated"
-        return "gaussian"
+        return super().potential_model()
 
     def geometry(self, record):
         r"""

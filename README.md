@@ -68,7 +68,7 @@ kernel launch. For a V100, `pip install torch --index-url
 https://download.pytorch.org/whl/cu126`.
 
 ```bash
-python -m poraque.ml.device --check      # three seconds, before the queue
+python -m poraque.ml.device --check --device cuda   # three seconds, before the queue
 ```
 
 It prints the torch build, its CUDA runtime, where it was imported from, the

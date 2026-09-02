@@ -106,16 +106,58 @@ def _material(cell, shape, element="Si", counts=(2,), seed=0):
     return grid, structure, potential, ChargeDensity(density, grid, structure)
 
 
+#: A real VASP library on this machine, if the runner points at one.
+#:
+#: Pseudopotentials are licensed and this repository ships none, so the
+#: POTCAR-dependent tests skip in a bare checkout — which is right, and which
+#: also means the *positive* half of every "did the library serve this
+#: element?" question goes unexercised wherever they skip. `PORAQUE_TEST_POTCAR_DIR`
+#: is the opt-in, in the same spirit as `PORAQUE_TEST_PYSR`: a path stated by
+#: the person running the suite rather than a home directory committed to git.
+LIBRARY_POTCAR_DIR = os.environ.get("PORAQUE_TEST_POTCAR_DIR") or None
+
+
+def _library_element(element):
+    """That element's ``POTCAR`` text from ``PORAQUE_TEST_POTCAR_DIR``, or None."""
+    if not LIBRARY_POTCAR_DIR:
+        return None
+    for candidate in (os.path.join(LIBRARY_POTCAR_DIR, element, "POTCAR"),
+                      os.path.join(LIBRARY_POTCAR_DIR, f"POTCAR.{element}")):
+        if os.path.exists(candidate):
+            with open(candidate, "r", errors="replace") as handle:
+                return handle.read()
+    return None
+
+
+def _pt_potcar_text():
+    """A Pt ``POTCAR``: the shipped reference, or the opted-in library."""
+    if os.path.exists(REFERENCE_POTCAR):
+        with open(REFERENCE_POTCAR, "r", errors="replace") as source:
+            return source.read()
+    return _library_element("Pt")
+
+
 @pytest.fixture
 def potcar_library(tmp_path):
     """A one-element POTCAR library laid out the way VASP ships one."""
-    if not os.path.exists(REFERENCE_POTCAR):
-        pytest.skip("reference POTCAR not available")
+    text = _pt_potcar_text()
+    if text is None:
+        pytest.skip("no Pt POTCAR: ship one, or set PORAQUE_TEST_POTCAR_DIR")
     root = tmp_path / "potcars"
     (root / "Pt").mkdir(parents=True)
-    with open(REFERENCE_POTCAR, "r", errors="replace") as source:
-        (root / "Pt" / "POTCAR").write_text(source.read())
+    (root / "Pt" / "POTCAR").write_text(text)
     return str(root)
+
+
+@pytest.fixture
+def pt_potcar(tmp_path):
+    """The same POTCAR as a loose file, for ``write_calculation(potcar=...)``."""
+    text = _pt_potcar_text()
+    if text is None:
+        pytest.skip("no Pt POTCAR: ship one, or set PORAQUE_TEST_POTCAR_DIR")
+    path = tmp_path / "REFERENCE_POTCAR"
+    path.write_text(text)
+    return str(path)
 
 
 def write_calculation(directory, shape=(12, 12, 12), cell=None, seed=0,
@@ -707,7 +749,11 @@ class TestPotcarLibrary:
         potential = source.read(record, "EXTCAR", source.grid(record))
 
         assert potential.metadata["model"] == "potcar"
-        assert potential.metadata["derived_from"] == "CHGCAR header + POTCAR library"
+        # "density geometry", not "CHGCAR header": since 2026-08-28 the
+        # potential is built at the geometry `CalculationSource.geometry`
+        # resolves, which is the density's own header when it has one and the
+        # structure file otherwise -- one string for both routes.
+        assert potential.metadata["derived_from"] == "density geometry + POTCAR library"
         assert source.potential_model() == "tabulated"
 
     def test_the_two_constructions_genuinely_differ(self, tmp_path,
@@ -736,13 +782,25 @@ class TestPotcarLibrary:
 
     def test_charges_come_from_the_library_rather_than_inference(
             self, tmp_path, potcar_library):
-        """Z_val is stated by the POTCAR; inferring it would be a detour."""
+        """
+        Z_val is stated by the POTCAR; inferring it would be a detour.
+
+        Read off the fixture's own POTCAR rather than written as a literal:
+        Pt ships as `Pt` (ZVAL 10) and `Pt_pv` (ZVAL 11) among others, so a
+        literal asserts which pseudopotential the runner happens to have, not
+        that the library was consulted at all. The densities in `write_bulk`
+        are random, so an inferred charge would not be either number.
+        """
+        from poraque.fields.vasp.potcar import Potcar
+
+        expected = float(Potcar.from_library(potcar_library, ["Pt"],
+                                             parse_tables=False)[0].zval)
         archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
                              element="Pt")
 
         source = resolve_source(archive, potcar_dir=potcar_library)
 
-        assert source.charges["Pt"] == 11.0
+        assert source.charges["Pt"] == expected
 
     def test_a_missing_element_warns_and_falls_back(self, tmp_path,
                                                     potcar_library):
@@ -784,13 +842,18 @@ class TestPotcarLibrary:
         potential = source.read(record, "EXTCAR", source.grid(record))
 
         assert potential.metadata["model"] == "potcar"
-        assert potential.metadata["derived_from"] == "POSCAR + POTCAR library"
+        # Was "POSCAR + POTCAR library". A run directory and a bare archive now
+        # give the *same* string, because both build the potential at the
+        # geometry the density carries -- which is the point of that change,
+        # not an accident of wording.
+        assert potential.metadata["derived_from"] == "density geometry + POTCAR library"
 
     def test_a_run_with_its_own_potcar_ignores_the_library(self, tmp_path,
-                                                           potcar_library):
+                                                           potcar_library,
+                                                           pt_potcar):
         runs = os.path.dirname(write_calculation(
             tmp_path / "runs" / "struct_000", element="Pt",
-            potcar=REFERENCE_POTCAR))
+            potcar=pt_potcar))
         source = resolve_source(runs, potcar_dir=potcar_library)
         record = source.discover()[0]
 
@@ -800,6 +863,13 @@ class TestPotcarLibrary:
 
     def test_the_cache_records_which_construction_was_used(self, tmp_path,
                                                            potcar_library):
+        """
+        The log line this asserted, ``V_ext tabulated from``, was removed in
+        26.8.46 and the assertion went stale unnoticed because the fixture
+        skips wherever no POTCAR is available. Its replacement says more: the
+        construction **that was resolved**, per element, which is the same
+        string the cache fingerprint now records.
+        """
         archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
                              element="Pt")
         lines = []
@@ -807,7 +877,183 @@ class TestPotcarLibrary:
         build_field_cache(archive, tmp_path / "out", resolution=8,
                           potcar_dir=potcar_library, log=lines.append)
 
-        assert any("V_ext tabulated from" in line for line in lines)
+        assert any("POTCAR library: Pt=library" in line for line in lines)
+
+
+class TestTheCacheRecordsWhatTheLibraryServedNotWhatWasAsked:
+    """
+    ``potcar_dir`` in the fingerprint is a request; ``potcar_source`` is an
+    answer.
+
+    Found on Santos Dumont: a control run landed on a compute node where the
+    library's filesystem was not mounted, warned six times on stderr, trained
+    against analytic pseudo-ion potentials, and wrote a
+    ``cache_fingerprint.json`` byte-identical to one built from real
+    pseudopotentials — in a directory *named* ``res32_potcar``. Every later run
+    reused it silently, including on nodes where the library was mounted, and
+    the warning appeared only during the build that wrote it. The validation
+    error that cache produced had already been quoted as a result.
+
+    The two constructions are different physical quantities, not different
+    approximations to one (see :class:`TestPotcarLibrary`), which is what makes
+    a fingerprint that cannot tell them apart a correctness problem rather than
+    a tidiness one.
+    """
+
+    @pytest.fixture
+    def unreachable_library(self, tmp_path):
+        """A configured library that cannot be read — the /prj case exactly."""
+        return str(tmp_path / "not" / "mounted" / "POTCARs")
+
+    def test_the_fingerprint_says_gaussian_when_the_library_was_unreadable(
+            self, tmp_path, unreachable_library):
+        import json
+
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Pt")
+        with pytest.warns(RuntimeWarning, match="No usable 'Pt' POTCAR"):
+            build_field_cache(archive, tmp_path / "out", resolution=8,
+                              potcar_dir=unreachable_library,
+                              charges=CHARGES)
+
+        with open(tmp_path / "out" / "cache_fingerprint.json") as handle:
+            recorded = json.load(handle)
+
+        assert recorded["potcar_source"] == {"Pt": "gaussian"}
+        # And the path that was asked for is still there beside it, because
+        # both facts are wanted -- the gap between them is the whole point.
+        assert recorded["potcar_dir"].endswith("POTCARs")
+
+    def test_a_gaussian_cache_is_not_reused_by_a_run_with_the_library(
+            self, tmp_path, unreachable_library):
+        """
+        The consequence that matters. Written by hand rather than by building
+        twice, because a second build needs a real POTCAR this checkout does
+        not ship — and the mechanism under test is the fingerprint comparison,
+        not the pseudopotential parser.
+        """
+        import json
+
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Pt")
+        cache = tmp_path / "out"
+        cache.mkdir()
+        with pytest.warns(RuntimeWarning, match="No usable 'Pt' POTCAR"):
+            build_field_cache(archive, cache, resolution=8,
+                              potcar_dir=unreachable_library, charges=CHARGES)
+
+        # Now pretend the library came back: the same request, a different
+        # answer. Before `potcar_source` existed the two were indistinguishable
+        # and the second run silently reused the first's analytic potentials.
+        path = cache / "cache_fingerprint.json"
+        recorded = json.loads(path.read_text())
+        recorded["potcar_source"] = {"Pt": "library"}
+        path.write_text(json.dumps(recorded))
+
+        with pytest.raises(ValueError, match="potcar_source"):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                build_field_cache(archive, cache, resolution=8,
+                                  potcar_dir=unreachable_library,
+                                  charges=CHARGES)
+
+    def test_a_dataset_with_no_library_is_fingerprinted_exactly_as_before(
+            self, tmp_path):
+        """A key that is `null` whenever it has nothing to say costs nothing
+        and invalidates nothing."""
+        import json
+
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Pt")
+        build_field_cache(archive, tmp_path / "out", resolution=8,
+                          charges=CHARGES)
+
+        with open(tmp_path / "out" / "cache_fingerprint.json") as handle:
+            assert json.load(handle)["potcar_source"] is None
+
+    def test_a_cache_written_before_the_key_existed_is_adopted_not_refused(
+            self, tmp_path):
+        """
+        An upgrade that invalidated every cache in existence would mean
+        rebuilding hundreds of densities to learn nothing: the older build
+        never asked the question, so it cannot have disagreed about the answer.
+        It is adopted with a warning naming the key, because "unrecorded" and
+        "recorded as the same" are different states.
+        """
+        import json
+
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Pt")
+        cache = tmp_path / "out"
+        build_field_cache(archive, cache, resolution=8, charges=CHARGES)
+
+        path = cache / "cache_fingerprint.json"
+        recorded = json.loads(path.read_text())
+        del recorded["potcar_source"]
+        path.write_text(json.dumps(recorded))
+
+        with pytest.warns(RuntimeWarning, match="potcar_source"):
+            build_field_cache(archive, cache, resolution=8, charges=CHARGES)
+
+        assert "potcar_source" in json.loads(path.read_text())
+
+    def test_a_real_mismatch_still_raises(self, tmp_path):
+        """The narrow adoption above must not become "ignore any difference"."""
+        import json
+
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Pt")
+        cache = tmp_path / "out"
+        build_field_cache(archive, cache, resolution=8, charges=CHARGES)
+
+        path = cache / "cache_fingerprint.json"
+        recorded = json.loads(path.read_text())
+        del recorded["potcar_source"]
+        recorded["resolution"] = 16
+        path.write_text(json.dumps(recorded))
+
+        with pytest.raises(ValueError, match="resolution"):
+            build_field_cache(archive, cache, resolution=8, charges=CHARGES)
+
+    def test_strict_potcar_refuses_the_fallback_and_names_the_element(
+            self, tmp_path, unreachable_library):
+        """
+        The same failure shape as `training.strict_device`, pointing at the
+        other resource: a job that holds its allocation and quietly computes
+        something other than what was configured.
+        """
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Pt")
+
+        with pytest.raises(RuntimeError, match=r"\['Pt'\]"):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                build_field_cache(archive, tmp_path / "out", resolution=8,
+                                  potcar_dir=unreachable_library,
+                                  charges=CHARGES, strict_potcar=True)
+
+    def test_the_potential_model_reports_what_was_resolved(
+            self, tmp_path, unreachable_library):
+        """
+        `potential_model` answered "tabulated" from the *presence* of a
+        `potcar_dir` option, which is the same mistake the fingerprint was
+        making — and it is what `MixedFieldDataset` consults before deciding
+        whether a mixture of constructions needs a warning.
+        """
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Pt")
+        source = resolve_source(archive, potcar_dir=unreachable_library,
+                                charges=CHARGES)
+
+        with pytest.warns(RuntimeWarning, match="No usable 'Pt' POTCAR"):
+            assert source.potential_model() == "gaussian"
+
+    def test_coverage_is_none_when_no_library_is_configured(self, tmp_path):
+        """Nothing was asked for, so nothing can have failed."""
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Pt")
+
+        assert resolve_source(archive, charges=CHARGES).potcar_coverage() is None
 
 
 # ---------------------------------------------------------------------- #
@@ -899,7 +1145,7 @@ class TestMixedFieldDataset:
                               resolution=8, charges=CHARGES)
 
     def test_a_potcar_library_makes_the_mixture_one_quantity(
-            self, tmp_path, potcar_library):
+            self, tmp_path, potcar_library, pt_potcar):
         """
         With the library both sources build the tabulated potential.
 
@@ -909,7 +1155,7 @@ class TestMixedFieldDataset:
         """
         runs = os.path.dirname(write_calculation(
             tmp_path / "runs" / "struct_000", element="Pt",
-            potcar=REFERENCE_POTCAR))
+            potcar=pt_potcar))
         archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
                              element="Pt")
 

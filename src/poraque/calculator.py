@@ -71,7 +71,7 @@ except ImportError as error:                              # pragma: no cover
     Calculator, all_changes = object, None
     _ASE_ERROR = error
 
-from .fields import ExternalPotential, FieldGrid
+from .fields import ExternalPotential, FieldGrid, field_integral
 from .fields.structure import Structure
 from .ml import BUNDLE_FILENAME, resolve_bundle_path
 from .physics import EnergyCalculator
@@ -539,10 +539,10 @@ class Poraque(Calculator):
         nominal = calculator.nominal_electrons
         # `electron_count` on a spin pair, `integrate` on a plain field: the
         # two-channel class deliberately offers no `integrate`, since the
-        # integral of (rho, m) is not one number.
-        raw = fields["density_raw"]
-        raw_count = float(raw.electron_count() if hasattr(raw, "magnetization")
-                          else raw.integrate())
+        # integral of (rho, m) is not one number. One helper decides that for
+        # the whole codebase -- this was the second of three copies, and the
+        # third was the one that did not exist, in `poraque-inference`.
+        raw_count = field_integral(fields["density_raw"])
         self.raw_electron_drift = (
             None if not nominal else (raw_count - nominal) / nominal)
 

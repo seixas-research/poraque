@@ -287,6 +287,20 @@ class SpectralConv3d(nn.Module):
 
         # He-style scaling keeps activations O(1) through the stack.
         scale = 1.0 / (self.in_channels * self.out_channels)
+        # `torch.cfloat` is why this project has no `torch.compile` option.
+        # Inductor does not generate code for complex operators -- it says so,
+        # every time -- so the one part of an FNO that compilation would be
+        # invoked to fuse is the part it hands straight back to eager, while
+        # the wrapper and the graph breaks are still paid for. Measured on a
+        # V100 at 150 epochs x 2 repetitions: +7.9 % per epoch at
+        # mode="default" and +9.4 % at "max-autotune", 200-314 s of cold
+        # compilation on top, a validation error that moved reproducibly, and
+        # an eighteen-minute first epoch with no output on four DDP ranks. The
+        # flag was removed in 26.9.3; `RETIRED_KEYS` in ml/config.py refuses it
+        # by name. See CUDA_4.md sections 7 and 8, and note what was NOT tried:
+        # compiling only the real-valued submodules, where 44.4 % of the GPU
+        # time actually is. Re-open whole-model compilation only if Inductor
+        # gains complex-operator codegen.
         self.weight = nn.Parameter(
             scale * torch.randn(4, self.in_channels, self.out_channels,
                                 *self.modes, dtype=torch.cfloat)

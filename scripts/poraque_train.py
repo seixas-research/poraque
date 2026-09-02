@@ -143,7 +143,11 @@ _preimport_symbolic_engine(sys.argv[1:])
 import torch  # noqa: E402
 
 from poraque import banner  # noqa: E402
-from poraque.fields import FIELD_DTYPES, set_default_dtype  # noqa: E402
+from poraque.fields import (  # noqa: E402
+    FIELD_DTYPES,
+    field_integral,
+    set_default_dtype,
+)
 from poraque.ml import (  # noqa: E402
     resolve_bundle_path,
     FieldOperator,
@@ -414,6 +418,10 @@ def build_cache(config, log):
         # rebuilds rather than mixing layouts in one directory.
         storage=data.storage, compression=data.compression,
         compression_level=data.compression_level,
+        # Whether a configured POTCAR library that cannot serve an element is
+        # an error or a documented degradation. Either way, what it *did* serve
+        # goes into the cache fingerprint.
+        strict_potcar=data.strict_potcar,
     )
 
     # The PAW augmentation records travel with the weights, so a prediction can
@@ -975,9 +983,6 @@ def loader_settings(config, distributed=None):
     return {
         "num_workers": config.training.num_workers,
         "pin_memory": config.training.pin_memory,
-        "compile_model": config.training.compile,
-        "compile_mode": config.training.compile_mode,
-        "compile_dynamic": config.training.compile_dynamic,
         "distributed": distributed,
     }
 
@@ -1358,33 +1363,6 @@ def format_shapes(buckets, indent="                        "):
         lines.append(f"{text:<14s} {count:>3d} "
                      f"structure{'s' if count != 1 else ''}")
     return [lines[0]] + [indent + line for line in lines[1:]] if lines else []
-
-
-def field_integral(field):
-    """
-    The one number that summarises a predicted field, for either channel count.
-
-    A single-channel field integrates. A :class:`~poraque.fields.SpinDensity`
-    does not: it is two fields, and the integral of the pair is not a scalar.
-    The quantity meant here is the one the density's *first* channel carries —
-    the electron count — so that is what a spin-polarised prediction reports,
-    and the magnetisation is left to the metrics table where it has a column
-    of its own.
-
-    Without this, a run with ``data.spin: true`` trained to completion and then
-    died in the reporting pass with ``AttributeError``, discarding the epochs.
-
-    Parameters
-    ----------
-    field : ScalarField or SpinDensity
-
-    Returns
-    -------
-    float
-    """
-    if hasattr(field, "integrate"):
-        return field.integrate()
-    return field.electron_count()
 
 
 def plot_channel(field):
@@ -2117,13 +2095,12 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
         "checkpoint": checkpoint,
         "figures": figures,
         "seconds": elapsed,
-        # What a batch-size or compile study needs, recorded by the run that
-        # produced it. Before this the only route to either was sampling
+        # What a batch-size study needs, recorded by the run that produced it.
+        # Before this the only route to either number was sampling
         # `nvidia-smi` from outside the process, which cannot separate one task
         # of a two-task run from the other and is gone by the time anyone reads
         # the results. `seconds_per_epoch` is measured after a device
-        # synchronisation, so it is compute rather than submission, and its
-        # first entry carries any `torch.compile` cost.
+        # synchronisation, so it is compute rather than submission.
         **resources,
         "final_train_loss": history["train_loss"][-1],
         "history": curves,
@@ -2513,12 +2490,6 @@ def build_parser():
                        help="DataLoader worker processes (default 0). Prefer "
                             "the in-memory cache: added to it, workers make "
                             "training slower, not faster")
-    group.add_argument("--compile", dest="training.compile",
-                       action="store_const", const=True, default=None,
-                       help="wrap the model in torch.compile for the training "
-                            "loop (CUDA only; a measurement switch, not a "
-                            "recommendation)")
-
     group = parser.add_argument_group("fine-tuning")
     group.add_argument("--fine-tune", dest="fine_tuning.enable",
                        action="store_const", const=True, default=None,

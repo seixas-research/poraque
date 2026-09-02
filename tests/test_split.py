@@ -672,6 +672,70 @@ class TestTheCostMeasurementsAreNotResults:
         assert all(type(v) is float for v in curves["train_loss"])
 
 
+class TestTorchCompileIsGoneAndSaysSo:
+    """
+    `training.compile` was removed in 26.9.3, after being measured on a V100.
+
+    Inductor does not generate code for complex operators. `SpectralConv3d`'s
+    weights are complex, so the one part of an FNO that compilation was invoked
+    to fuse is the part it hands back to eager, while the wrapper and the graph
+    breaks are still paid for: +7.9 % and +9.4 % per epoch over two modes and
+    two repetitions, 200-314 s of cold compilation on top, a validation error
+    that moved reproducibly in both arms, and -- on four DDP ranks -- an
+    eighteen-minute first epoch with no output, cancelled.
+
+    The three keys are *retired* rather than accepted-and-ignored. A config
+    that still sets them was written to ask for something, and answering "yes"
+    silently is how a run comes to be quoted with a claim about how it was
+    executed that is not true of it.
+    """
+
+    @pytest.mark.parametrize("key", ["compile", "compile_mode",
+                                     "compile_dynamic"])
+    def test_the_key_raises_rather_than_being_ignored(self, tmp_path, key):
+        from poraque.ml.config import TrainingConfig
+
+        path = tmp_path / "run.yaml"
+        path.write_text(f"training:\n  {key}: true\n")
+        with pytest.raises(ValueError, match=key):
+            TrainingConfig.from_yaml(str(path))
+
+    def test_the_error_names_torch_compile_and_why(self, tmp_path):
+        """A retired key that says only "unknown" sends the reader to the
+        source to find out whether it ever did anything."""
+        from poraque.ml.config import TrainingConfig
+
+        path = tmp_path / "run.yaml"
+        path.write_text("training:\n  compile: true\n")
+        with pytest.raises(ValueError) as error:
+            TrainingConfig.from_yaml(str(path))
+        assert "torch.compile" in str(error.value)
+
+    def test_train_no_longer_takes_the_keywords(self):
+        import inspect
+
+        from poraque.ml.training import train
+
+        parameters = inspect.signature(train).parameters
+        assert not [name for name in parameters if "compile" in name]
+
+    def test_the_measurement_survives_in_the_source(self):
+        """
+        The reason it is gone has to outlive the code that implemented it, or
+        it gets re-proposed in a year. `physics.py` already keeps its rejected
+        on-device cell arithmetic this way; the complex weights get the same
+        treatment, beside the `torch.cfloat` that is the whole explanation.
+        """
+        import os
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        source = open(os.path.join(root, "src", "poraque", "ml",
+                                   "fno.py")).read()
+        weights = source.split("dtype=torch.cfloat")[0][-1600:]
+        assert "torch.compile" in weights
+        assert "complex" in weights
+
+
 @pytest.fixture
 def toy(tmp_path):
     """A two-material dataset on one grid shape, enough to drive `train`."""

@@ -130,6 +130,7 @@ class TestBuildCapability:
     def test_a_capability_below_every_listed_one_is_unsupported(self, monkeypatch):
         """sm_70 against a build listing sm_75 upwards: the V100 case."""
         monkeypatch.setattr(device_module, "cuda_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
         monkeypatch.setattr(torch.cuda, "get_arch_list",
                             lambda: ["sm_75", "sm_80", "sm_90", "compute_90"])
         monkeypatch.setattr(torch.cuda, "get_device_capability", lambda i=0: (7, 0))
@@ -138,6 +139,7 @@ class TestBuildCapability:
     def test_a_capability_above_the_oldest_listed_one_is_supported(self, monkeypatch):
         """A build ships PTX for its newest architecture, which JITs forward."""
         monkeypatch.setattr(device_module, "cuda_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
         monkeypatch.setattr(torch.cuda, "get_arch_list",
                             lambda: ["sm_50", "sm_70", "sm_80"])
         monkeypatch.setattr(torch.cuda, "get_device_capability", lambda i=0: (9, 0))
@@ -146,6 +148,7 @@ class TestBuildCapability:
     def test_an_empty_arch_list_is_not_read_as_a_refusal(self, monkeypatch):
         """Absence of evidence: a build that lists nothing blocks nothing."""
         monkeypatch.setattr(device_module, "cuda_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
         monkeypatch.setattr(torch.cuda, "get_arch_list", lambda: ["compute_80"])
         monkeypatch.setattr(torch.cuda, "get_device_capability", lambda i=0: (3, 5))
         assert cuda_capability_supported() is True
@@ -194,6 +197,131 @@ class TestStrictDevice:
         assert resolve_device("cpu", strict=True).type == "cpu"
         for name in ACCELERATORS:
             assert resolve_device(name, strict=True).type == name
+
+
+class TestStrictMeansSomethingUnderAuto:
+    """
+    `strict` was unreachable from the `auto` branch, and `auto` is the default.
+
+    `resolve_device` returned from that branch before `strict` was ever read,
+    so `available_devices()[0]` -- `"cpu"` on a machine with no accelerator --
+    came back successfully. A configuration setting `strict_device: true` and
+    leaving `device` alone, which is exactly what `config.py` tells an HPC user
+    to do, therefore got no protection whatever: the job took its GPU slot,
+    resolved to the CPU, warned nothing and trained to the wall clock.
+
+    The same branch is why `python -m poraque.ml.device --check || exit 1`, the
+    one-liner published in the installation guide and executed at the top of
+    the Slurm script, could not fail on any machine with a working CPU. Found
+    on a V100 node at LNCC with the GPUs hidden, where `--check` printed the
+    correct diagnosis and exited 0.
+    """
+
+    @pytest.fixture
+    def no_accelerator(self, monkeypatch):
+        """A machine with a working CPU and nothing else."""
+        monkeypatch.setattr(device_module, "cuda_available", lambda: False)
+        monkeypatch.setattr(device_module, "mps_available", lambda: False)
+
+    @pytest.mark.parametrize("request_", ["auto", None, "", "AUTO", " auto "])
+    def test_every_spelling_of_auto_refuses(self, no_accelerator, request_):
+        """`TestStrictDevice` covered only the explicit spellings, which is
+        why this survived: `auto`, `None` and `""` all reach the same branch
+        and none of them was tested under `strict`."""
+        with pytest.raises(RuntimeError, match="auto"):
+            resolve_device(request_, strict=True)
+
+    def test_the_message_says_how_to_ask_for_the_cpu_deliberately(
+            self, no_accelerator):
+        """A workstation with no GPU that genuinely wants CPU training is a
+        real case, and the refusal has to name the way to say so rather than
+        leave the reader to guess that `strict_device` must come off."""
+        with pytest.raises(RuntimeError, match="device: cpu"):
+            resolve_device("auto", strict=True)
+
+    def test_an_explicit_cpu_is_unaffected(self, no_accelerator):
+        assert resolve_device("cpu", strict=True).type == "cpu"
+
+    def test_without_strict_auto_still_falls_back_quietly(self, no_accelerator):
+        """The non-strict contract does not change: a configuration written on
+        a machine with a GPU still runs on a laptop."""
+        assert resolve_device("auto").type == "cpu"
+
+    def test_the_check_entry_point_can_now_fail(self, no_accelerator, capsys):
+        """`--check` is spelled like a guard and published as one. It has to be
+        able to say no."""
+        assert device_module._main(["--check"]) == 1
+        assert "FAILED" in capsys.readouterr().out
+
+    def test_the_check_entry_point_still_passes_where_there_is_a_device(self):
+        if not ACCELERATORS:
+            pytest.skip("no accelerator here to pass the check")
+        assert device_module._main(["--check"]) == 0
+
+    def test_a_plain_report_is_still_a_report(self, no_accelerator, capsys):
+        """Without `--check` this prints and exits 0 whatever it found. The
+        refusal belongs to the guard, not to the description."""
+        assert device_module._main([]) == 0
+        assert "FAILED" not in capsys.readouterr().out
+
+
+class TestAnOutOfRangeCudaOrdinal:
+    """
+    `cuda:9` on a four-GPU node escaped both refusal paths.
+
+    `cuda_capability_supported` called `torch.cuda.get_device_capability(index)`
+    with no bound, so an ordinal beyond the visible set raised a bare
+    `AssertionError: Invalid device id` from inside torch. That breaks both
+    contracts at once: `strict=True` owes a diagnosed `RuntimeError` and
+    `strict=False` owes a warning and a CPU, not an exception at all. A caller
+    that wrapped `resolve_device` in `try/except RuntimeError` --
+    `poraque_train.resolve_strict_device` does exactly that, to turn the
+    failure into a readable report -- catches neither.
+
+    Realistic rather than contrived: under Slurm `--gres=gpu:1` gives a process
+    one visible device, `cuda:0`, however many the login node's `nvidia-smi`
+    listed. A config saying `device: cuda:2` is the natural way to arrive here.
+    """
+
+    @pytest.fixture
+    def four_gpus(self, monkeypatch):
+        """A node with four visible CUDA devices, without needing one."""
+        def capability(index=0):
+            assert index < 4, "Invalid device id"
+            return (7, 0)
+
+        monkeypatch.setattr(device_module, "cuda_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "device_count", lambda: 4)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", capability)
+        monkeypatch.setattr(torch.cuda, "get_arch_list",
+                            lambda: ["sm_70", "sm_80"])
+
+    def test_strict_raises_a_diagnosed_error_not_an_assertion(self, four_gpus):
+        with pytest.raises(RuntimeError, match="cuda:9"):
+            resolve_device("cuda:9", strict=True)
+
+    def test_the_message_names_the_count_actually_visible(self, four_gpus):
+        with pytest.raises(RuntimeError) as error:
+            resolve_device("cuda:9", strict=True)
+        text = str(error.value)
+        assert "4 CUDA devices" in text
+        assert "CUDA_VISIBLE_DEVICES" in text
+
+    def test_without_strict_it_warns_and_falls_back(self, four_gpus):
+        """The documented non-strict contract, which an AssertionError from
+        two frames down does not honour."""
+        with pytest.warns(RuntimeWarning, match="cuda:9"):
+            assert resolve_device("cuda:9").type == "cpu"
+
+    def test_an_ordinal_inside_the_range_is_untouched(self, four_gpus):
+        assert str(resolve_device("cuda:1")) == "cuda:1"
+
+    def test_the_capability_probe_is_safe_for_any_ordinal(self, four_gpus):
+        """Its docstring promises it can be called anywhere. An ordinal that
+        does not exist is part of "anywhere"."""
+        assert cuda_capability_supported(0) is True
+        assert cuda_capability_supported(9) is False
 
 
 class TestTheDeviceReport:

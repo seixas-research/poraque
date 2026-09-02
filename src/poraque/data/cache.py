@@ -113,7 +113,7 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
                       gaussian_blur=None, blur_method="spectral", pattern=None,
                       format="auto", spin=False, limit=None,
                       storage="files", compression=None, compression_level=4,
-                      log=None):
+                      strict_potcar=False, log=None):
     r"""
     Downsample every material under ``paths`` into one prepared cache.
 
@@ -172,6 +172,14 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
         :func:`poraque.fields.hdf5.compression_options`.
     compression_level : int, optional
         Gzip level 0-9.
+    strict_potcar : bool, optional
+        Raise instead of falling back to the Gaussian pseudo-ion model when a
+        configured ``potcar_dir`` cannot serve an element. Off by default,
+        because the fallback is a legitimate degradation on a workstation; on a
+        cluster it is the same failure shape as the silent CPU fallback
+        ``training.strict_device`` exists to remove — a job that holds its
+        allocation and quietly computes something other than what was
+        configured.
     log : callable, optional
         Receives one line per material.
 
@@ -203,6 +211,7 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
              f"materials")
 
     spin = _resolve_spin(spin, records, emit)
+    potcar_source = _resolve_potcar_source(sources, strict_potcar, emit)
 
     if storage not in ("files", "hdf5"):
         raise ValueError(
@@ -219,7 +228,7 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
     os.makedirs(cache, exist_ok=True)
     _check_fingerprint(cache, _fingerprint(paths, resolution, fields,
                                            options, spin, storage, compression,
-                                           compression_level))
+                                           compression_level, potcar_source))
 
     summary = _load_summary(cache)
     table = _CacheTable([record.identifier for record in records], fields, emit)
@@ -239,6 +248,77 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
     table.footer()
 
     return cache
+
+
+def _resolve_potcar_source(sources, strict, emit):
+    r"""
+    What the ``POTCAR`` library actually served, per element.
+
+    ``None`` when no library is configured anywhere — a purely Gaussian dataset
+    has nothing to have failed, and its fingerprint is then exactly what it was
+    before this existed.
+
+    The point is the gap between the two questions. ``potcar_dir`` in the
+    fingerprint is the path that was *asked for*; this is what came back.
+    Found on Santos Dumont, where a control run landed on a node with ``/prj``
+    unmounted, warned six times on stderr, trained against analytic pseudo-ion
+    potentials, and wrote a cache whose fingerprint was indistinguishable from
+    the real one — including its directory name, ``res32_potcar``. Every later
+    run reused it silently, on mounted nodes too, and the warning never came
+    back. The run it invalidated had already been quoted as a measurement.
+
+    Parameters
+    ----------
+    sources : sequence of MaterialSource
+    strict : bool
+        Raise rather than record a fallback. See ``strict_potcar``.
+    emit : callable
+
+    Returns
+    -------
+    dict or None
+        ``{element: "library" | "gaussian"}``.
+
+    Raises
+    ------
+    RuntimeError
+        Under ``strict``, naming the elements the library did not serve.
+    """
+    resolved = {}
+    for source in sources:
+        coverage = source.potcar_coverage()
+        if coverage is None:
+            continue
+        for element, served in coverage.items():
+            # A library that serves an element for one source and not another
+            # is one library and one answer: the pessimistic one, since the
+            # dataset then contains at least one analytic potential.
+            if not served or element not in resolved:
+                resolved[element] = "library" if served else "gaussian"
+
+    if not resolved:
+        return None
+
+    fell_back = sorted(element for element, mode in resolved.items()
+                       if mode == "gaussian")
+    if fell_back and strict:
+        raise RuntimeError(
+            f"The POTCAR library does not serve {fell_back}, so the external "
+            f"potential for every structure containing them would be the "
+            f"Gaussian pseudo-ion model -- a different field, not a coarser "
+            f"one. strict_potcar is set, so this is an error rather than a "
+            f"warning. Unset data.strict_potcar to accept the fallback, or "
+            f"check that data.potcar_dir is readable from this node."
+        )
+
+    emit("  POTCAR library: " + ", ".join(f"{element}={mode}" for element, mode
+                                          in sorted(resolved.items())))
+    if fell_back:
+        emit(f"      note: {', '.join(fell_back)} fall back to the Gaussian "
+             f"pseudo-ion model, and the cache fingerprint records it -- a "
+             f"later run with the library available will rebuild rather than "
+             f"reuse this")
+    return resolved
 
 
 def _resolve_spin(requested, records, emit):
@@ -386,10 +466,20 @@ def _range_text(bounds):
 
 
 def _fingerprint(paths, resolution, fields, options, spin,
-                 storage="files", compression=None, compression_level=4):
+                 storage="files", compression=None, compression_level=4,
+                 potcar_source=None):
     """Everything that decides what a cache directory's files contain."""
     potcar_dir = options.get("potcar_dir")
     return {
+        # What the library actually served, per element, against `potcar_dir`
+        # just below, which is only what it was asked for. A run on a node
+        # where the library was not mounted builds a cache of analytic
+        # pseudo-ion potentials -- a different physical quantity, not a worse
+        # approximation to the same one -- and without this key that cache is
+        # indistinguishable from the real thing and is reused forever.
+        # `None` when no library was configured, so a purely Gaussian dataset's
+        # fingerprint is unchanged.
+        "potcar_source": potcar_source,
         "paths": sorted(os.path.abspath(path) for path in paths),
         "resolution": int(resolution) if resolution else None,
         "fields": sorted(fields),
@@ -421,6 +511,15 @@ def _check_fingerprint(cache, fingerprint):
     material directories is adopted with a warning (caches predate the
     record). A mismatch raises, naming the keys that differ — the caller
     should pick another cache directory or delete this one deliberately.
+
+    One narrower case is adopted rather than refused: a recorded fingerprint
+    that agrees on every key it *has*, and lacks only keys this version added.
+    Those keys record something the older build never asked about, so it cannot
+    have disagreed about them — and refusing would invalidate every cache in
+    existence on an upgrade, which is a rebuild of hundreds of densities to
+    learn nothing. The warning says which keys are unrecorded, because
+    "unrecorded" and "recorded as the same" are different states and only one
+    of them is evidence.
     """
     # JSON round-trip so tuples/lists and int/float compare canonically.
     fingerprint = json.loads(json.dumps(fingerprint, sort_keys=True))
@@ -435,15 +534,31 @@ def _check_fingerprint(cache, fingerprint):
             recorded = None
 
     if recorded is not None and recorded != fingerprint:
+        added = sorted(set(fingerprint) - set(recorded))
         differing = sorted(key for key in set(recorded) | set(fingerprint)
                            if recorded.get(key) != fingerprint.get(key))
-        raise ValueError(
-            f"{cache} was built with different parameters "
-            f"({', '.join(differing)} differ; see "
-            f"{CACHE_FINGERPRINT_FILENAME}). Reusing it would silently mix "
-            f"datasets or potential constructions. Point the build at a "
-            f"fresh cache directory, or delete this one to rebuild it."
-        )
+        if added and not (set(differing) - set(added)):
+            import warnings
+
+            warnings.warn(
+                f"{cache} was built before this version recorded "
+                f"{', '.join(added)}, so it cannot say what was used for "
+                f"{'them' if len(added) > 1 else 'it'}. Adopting the cache and "
+                f"recording the current value. Delete it and rebuild if that "
+                f"is not what it holds.",
+                RuntimeWarning, stacklevel=3,
+            )
+            # Deliberately *not* `recorded = None`: that would fall into the
+            # legacy branch below and warn a second time, with a sentence that
+            # is not true of this cache -- it has a fingerprint, and it agrees.
+        else:
+            raise ValueError(
+                f"{cache} was built with different parameters "
+                f"({', '.join(differing)} differ; see "
+                f"{CACHE_FINGERPRINT_FILENAME}). Reusing it would silently mix "
+                f"datasets or potential constructions. Point the build at a "
+                f"fresh cache directory, or delete this one to rebuild it."
+            )
 
     if recorded is None:
         has_materials = any(

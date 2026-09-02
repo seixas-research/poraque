@@ -1001,10 +1001,9 @@ def _distributed_forward(operator, context, emit, verbose):
     """
     Wrap the model in ``DistributedDataParallel``, or return it unchanged.
 
-    Like :func:`_compiled_forward`, the wrapper is used to *call* the model and
-    is never assigned onto the operator: DDP prefixes every ``state_dict`` key
-    with ``module.``, so an operator holding one would write checkpoints that
-    load nowhere else. The parameters are the same tensors either way, which is
+    The wrapper is used to *call* the model and is never assigned onto the
+    operator: DDP prefixes every ``state_dict`` key with ``module.``, so an
+    operator holding one would write checkpoints that load nowhere else. The parameters are the same tensors either way, which is
     what lets the optimiser, the gradient clipping and the best-weight snapshot
     all keep addressing ``operator.model`` directly.
 
@@ -1040,73 +1039,11 @@ def _distributed_forward(operator, context, emit, verbose):
     return wrapped
 
 
-def _compiled_forward(operator, requested, mode, dynamic, emit, verbose,
-                      module=None):
-    """
-    The callable the training loop uses to run the model, compiled or not.
-
-    Returns ``module`` (``operator.model`` by default) unchanged unless
-    ``requested`` and the device is CUDA. The wrapper is deliberately *not*
-    assigned back onto the operator: :func:`torch.compile` returns a module
-    whose ``state_dict`` keys are prefixed ``_orig_mod.``, so storing it would
-    make every checkpoint this run writes — and the in-memory best-weight
-    restore — silently incompatible with every other code path that loads one.
-
-    Parameters
-    ----------
-    operator : FieldOperator
-    requested : bool
-    mode : str
-        ``torch.compile``'s ``mode``.
-    dynamic : bool
-        ``torch.compile``'s ``dynamic``. One graph over symbolic shapes rather
-        than one per shape, which is what makes this affordable when batches
-        are bucketed by grid shape.
-    emit : callable
-    verbose : bool
-    module : torch.nn.Module, optional
-        What to compile. Under DDP this is the **wrapper**, not the bare model:
-        Dynamo's DDPOptimizer splits the graph at DDP's gradient-bucket
-        boundaries so the all-reduces can overlap the backward pass, and it can
-        only do that if it can see the wrapper. Compiling inside DDP instead
-        produces one graph with every all-reduce serialised after it.
-
-    Returns
-    -------
-    callable
-        ``(inputs, cell) -> prediction``.
-    """
-    module = operator.model if module is None else module
-    if not requested:
-        return module
-
-    # Guarded on the device rather than on availability. Inductor has an MPS
-    # backend and it is a different proposition from the CUDA one -- untested
-    # here, and not what the measurement that motivated this flag was about --
-    # so the same flag must not silently turn it on.
-    if operator.device.type != "cuda":
-        warnings.warn(
-            f"training.compile was requested on "
-            f"{describe_device(operator.device)}; torch.compile is enabled "
-            f"only on CUDA here, so the model runs uncompiled.",
-            RuntimeWarning, stacklevel=3,
-        )
-        return module
-
-    compiled = torch.compile(module, mode=mode, dynamic=bool(dynamic))
-    if verbose:
-        emit(f"    torch.compile: mode={mode!r} dynamic={bool(dynamic)} "
-             f"(compilation is charged to the first epoch; compare it against "
-             f"the rest in seconds_per_epoch)")
-    return compiled
-
-
 def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
           weight_decay=1e-4, validation=None, loss=None, scheduler="cosine",
           grad_clip=1.0, eval_every=1, early_stopping=0, checkpoint=None,
           seed=0, verbose=True, log=None, optimizer="adamw",
-          num_workers=0, pin_memory="auto", compile_model=False,
-          compile_mode="default", compile_dynamic=True, distributed=None):
+          num_workers=0, pin_memory="auto", distributed=None):
     """
     Train a :class:`FieldOperator`.
 
@@ -1191,22 +1128,6 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     pin_memory : {"auto", True, False}, optional
         Page-locked staging for the host-to-device copy. ``"auto"`` resolves to
         ``True`` on CUDA and ``False`` elsewhere, which is the whole decision.
-    compile_model : bool, optional
-        Wrap the model in :func:`torch.compile` **for the training loop only**.
-        Ignored with a warning off CUDA: Inductor's MPS backend is a different
-        proposition and must not be turned on by the same flag.
-
-        The wrapper is used to call the model and is never stored on the
-        operator, so ``state_dict`` keys, the best-weight restore and every
-        checkpoint written are those of the uncompiled module --- a compiled
-        module prefixes them with ``_orig_mod.`` and the checkpoint would not
-        reload.
-    compile_mode : str, optional
-        ``torch.compile``'s ``mode``.
-    compile_dynamic : bool, optional
-        ``torch.compile``'s ``dynamic``. ``True`` asks for one graph over
-        symbolic shapes, which is what makes this affordable at all: batches are
-        bucketed by grid shape and a real dataset has many.
     distributed : DistributedContext, optional
         The process group this rank belongs to, already initialised by
         :func:`~poraque.ml.distributed.initialize`. ``None`` and a disabled
@@ -1238,9 +1159,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         queueing — and, on CUDA, ``peak_vram_bytes`` and
         ``peak_vram_reserved_bytes``. Those three are what a ``batch_size``
         study needs and what previously could only be had by sampling
-        ``nvidia-smi`` from outside the process. ``seconds_per_epoch`` is also
-        where ``compile_model``'s cost shows up: compilation is charged to the
-        first epoch, so the first entry against the rest is the price of it.
+        ``nvidia-smi`` from outside the process.
     """
     torch.manual_seed(seed)
     context = distributed if distributed is not None else DistributedContext()
@@ -1292,19 +1211,12 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         if validation is not None else None
     )
 
-    # Called instead of `operator.model` inside the loop, never assigned to it.
-    # Both wrappers rename `state_dict` keys -- `_orig_mod.` for compile,
-    # `module.` for DDP -- and storing either would silently make every
-    # checkpoint this run writes unloadable by every other code path.
-    #
-    # DDP first, compile on top: Dynamo's DDPOptimizer splits the graph at
-    # DDP's gradient-bucket boundaries so the all-reduces overlap the backward
-    # pass, and it can only do that if it can see the wrapper.
+    # Called instead of `operator.model` inside the loop, never assigned to it:
+    # DDP renames every `state_dict` key to `module.<key>`, and storing the
+    # wrapper would silently make every checkpoint this run writes unloadable
+    # by every other code path.
     emit = log if log is not None else print
-    replicated = _distributed_forward(operator, context, emit, verbose)
-    forward = _compiled_forward(operator, compile_model, compile_mode,
-                                compile_dynamic, emit, verbose,
-                                module=replicated)
+    forward = _distributed_forward(operator, context, emit, verbose)
 
     history = {"train_loss": [], "val_error": [], "val_epoch": [],
                "seconds_per_epoch": []}

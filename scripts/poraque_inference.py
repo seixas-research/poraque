@@ -113,6 +113,8 @@ from poraque.fields import (  # noqa: E402
     ExternalPotential,
     FieldGrid,
     KineticEnergyDensity,
+    charge_channel,
+    field_integral,
     von_weizsacker_tau,
 )
 from poraque.fields.io import resolve_reader  # noqa: E402
@@ -662,23 +664,37 @@ def run(args, log):
     density = operator.predict(potential)
     log(f"        predicted in {time.time() - start:.2f} s")
 
-    electrons = density.integrate()
+    # Everything below reports on the *density*, and a two-channel prediction
+    # stacks (rho, m) into `.data`. `charge` is rho alone -- a range in
+    # e/Ang^3, a negative-voxel count and the von Weizsaecker bound are all
+    # statements about rho, and evaluating them on the stack silently folds in
+    # a magnetisation that is legitimately signed and in different units.
+    # `density` itself stays whatever `predict` returned, because that is what
+    # gets written and what chg2tau consumes.
+    charge = charge_channel(density)
+    electrons = field_integral(density)
     expected = sum(
         (zval or {}).get(element,
                          pseudopotentials[element].valence_charge
                          if element in pseudopotentials else 0.0) * count
         for element, count in zip(structure.elements, structure.counts)
     )
-    log(f"        range [{density.data.min():.5f}, {density.data.max():.5f}] e/A^3")
+    log(f"        range [{charge.data.min():.5f}, {charge.data.max():.5f}] e/A^3")
     log(f"        integral = {electrons:.4f} electrons"
         + (f"   (expected {expected:.1f}, error "
            f"{100 * abs(electrons - expected) / expected:.3f} %)"
            if expected else ""))
-    negative = int(np.count_nonzero(density.data < 0))
+    if charge is not density:
+        moment = density.magnetic_moment()
+        log(f"        magnetization: integral = {moment:+.4f} mu_B, range "
+            f"[{density.magnetization.min():+.5f}, "
+            f"{density.magnetization.max():+.5f}] e/A^3")
+        results["magnetic_moment"] = moment
+    negative = int(np.count_nonzero(charge.data < 0))
     if negative:
         log(f"        !! {negative} negative voxels "
-            f"({100 * negative / density.data.size:.4f} %), min "
-            f"{density.data.min():.4g} e/A^3")
+            f"({100 * negative / charge.data.size:.4f} %), min "
+            f"{charge.data.min():.4g} e/A^3")
 
     # The number of valence electrons is fixed by the pseudopotentials, so it
     # is a constraint rather than something to predict. VASP checks it on read
@@ -691,7 +707,20 @@ def run(args, log):
     results["normalized"] = False
     if args.normalize and expected and electrons > 0:
         factor = expected / electrons
-        density.data = density.data * factor
+        # Through the field's own `normalized`, not a multiply on `.data`.
+        # Three things follow from that and none of them are cosmetic: the
+        # two-channel class's `.data` is a read-only stack, so the multiply
+        # raised; it knows that scaling rho alone would change the local
+        # polarisation m/rho everywhere, which is a different prediction and
+        # not a normalisation, so it scales the pair and keeps rho_up and
+        # rho_down non-negative; and there is then one implementation of the
+        # arithmetic rather than a copy here that has to be kept in step.
+        #
+        # `clip_negative=False` preserves what this script has always done:
+        # the negative voxels are *reported* above and left in the field, so
+        # the written CHGCAR is the prediction and not a repaired one.
+        density = density.normalized(expected, clip_negative=False)
+        charge = charge_channel(density)
         results["normalized"] = True
         results["normalization_factor"] = factor
         log(f"        normalized to {expected:.4f} electrons "
@@ -706,7 +735,9 @@ def run(args, log):
                 f"-- an error this large means the structure is far from the "
                 f"training set and the density is unreliable however it is "
                 f"scaled.")
-        electrons = density.integrate()
+        electrons = field_integral(density)
+        if charge is not density:
+            results["magnetic_moment"] = density.magnetic_moment()
 
     augmentation = None
     if getattr(args, "add_paw", False):
@@ -749,7 +780,7 @@ def run(args, log):
 
     # The Hoffmann-Ostenhof bound is a theorem; check it even when the head
     # guarantees it, because it also validates the chained density.
-    bound = von_weizsacker_tau(density.data, grid)
+    bound = von_weizsacker_tau(charge.data, grid)
     deficit = tau.data - bound
     violations = int(np.count_nonzero(deficit < -1e-6))
     log(f"        constraint tau >= tau_vW[rho]: {violations}/{deficit.size} "
@@ -797,9 +828,14 @@ def run(args, log):
     if args.compare:
         log(f"\n  --- comparison against reference files in {args.directory} ---")
         results["comparison"] = {}
+        # `charge`, not `density`: a reference CHGCAR read as a ChargeDensity
+        # is one channel, and subtracting it from a (2, ...) stack broadcasts
+        # rather than fails -- a relative L2 that silently averages the density
+        # error together with the magnetisation error, reported as the density
+        # error. The magnetisation has its own comparison below.
         for filename, field_class, predicted in (
             ("EXTCAR", ExternalPotential, potential),
-            ("CHGCAR", ChargeDensity, density),
+            ("CHGCAR", ChargeDensity, charge),
             ("TAUCAR", KineticEnergyDensity, tau),
         ):
             path = os.path.join(args.directory, filename)
@@ -854,8 +890,12 @@ def run(args, log):
                                 prefix=os.path.basename(
                                     os.path.normpath(args.directory)))
         produced = []
+        # Again the density channel alone. A figure handed a (2, ...) stack
+        # does not draw a worse picture, it hands Matplotlib a three-axis
+        # "image" and dies -- after the whole prediction has already run. This
+        # is the same lesson `plot_channel` records in poraque_train.py.
         for filename, field_class, predicted, label, unit, positive in (
-            ("CHGCAR", ChargeDensity, density, r"$\rho$", r"e/$\AA^3$", True),
+            ("CHGCAR", ChargeDensity, charge, r"$\rho$", r"e/$\AA^3$", True),
             ("TAUCAR", KineticEnergyDensity, tau, r"$\tau$", r"eV/$\AA^3$", True),
         ):
             path = os.path.join(args.directory, filename)

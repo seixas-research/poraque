@@ -61,7 +61,12 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 # requested device is unusable -- which is the case `torch.cuda.is_available()`
 # cannot detect, since CUDA 13 dropped Volta and a +cu130 wheel on a V100
 # reports available and then aborts.
-python -m poraque.ml.device --check || exit 1
+#
+# `--device cuda` rather than the default `auto`: this job asked the scheduler
+# for four GPUs, so naming them is what the check should be about. (`--check`
+# refuses a CPU under `auto` as well, since 26.9.3 -- before that it could not
+# fail on any machine with a working CPU, which made this line decorative.)
+python -m poraque.ml.device --check --device cuda || exit 1
 
 # ---------------------------------------------------------------------------
 # Launch

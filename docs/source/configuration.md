@@ -85,6 +85,7 @@ task: ext2chg          # identical to {type: ext2chg}, with the default name
 | `format` | `auto` | `vasp`, or `auto` to detect the code from the files present |
 | `resolution` | `32` | longest grid axis after spectral downsampling |
 | `potcar_dir` | `null` | POTCAR library, used where the data ships no pseudopotentials |
+| `strict_potcar` | `false` | refuse the Gaussian fallback when a configured library cannot serve an element |
 | `sigma` | `null` | Gaussian pseudo-ion width in Å, where the Gaussian model is reached |
 | `gaussian_blur` | `null` | Gaussian blur width in Å applied to the computed potential |
 | `blur_method` | `spectral` | `spectral` or `ndimage` |
@@ -242,6 +243,41 @@ VASP PBE set (`PAW_PBE`); a `PAW_LDA` library would build a potential the
 densities were never computed from — worse than the Gaussian fallback, because
 it looks exact.
 ```
+
+(strict-potcar)=
+#### What the cache records, and `strict_potcar`
+
+A library that cannot be read falls back per element, with a `RuntimeWarning`
+on stderr, and the run continues. That is the right default. What was wrong
+until 26.9.3 is that nothing downstream recorded it: the cache fingerprint held
+`potcar_dir`, which is the path that was **asked for**, and said nothing about
+whether it was ever opened.
+
+The consequence was found on Santos Dumont. A control run landed on a node
+where the library's filesystem was not mounted, warned six times, trained
+against analytic pseudo-ion potentials, and wrote
+`cache/res32_potcar/cache_fingerprint.json` byte-identical to one built from
+real pseudopotentials — down to the directory being *named* `potcar`. Every
+later run reused it silently, including on nodes where the library was
+mounted, and the warning never came back. The validation error it produced had
+already been quoted as a measurement.
+
+The fingerprint now carries `potcar_source`, per element:
+
+```json
+{ "potcar_dir": "/prj/…/POTCARs",
+  "potcar_source": {"Ag": "gaussian", "Pt": "library"} }
+```
+
+so a cache built during an outage no longer matches a run that can read the
+library — it rebuilds rather than being reused — and the resolved mode appears
+in the run log beside the rest of the cache line. `null` when no library is
+configured, so a purely Gaussian dataset's fingerprint is unchanged.
+
+`strict_potcar: true` turns the fallback into an error naming the elements
+the library did not serve. It is off by default and is meant for queues: the
+failure shape is `training.strict_device`'s, a job that holds its allocation
+and quietly computes something other than what was configured.
 
 Missing or unreadable entries are **not fatal**. Each such species warns once
 and falls back to the Gaussian model for the structures that contain it, so a
@@ -403,13 +439,11 @@ the training log reports any reference points that violate it.
 | `num_workers` | `0` | DataLoader worker processes — read `data.cache_in_memory` first |
 | `pin_memory` | `auto` | page-locked staging; `auto` is `true` on CUDA and `false` elsewhere |
 | `tf32` | `true` | TensorFloat-32 matmul and convolution; CUDA, Ampere and later |
-| `compile` | `false` | `torch.compile` the training loop; CUDA only, and a measurement switch |
-| `compile_mode` | `default` | `default`, `reduce-overhead` or `max-autotune` |
-| `compile_dynamic` | `true` | one compiled graph over symbolic shapes rather than one per shape |
 | `loss` | `relative_l2` | `absolute_l2`, `relative_l2`, `absolute_h1` or `relative_h1` |
 | `sobolev_weight` | `0.1` | gradient-term weight for the two `h1` losses |
 | `physics` | all `0.0` | physics-informed loss weights |
 
+(strict-device)=
 ### `device` and `strict_device`
 
 `device: auto` prefers CUDA, then Apple Metal, then the CPU. An explicit backend
@@ -441,6 +475,14 @@ Volta. Poraquê checks the compute capability against the build's own
 `arch_list` and refuses before any of that. See
 [NVIDIA GPUs](nvidia-gpus).
 
+`strict_device` applies to `device: auto` as well, which is the default and
+until 26.9.3 was the case it did *not* cover: the `auto` branch returned the
+best available backend before `strict` was consulted, so a configuration that
+set `strict_device: true` and left `device` alone — the exact pairing this
+section recommends — got no protection at all. It now refuses when `auto`
+resolves to the CPU, and names `device: cpu` as the way to ask for CPU
+training deliberately.
+
 (num-workers-and-pin-memory)=
 ### `num_workers` and `pin_memory`
 
@@ -465,30 +507,60 @@ the case `cache_in_memory: false` exists for.
 there and `false` everywhere, since it does not help on Metal and some PyTorch
 versions warn when asked for it.
 
-### `tf32`, `compile`
+### `tf32`
 
 `tf32` keeps float32's range and drops its mantissa to ten bits inside the
 tensor cores. It is a real speedup on Ampere and later, and **exactly nothing**
 before it — a V100 has no TF32 path — so it is on by default and costs nothing
-where it does not apply.
+where it does not apply. Ignored off CUDA.
 
-`compile` is a measurement switch rather than a recommendation, and it is off.
-The case for it is the kernel profile: at `width=16, modes=8, n_layers=3` on a
-V100, **44.4 % of GPU time is elementwise work**, and the four costliest kernels
-are `copy_`, `Memcpy DtoD`, `add_` and `fill_` — memory traffic between kernels
-that each do very little arithmetic, which is what fusion removes. Convolution
-is 23.7 %, FFT 13.7 %, and GEMM only 6.1 %.
+(no-torch-compile)=
+### There is no `compile` key
 
-The case against is that batches are bucketed by grid shape and a real dataset
-has many — 19 distinct shapes in the set measured — and Inductor specialises per
-shape unless `compile_dynamic` holds across `rfftn`/`irfftn` with a varying `s=`.
-Whether it does is the open question, and the reason this is a flag rather than
-a default. Compilation is charged to the first epoch, where `seconds_per_epoch`
-in the metrics JSON makes the trade visible: a 60-epoch run that pays 90 s of
-compilation to save 20 s is a loss, and a 2000-epoch run is not.
+There was one, for a version, and it was removed in 26.9.3 after being
+measured. Setting `compile`, `compile_mode` or `compile_dynamic` now raises and
+says why, rather than being accepted and ignored.
 
-Both are ignored off CUDA. `compile` says so rather than quietly turning on
-Inductor's Metal backend, which is a different proposition and untested here.
+**Inductor does not generate code for complex operators.** Every compiled run
+said so:
+
+```
+torch/_inductor/lowering.py:1917: UserWarning: Torchinductor does not support
+code generation for complex operators. Performance may be worse than eager.
+```
+
+`SpectralConv3d`'s weights are complex, and it *is* the Fourier neural
+operator. So the one part of the model compilation was invoked to fuse is the
+part Inductor hands back to eager, while the wrapper and the graph breaks are
+still paid for. That is the mechanism behind the numbers — 150 epochs, two
+repetitions, one V100:
+
+| arm | s/epoch | first epoch (cold → warm) | val rel L2 |
+| --- | --- | --- | --- |
+| off | **0.6289** | 3.8 s | 0.280563 |
+| `mode="default"` | 0.6785 (+7.9 %) | 199.8 s → 17.6 s | 0.284980 |
+| `mode="max-autotune"` | 0.6879 (+9.4 %) | 314.0 s → 20.7 s | 0.272624 |
+
+`TORCH_LOGS=recompiles` emitted nothing, so `dynamic=True` did hold one graph
+across the 19 shapes: the shape-bucketing worry was unfounded and the gain
+still does not exist. The validation error also moved, reproducibly and
+identically across both repetitions, which disqualifies the arms independently
+of their timing.
+
+On four ranks it did not merely lose. With `--distributed auto` and 60 epochs,
+in the same allocation as an uncompiled four-rank run that finished in 86.6 s,
+the compiled run sat **eighteen minutes in the first epoch without printing an
+epoch line** and was cancelled. A configuration key whose failure mode is a
+silent deadlock inside a queue allocation is the hazard
+[`strict_device`](strict-device) exists to remove, pointing the other way.
+
+What was *not* measured, and is worth measuring one day: compiling only the
+real-valued submodules — `CellEncoder`, FiLM, the pointwise convolutions, the
+projection head, the KAN activations — and leaving `SpectralConv3d` in eager.
+That is where the 44.4 % of elementwise GPU time lives. It should come back as
+an internal decision about which submodules to wrap, not as a switch a config
+file can throw. The condition for re-opening whole-model compilation is
+upstream: Inductor gaining complex-operator codegen.
 
 (distributed)=
 ### `distributed` and `distributed_timeout`
