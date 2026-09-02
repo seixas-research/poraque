@@ -8,7 +8,7 @@ dynamic = ["version"]
 authors = [
   { name="Leandro Seixas Rocha", email="leandro.rocha@ilum.cnpem.br" },
 ]
-description = "For machine learning density-based operators"
+description = "For electronic structure calculations with neural operators"
 readme = "README.md"
 license = {file = "LICENSE"} # MIT License
 requires-python = ">=3.11"
