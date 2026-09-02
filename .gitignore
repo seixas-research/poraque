@@ -179,6 +179,7 @@ pseudos/
 # The logs are small plain text and are kept deliberately.
 data/cache/
 models/
+*.poraque
 *.pfno
 
 # Materials Project downloads. Hundreds of megabytes of charge densities that

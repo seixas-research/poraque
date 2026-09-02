@@ -56,7 +56,7 @@ it does not cancel in a difference.
 The calculator rescales the density to the exact count by default:
 
 \begin{lstlisting}[language=Python]
-atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs",
+atoms.calc = Poraque("models/poraque_models.poraque", potcar_dir="POTCARs",
                      normalize_density=True)   # the default
 
 atoms.calc.verify_charge()          # passes by construction
@@ -101,7 +101,7 @@ Method & $w_A(\rr)$ & Cost & Character \\
 \subsection{From the ASE calculator}
 
 \begin{lstlisting}[language=Python]
-atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs",
+atoms.calc = Poraque("models/poraque_models.poraque", potcar_dir="POTCARs",
                      references="data/vasp/ref")
 
 atoms.get_charges()                       # standard ASE, Bader by default

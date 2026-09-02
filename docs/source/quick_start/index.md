@@ -50,7 +50,7 @@ data of every structure, then writes:
 
 | Output | Contents |
 | --- | --- |
-| `models/poraque_models.pfno` | both trained operators, in one file |
+| `models/poraque_models.poraque` | both trained operators, in one file |
 | `logs/*.log`, `logs/*.json` | metrics, and the resolved configuration |
 | `results/plots/` | loss curves, field cross-sections, parity plots |
 | `reports/*.pdf` | a typeset report per model |
@@ -61,7 +61,7 @@ data of every structure, then writes:
 poraque-inference new_structure/ --output predictions/new_structure
 ```
 
-Both operators come from the single `models/poraque_models.pfno` written by
+Both operators come from the single `models/poraque_models.poraque` written by
 step 3. The grid is sized from `--encut` (default **200 eV**) at `PREC=Normal`,
 unless `--grid`, `--like` or `--resolution` is given.
 
@@ -159,7 +159,7 @@ occupancies are still a good approximation.
 
 **Without a reference calculation**, the model falls back to a per-element
 table it carries. Training reads the augmentation records off the training
-`CHGCAR`s, averages them per element, and stores them in the `.pfno` bundle:
+`CHGCAR`s, averages them per element, and stores them in the `.poraque` bundle:
 
 ```text
   PAW reference: Pt  138 values, averaged over 494 atoms in 17 structure(s)
@@ -214,7 +214,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
-atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
+atoms.calc = Poraque("models/poraque_models.poraque", potcar_dir="POTCARs")
 
 rho = atoms.calc.get_charge_density(atoms)   # ChargeDensity, e/Ang^3
 print(rho.electron_count())                  # 44.0, the valence count

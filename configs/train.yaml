@@ -17,9 +17,13 @@ data:
     - ./data/vasp/structures                             #   one subdirectory per material
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # without a library V_ext is the Gaussian model
   atomic_reference: ./data/vasp/isolated_atoms           # the Pt atom: the baseline and the PAW records
-  delta_density: true                                    # ext2chg learns rho - rho_sup; predict() still returns the full rho
   paw_source: atomic                                     # the free atom's own record, per element and transferable
+  delta_density: true                                    # ext2chg learns rho - rho_sup; predict() still returns the full rho
   resolution: 32                                         # longest grid axis after spectral downsampling
+  cache_in_memory: auto                                  # auto | true | false
+  storage: files                                         # files (a CHGCAR-format text file per field) | hdf5 (one fields.h5)
+  compression: null                                      # null | gzip | lzf; hdf5 only, and raises on a text cache
+  compression_level: 4                                   # gzip only; ignored by lzf
 
 model:
   width: 16                     # channels carried through the Fourier layers
@@ -46,6 +50,7 @@ training:
   early_stopping: 300           # epochs without improvement before stopping; 0 disables
   seed: 42                      # the validation draw, the fold partition, the batch order
   device: auto                  # auto (CUDA, then MPS, then CPU) or an explicit backend
+  strict_device: false
   physics:
     electron_count_weight: 1.0  # ext2chg: int(rho) must equal the known valence count
     positivity_weight: 0.1      # rho, tau >= 0 (a Log head is the better fix)
@@ -57,7 +62,7 @@ output:
   write_log: true               # log/<name>.log, .json, and the resolved config
   plot_figures: true            # render the figures into plots/
   write_pdf_report: true        # typeset the PDF into report/; needs a LaTeX toolchain
-  checkpoint: true              # write the .pfno
+  checkpoint: true              # write the .poraque
   plot_format: png
   dpi: 400
   save_raw_plot_data: true      # write the numbers behind each figure beside it

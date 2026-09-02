@@ -74,7 +74,7 @@ The checkpoint holds one model:
 
 ```python
 >>> from poraque.ml import bundle_tasks
->>> bundle_tasks("models/poraque_models.pfno")
+>>> bundle_tasks("models/poraque_models.poraque")
 ['ext2chg']
 ```
 

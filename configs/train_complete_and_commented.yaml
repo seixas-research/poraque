@@ -170,8 +170,32 @@ training:
                                 #     wall clock ends. `python -m poraque.ml.device --check`
                                 #     is the same test for three seconds, before the queue.
 
+  # Multi-GPU. `auto` forms a DistributedDataParallel group over NCCL WHEN THE
+  # LAUNCHER ALREADY DESCRIBES ONE -- a Slurm step with several tasks, or
+  # torchrun -- and does nothing otherwise. It cannot invent ranks: the launcher
+  # decides the topology and this key decides only whether to believe it. So on
+  # a cluster the line that matters is in the submission script:
+  #     #SBATCH --ntasks-per-node=4   # one task per GPU. Not optional.
+  #     #SBATCH --gres=gpu:4
+  #     srun poraque-train --config ... --strict-device --distributed auto
+  # Requesting four GPUs and launching ONE task is a perfectly good single-GPU
+  # run that looks, from inside the process, exactly like the one you asked for
+  # -- which is why the run log prints the Slurm variables it saw.
+  # `off` runs single-GPU inside a multi-task allocation, which is how a
+  # scaling result is bisected. Rank 0 alone prints and writes; the EFFECTIVE
+  # BATCH SIZE is batch_size x world_size, so a four-rank run is not the same
+  # optimiser as the one-rank run it is compared against.
+  # See scripts/slurm/poraque_ddp.sbatch.
+  distributed: auto             # auto | off
+  distributed_timeout: 30.0     # minutes before a collective is declared failed.
+                                #   Long on purpose: the first collective happens after
+                                #   every rank has read its cache, and a cold parallel-
+                                #   filesystem read of a few hundred densities is minutes.
+
   # Getting the data to the device. Read data.cache_in_memory first: these two
-  # are ALTERNATIVES, not complements. Measured, 20 epochs on 115 structures:
+  # are ALTERNATIVES, not complements. Under `distributed` this gets WORSE, not
+  # better -- each rank is already a process with a field cache of its own, and
+  # workers on top multiply the copies again. Measured, 20 epochs on 115 structures:
   # the cache alone 168.0 -> 16.3 s, four workers alone -> 120.2 s, and the two
   # together back up to 18.8 s -- each worker is a process that re-parses the
   # whole set into a cache of its own.
@@ -206,7 +230,7 @@ output:
   write_log: true               # log/<name>.log, .json, and the resolved config
   plot_figures: true            # render the figures into plots/
   write_pdf_report: true        # typeset the PDF into report/; needs a LaTeX toolchain
-  checkpoint: true              # write the .pfno
+  checkpoint: true              # write the .poraque
   log: null                     # explicit log path; null uses the run folder
   json: null                    # explicit metrics path; null uses the run folder
   plot_format: png
@@ -247,7 +271,7 @@ symbolic:
 fine_tuning:
   enable: false                 # continue a trained fit on a narrower set; normalizations come
                                 #   from the checkpoint, never refitted on the new data
-  pretrained_checkpoint: models/poraque_models.pfno
+  pretrained_checkpoint: models/poraque_models.poraque
   learning_rate: 1.0e-05        # much lower than a fresh fit, which is the point
   freeze_lifting_layers: false  # keep the input embedding fixed and adapt only the operator;
                                 #   ignored under use_lora, which freezes everything anyway

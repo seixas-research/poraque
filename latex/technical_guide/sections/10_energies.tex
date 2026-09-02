@@ -289,7 +289,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
-atoms.calc = Poraque("models/poraque_models.pfno",
+atoms.calc = Poraque("models/poraque_models.poraque",
                      potcar_dir="POTCARs")
 energy = atoms.get_potential_energy()
 \end{lstlisting}

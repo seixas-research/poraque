@@ -52,14 +52,14 @@ task:
 
 | | |
 | --- | --- |
-| `models/<name>.pfno` | the weights |
+| `models/<name>.poraque` | the weights |
 | `reports/<name>_report.pdf` | the PDF report |
 | `results/plots/<name>/` | the figures |
 
 A `task: all` run trains two models and so writes two reports, which are then
 `<name>_ext2chg_report.pdf` and `<name>_chg2tau_report.pdf` — one name cannot
 serve both. Cross-validation writes `<name>_kfold_report.pdf`, and a fine-tune
-writes its weights to `<name>_finetuned.pfno` rather than over the general
+writes its weights to `<name>_finetuned.poraque` rather than over the general
 model it specialises.
 
 ```{important}
@@ -398,6 +398,8 @@ the training log reports any reference points that violate it.
 | `seed` | `0` | weight initialisation, batch order and fold shuffling |
 | `device` | `auto` | `auto`, `cuda`, `mps` or `cpu` |
 | `strict_device` | `false` | abort instead of falling back to the CPU — see below |
+| `distributed` | `auto` | `auto` or `off`; multi-GPU over NCCL when the launcher describes a group |
+| `distributed_timeout` | `30.0` | minutes before a collective is declared failed |
 | `num_workers` | `0` | DataLoader worker processes — read `data.cache_in_memory` first |
 | `pin_memory` | `auto` | page-locked staging; `auto` is `true` on CUDA and `false` elsewhere |
 | `tf32` | `true` | TensorFloat-32 matmul and convolution; CUDA, Ampere and later |
@@ -488,11 +490,63 @@ compilation to save 20 s is a loss, and a 2000-epoch run is not.
 Both are ignored off CUDA. `compile` says so rather than quietly turning on
 Inductor's Metal backend, which is a different proposition and untested here.
 
-### One GPU
+(distributed)=
+### `distributed` and `distributed_timeout`
 
-Poraquê trains on **one** GPU; request one. There is no
-`DistributedDataParallel` path, so a job allocated four will see four and use
-`cuda:0`.
+`auto` — the default — forms a `DistributedDataParallel` group over NCCL **when
+the environment already describes one**, and does nothing otherwise. A Slurm
+step with more than one task, or a `torchrun` launch, is such an environment; a
+workstation is not.
+
+It cannot turn a one-process run into a four-GPU one. The launcher decides the
+topology and this key decides only whether to believe it, so on a cluster the
+setting that matters is in the submission script:
+
+```bash
+#SBATCH --ntasks-per-node=4          # one task per GPU
+#SBATCH --gres=gpu:4
+srun poraque-train --config configs/train.yaml --distributed auto
+```
+
+See [Several GPUs, under Slurm](installation.md) for the full script and for
+how `MASTER_ADDR` and `MASTER_PORT` are derived from the allocation.
+
+`off` refuses a group inside a multi-task allocation, which is how four
+independent single-GPU jobs are run from one submission and how a scaling
+result is bisected against a single-device baseline.
+
+Three consequences, all of them visible in the run log:
+
+- The **effective batch size is `batch_size` × the world size**. A four-rank
+  run at `batch_size: 10` steps on 40 samples, so it is not the same optimiser
+  as the one-rank run it is compared against — halve the learning rate or
+  quarter the batch size if the comparison is meant to be of the same
+  optimisation.
+- **Rank 0 alone writes** the checkpoint, the metrics, the figures and the PDF,
+  and alone prints.
+- **The batches are split, not the samples.** `ShapeBucketSampler` groups
+  materials by grid shape so no padding ever reaches the FFT, and a `DataLoader`
+  takes a `sampler` or a `batch_sampler` and never both — so the bucketing runs
+  first, identically on every rank, and a real `DistributedSampler` partitions
+  the resulting *list of batches*. Each rank gets a unique, non-overlapping
+  subset, and every rank gets the same *number* of batches, which is not
+  tidiness: DDP all-reduces gradients inside each `backward()`, and a rank that
+  runs out of batches first leaves the others in a collective that never
+  completes.
+
+`distributed_timeout` is long (30 minutes) on purpose. The first collective
+happens after every rank has read its prepared cache, and a cold
+parallel-filesystem read of a few hundred densities is minutes; a timeout that
+fires there reports itself as a NCCL error and sends the reader looking at the
+network.
+
+```{note}
+There is no `DataParallel` fallback and no Gloo backend. Both would let a
+misconfigured run go quietly slower than a single GPU — the first by
+replicating in one process, the second by distributing across CPU cores inside
+a GPU allocation. Without CUDA the group is refused with a warning naming the
+probable cause, and the run continues on one device.
+```
 
 ### `valid_fraction`, `enable_kfold`, `k_folds`
 
@@ -712,7 +766,7 @@ only discourages violating it.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `root` | `models` | parent of the run folder; `null` disables **all** output |
-| `checkpoint` | `true` | write `<name>.pfno` |
+| `checkpoint` | `true` | write `<name>.poraque` |
 | `write_log` | `true` | write `log/`: the log, the metrics JSON, the resolved config |
 | `plot_figures` | `true` | render `plots/` |
 | `write_pdf_report` | `true` | typeset `report/` |

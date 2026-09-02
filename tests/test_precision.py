@@ -322,7 +322,7 @@ class TestDerivedOutputPaths:
     """
     A run should be named once.
 
-    Every artefact already came from ``task.name`` -- ``models/<name>.pfno``,
+    Every artefact already came from ``task.name`` -- ``models/<name>.poraque``,
     ``reports/<name>_report.pdf``, ``results/plots/<name>/``. The log and the
     metrics were the two a user had to repeat by hand, and the only two that
     two different runs could end up sharing while writing separate weights.

@@ -806,13 +806,13 @@ class TestBundleNaming:
         from poraque.ml import BUNDLE_FILENAME, FINETUNED_BUNDLE_FILENAME
 
         assert BUNDLE_FILENAME != FINETUNED_BUNDLE_FILENAME
-        assert BUNDLE_FILENAME.endswith(".pfno")
-        assert FINETUNED_BUNDLE_FILENAME.endswith(".pfno")
+        assert BUNDLE_FILENAME.endswith(".poraque")
+        assert FINETUNED_BUNDLE_FILENAME.endswith(".poraque")
 
     def test_an_existing_file_is_returned_unchanged(self, tmp_path):
         from poraque.ml import resolve_bundle_path
 
-        path = tmp_path / "m.pfno"
+        path = tmp_path / "m.poraque"
         path.write_text("x")
         assert resolve_bundle_path(str(path)) == str(path)
 
@@ -822,16 +822,85 @@ class TestBundleNaming:
 
         (tmp_path / "m.pth").write_text("x")
         lines = []
-        resolved = resolve_bundle_path(str(tmp_path / "m.pfno"), lines.append)
+        resolved = resolve_bundle_path(str(tmp_path / "m.poraque"), lines.append)
         assert resolved == str(tmp_path / "m.pth")
-        assert any(".pfno" in line for line in lines)
+        assert any(".poraque" in line for line in lines)
 
     def test_a_missing_file_keeps_the_requested_name(self, tmp_path):
         """So the error names what the user asked for, not a guess."""
         from poraque.ml import resolve_bundle_path
 
-        requested = str(tmp_path / "absent.pfno")
+        requested = str(tmp_path / "absent.poraque")
         assert resolve_bundle_path(requested) == requested
+
+
+class TestTheExtensionIsPoraqueAndPfnoStillLoads:
+    """
+    The bundle extension became ``.poraque`` on 2026-09-02, replacing
+    ``.pfno``.
+
+    Every model trained before that date is called ``.pfno`` — including the
+    one this repository ships — and the *format* did not change, only the
+    name. A rename that could not find those files would report a trained
+    model as "no model", which is the failure the ``.pth`` rename already
+    caused once and which :func:`resolve_bundle_path` exists to prevent.
+    """
+
+    def test_the_suffix_has_one_definition(self):
+        """
+        Two copies of a filename extension is how the last rename left a
+        default path behind, so the string is defined once and imported.
+        """
+        from poraque.ml import BUNDLE_FILENAME, FINETUNED_BUNDLE_FILENAME
+        from poraque.ml.config import BUNDLE_SUFFIX
+
+        assert BUNDLE_SUFFIX == ".poraque"
+        assert BUNDLE_FILENAME.endswith(BUNDLE_SUFFIX)
+        assert FINETUNED_BUNDLE_FILENAME.endswith(BUNDLE_SUFFIX)
+
+    def test_the_old_extension_is_a_legacy_name_not_the_current_one(self):
+        from poraque.ml import LEGACY_BUNDLE_SUFFIXES
+        from poraque.ml.config import BUNDLE_SUFFIX
+
+        assert ".pfno" in LEGACY_BUNDLE_SUFFIXES
+        assert BUNDLE_SUFFIX not in LEGACY_BUNDLE_SUFFIXES
+
+    def test_a_pfno_beside_the_requested_name_is_found(self, tmp_path):
+        from poraque.ml import resolve_bundle_path
+
+        (tmp_path / "m.pfno").write_text("x")
+        lines = []
+        resolved = resolve_bundle_path(str(tmp_path / "m.poraque"),
+                                       lines.append)
+        assert resolved == str(tmp_path / "m.pfno")
+        assert any(".poraque" in line for line in lines)
+
+    def test_a_renamed_base_is_found_from_a_recorded_pfno_path(self, tmp_path):
+        """
+        The other direction, which the single-direction search missed: a LoRA
+        checkpoint stores the path of the base it adapts. Written before the
+        rename it names a ``.pfno``; read after the base was renamed, that
+        path no longer exists and the adapter holds no weights of its own.
+        """
+        from poraque.ml import resolve_bundle_path
+
+        (tmp_path / "base.poraque").write_text("x")
+        resolved = resolve_bundle_path(str(tmp_path / "base.pfno"))
+        assert resolved == str(tmp_path / "base.poraque")
+
+    def test_a_different_stem_is_never_substituted(self, tmp_path):
+        """Only the extension is guessed at; another stem is another model."""
+        from poraque.ml import resolve_bundle_path
+
+        (tmp_path / "other.pfno").write_text("x")
+        requested = str(tmp_path / "wanted.poraque")
+        assert resolve_bundle_path(requested) == requested
+
+    def test_the_checkpoint_path_carries_the_new_extension(self, tmp_path):
+        config = TrainingConfig()
+        config.task.name = "pt_res32"
+        config.output.root = str(tmp_path)
+        assert config.checkpoint_path().endswith("pt_res32.poraque")
 
 
 class TestFineTuningValidation:
@@ -845,11 +914,11 @@ class TestFineTuningValidation:
 
     def test_disabled_needs_no_checkpoint(self):
         config = TrainingConfig()
-        config.fine_tuning.pretrained_checkpoint = "/nope.pfno"
+        config.fine_tuning.pretrained_checkpoint = "/nope.poraque"
         poraque_train.validate_fine_tuning_settings(config)     # no raise
 
     def test_a_missing_checkpoint_fails_before_training(self, tmp_path):
-        config = self._config(tmp_path, pretrained_checkpoint="/nope.pfno")
+        config = self._config(tmp_path, pretrained_checkpoint="/nope.poraque")
         with pytest.raises(SystemExit, match="does not exist"):
             poraque_train.validate_fine_tuning_settings(config)
 
@@ -886,7 +955,7 @@ class TestFineTuningValidation:
 
         run = os.path.join(str(tmp_path), "ag_au_pt_v2")
         assert poraque_train.bundle_path(config) == \
-            os.path.join(run, "ag_au_pt_v2.pfno")
+            os.path.join(run, "ag_au_pt_v2.poraque")
         assert poraque_train.plot_directory(config) == \
             os.path.join(run, "plots")
         assert config.report_dir() == os.path.join(run, "report")
@@ -900,10 +969,10 @@ class TestFineTuningValidation:
         # A fine-tune never lands on the general model it specialises.
         config.fine_tuning.enable = True
         assert poraque_train.bundle_path(config) != \
-            os.path.join(str(tmp_path), "ag_au_pt_v2.pfno")
+            os.path.join(str(tmp_path), "ag_au_pt_v2.poraque")
 
     def test_a_non_positive_learning_rate_fails(self, tmp_path):
-        base = tmp_path / "base.pfno"
+        base = tmp_path / "base.poraque"
         base.write_text("x")
         config = self._config(tmp_path, pretrained_checkpoint=str(base),
                               learning_rate=0.0)
@@ -914,7 +983,7 @@ class TestFineTuningValidation:
         base = tmp_path / "base.pth"
         base.write_text("x")
         config = self._config(tmp_path,
-                              pretrained_checkpoint=str(tmp_path / "base.pfno"))
+                              pretrained_checkpoint=str(tmp_path / "base.poraque"))
         poraque_train.validate_fine_tuning_settings(config)
         assert config.fine_tuning.pretrained_checkpoint == str(base)
 

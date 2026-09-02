@@ -17,7 +17,7 @@ the calculator protocol::
     from poraque.calculator import Poraque
 
     atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
-    atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
+    atoms.calc = Poraque("models/poraque_models.poraque", potcar_dir="POTCARs")
 
     rho = atoms.calc.get_charge_density(atoms)   # ChargeDensity, e/Ang^3
     charges = atoms.get_charges()                # net charge per atom, +e
@@ -89,7 +89,7 @@ class Poraque(Calculator):
     ----------
     models : str, optional
         The unified checkpoint written by ``poraque-train``, holding both
-        operators. Defaults to ``models/poraque_models.pfno``.
+        operators. Defaults to ``models/poraque_models.poraque``.
     ext2chg, chg2tau : FieldOperator, optional
         Already-loaded operators, overriding the corresponding entry of
         ``models``. Useful for evaluating a model that is still in memory.
@@ -171,7 +171,7 @@ class Poraque(Calculator):
     --------
     >>> from ase.build import bulk                                # doctest: +SKIP
     >>> atoms = bulk("Pt", "fcc", a=3.92, cubic=True)             # doctest: +SKIP
-    >>> atoms.calc = Poraque("models/poraque_models.pfno",
+    >>> atoms.calc = Poraque("models/poraque_models.poraque",
     ...                      potcar_dir="POTCARs")                # doctest: +SKIP
 
     The fields are the prediction; the energy is one thing integrated from

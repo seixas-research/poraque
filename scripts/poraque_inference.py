@@ -34,8 +34,8 @@ Every output is written in ``CHGCAR`` format, so the predictions are read by
 any tool that handles VASP volumetric files.
 
 Both operators are read from a **single unified checkpoint**,
-``models/<name>/<name>.pfno``, written by ``poraque-train``
-(``models/poraque_models/poraque_models.pfno`` for an unnamed run). One file
+``models/<name>/<name>.poraque``, written by ``poraque-train``
+(``models/poraque_models/poraque_models.poraque`` for an unnamed run). One file
 for the whole chain means the two halves cannot be copied separately or mixed
 across training runs.
 
@@ -74,7 +74,7 @@ command and runs from any directory::
 
     # explicit bundle, and a coarser grid
     poraque-inference new_structure/ \
-        --models models/poraque_models.pfno --encut 300
+        --models models/poraque_models.poraque --encut 300
 
     # match an existing calculation's grid, for a direct comparison
     poraque-inference run/ --like run/CHGCAR --compare
@@ -153,7 +153,7 @@ def load_operator(bundle, task, device):
     Parameters
     ----------
     bundle : str
-        Path to ``poraque_models.pfno``.
+        Path to ``poraque_models.poraque``.
     task : str
         ``"ext2chg"`` or ``"chg2tau"``.
     device : torch.device or str
@@ -169,7 +169,7 @@ def load_operator(bundle, task, device):
     except FileNotFoundError as error:
         raise SystemExit(
             f"{bundle}: no such file. poraque-train writes the bundle to "
-            f"models/<task.name>/<task.name>.pfno; pass that path with "
+            f"models/<task.name>/<task.name>.poraque; pass that path with "
             f"--models.") from error
     except (KeyError, ValueError) as error:
         raise SystemExit(f"{bundle}: {error}") from error

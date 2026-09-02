@@ -59,9 +59,12 @@ _LAZY = {
     # data
     "FieldPairDataset": "poraque.ml.data",
     "ShapeBucketSampler": "poraque.ml.data",
+    "DistributedShapeBucketSampler": "poraque.ml.data",
     "collate_fields": "poraque.ml.data",
     "discover_materials": "poraque.ml.data",
     "make_dataloader": "poraque.ml.data",
+    # multi-GPU
+    "DistributedContext": "poraque.ml.distributed",
     # transforms
     "Asinh": "poraque.ml.transforms",
     "FieldTransform": "poraque.ml.transforms",
@@ -119,6 +122,7 @@ _LAZY = {
     "is_adapted": "poraque.ml.lora",
     "load_lora_state_dict": "poraque.ml.lora",
     "lora_state_dict": "poraque.ml.lora",
+    "BUNDLE_SUFFIX": "poraque.ml.training",
     "FINETUNED_BUNDLE_FILENAME": "poraque.ml.training",
     "LEGACY_BUNDLE_SUFFIXES": "poraque.ml.training",
     "resolve_bundle_path": "poraque.ml.training",

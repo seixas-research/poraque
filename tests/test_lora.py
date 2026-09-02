@@ -285,7 +285,7 @@ class TestAnAdaptedOperatorSavesAndReloads:
         operator = FieldOperator("chg2tau", width=8, modes=4, n_layers=2,
                                  projection_channels=16, device="cpu")
         train(operator, data, epochs=2, batch_size=1, verbose=False, seed=0)
-        path = str(tmp_path / "base.pfno")
+        path = str(tmp_path / "base.poraque")
         save_bundle(path, {"chg2tau": operator})
         return path, data
 
@@ -308,7 +308,7 @@ class TestAnAdaptedOperatorSavesAndReloads:
         assert operator.state()["model_state"] == {}
         assert operator.state()["lora"]["base_checkpoint"] == os.path.abspath(path)
 
-        fine_tuned = str(tmp_path / "lora.pfno")
+        fine_tuned = str(tmp_path / "lora.poraque")
         save_bundle(fine_tuned, {"chg2tau": operator})
 
         assert os.path.getsize(fine_tuned) < os.path.getsize(path) / 10
@@ -321,7 +321,7 @@ class TestAnAdaptedOperatorSavesAndReloads:
         train(operator, data, epochs=2, batch_size=1, learning_rate=1e-2,
               verbose=False, seed=0)
 
-        fine_tuned = str(tmp_path / "lora.pfno")
+        fine_tuned = str(tmp_path / "lora.poraque")
         save_bundle(fine_tuned, {"chg2tau": operator})
         reloaded = load_bundle(fine_tuned, "chg2tau", device="cpu")
 
@@ -343,7 +343,7 @@ class TestAnAdaptedOperatorSavesAndReloads:
 
         path, _ = base_bundle
         operator = self._adapt(path)
-        fine_tuned = str(tmp_path / "lora.pfno")
+        fine_tuned = str(tmp_path / "lora.poraque")
         save_bundle(fine_tuned, {"chg2tau": operator})
         os.rename(path, path + ".moved")
 

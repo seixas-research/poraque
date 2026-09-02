@@ -12,7 +12,7 @@ poraque-train --config configs/train.yaml
 
 # 2. specialise it on one family
 poraque-train --config configs/train.yaml \
-    --fine-tune --pretrained models/poraque_models.pfno \
+    --fine-tune --pretrained models/poraque_models.poraque \
     --root data/oxides --checkpoint-dir models/oxides
 \end{lstlisting}
 
@@ -56,7 +56,7 @@ fine_tuning:
 The run reports what was actually frozen, so it never has to be inferred:
 
 \begin{lstlisting}
-      fine-tuning from : models/poraque_models.pfno
+      fine-tuning from : models/poraque_models.poraque
       architecture     : inferred from the checkpoint (4,202,001 parameters)
       transforms       : taken from the checkpoint
       frozen           : lifting path, 1,392 parameters;
@@ -80,7 +80,7 @@ Key & Default & Meaning \\
 \midrule
 \opt{enable} & \opt{false} & Start from \opt{pretrained\_checkpoint} instead of
 a fresh initialisation. \\
-\opt{pretrained\_} \opt{checkpoint} & \file{models/poraque\_} \file{models.pfno}
+\opt{pretrained\_} \opt{checkpoint} & \file{models/poraque\_} \file{models.poraque}
 & Base bundle to adapt. \\
 \opt{learning\_rate} & \opt{1e-05} & Replaces \opt{training.learning\_rate} for
 this run. \\
@@ -117,7 +117,7 @@ does not:
       LoRA             : 3 adapted layer(s), rank 8, alpha 16
       trainable        : 1,320 of 3,153,673 parameters (0.042%); the rest is frozen
       NOTE: the checkpoint will hold the ADAPTER only and name this base;
-            it cannot be loaded without poraque_models.pfno.
+            it cannot be loaded without poraque_models.poraque.
 \end{lstlisting}
 
 $B$ starts at \textbf{zero}, so $BA = 0$ and the adapted model \emph{is} the
@@ -150,20 +150,20 @@ The fine-tuning learning rate is much smaller by design: the base rate would
 walk the weights away from the solution being adapted before a small dataset
 could constrain them.
 
-\section{Output, and the \opt{.pfno} format}
-\label{sec:pfno}
+\section{Output, and the \opt{.poraque} format}
+\label{sec:poraque}
 
-Poraqu\^e writes its models as \opt{.pfno} --- \emph{Poraqu\^e Fourier Neural
-Operator}:
+Poraqu\^e writes its models as \opt{.poraque}, after the project rather than
+after the architecture inside it:
 
 \begin{center}
 \begin{tabular}{@{}lp{8.4cm}@{}}
 \toprule
 File & Contents \\
 \midrule
-\file{models/poraque\_models.pfno} & The universal model: both operators in one
+\file{models/poraque\_models.poraque} & The universal model: both operators in one
 file. \\
-\file{models/poraque\_finetuned.pfno} & A fine-tune, specialised to one
+\file{models/poraque\_finetuned.poraque} & A fine-tune, specialised to one
 family. \\
 \bottomrule
 \end{tabular}
@@ -184,8 +184,13 @@ scores for a general one's. The bundle metadata records
 frozen, so a checkpoint can always be traced back to its parent.
 
 \begin{pnote}
-Models written before this rename carry \opt{.pth}. If the \opt{.pfno} file is
-absent and a \opt{.pth} of the same stem is present, it is used and the
-substitution is announced --- an existing trained model should not become
-invisible because a default filename changed. Rename it to silence the notice.
+The extension has been changed twice: \opt{.pth} first became \opt{.pfno}, and
+\opt{.pfno} became \opt{.poraque} on 2 September 2026. Neither change touched
+the container, so every older file still loads. If the \opt{.poraque} file is
+absent and a \opt{.pfno}, \opt{.pth} or \opt{.pt} of the same stem is present,
+that one is used and the substitution is announced --- an existing trained model
+should not become invisible because a default filename changed. The search runs
+the other way too, which matters for a LoRA checkpoint: it stores the path of
+the base it adapts, and that path may name a file since renamed. Rename the file
+to silence the notice.
 \end{pnote}

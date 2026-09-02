@@ -56,7 +56,7 @@ class TestInitSeed:
 
     def test_survives_a_checkpoint_round_trip(self, tmp_path):
         """A committee member must be identifiable after it is saved."""
-        path = str(tmp_path / "member.pfno")
+        path = str(tmp_path / "member.poraque")
         _build(init_seed=5).save(path)
         assert FieldOperator.load(path, device="cpu").init_seed == 5
 
@@ -385,7 +385,7 @@ class TestCommitteeClass:
     def test_loads_from_bundles(self, members, tmp_path, potential):
         from poraque.ml import Committee, save_bundle
 
-        paths = [save_bundle(str(tmp_path / f"m{i}.pfno"), {"ext2chg": m})
+        paths = [save_bundle(str(tmp_path / f"m{i}.poraque"), {"ext2chg": m})
                  for i, m in enumerate(members)]
         committee = Committee.from_bundles(paths, "ext2chg", device="cpu")
         assert len(committee) == 3

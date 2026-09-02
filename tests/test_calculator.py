@@ -180,7 +180,7 @@ class TestGuardRails:
 
     def test_rejects_a_single_operator_checkpoint(self, tmp_path):
         """A bare FieldOperator file is not a bundle, and says so."""
-        path = str(tmp_path / "ext2chg.pfno")
+        path = str(tmp_path / "ext2chg.poraque")
         FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
                       device="cpu").save(path)
         with pytest.raises(ValueError, match="not a Poraque model bundle"):

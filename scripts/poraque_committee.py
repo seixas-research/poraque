@@ -120,6 +120,8 @@ from poraque import banner  # noqa: E402
 from poraque.fields import ChargeDensity, FieldGrid  # noqa: E402
 from poraque.ml import (  # noqa: E402
     BUNDLE_FILENAME,
+    BUNDLE_SUFFIX,
+    LEGACY_BUNDLE_SUFFIXES,
     Committee,
     disagreement_error_correlation,
 )
@@ -133,12 +135,18 @@ def member_bundle(entry):
     """
     The checkpoint inside one member directory, whatever the run named it.
 
-    ``poraque-train`` writes ``<output.root>/<name>/<name>.pfno``, and
+    ``poraque-train`` writes ``<output.root>/<name>/<name>.poraque``, and
     ``task.name`` is exactly the key a user is told to set so two runs cannot
     overwrite each other. Looking only for :data:`BUNDLE_FILENAME` therefore
     finds the members of a *default* run and none of the members of a named
     one — and reports it as "no committee here", which sends the user back to
     train the members they already trained.
+
+    The legacy extensions are searched too, and only after ``.poraque`` finds
+    nothing. A committee is trained member by member over days; renaming the
+    extension mid-way should not turn the earlier members into files nobody
+    can see, and mixing the two in one committee is legitimate because the
+    bundle *format* never changed — only what it is called.
 
     Returns
     -------
@@ -159,16 +167,17 @@ def member_bundle(entry):
     if os.path.isfile(default):
         return default
 
-    found = sorted(glob.glob(os.path.join(entry, "*.pfno")))
-    if len(found) == 1:
-        return found[0]
-    if len(found) > 1:
-        raise SystemExit(
-            f"{entry} holds {len(found)} checkpoints "
-            f"({', '.join(os.path.basename(p) for p in found)}) and none is "
-            f"the default {BUNDLE_FILENAME}. Point --models at the files "
-            f"themselves so the members are unambiguous."
-        )
+    for suffix in (BUNDLE_SUFFIX,) + LEGACY_BUNDLE_SUFFIXES:
+        found = sorted(glob.glob(os.path.join(entry, "*" + suffix)))
+        if len(found) == 1:
+            return found[0]
+        if len(found) > 1:
+            raise SystemExit(
+                f"{entry} holds {len(found)} checkpoints "
+                f"({', '.join(os.path.basename(p) for p in found)}) and none "
+                f"is the default {BUNDLE_FILENAME}. Point --models at the "
+                f"files themselves so the members are unambiguous."
+            )
     return None
 
 

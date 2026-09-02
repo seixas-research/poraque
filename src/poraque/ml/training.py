@@ -24,8 +24,10 @@ import numpy as np
 import torch
 
 from ..fields import ChargeDensity, ExternalPotential, KineticEnergyDensity
+from .config import BUNDLE_SUFFIX
 from .data import make_dataloader
 from .device import describe_device, resolve_device, synchronize
+from .distributed import DistributedContext, all_reduce_mean, barrier
 from .fno import FNO3d
 from .losses import PhysicsInformedLoss, data_error
 from .tasks import resolve_task
@@ -567,6 +569,12 @@ class FieldOperator:
         from .lora import apply_lora, load_lora_state_dict
 
         base_path = lora.get("base_checkpoint")
+        if base_path:
+            # The base may have been renamed since the fine-tune recorded it
+            # — the extension changed under the whole project on 2026-09-02 —
+            # and a LoRA checkpoint that cannot find its base holds no weights
+            # at all.
+            base_path = resolve_bundle_path(str(base_path))
         if not base_path or not os.path.exists(str(base_path)):
             raise FileNotFoundError(
                 f"This is a LoRA checkpoint: it holds a "
@@ -633,23 +641,35 @@ class FieldOperator:
 #: message instead of a ``KeyError`` three frames deep.
 BUNDLE_FORMAT = "poraque-bundle-1"
 
-#: Conventional filename for the unified checkpoint.
-BUNDLE_FILENAME = "poraque_models.pfno"
+#: Conventional filename for the unified checkpoint. The extension itself is
+#: :data:`poraque.ml.config.BUNDLE_SUFFIX`, re-exported here so that everything
+#: about naming a bundle is reachable from one module.
+BUNDLE_FILENAME = "poraque_models" + BUNDLE_SUFFIX
 
-#: Extensions Poraquê used to write bundles under. Retained only so a stale
-#: file can be *found and named*, never to change how one is read: the format
-#: is unchanged and the extension was never inspected when loading.
-LEGACY_BUNDLE_SUFFIXES = (".pth", ".pt")
+#: Extensions Poraquê used to write bundles under, newest first. Retained only
+#: so a stale file can be *found and named*, never to change how one is read:
+#: the format is unchanged and the extension was never inspected when loading.
+#: ``.pfno`` was the extension until 2026-09-02 and is what every model trained
+#: before then is called, so it is the one most likely to be hit.
+LEGACY_BUNDLE_SUFFIXES = (".pfno", ".pth", ".pt")
 
 
 def resolve_bundle_path(path, log=None):
     """
-    Fall back to a legacy extension when the ``.pfno`` file is absent.
+    Find the bundle the caller means, whichever extension it is under.
 
-    Renaming the default output from ``.pth`` to ``.pfno`` would otherwise make
-    an existing trained model invisible to every default path, which reads as
-    "no model" rather than "renamed". This looks beside the requested file for
-    the same stem under an old extension and says what it did.
+    Renaming the default output — ``.pth`` to ``.pfno``, then ``.pfno`` to
+    ``.poraque`` — would otherwise make an existing trained model invisible to
+    every default path, which reads as "no model" rather than "renamed". This
+    looks beside the requested file for the same stem under any of the names
+    Poraquê has used, and says what it did.
+
+    The search runs **both ways**, which the single-direction version did not.
+    A config that asks for ``.poraque`` and finds a ``.pfno`` is the obvious
+    case; the other one is a checkpoint that *records* the path it was trained
+    against — a LoRA adapter names its base — written before the rename and
+    read after the base was renamed. Only the extension is guessed at; a
+    different stem is a different model and is never substituted.
 
     Parameters
     ----------
@@ -661,23 +681,27 @@ def resolve_bundle_path(path, log=None):
     Returns
     -------
     str
-        ``path`` when it exists, the legacy file when only that does, and
-        ``path`` unchanged when neither does — so the caller still reports the
-        name the user actually asked for.
+        ``path`` when it exists, the file under another of Poraquê's own
+        extensions when only that does, and ``path`` unchanged when neither
+        does — so the caller still reports the name the user actually asked
+        for.
     """
     if os.path.exists(path):
         return path
 
-    stem = os.path.splitext(path)[0]
-    for suffix in LEGACY_BUNDLE_SUFFIXES:
-        legacy = stem + suffix
-        if os.path.exists(legacy):
+    stem, requested = os.path.splitext(path)
+    alternatives = [suffix for suffix
+                    in (BUNDLE_SUFFIX,) + LEGACY_BUNDLE_SUFFIXES
+                    if suffix != requested]
+    for suffix in alternatives:
+        candidate = stem + suffix
+        if os.path.exists(candidate):
             if log is not None:
-                log(f"  NOTE: {path} does not exist, but {legacy} does — "
+                log(f"  NOTE: {path} does not exist, but {candidate} does — "
                     f"using it.")
                 log(f"        Poraque now writes {os.path.basename(stem)}"
-                    f".pfno; rename the file to silence this.")
-            return legacy
+                    f"{BUNDLE_SUFFIX}; rename the file to silence this.")
+            return candidate
     return path
 
 
@@ -685,7 +709,7 @@ def resolve_bundle_path(path, log=None):
 #: :data:`BUNDLE_FILENAME`: a fine-tune is a specialisation of the base model,
 #: usually to a narrower set of materials, and writing it over the general
 #: model would silently replace something broad with something narrow.
-FINETUNED_BUNDLE_FILENAME = "poraque_finetuned.pfno"
+FINETUNED_BUNDLE_FILENAME = "poraque_finetuned" + BUNDLE_SUFFIX
 
 
 def infer_backbone_kwargs(model_state):
@@ -753,7 +777,7 @@ def save_bundle(path, operators, metadata=None):
     Parameters
     ----------
     path : str
-        Destination, conventionally ``models/poraque_models.pfno``.
+        Destination, conventionally ``models/poraque_models.poraque``.
     operators : dict
         ``{task_name: FieldOperator}``.
     metadata : dict, optional
@@ -766,7 +790,7 @@ def save_bundle(path, operators, metadata=None):
 
     Examples
     --------
-    >>> save_bundle("models/poraque_models.pfno",
+    >>> save_bundle("models/poraque_models.poraque",
     ...             {"ext2chg": first, "chg2tau": second})   # doctest: +SKIP
     """
     from ..version import __version__
@@ -973,16 +997,60 @@ def build_optimizer(parameters, name="adamw", learning_rate=1e-3,
         f"Unknown optimizer {name!r}; expected one of {list(OPTIMIZERS)}.")
 
 
-def _compiled_forward(operator, requested, mode, dynamic, emit, verbose):
+def _distributed_forward(operator, context, emit, verbose):
+    """
+    Wrap the model in ``DistributedDataParallel``, or return it unchanged.
+
+    Like :func:`_compiled_forward`, the wrapper is used to *call* the model and
+    is never assigned onto the operator: DDP prefixes every ``state_dict`` key
+    with ``module.``, so an operator holding one would write checkpoints that
+    load nowhere else. The parameters are the same tensors either way, which is
+    what lets the optimiser, the gradient clipping and the best-weight snapshot
+    all keep addressing ``operator.model`` directly.
+
+    Parameters
+    ----------
+    operator : FieldOperator
+        Already on ``cuda:<local_rank>``; DDP requires it, and putting every
+        rank on ``cuda:0`` is the classic way to get a fourfold slowdown
+        reported as a scaling failure.
+    context : DistributedContext
+    emit : callable
+    verbose : bool
+
+    Returns
+    -------
+    torch.nn.Module
+    """
+    if not context or not context.initialized:
+        return operator.model
+
+    from torch.nn.parallel import DistributedDataParallel
+
+    wrapped = DistributedDataParallel(
+        operator.model, device_ids=[context.local_rank],
+        output_device=context.local_rank,
+        # The Fourier layers are complex-valued and every parameter takes a
+        # gradient every step, so there is no unused branch for DDP to hunt
+        # for -- and the search costs a full graph traversal per iteration.
+        find_unused_parameters=False,
+    )
+    if verbose:
+        emit(f"    distributed: {context.describe()}")
+    return wrapped
+
+
+def _compiled_forward(operator, requested, mode, dynamic, emit, verbose,
+                      module=None):
     """
     The callable the training loop uses to run the model, compiled or not.
 
-    Returns ``operator.model`` unchanged unless ``requested`` and the device is
-    CUDA. The wrapper is deliberately *not* assigned back onto the operator:
-    :func:`torch.compile` returns a module whose ``state_dict`` keys are
-    prefixed ``_orig_mod.``, so storing it would make every checkpoint this run
-    writes — and the in-memory best-weight restore — silently incompatible with
-    every other code path that loads one.
+    Returns ``module`` (``operator.model`` by default) unchanged unless
+    ``requested`` and the device is CUDA. The wrapper is deliberately *not*
+    assigned back onto the operator: :func:`torch.compile` returns a module
+    whose ``state_dict`` keys are prefixed ``_orig_mod.``, so storing it would
+    make every checkpoint this run writes — and the in-memory best-weight
+    restore — silently incompatible with every other code path that loads one.
 
     Parameters
     ----------
@@ -996,14 +1064,21 @@ def _compiled_forward(operator, requested, mode, dynamic, emit, verbose):
         are bucketed by grid shape.
     emit : callable
     verbose : bool
+    module : torch.nn.Module, optional
+        What to compile. Under DDP this is the **wrapper**, not the bare model:
+        Dynamo's DDPOptimizer splits the graph at DDP's gradient-bucket
+        boundaries so the all-reduces can overlap the backward pass, and it can
+        only do that if it can see the wrapper. Compiling inside DDP instead
+        produces one graph with every all-reduce serialised after it.
 
     Returns
     -------
     callable
         ``(inputs, cell) -> prediction``.
     """
+    module = operator.model if module is None else module
     if not requested:
-        return operator.model
+        return module
 
     # Guarded on the device rather than on availability. Inductor has an MPS
     # backend and it is a different proposition from the CUDA one -- untested
@@ -1016,9 +1091,9 @@ def _compiled_forward(operator, requested, mode, dynamic, emit, verbose):
             f"only on CUDA here, so the model runs uncompiled.",
             RuntimeWarning, stacklevel=3,
         )
-        return operator.model
+        return module
 
-    compiled = torch.compile(operator.model, mode=mode, dynamic=bool(dynamic))
+    compiled = torch.compile(module, mode=mode, dynamic=bool(dynamic))
     if verbose:
         emit(f"    torch.compile: mode={mode!r} dynamic={bool(dynamic)} "
              f"(compilation is charged to the first epoch; compare it against "
@@ -1031,22 +1106,30 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
           grad_clip=1.0, eval_every=1, early_stopping=0, checkpoint=None,
           seed=0, verbose=True, log=None, optimizer="adamw",
           num_workers=0, pin_memory="auto", compile_model=False,
-          compile_mode="default", compile_dynamic=True):
+          compile_mode="default", compile_dynamic=True, distributed=None):
     """
     Train a :class:`FieldOperator`.
 
-    **One GPU.** Poraquê trains on a single device; request one. There is no
-    :class:`~torch.nn.parallel.DistributedDataParallel` path and no
-    ``DataParallel``, so a job allocated four GPUs sees four and uses
-    ``cuda:0``. That is a deliberate omission rather than an oversight: for
-    fields of this size the optimiser step is tens of milliseconds on a model of
-    a few megabytes, the constraint is getting data to it, and replicating the
-    loader across ranks would multiply that cost by the rank count. The
-    non-obvious part of ever adding it is that
-    :class:`~poraque.ml.data.ShapeBucketSampler` is a ``batch_sampler`` grouping
-    by grid shape, which a plain ``DistributedSampler`` does not compose with,
-    and partitioning shapes across ranks unbalances the load badly --- the
-    buckets differ by two orders of magnitude in size.
+    **One GPU, unless a group is passed.** With ``distributed`` left at
+    ``None`` this is the single-device loop it has always been. Given an
+    initialised :class:`~poraque.ml.distributed.DistributedContext` it becomes
+    data-parallel over NCCL: the model is wrapped in
+    :class:`~torch.nn.parallel.DistributedDataParallel`, the shape-bucketed
+    batches are partitioned across ranks by
+    :class:`~poraque.ml.data.DistributedShapeBucketSampler`, and rank 0 alone
+    prints and writes.
+
+    Three things about that are worth knowing before reading a scaling number.
+    The **effective batch size is multiplied by the world size**, so a
+    four-rank run at ``batch_size`` 32 is stepping on 128 samples and is not
+    the same optimiser as the one-rank run it is being compared against.
+    **Validation is not distributed**: every rank evaluates the whole held-out
+    set, redundantly, so that ``best_error`` and the early-stopping decision
+    are identical on every rank by construction rather than by a reduction that
+    could be forgotten — ranks that disagreed about whether to stop would leave
+    the ones still training waiting on a collective nobody joins. And the
+    **training loss is all-reduced** at the end of each epoch, so the logged
+    number is over the whole dataset and not over this rank's quarter of it.
 
     Parameters
     ----------
@@ -1124,6 +1207,11 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         ``torch.compile``'s ``dynamic``. ``True`` asks for one graph over
         symbolic shapes, which is what makes this affordable at all: batches are
         bucketed by grid shape and a real dataset has many.
+    distributed : DistributedContext, optional
+        The process group this rank belongs to, already initialised by
+        :func:`~poraque.ml.distributed.initialize`. ``None`` and a disabled
+        context are the same thing, so a caller passes it unconditionally and
+        the single-device path is what runs when there is no group.
 
     Returns
     -------
@@ -1155,6 +1243,15 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         first epoch, so the first entry against the rest is the price of it.
     """
     torch.manual_seed(seed)
+    context = distributed if distributed is not None else DistributedContext()
+    # Rank 0 alone writes and prints. Four ranks appending to one log truncate
+    # each other's lines, and four calling `operator.save` on one path race on
+    # the same inode -- which does not raise, it leaves a checkpoint that loads
+    # and holds a mixture. Applied here, once, rather than guarded at each of
+    # the dozen sites below.
+    if not context.is_main:
+        verbose = False
+        checkpoint = None
     criterion = loss or PhysicsInformedLoss(task=operator.task.name)
     # Only unfrozen parameters reach the optimiser. A frozen one would receive
     # no gradient and so never move, but AdamW's decoupled weight decay is
@@ -1181,7 +1278,13 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
     loader = make_dataloader(dataset, batch_size=batch_size, shuffle=True,
                              seed=seed, num_workers=num_workers,
-                             pin_memory=pin_memory)
+                             pin_memory=pin_memory, distributed=context)
+    # Deliberately **not** distributed. Every rank evaluates the whole held-out
+    # set, which is redundant work -- forward-only, on a fifth of the data --
+    # bought in exchange for `best_error` being identical on every rank without
+    # a reduction anyone could forget to add. Early stopping is decided from
+    # that number, and ranks that disagreed about whether to break would leave
+    # the ones still training in a collective that never completes.
     validation_loader = (
         make_dataloader(validation, batch_size=batch_size, shuffle=False,
                         seed=seed, num_workers=num_workers,
@@ -1190,13 +1293,18 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     )
 
     # Called instead of `operator.model` inside the loop, never assigned to it.
-    # `torch.compile` returns a wrapper whose `state_dict` keys carry an
-    # `_orig_mod.` prefix; storing it would silently make every checkpoint this
-    # run writes unloadable by every other code path.
+    # Both wrappers rename `state_dict` keys -- `_orig_mod.` for compile,
+    # `module.` for DDP -- and storing either would silently make every
+    # checkpoint this run writes unloadable by every other code path.
+    #
+    # DDP first, compile on top: Dynamo's DDPOptimizer splits the graph at
+    # DDP's gradient-bucket boundaries so the all-reduces overlap the backward
+    # pass, and it can only do that if it can see the wrapper.
+    emit = log if log is not None else print
+    replicated = _distributed_forward(operator, context, emit, verbose)
     forward = _compiled_forward(operator, compile_model, compile_mode,
-                                compile_dynamic,
-                                log if log is not None else print,
-                                verbose)
+                                compile_dynamic, emit, verbose,
+                                module=replicated)
 
     history = {"train_loss": [], "val_error": [], "val_epoch": [],
                "seconds_per_epoch": []}
@@ -1204,7 +1312,6 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         torch.cuda.reset_peak_memory_stats(operator.device)
     best_error = float("inf")
     best_epoch, best_state, stopped_early = 0, None, False
-    emit = log if log is not None else print
     eval_every = max(1, int(eval_every))
     early_stopping = max(0, int(early_stopping))
 
@@ -1329,9 +1436,15 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             lr_schedule.step()
 
         divisor = max(batches, 1)
+        # Reduced before it leaves the device, so the collective costs one
+        # small all-reduce rather than a host round trip per rank. Every rank
+        # holds the same number afterwards, which is what keeps the early-
+        # stopping branch below in agreement across the group. A no-op without
+        # one, so the single-device path is unchanged.
+        running = all_reduce_mean(running / divisor, context)
         # The one synchronisation per epoch that the device-side accumulator
         # above exists to reduce the count of.
-        mean_loss = float(running / divisor)
+        mean_loss = float(running)
         history["train_loss"].append(mean_loss)
         # After the sync `.item()` forced, so this is compute rather than
         # queueing -- an unsynchronised clock on an asynchronous backend
@@ -1404,6 +1517,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         history["peak_vram_reserved_bytes"] = int(
             torch.cuda.max_memory_reserved(operator.device))
 
+    # Rank 0 writes the checkpoint just above; the others must not run ahead
+    # into the next task and start reading a file that is still being written.
+    barrier(context)
     return history
 
 

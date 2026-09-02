@@ -2,7 +2,7 @@
 
 ```bash
 python experiments/total_energy/vasp_compare.py     # the expression vs VASP
-python experiments/total_energy/energy_check.py <bundle.pfno> <cache>
+python experiments/total_energy/energy_check.py <bundle.poraque> <cache>
 ```
 
 `vasp_compare.py` uses no model: it hands the **DFT** fields to Poraquê's energy

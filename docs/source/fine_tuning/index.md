@@ -16,7 +16,7 @@ poraque-train --config configs/train.yaml
 
 # 2. specialise it on one family
 poraque-train --config configs/train.yaml \
-    --fine-tune --pretrained models/poraque_models.pfno \
+    --fine-tune --pretrained models/poraque_models.poraque \
     --root data/oxides --checkpoint-dir models/oxides
 ```
 
@@ -60,7 +60,7 @@ precisely what differs between material families.
 The run reports what was actually frozen, so you never have to infer it:
 
 ```text
-      fine-tuning from : models/poraque_models.pfno
+      fine-tuning from : models/poraque_models.poraque
       architecture     : inferred from the checkpoint (4,202,001 parameters)
       transforms       : taken from the checkpoint
       frozen           : lifting path, 1,392 parameters; 4,200,609 remain trainable
@@ -79,7 +79,7 @@ undoing the pre-training the freeze was meant to preserve.
 ```yaml
 fine_tuning:
   enable: false
-  pretrained_checkpoint: models/poraque_models.pfno
+  pretrained_checkpoint: models/poraque_models.poraque
   learning_rate: 1.0e-05
   freeze_lifting_layers: false
   use_lora: false
@@ -91,7 +91,7 @@ fine_tuning:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enable` | `false` | start from `pretrained_checkpoint` instead of a fresh init |
-| `pretrained_checkpoint` | `models/poraque_models.pfno` | base bundle to adapt |
+| `pretrained_checkpoint` | `models/poraque_models.poraque` | base bundle to adapt |
 | `learning_rate` | `1e-05` | replaces `training.learning_rate` for this run |
 | `freeze_lifting_layers` | `false` | hold the input lifting path fixed |
 | `use_lora` | `false` | freeze everything and learn a low-rank correction |
@@ -121,7 +121,7 @@ orders of magnitude and the fine-tune fits where a full one does not:
       LoRA             : 3 adapted layer(s), rank 8, alpha 16
       trainable        : 1,320 of 3,153,673 parameters (0.042%); the rest is frozen
       NOTE: the checkpoint will hold the ADAPTER only and name this base;
-            it cannot be loaded without poraque_models.pfno.
+            it cannot be loaded without poraque_models.poraque.
 ```
 
 $B$ starts at **zero**, so $BA = 0$ and the adapted model *is* the base model
@@ -151,15 +151,15 @@ and the run says so rather than appearing to apply both.
 
 ## Output
 
-A fine-tune is written as **`poraque_finetuned.pfno`**, never over the base
-`poraque_models.pfno`. The two coexist in the same directory, and a run that
+A fine-tune is written as **`poraque_finetuned.poraque`**, never over the base
+`poraque_models.poraque`. The two coexist in the same directory, and a run that
 would genuinely overwrite its own base is refused — before training starts, not
 after.
 
 The PDF report leads its Configuration section with the fine-tuning facts and
 carries a caveat at the top:
 
-> This is a FINE-TUNED model, adapted from `models/poraque_models.pfno`. Its
+> This is a FINE-TUNED model, adapted from `models/poraque_models.poraque`. Its
 > scores describe the material family it was specialised on, and say nothing
 > about the broader set the base model was trained across.
 
@@ -167,14 +167,15 @@ The bundle's metadata records `fine_tuned_from`, the learning rate and whether
 the lifting layers were frozen, so a checkpoint can always be traced back to
 its parent.
 
-## The `.pfno` format
+## The `.poraque` format
 
-Poraquê writes its models as **`.pfno`** — *Poraquê Fourier Neural Operator*:
+Poraquê writes its models as **`.poraque`**, after the project rather than
+after the architecture inside it:
 
 | File | Contents |
 | --- | --- |
-| `models/poraque_models.pfno` | the universal model: both operators in one file |
-| `models/poraque_finetuned.pfno` | a fine-tune, specialised to one family |
+| `models/poraque_models.poraque` | the universal model: both operators in one file |
+| `models/poraque_finetuned.poraque` | a fine-tune, specialised to one family |
 
 The container is a `torch.save` payload keyed by task (`ext2chg`, `chg2tau`)
 with a format tag and metadata; the extension is a label, not a different
@@ -182,8 +183,13 @@ serialisation. Nothing inspects it when loading, so a bundle under any name
 loads fine.
 
 ```{note}
-Models written before this rename carry `.pth`. If the `.pfno` file is absent
-and a `.pth` of the same stem is present, it is used and the substitution is
-announced — an existing trained model should not become invisible because a
-default filename changed. Rename it to silence the notice.
+The extension has been changed twice: `.pth` first became `.pfno`, and `.pfno`
+became `.poraque` on 2 September 2026. Neither change touched the container, so
+every older file still loads. If the `.poraque` file is absent and a `.pfno`,
+`.pth` or `.pt` of the same stem is present, that one is used and the
+substitution is announced — an existing trained model should not become
+invisible because a default filename changed. The search runs the other way
+too, which matters for a LoRA checkpoint: it stores the path of the base it
+adapts, and that path may name a file since renamed. Rename the file to silence
+the notice.
 ```

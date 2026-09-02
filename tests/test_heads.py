@@ -347,7 +347,7 @@ class TestFieldOperatorIntegration:
         density, _ = chg2tau.load_fields(0)
         expected = operator.predict(density).data
 
-        path = tmp_path / "pauli.pfno"
+        path = tmp_path / "pauli.poraque"
         operator.save(path)
         restored = FieldOperator.load(path, device="cpu", **kwargs)
 
@@ -361,7 +361,7 @@ class TestFieldOperatorIntegration:
         operator = FieldOperator("chg2tau", input_transform=chg2tau.input_transform,
                                  target_transform=chg2tau.target_transform,
                                  device="cpu", **kwargs)
-        path = tmp_path / "plain.pfno"
+        path = tmp_path / "plain.poraque"
         operator.save(path)
         restored = FieldOperator.load(path, device="cpu", **kwargs)
         assert restored.pauli_residual is False

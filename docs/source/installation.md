@@ -139,14 +139,75 @@ Poraquê's start-up banner prints torch's version, its CUDA build **and its
 install directory** for exactly this reason, so a mismatch appears in the run's
 own log instead of becoming a four-hour CPU run.
 
-### One GPU
+(multi-gpu)=
+### Several GPUs, under Slurm
 
-Poraquê trains on a single device; request one. There is no
-`DistributedDataParallel` path, so a job allocated four GPUs will see four and
-use `cuda:0`. That is deliberate: for fields of this size the optimiser step is
-tens of milliseconds on a model of a few megabytes, and the constraint is
-getting data to it rather than the arithmetic — see
-[`data.cache_in_memory`](configuration.md).
+Poraquê trains data-parallel over NCCL when the launcher describes a group, and
+on one device when it does not. It cannot invent ranks: **the launcher decides
+the topology and `training.distributed` decides only whether to believe it.**
+The shipped submission script is `scripts/slurm/poraque_ddp.sbatch`:
+
+```bash
+sbatch scripts/slurm/poraque_ddp.sbatch configs/train.yaml
+```
+
+The line that matters is `--ntasks-per-node`, which must equal the number of
+GPUs:
+
+```bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=4          # one task per GPU. Not optional.
+#SBATCH --gres=gpu:4
+
+srun poraque-train --config configs/train.yaml --device cuda \
+                   --strict-device --distributed auto
+```
+
+Requesting four GPUs and launching **one** task is the failure to watch for.
+It is not an error — it is a perfectly good single-GPU run — but it leaves
+`SLURM_NTASKS` at 1 and looks, from inside the process, exactly like the
+single-GPU run somebody asked for. The run log therefore prints the Slurm
+variables it saw:
+
+```
+  ranks  : nccl rank 0/4 local_rank 0 on sdumont1234:24601 (launched by slurm)
+             SLURM_JOB_ID = 4601
+             SLURM_NTASKS = 4
+           effective batch = 10 x 4 ranks = 40
+```
+
+`MASTER_ADDR` is the first host of `SLURM_STEP_NODELIST` and `MASTER_PORT` is
+derived from `SLURM_JOB_ID`, so nothing is hard-coded and two jobs sharing a
+node cannot collide on a port. `torchrun` is understood as well, and is
+consulted *after* Slurm: a `torchrun` launch inside an allocation carries both
+sets of variables and its own describe the group it actually formed.
+
+Three things to know before reading a scaling number:
+
+- **The effective batch size is `batch_size` × the world size.** A four-rank
+  run at `batch_size: 10` steps on 40 samples and is not the same optimiser as
+  the one-rank run it is being compared against.
+- **Rank 0 alone writes** the checkpoint, the metrics, the figures and the PDF,
+  and alone prints. Four ranks opening one log truncate each other's.
+- **`num_workers` gets worse, not better, under DDP.** Each rank is already a
+  process with a field cache of its own. One rank per GPU, cache on, no
+  workers — see [`data.cache_in_memory`](cache-in-memory).
+
+To bisect a result, run the same allocation single-GPU with `--distributed off`
+and compare `seconds_per_epoch` in the metrics JSON.
+
+```{note}
+NCCL only. Gloo would work on CPU and would be a way to test the plumbing, but
+it would also let a misconfigured job train distributed across 96 CPU cores at
+a fraction of one GPU's speed — the same silent waste `strict_device` exists to
+prevent. Without CUDA the group is refused with a warning and the run continues
+on one device.
+
+There is no `DataParallel` fallback either. Single-process multi-GPU is slower
+than one GPU for a model of a few megabytes, it changes the effective batch
+size silently, and offering it would mean a laptop run and a cluster run
+differed in a way nothing recorded.
+```
 
 ## Verifying the installation
 

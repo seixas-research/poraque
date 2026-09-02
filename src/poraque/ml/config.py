@@ -45,6 +45,15 @@ def _require_yaml():
         )
 
 
+#: The extension a trained bundle is written under. It lives here, in the
+#: torch-free layer, because this is where :meth:`TrainingConfig.checkpoint_path`
+#: builds the name; :mod:`poraque.ml.training` imports it rather than keeping a
+#: second copy. The name has now been changed twice — ``.pth`` to ``.pfno`` to
+#: ``.poraque`` — and each time the cost was some default path elsewhere still
+#: spelling the old one.
+BUNDLE_SUFFIX = ".poraque"
+
+
 @dataclass
 class TaskConfig:
     """
@@ -60,7 +69,7 @@ class TaskConfig:
         it::
 
             models/<name>/
-                <name>.pfno         the weights
+                <name>.poraque         the weights
                 log/                training log, metrics JSON, resolved config
                 plots/              loss curves, parity, field slices
                 report/             the generated PDF
@@ -1130,9 +1139,46 @@ class TrainingConfig_:
         or a build with no kernels for this architecture. The last is the one
         ``torch.cuda.is_available()`` cannot detect on its own; see
         :func:`~poraque.ml.device.cuda_capability_supported`.
+    distributed : str
+        Multi-GPU training. ``"auto"`` (the default) forms a
+        ``DistributedDataParallel`` group over NCCL **when the environment
+        already describes one** — a Slurm step with more than one task, or a
+        ``torchrun`` launch — and does nothing otherwise. ``"off"`` refuses to,
+        which is how a four-task allocation is made to run four independent
+        single-GPU jobs, and how a distributed run is bisected against a
+        single-device one.
+
+        ``"auto"`` cannot turn a one-process run into a four-GPU one: the
+        launcher decides the topology and this key decides only whether to
+        believe it. On Santos Dumont that means ``--ntasks-per-node=4`` beside
+        ``--gres=gpu:4`` in the submission script; requesting four GPUs and
+        launching one task leaves ``SLURM_NTASKS`` at 1 and looks from inside
+        the process exactly like a single-GPU run that was asked for, which is
+        why the run log prints the Slurm variables it saw.
+
+        Rank 0 alone prints and writes the checkpoint, the metrics, the figures
+        and the PDF. The **effective batch size is** ``batch_size`` **times the
+        world size**, so a four-rank run is not the same optimiser as the
+        one-rank run it is compared against.
+
+        There is deliberately no ``DataParallel`` fallback. Single-process
+        multi-GPU is slower than one GPU for a model of a few megabytes, it
+        changes the effective batch size silently, and offering it would mean a
+        laptop run and a cluster run differed in a way nothing recorded.
+    distributed_timeout : float
+        Minutes before a collective is declared failed. The default of 30 is
+        long on purpose: the first collective happens after every rank has read
+        its prepared cache, and a cold parallel-filesystem read of a few
+        hundred densities is minutes. A timeout that fires there reports itself
+        as a NCCL error and sends the reader looking at the network.
     num_workers : int
         DataLoader worker processes. ``0`` (the default) loads in the main
         process.
+
+        Under ``distributed`` this arithmetic gets worse, not better: each rank
+        is already a process with a field cache of its own, and workers on top
+        multiply the copies again. One rank per GPU, cache on, no workers is
+        where to start.
 
         **Read ``data.cache_in_memory`` before raising this.** The two are
         alternatives, not complements, and the measurement is unambiguous: on a
@@ -1409,6 +1455,8 @@ class TrainingConfig_:
     init_seed: int = None
     device: str = "auto"
     strict_device: bool = False
+    distributed: str = "auto"
+    distributed_timeout: float = 30.0
     num_workers: int = 0
     pin_memory: str = "auto"
     tf32: bool = True
@@ -1435,7 +1483,7 @@ class OutputConfig:
     Everything a run writes lives under ``<root>/<name>/``::
 
         models/pt_w16_m8_l3/
-            pt_w16_m8_l3.pfno        the weights
+            pt_w16_m8_l3.poraque        the weights
             log/                     the training log, the metrics JSON,
                                      and the resolved config
             plots/                   loss curves, parity, slices, histograms
@@ -1470,7 +1518,7 @@ class OutputConfig:
         Typeset the PDF into ``report/``. Needs a LaTeX toolchain; without one
         the source ``.tex`` is written instead and the run says so.
     checkpoint : bool
-        Write the ``.pfno``. Off only makes sense for a run whose purpose is
+        Write the ``.poraque``. Off only makes sense for a run whose purpose is
         the metrics, such as a k-fold estimate.
     log, json : str or None
         Explicit override for the log and metrics paths. ``null`` (the
@@ -1830,7 +1878,7 @@ class FineTuningConfig:
     """
 
     enable: bool = False
-    pretrained_checkpoint: str = "models/poraque_models.pfno"
+    pretrained_checkpoint: str = "models/poraque_models" + BUNDLE_SUFFIX
     learning_rate: float = 1e-5
     freeze_lifting_layers: bool = False
     use_lora: bool = False
@@ -2090,7 +2138,7 @@ class TrainingConfig:
 
     def checkpoint_path(self):
         """
-        ``<run>/<name>.pfno``, or ``None`` when checkpointing is off.
+        ``<run>/<name>.poraque``, or ``None`` when checkpointing is off.
 
         A fine-tune gets its own stem. It is a specialisation, usually onto a
         narrower set of materials, and writing it over the general model would
@@ -2108,7 +2156,7 @@ class TrainingConfig:
         stem = self.run_name()
         if self.fine_tuning.enable:
             stem += "_finetuned"
-        return os.path.join(root, f"{stem}.pfno")
+        return os.path.join(root, stem + BUNDLE_SUFFIX)
 
     def log_path(self):
         """

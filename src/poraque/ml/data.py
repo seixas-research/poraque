@@ -856,6 +856,115 @@ class ShapeBucketSampler(Sampler):
         return len(self._batches())
 
 
+class DistributedShapeBucketSampler(Sampler):
+    """
+    :class:`ShapeBucketSampler`, split across the ranks of a DDP group.
+
+    The batches are distributed, not the samples, and that is the whole design.
+    ``DataLoader`` takes a ``sampler`` **or** a ``batch_sampler`` and never
+    both, so a plain :class:`~torch.utils.data.distributed.DistributedSampler`
+    would have to displace the shape bucketing --- and a batch mixing
+    :math:`32^3` with :math:`40^3` does not merely train badly, it raises in
+    :func:`collate_fields`, because there is no padding anywhere in this
+    pipeline and the FFT is the reason.
+
+    So the bucketing runs first, unchanged and identically on every rank (it is
+    a pure function of ``seed`` and ``epoch``, which is what makes the ranks
+    agree without communicating), and the resulting *list of batches* is what
+    a real ``DistributedSampler`` is then asked to partition. Every rank gets a
+    unique, non-overlapping subset; no batch is split; no batch mixes shapes.
+
+    **The padding is load-bearing.** ``DistributedSampler`` extends its index
+    list to a multiple of the world size by wrapping around to the front, so
+    every rank yields the same number of batches. That is not tidiness: DDP
+    all-reduces gradients inside each ``backward()``, and a rank that runs out
+    of batches first leaves the others waiting in a collective that will never
+    complete. The job then burns its allocation in a hang rather than failing.
+    The cost is that up to ``world_size - 1`` batches are seen twice in an
+    epoch by somebody, which slightly over-weights a few materials --- against
+    a deadlock, that is not a close call.
+
+    Parameters
+    ----------
+    dataset : FieldPairDataset
+    batch_size : int, optional
+        Maximum samples per batch *per rank*. The effective global batch is
+        ``batch_size * world_size``, which is worth remembering when comparing
+        a four-GPU run against a one-GPU one: they are not the same optimiser.
+    shuffle : bool, optional
+    drop_last : bool, optional
+        Passed to the inner :class:`ShapeBucketSampler` and applied to *batches
+        within a bucket*, not to the rank partition --- the rank partition is
+        padded rather than truncated, for the reason above.
+    seed : int, optional
+    num_replicas, rank : int, optional
+        World size and this process's rank. Read from the initialised process
+        group when omitted, which is what ``DistributedSampler`` does and what
+        makes an explicit pair useful only in a test.
+
+    See Also
+    --------
+    poraque.ml.distributed : the launch side, and why NCCL only.
+    """
+
+    def __init__(self, dataset, batch_size=1, shuffle=True, drop_last=False,
+                 seed=0, num_replicas=None, rank=None):
+        from torch.utils.data.distributed import DistributedSampler
+
+        self.buckets_sampler = ShapeBucketSampler(
+            dataset, batch_size=batch_size, shuffle=shuffle,
+            drop_last=drop_last, seed=seed)
+        self.dataset = dataset
+        self.batch_size = int(batch_size)
+        self.seed = int(seed)
+        self.epoch = 0
+
+        # The number of batches is a property of the buckets and the batch
+        # size, not of the epoch: shuffling reorders batches and reorders
+        # within a bucket, and neither changes how many chunks a bucket splits
+        # into. So a fixed-length index range is a faithful stand-in for the
+        # batch list, and `DistributedSampler` can partition it once.
+        self._n_batches = len(self.buckets_sampler)
+        self.partition = DistributedSampler(
+            range(self._n_batches), num_replicas=num_replicas, rank=rank,
+            shuffle=shuffle, seed=seed, drop_last=False,
+        )
+        self.num_replicas = self.partition.num_replicas
+        self.rank = self.partition.rank
+
+    def set_epoch(self, epoch):
+        """
+        Advance both halves of the sampler.
+
+        Forwarded to the bucket sampler *and* to the ``DistributedSampler``.
+        Missing either is a silent bug rather than a crash: forget the first
+        and every epoch draws the same batches, forget the second and every
+        epoch sends the same batches to the same rank, and in both cases
+        training proceeds and merely learns less than the log claims.
+        """
+        self.epoch = int(epoch)
+        self.buckets_sampler.set_epoch(epoch)
+        self.partition.set_epoch(epoch)
+
+    def _batches(self):
+        # Rebuilt per epoch and identical on every rank, since it depends only
+        # on `seed` and `epoch`. That identity is what allows the partition to
+        # be agreed without a collective.
+        batches = self.buckets_sampler._batches()
+        if not batches:
+            return []
+        # `DistributedSampler`'s padding can wrap past the end when the batch
+        # count is not a multiple of the world size; the modulo is what makes
+        # that wrap land on a real batch.
+        return [batches[index % len(batches)] for index in self.partition]
+
+    def __iter__(self):
+        return iter(self._batches())
+
+    def __len__(self):
+        return len(self.partition)
+
+
 def collate_fields(samples):
     """
     Collate samples that share one grid shape.
@@ -906,7 +1015,7 @@ def collate_fields(samples):
 
 
 def make_dataloader(dataset, batch_size=1, shuffle=True, num_workers=0, seed=0,
-                    pin_memory=False):
+                    pin_memory=False, distributed=None):
     """
     Build a :class:`torch.utils.data.DataLoader` that tolerates ragged grids.
 
@@ -924,6 +1033,10 @@ def make_dataloader(dataset, batch_size=1, shuffle=True, num_workers=0, seed=0,
         destination is CUDA --- it does nothing on MPS and some PyTorch
         versions warn there --- so the caller decides, since it is
         :func:`~poraque.ml.training.train` that knows the operator's device.
+    distributed : DistributedContext, optional
+        When it describes a real group, batches are partitioned across its
+        ranks by :class:`DistributedShapeBucketSampler`. A disabled context and
+        ``None`` are the same thing, so the caller passes it unconditionally.
 
     Returns
     -------
@@ -937,11 +1050,21 @@ def make_dataloader(dataset, batch_size=1, shuffle=True, num_workers=0, seed=0,
     the two together back up to **18.8 s**. Each worker is a process with a
     cache of its own, so the parse the cache removes is paid once per worker
     instead of once.
+
+    That arithmetic gets worse under DDP, not better: each of the four ranks is
+    already a process with a cache of its own, so ``num_workers`` on top
+    multiplies the copies by another factor. One rank per GPU with the cache on
+    and no workers is the configuration to start from.
     """
     from torch.utils.data import DataLoader
 
-    sampler = ShapeBucketSampler(dataset, batch_size=batch_size, shuffle=shuffle,
-                                 seed=seed)
+    if distributed:
+        sampler = DistributedShapeBucketSampler(
+            dataset, batch_size=batch_size, shuffle=shuffle, seed=seed,
+            num_replicas=distributed.world_size, rank=distributed.rank)
+    else:
+        sampler = ShapeBucketSampler(dataset, batch_size=batch_size,
+                                     shuffle=shuffle, seed=seed)
     options = {}
     if num_workers:
         # Rebuilding the worker pool every epoch costs more than the pool saves

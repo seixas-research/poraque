@@ -428,7 +428,7 @@ class Committee:
     Examples
     --------
     >>> committee = Committee.from_bundles(                    # doctest: +SKIP
-    ...     sorted(glob("models/committee_*/poraque_models.pfno")), "ext2chg")
+    ...     sorted(glob("models/committee_*/poraque_models.poraque")), "ext2chg")
     >>> committee.disagreement(potential)["jsd"]               # doctest: +SKIP
     """
 
@@ -466,7 +466,7 @@ class Committee:
         Parameters
         ----------
         paths : sequence of str
-            One ``poraque_models.pfno`` per member.
+            One ``poraque_models.poraque`` per member.
         task : str
             ``"ext2chg"`` or ``"chg2tau"``.
         device : str or torch.device, optional

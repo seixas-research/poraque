@@ -14,7 +14,7 @@
 | Code-agnostic ingestion | VASP done; QE/GPAW scaffolded | contract is four methods |
 | Spectral resampling | done | integral preserved to $5.6\times10^{-17}$ |
 | FNO, ragged grids | done | one model, 3 grid shapes, CPU/MPS agree to $10^{-6}$ |
-| Universal training | done | `models/{ext2chg,chg2tau}.pfno` |
+| Universal training | done | `models/{ext2chg,chg2tau}.poraque` |
 | K-fold cross-validation | done | 0.0295 ± 0.0025 / 0.0525 ± 0.0031 |
 | Pauli-residual head | done | −18.3 % error, trains 17.8 % faster |
 | Exact spectral $\nabla$, $\nabla^2$, $v_H$ | done | Poisson residual $10^{-12}$ |

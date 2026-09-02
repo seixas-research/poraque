@@ -82,8 +82,33 @@ default) keeps decoded fields in RAM between epochs; without it every epoch
 re-parses every file, which measured **10.3× on a V100** with the validation
 error unchanged to five decimals. And `training.num_workers` is its
 *alternative*, not its complement — added to the cache it makes training slower,
-since each worker re-parses the set into a cache of its own. Poraquê trains on
-one GPU; request one.
+since each worker re-parses the set into a cache of its own.
+
+### On several GPUs, under Slurm
+
+Poraquê trains data-parallel over NCCL when the launcher describes a group, and
+on one device when it does not. It cannot invent ranks: **the launcher decides
+the topology and `training.distributed` decides only whether to believe it.**
+
+```bash
+sbatch scripts/slurm/poraque_ddp.sbatch configs/train.yaml
+```
+
+The line that matters is `--ntasks-per-node=4` beside `--gres=gpu:4`.
+Requesting four GPUs and launching one task is a perfectly good single-GPU run
+that looks, from inside the process, exactly like the one you asked for — which
+is why the run log prints the Slurm variables it saw. `MASTER_ADDR` comes from
+`SLURM_STEP_NODELIST` and `MASTER_PORT` from `SLURM_JOB_ID`, so nothing is
+hard-coded and two jobs on one node cannot collide.
+
+The **batches** are split, not the samples. `ShapeBucketSampler` groups
+materials by grid shape so no padding ever reaches the FFT, and a `DataLoader`
+takes a `sampler` or a `batch_sampler` and never both — so the bucketing runs
+first, identically on every rank, and a real `DistributedSampler` partitions the
+resulting *list of batches*. Every rank gets a unique, non-overlapping subset
+and the same *number* of batches, which is what stops DDP's per-`backward()`
+all-reduce from hanging on the rank that ran out first. The effective batch size
+is `batch_size` × the world size, and rank 0 alone prints and writes.
 
 ### Faster CPU inference (optional)
 
@@ -111,9 +136,9 @@ poraque-train --config configs/train.yaml
 poraque-train --config configs/train.yaml --kfold --k-folds 5
 
 # 3. predict a structure that has never been computed. --models points at
-#    the bundle step 1 wrote: models/<task.name>/<task.name>.pfno
+#    the bundle step 1 wrote: models/<task.name>/<task.name>.poraque
 poraque-inference new_structure/ --output predictions/new_structure \
-    --models models/pt_w16_m8_l3/pt_w16_m8_l3.pfno
+    --models models/pt_w16_m8_l3/pt_w16_m8_l3.poraque
 
 # 4. calibrate: does committee disagreement predict error? Run this on
 #    LABELLED data first -- it costs nothing and says whether step 5 means
@@ -159,7 +184,7 @@ Everything a run writes lands under `models/<name>/`:
 
 ```text
 models/pt_w16_m8_l3/
-    pt_w16_m8_l3.pfno     the weights
+    pt_w16_m8_l3.poraque     the weights
     log/                  training log, metrics JSON, resolved config
     plots/                loss curves, parity, field slices
     report/               the generated PDF
@@ -204,7 +229,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
-atoms.calc = Poraque("models/poraque_models.pfno", potcar_dir="POTCARs")
+atoms.calc = Poraque("models/poraque_models.poraque", potcar_dir="POTCARs")
 
 rho = atoms.calc.get_charge_density(atoms)   # ChargeDensity, e/Ang^3
 print(rho.electron_count())                  # 44.0, the valence count

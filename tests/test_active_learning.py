@@ -693,7 +693,7 @@ class TestMemberBundleDiscovery:
     """
     A committee must be discoverable however the run named its checkpoints.
 
-    ``poraque-train`` writes ``<checkpoint_dir>/<task.name>.pfno``, and
+    ``poraque-train`` writes ``<checkpoint_dir>/<task.name>.poraque``, and
     ``task.name`` is exactly the key users are told to set so two runs cannot
     overwrite each other. Looking only for the default filename found the
     members of a default run and none of the members of a named one -- then
@@ -716,13 +716,36 @@ class TestMemberBundleDiscovery:
     def test_a_default_run_is_found(self, tmp_path):
         from poraque_committee import resolve_bundles
 
-        pattern = self._members(tmp_path, "poraque_models.pfno")
+        pattern = self._members(tmp_path, "poraque_models.poraque")
         assert len(resolve_bundles(pattern)) == 3
+
+    def test_a_member_may_still_carry_the_old_extension(self, tmp_path):
+        """
+        The bundle extension became ``.poraque`` on 2026-09-02. A committee is
+        trained member by member over days, so renaming it mid-way must not
+        hide the members already on disk -- the bundle *format* is unchanged
+        and only the name moved.
+        """
+        from poraque_committee import member_bundle
+
+        pattern = self._members(tmp_path, "si_res32.pfno", n=1)
+        assert pattern    # the path insert is what this call is for
+        directory = tmp_path / "committee_0"
+        assert member_bundle(str(directory)).endswith("si_res32.pfno")
+
+    def test_the_current_extension_wins_over_a_stale_one(self, tmp_path):
+        """A re-trained member must not be shadowed by the file it replaced."""
+        from poraque_committee import member_bundle
+
+        self._members(tmp_path, "si_res32.pfno", n=1)
+        directory = tmp_path / "committee_0"
+        (directory / "si_res32.poraque").write_bytes(b"checkpoint")
+        assert member_bundle(str(directory)).endswith("si_res32.poraque")
 
     def test_a_named_run_is_found(self, tmp_path):
         from poraque_committee import resolve_bundles
 
-        pattern = self._members(tmp_path, "si_res32.pfno")
+        pattern = self._members(tmp_path, "si_res32.poraque")
         assert len(resolve_bundles(pattern)) == 3, (
             "a run with task.name set is still a committee")
 
@@ -731,9 +754,9 @@ class TestMemberBundleDiscovery:
 
         directory = tmp_path / "committee_0"
         directory.mkdir()
-        (directory / "poraque_models.pfno").write_bytes(b"x")
-        (directory / "si_res32.pfno").write_bytes(b"x")
-        assert member_bundle(str(directory)).endswith("poraque_models.pfno")
+        (directory / "poraque_models.poraque").write_bytes(b"x")
+        (directory / "si_res32.poraque").write_bytes(b"x")
+        assert member_bundle(str(directory)).endswith("poraque_models.poraque")
 
     def test_an_ambiguous_directory_is_refused_rather_than_guessed(self,
                                                                   tmp_path):
@@ -741,8 +764,8 @@ class TestMemberBundleDiscovery:
 
         directory = tmp_path / "committee_0"
         directory.mkdir()
-        (directory / "a.pfno").write_bytes(b"x")
-        (directory / "b.pfno").write_bytes(b"x")
+        (directory / "a.poraque").write_bytes(b"x")
+        (directory / "b.poraque").write_bytes(b"x")
         with pytest.raises(SystemExit, match="2 checkpoints"):
             member_bundle(str(directory))
 
@@ -756,6 +779,6 @@ class TestMemberBundleDiscovery:
     def test_a_single_member_is_still_refused(self, tmp_path):
         from poraque_committee import resolve_bundles
 
-        pattern = self._members(tmp_path, "si_res32.pfno", n=1)
+        pattern = self._members(tmp_path, "si_res32.poraque", n=1)
         with pytest.raises(SystemExit, match="needs at least two"):
             resolve_bundles(pattern)

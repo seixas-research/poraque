@@ -447,7 +447,7 @@ class TestBackwardCompatibility:
     def test_default_bundle_round_trip_is_unaffected(self, tmp_path):
         operator = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
                                  projection_channels=8, device="cpu")
-        path = save_bundle(str(tmp_path / "m.pfno"), {"chg2tau": operator})
+        path = save_bundle(str(tmp_path / "m.poraque"), {"chg2tau": operator})
         restored = load_bundle(path, "chg2tau", device="cpu")
         assert restored.model.activation == "silu"
         for a, b in zip(operator.model.state_dict().values(),
@@ -461,7 +461,7 @@ class TestBackwardCompatibility:
         operator = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
                                  projection_channels=8, activation="gelu",
                                  device="cpu")
-        path = save_bundle(str(tmp_path / "m.pfno"), {"chg2tau": operator})
+        path = save_bundle(str(tmp_path / "m.poraque"), {"chg2tau": operator})
         restored = load_bundle(path, "chg2tau", device="cpu")
         assert restored.model.activation == "gelu"
         for a, b in zip(operator.model.state_dict().values(),
@@ -497,7 +497,7 @@ class TestFNOWithKANActivations:
             activation="kan_bspline", kan_grid_size=5, kan_spline_order=2,
             kan_grid_range=(-3.0, 3.0), device="cpu",
         )
-        path = save_bundle(str(tmp_path / "m.pfno"), {"ext2chg": operator})
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator})
         restored = load_bundle(path, "ext2chg", device="cpu")
 
         assert restored.model.activation == "kan_bspline"
@@ -513,7 +513,7 @@ class TestFNOWithKANActivations:
             "chg2tau", width=4, modes=2, n_layers=1, projection_channels=8,
             activation="kan_cheby", kan_degree=9, device="cpu",
         )
-        path = save_bundle(str(tmp_path / "m.pfno"), {"chg2tau": operator})
+        path = save_bundle(str(tmp_path / "m.poraque"), {"chg2tau": operator})
         restored = load_bundle(path, "chg2tau", device="cpu")
 
         assert restored.model.activation == "kan_cheby"
@@ -528,7 +528,7 @@ class TestFNOWithKANActivations:
             activation="kan_rbf", kan_grid_size=5, kan_grid_range=(-3.0, 3.0),
             device="cpu",
         )
-        path = save_bundle(str(tmp_path / "m.pfno"), {"ext2chg": operator})
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator})
         restored = load_bundle(path, "ext2chg", device="cpu")
 
         assert restored.model.activation == "kan_rbf"
@@ -544,7 +544,7 @@ class TestFNOWithKANActivations:
             activation="kan_rational", kan_rational_num_degree=3,
             kan_rational_den_degree=2, device="cpu",
         )
-        path = save_bundle(str(tmp_path / "m.pfno"), {"chg2tau": operator})
+        path = save_bundle(str(tmp_path / "m.poraque"), {"chg2tau": operator})
         restored = load_bundle(path, "chg2tau", device="cpu")
 
         assert restored.model.activation == "kan_rational"
@@ -665,7 +665,7 @@ class TestSymbolicExpression:
         expr = symbolic_expression(activation, channel=0)
         assert isinstance(expr, sympy.Expr)
         # round-trips through a checkpoint just like every other tensor
-        path = save_bundle(str(tmp_path / "m.pfno"), {"ext2chg": operator})
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator})
         restored = load_bundle(path, "ext2chg", device="cpu")
         restored_expr = symbolic_expression(
             restored.model.blocks[0].activation, channel=0)
@@ -774,7 +774,7 @@ class TestPureKANMode:
         )
         assert operator.model.blocks[0].activation.base_weight is None
 
-        path = save_bundle(str(tmp_path / "m.pfno"), {"ext2chg": operator})
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator})
         restored = load_bundle(path, "ext2chg", device="cpu")
 
         assert restored.model.kan_use_base is False
@@ -946,7 +946,7 @@ class TestTheReadOutFollowsTheConfiguredActivation:
                                  device="cpu")
         assert operator.state()["architecture"]["projection_activation"] == "silu"
 
-        path = save_bundle(str(tmp_path / "m.pfno"), {"ext2chg": operator})
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator})
         restored = load_bundle(path, "ext2chg", device="cpu")
         assert restored.model.projection_activation == "silu"
 

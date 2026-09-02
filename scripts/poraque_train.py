@@ -151,13 +151,20 @@ from poraque.ml import (  # noqa: E402
     save_bundle,
     train,
 )
-from poraque.ml.config import TrainingConfig  # noqa: E402
+from poraque.ml.config import BUNDLE_SUFFIX, TrainingConfig  # noqa: E402
 from poraque.ml.data import CACHE_MEMORY_BUDGET  # noqa: E402
 from poraque.ml.device import (  # noqa: E402
     describe_device,
     device_report,
     enable_tf32,
     resolve_device,
+)
+from poraque.ml.distributed import (  # noqa: E402
+    barrier,
+    describe as describe_distributed,
+    discover as discover_distributed,
+    initialize as initialize_distributed,
+    shutdown as shutdown_distributed,
 )
 from poraque.ml.fno import PRECISIONS  # noqa: E402
 from poraque.ml.training import OPTIMIZERS  # noqa: E402
@@ -187,7 +194,7 @@ FIELD_LABELS = {
 # physics weights -- differ in that name, and so cannot overwrite each other.
 # Everything lands under one directory per run:
 #
-#     models/<name>/<name>.pfno    log/    plots/    report/
+#     models/<name>/<name>.poraque    log/    plots/    report/
 #
 # The helpers below are the only places those paths are formed. They read the
 # config rather than mutating it, so re-running with the config a run archived
@@ -201,7 +208,7 @@ def model_name(config):
 
 def bundle_path(config):
     """
-    Where the trained weights go: ``<output.root>/<name>/<name>.pfno``.
+    Where the trained weights go: ``<output.root>/<name>/<name>.poraque``.
 
     Returns
     -------
@@ -251,16 +258,26 @@ class Tee:
     ``path=None`` means terminal only, which is what ``output.write_log:
     false`` asks for. Without that case the toggle crashed the run before it
     started, on ``os.path.dirname(None)``.
+
+    ``silent=True`` swallows everything, and is what every rank but the first
+    gets under DDP. Four ranks opening one path with ``"w"`` truncate each
+    other's output and interleave the survivors, so a four-GPU run's log ends
+    up less readable than a one-GPU run's and its progress table unparseable.
+    The silencing is here rather than at each of the several hundred call
+    sites, which is the only version of it that can be kept correct.
     """
 
-    def __init__(self, path):
-        self.path = path
+    def __init__(self, path, silent=False):
+        self.path = None if silent else path
+        self.silent = bool(silent)
         self.handle = None
-        if path:
-            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            self.handle = open(path, "w")
+        if self.path:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            self.handle = open(self.path, "w")
 
     def __call__(self, message=""):
+        if self.silent:
+            return
         print(message)
         if self.handle is not None:
             self.handle.write(str(message) + "\n")
@@ -933,7 +950,7 @@ def resolve_strict_device(config, log):
             f"Set strict_device: false to allow the fallback.") from None
 
 
-def loader_settings(config):
+def loader_settings(config, distributed=None):
     """
     The ``train()`` keywords that govern *how* data reaches the device.
 
@@ -941,6 +958,15 @@ def loader_settings(config):
     fold of the cross-validation — must pass all of them, and the k-fold path
     has already dropped a keyword the split path had (``dtype``, once) and
     quietly changed what it was measuring.
+
+    Parameters
+    ----------
+    config : TrainingConfig
+    distributed : DistributedContext, optional
+        Passed straight through. A fold that forgot it would train on the
+        *whole* dataset on every rank and average four identical gradients,
+        which is not an error anywhere and is four times the work for the same
+        model — hence its being in this dict rather than at the call sites.
 
     Returns
     -------
@@ -952,6 +978,7 @@ def loader_settings(config):
         "compile_model": config.training.compile,
         "compile_mode": config.training.compile_mode,
         "compile_dynamic": config.training.compile_dynamic,
+        "distributed": distributed,
     }
 
 
@@ -1648,7 +1675,7 @@ def save_task_checkpoint(task, operator, config, log):
         return None
 
     path = os.path.join(run,
-                        f"{model_name(config)}_{task.name}_trained.pfno")
+                        f"{model_name(config)}_{task.name}_trained{BUNDLE_SUFFIX}")
     save_bundle(path, {task.name: operator},
                 metadata={"note": "single-task safety copy, written before "
                                   "the optional post-training analyses; "
@@ -1782,7 +1809,7 @@ def run_symbolic_distillation(task, dataset, operator, config, log,
     return result
 
 
-def run_task(task_name, cache, config, log, n_tasks=1):
+def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
     r"""
     Train one model for ``task_name`` on a train/validation split.
 
@@ -1804,6 +1831,12 @@ def run_task(task_name, cache, config, log, n_tasks=1):
         How many tasks this run trains in total. It only names the report:
         with one task the PDF is ``<name>_report.pdf``, with two it has to
         carry the task as well or the second would overwrite the first.
+    distributed : DistributedContext, optional
+        The process group, forwarded to :func:`~poraque.ml.training.train`. The
+        *data* work above is done identically on every rank — the split, the
+        transforms, the field cache — and only the batches are partitioned;
+        fitting the transforms per rank on a partition would give the four
+        replicas four different normalisations.
     """
     task = resolve_task(task_name)
     log(f"\n{'=' * 78}")
@@ -1898,7 +1931,7 @@ def run_task(task_name, cache, config, log, n_tasks=1):
         loss=build_loss(config, task.name), seed=config.training.seed,
         eval_every=config.training.eval_epoch, early_stopping=patience,
         log=log, verbose=True,
-        **loader_settings(config),
+        **loader_settings(config, distributed),
     )
     elapsed = time.time() - start
     # Lifted out before anything else reads `history`: they are run *cost*
@@ -2136,7 +2169,7 @@ def structure_level_folds(names, k, seed=0):
             for group in np.array_split(order, k) if len(group)]
 
 
-def run_task_kfold(task_name, cache, config, log, n_tasks=1):
+def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None):
     r"""
     K-fold cross-validation over structures.
 
@@ -2146,6 +2179,16 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
     *K* of them. Leave ``enable_kfold`` off for the artefact to ship.
 
     ``valid_fraction`` is ignored here — the folds define the splits.
+
+    Parameters
+    ----------
+    distributed : DistributedContext, optional
+        Forwarded to each fold. Every rank runs every fold, over its share of
+        that fold's batches; the folds are *not* distributed across ranks. That
+        would be the better parallelisation — the folds are independent, and
+        splitting them needs no communication at all — but it changes what the
+        run produces per rank, and this is the version that can be compared
+        against a single-device k-fold line for line.
     """
     task = resolve_task(task_name)
     baseline = resolve_baseline(task, config, cache, log)
@@ -2216,7 +2259,7 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1):
             eval_every=config.training.eval_epoch,
             early_stopping=config.training.early_stopping,
             log=log, verbose=True,
-            **loader_settings(config),
+            **loader_settings(config, distributed),
         )
         elapsed = time.time() - start
         # Per fold, and kept per fold: K models are fitted here, so a single
@@ -2354,7 +2397,7 @@ def build_parser():
                         choices=["all", "ext2chg", "chg2tau"])
     parser.add_argument("--name", dest="task.name", default=None,
                         metavar="NAME",
-                        help="name this run's outputs: models/NAME.pfno, "
+                        help="name this run's outputs: models/NAME.poraque, "
                              "reports/NAME_report.pdf and a NAME/ subdirectory "
                              "of the plot directory (default: poraque_models)")
     group = parser.add_argument_group("data overrides")
@@ -2450,6 +2493,15 @@ def build_parser():
                             "--device cannot be honoured; put this in every "
                             "batch job, where a silent fallback spends the GPU "
                             "allocation not using a GPU")
+    group.add_argument("--distributed", dest="training.distributed",
+                       default=None, choices=("auto", "off"),
+                       help="auto | off -- form a DistributedDataParallel "
+                            "group over NCCL when the launcher describes one "
+                            "(a Slurm step with several tasks, or torchrun). "
+                            "'off' runs single-GPU inside a multi-task "
+                            "allocation, which is how a scaling run is "
+                            "bisected. It cannot create ranks: the launcher "
+                            "decides the topology")
     group.add_argument("--cache-in-memory", dest="data.cache_in_memory",
                        default=None,
                        help="auto | true | false -- keep decoded fields in RAM "
@@ -2476,7 +2528,7 @@ def build_parser():
     group.add_argument("--pretrained", dest="fine_tuning.pretrained_checkpoint",
                        default=None, metavar="PATH",
                        help="base bundle to adapt (default: "
-                            "models/poraque_models.pfno)")
+                            "models/poraque_models.poraque)")
     group.add_argument("--fine-tune-lr", dest="fine_tuning.learning_rate",
                        type=float, default=None, metavar="LR",
                        help="learning rate for the fine-tune, replacing "
@@ -2554,7 +2606,35 @@ def run(argv=None):
     validate_loss_settings(config)
     validate_activation_settings(config)
 
-    log = Tee(config.log_path())
+    # Resolved before anything else, because it decides *which* device this
+    # process may use and whether it is allowed to write. Never raises: without
+    # a Slurm or torchrun launch it returns a disabled context and everything
+    # below takes the single-device path it always took.
+    context = discover_distributed(config.training.distributed)
+    if context:
+        # Each rank owns one GPU, and it is `cuda:<local_rank>` rather than
+        # whatever `auto` would pick -- which is `cuda:0` for all four,
+        # contending for one device and reporting itself as a scaling failure.
+        config.training.device = context.device
+        initialize_distributed(context,
+                               timeout_minutes=config.training.distributed_timeout)
+    if not context.is_main:
+        # Rank 0 alone writes. Turned off here, on this process's own copy of
+        # the config, rather than guarded at each of the dozen places something
+        # is written: `bundle_path`, `plot_directory`, `report_dir`,
+        # `log_path` and `json_path` all read these flags, so switching them
+        # off once switches off every writer including the ones added later.
+        # The empty strings are for the two artefacts a config can name
+        # explicitly, which would otherwise bypass their own directory flag.
+        config.output.checkpoint = False
+        config.output.plot_figures = False
+        config.output.write_pdf_report = False
+        config.output.write_log = False
+        config.output.log = ""
+        config.output.json = ""
+        config.output.save_raw_plot_data = False
+
+    log = Tee(config.log_path(), silent=not context.is_main)
     try:
         # Through the Tee, so the environment that produced a run is recorded
         # in its log rather than only shown once on a terminal that is long
@@ -2591,6 +2671,18 @@ def run(argv=None):
         if enable_tf32(device, config.training.tf32):
             log("  tf32   : enabled for matmul and cudnn (no effect before "
                 "Ampere)")
+        # Printed whether or not a group formed. The usual failure is a
+        # submission script that requests four GPUs and launches one task,
+        # which leaves SLURM_NTASKS at 1 and looks from inside the process
+        # exactly like the single-GPU run somebody asked for -- so the
+        # variables that were actually present go into the log either way.
+        for index, line in enumerate(describe_distributed(context)):
+            prefix = "  ranks  : " if index == 0 else "           "
+            log(f"{prefix}{line}")
+        if context:
+            log(f"           effective batch = {config.training.batch_size} "
+                f"x {context.world_size} ranks = "
+                f"{config.training.batch_size * context.world_size}")
         log(f"  config : {args.config or '<built-in defaults>'}")
         # Every artefact now lives under one directory, so the four separate
         # path lines this replaces were four repetitions of the same prefix.
@@ -2604,10 +2696,14 @@ def run(argv=None):
                 ("plots/" if plot_directory(config) else None, "figures"),
                 ("report/" if config.report_dir() else None, "PDF report"),
             ]
+            # Sized from the names rather than fixed. The fixed 22 was wide
+            # enough for `<name>.pfno` and is not for `<name>.poraque`, which
+            # ran the filename straight into its description.
+            column = max([len(name) for name, _ in entries if name] + [22]) + 2
             for index, (name, what) in enumerate(entries):
                 glyph = "\u2514\u2500\u2500" if index == len(entries) - 1 else "\u251c\u2500\u2500"
                 if name:
-                    log(f"           {glyph} {name:<22s} {what}")
+                    log(f"           {glyph} {name:<{column}s}{what}")
                 else:
                     log(f"           {glyph} ({what}: not written)")
         else:
@@ -2618,7 +2714,18 @@ def run(argv=None):
             log(f"    {line}")
         log("")
 
-        cache = build_cache(config, log)
+        # One rank builds the prepared cache; the rest wait and then read it.
+        # Four processes spectrally downsampling into one directory write the
+        # same files concurrently, and the loser of that race gets a truncated
+        # CHGCAR that parses -- the format has no length field -- into a field
+        # of the wrong shape. The barrier is the whole of the fix, and it is
+        # why `distributed_timeout` defaults to half an hour: this is where the
+        # non-writing ranks spend a cold read of the source data.
+        if context.is_main:
+            cache = build_cache(config, log)
+        barrier(context)
+        if not context.is_main:
+            cache = build_cache(config, log)
         names = trainable_tasks(config.task.names(), cache, log)
         # One protocol, one variation: K-fold cross-validation.
         driver = run_task_kfold if config.training.enable_kfold else run_task
@@ -2633,7 +2740,8 @@ def run(argv=None):
                 log("  NOTE: --kfold ignores symbolic distillation -- it "
                     "runs only on a deployable single-split model.")
         results = [result for result in
-                   (driver(name, cache, config, log, n_tasks=len(names))
+                   (driver(name, cache, config, log, n_tasks=len(names),
+                           distributed=context)
                     for name in names)
                    if result is not None]
 
@@ -2644,7 +2752,7 @@ def run(argv=None):
                      if r.get("operator") is not None}
         bundle = None
         if operators and config.checkpoint_path():
-            # <output.root>/<name>/<name>.pfno, with a distinct stem for a
+            # <output.root>/<name>/<name>.poraque, with a distinct stem for a
             # fine-tune: it is a specialisation, usually to a narrower set of
             # materials, and writing it over the general model would replace
             # something broad with something narrow, silently and by default.
@@ -2693,7 +2801,7 @@ def run(argv=None):
             for task_name in operators:
                 stale = os.path.join(
                     config.run_dir(),
-                    f"{model_name(config)}_{task_name}_trained.pfno")
+                    f"{model_name(config)}_{task_name}_trained{BUNDLE_SUFFIX}")
                 if os.path.exists(stale):
                     os.remove(stale)
             if len(operators) < 2:
@@ -2770,6 +2878,10 @@ def run(argv=None):
             log(f"  figures         -> {plot_directory(config)}")
         return results
     finally:
+        # In a `finally` because a rank that exits without destroying its group
+        # leaves the others inside a collective until the step's wall clock
+        # ends -- one process's exception becomes an hour of billed silence.
+        shutdown_distributed(context)
         log.close()
 
 

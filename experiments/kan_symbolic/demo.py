@@ -53,16 +53,16 @@ from poraque.ml import load_bundle  # noqa: E402
 from poraque.ml.kan import BSplineKANActivation, symbolic_expression  # noqa: E402
 
 BASE_CHECKPOINTS = {
-    "kan_cheby": "models/pt_w16_m8_l3_kancheby/pt_w16_m8_l3_kancheby.pfno",
-    "kan_bspline": "models/pt_w16_m8_l3_kanbspline/pt_w16_m8_l3_kanbspline.pfno",
-    "kan_rbf": "models/pt_w16_m8_l3_rbf/pt_w16_m8_l3_rbf.pfno",
-    "kan_rational": "models/pt_w16_m8_l3_rational/pt_w16_m8_l3_rational.pfno",
+    "kan_cheby": "models/pt_w16_m8_l3_kancheby/pt_w16_m8_l3_kancheby.poraque",
+    "kan_bspline": "models/pt_w16_m8_l3_kanbspline/pt_w16_m8_l3_kanbspline.poraque",
+    "kan_rbf": "models/pt_w16_m8_l3_rbf/pt_w16_m8_l3_rbf.poraque",
+    "kan_rational": "models/pt_w16_m8_l3_rational/pt_w16_m8_l3_rational.poraque",
 }
 PURE_CHECKPOINTS = {
-    "kan_cheby (pure)": "models/pt_w16_m8_l3_kancheby_purekan/pt_w16_m8_l3_kancheby_purekan.pfno",
-    "kan_bspline (pure)": "models/pt_w16_m8_l3_kanbspline_purekan/pt_w16_m8_l3_kanbspline_purekan.pfno",
-    "kan_rbf (pure)": "models/pt_w16_m8_l3_kanrbf_purekan/pt_w16_m8_l3_kanrbf_purekan.pfno",
-    "kan_rational (pure)": "models/pt_w16_m8_l3_kanrational_purekan/pt_w16_m8_l3_kanrational_purekan.pfno",
+    "kan_cheby (pure)": "models/pt_w16_m8_l3_kancheby_purekan/pt_w16_m8_l3_kancheby_purekan.poraque",
+    "kan_bspline (pure)": "models/pt_w16_m8_l3_kanbspline_purekan/pt_w16_m8_l3_kanbspline_purekan.poraque",
+    "kan_rbf (pure)": "models/pt_w16_m8_l3_kanrbf_purekan/pt_w16_m8_l3_kanrbf_purekan.poraque",
+    "kan_rational (pure)": "models/pt_w16_m8_l3_kanrational_purekan/pt_w16_m8_l3_kanrational_purekan.poraque",
 }
 STRUCTURE = "data/cache/res32_potcar/struct_016/EXTCAR"
 LAYER, CHANNEL, N_VOXELS = 0, 0, 8
