@@ -104,6 +104,24 @@ def build(equivariant, seed=7, **kwargs):
 CUBIC = (torch.eye(3) * 8.0).unsqueeze(0)
 
 
+def sample_field(shape=(16, 16, 16), seed=0, device="cpu", dtype=torch.float32):
+    """
+    A test field drawn from a **stated** seed.
+
+    Not decoration. The dense baseline's rotation error is a property of the
+    field as well as of the weights — measured across seeds it runs from 0.086
+    to 0.93, an order of magnitude — so a counterfactual asserting "the dense
+    layer is *not* equivariant" against an unseeded ``torch.randn`` is a
+    threshold compared with a number that depends on what the rest of the
+    session left in the global RNG. It passed; it would have failed under a
+    different test order, and the failure would have looked like a real
+    regression in the thing it exists to disprove.
+    """
+    generator = torch.Generator().manual_seed(seed)
+    return torch.randn(1, 1, *shape, generator=generator,
+                       dtype=dtype).to(device)
+
+
 def worst_rotation_error(model, field, cell, rotations):
     """Largest relative deviation of ``f(Rx)`` from ``R f(x)``."""
     worst = 0.0
@@ -128,23 +146,36 @@ class TestARotatedFieldGivesARotatedPrediction:
     trivially equivariant — and the counterfactual is what rules that out.
     """
 
-    def test_the_equivariant_operator_commutes_with_all_24_rotations(self):
-        field = torch.randn(1, 1, 16, 16, 16)
-        error = worst_rotation_error(build(True), field, CUBIC,
-                                     octahedral_rotations())
+    @pytest.mark.parametrize("seed", [0, 1, 2])
+    def test_the_equivariant_operator_commutes_with_all_24_rotations(self, seed):
+        error = worst_rotation_error(build(True), sample_field(seed=seed),
+                                     CUBIC, octahedral_rotations())
         assert error < 1e-5, f"worst relative deviation {error:.3e}"
 
-    def test_the_dense_operator_does_not(self):
-        field = torch.randn(1, 1, 16, 16, 16)
-        error = worst_rotation_error(build(False, use_coordinates=False),
-                                     field, CUBIC, octahedral_rotations())
-        assert error > 0.1, (
-            f"the dense spectral layer came out equivariant to {error:.3e}, "
-            f"which it has no reason to be -- if the test field or the model "
-            f"has become degenerate the equivariant test above passes for "
-            f"nothing")
+    @pytest.mark.parametrize("seed", [0, 1, 2])
+    def test_the_dense_operator_does_not(self, seed):
+        """
+        The counterfactual, stated as a **ratio** rather than a threshold.
 
-    def test_the_residual_is_float_round_off_and_not_a_small_asymmetry(self):
+        The dense layer's rotation error depends on the field as well as on the
+        weights — 0.086 at one seed, 0.93 at another — so an absolute bound
+        here is a number that has to be re-tuned whenever anything upstream
+        touches the RNG. The claim that actually matters is scale-free: on the
+        *same* field, the dense layer is wrong by orders of magnitude more than
+        the radial one. Measured, that ratio is ~1e5.
+        """
+        field = sample_field(seed=seed)
+        rotations = octahedral_rotations()
+        dense = worst_rotation_error(build(False, use_coordinates=False),
+                                     field, CUBIC, rotations)
+        radial = worst_rotation_error(build(True), field, CUBIC, rotations)
+        assert dense > 1e-3, (
+            f"the dense spectral layer came out equivariant to {dense:.3e}, "
+            f"which it has no reason to be -- if the field or the model has "
+            f"become degenerate the equivariant test above passes for nothing")
+        assert dense > 1e3 * radial, f"dense {dense:.3e}, radial {radial:.3e}"
+
+    def test_the_residual_is_float_round_off_not_a_small_asymmetry(self):
         """
         In float64 the deviation drops by nine orders of magnitude.
 
@@ -155,7 +186,7 @@ class TestARotatedFieldGivesARotatedPrediction:
         equivariance was good to 2e-3 — plausible, stable, and wrong.
         """
         model = build(True).double()
-        field = torch.randn(1, 1, 16, 16, 16, dtype=torch.float64)
+        field = sample_field(dtype=torch.float64)
         error = worst_rotation_error(model, field, CUBIC.double(),
                                      octahedral_rotations()[:6])
         assert error < 1e-12, f"worst relative deviation {error:.3e}"
@@ -174,13 +205,13 @@ class TestTheRetainedModesMustBeASphereNotABox:
     QUARTER_TURN = [torch.tensor([[0, -1, 0], [1, 0, 0], [0, 0, 1]])]
 
     def test_the_cutoff_is_what_makes_a_non_cubic_cell_equivariant(self):
-        field = torch.randn(1, 1, 16, 16, 24)
+        field = sample_field((16, 16, 24))
         error = worst_rotation_error(build(True), field, self.TETRAGONAL,
                                      self.QUARTER_TURN)
         assert error < 1e-5, f"worst relative deviation {error:.3e}"
 
     def test_without_it_the_same_model_is_not(self):
-        field = torch.randn(1, 1, 16, 16, 24)
+        field = sample_field((16, 16, 24))
         error = worst_rotation_error(build(True, spherical_cutoff=False),
                                      field, self.TETRAGONAL,
                                      self.QUARTER_TURN)
@@ -453,6 +484,95 @@ class TestTheSetupBlockBehavesLikeKanSetup:
         assert kwargs["n_radial"] == 24
         assert kwargs["g_basis"] == 5.0
         assert kwargs["spherical_cutoff"] is False
+
+
+def accelerator():
+    """The device this machine actually has, or ``None``."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return None
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(accelerator() is None, reason="requires MPS or CUDA")
+class TestItHoldsOnWhateverAcceleratorIsHere:
+    """
+    The same property, on the device — and on **MPS specifically**.
+
+    Worth its own class because Metal is where this could plausibly have gone
+    wrong and not said so. :func:`~poraque.ml.fno.complex_contract` exists for
+    two documented MPS defects: a complex ``einsum`` *aborts the process*
+    rather than raising, and ``.real``/``.imag`` of a **strided** complex view
+    silently computes the wrong einsum — no error, results off by 40-90 %. The
+    radial layer's claim is that it meets neither, because its coefficients are
+    real and it contracts real tensors gathered into a contiguous block.
+
+    That claim is exactly the kind that is cheap to make and expensive to be
+    wrong about: a silently wrong contraction on Metal produces finite,
+    plausible numbers. ``tests/test_cuequivariance_gpu.py`` covers the CUDA
+    side and needs a cluster; this runs wherever there is an accelerator at
+    all, which on the development machine means it runs every time.
+    """
+
+    @staticmethod
+    def _device():
+        return accelerator()
+
+    def test_the_rotation_property_survives_the_device(self):
+        device = self._device()
+        model = build(True).to(device)
+        field = sample_field(device=device)
+        error = worst_rotation_error(model, field, CUBIC.to(device),
+                                     octahedral_rotations())
+        assert error < 1e-5, f"{device.type}: worst deviation {error:.3e}"
+
+    def test_the_device_agrees_with_the_cpu_on_the_prediction_itself(self):
+        """
+        Not only on the symmetry.
+
+        A contraction that were wrong on Metal in a *rotation-invariant* way
+        would pass the test above while computing a different operator. This is
+        the assertion that would catch it, and it is the one the strided-view
+        defect would have broken.
+        """
+        device = self._device()
+        field, cell = sample_field(), CUBIC
+        with torch.no_grad():
+            on_cpu = build(True)(field, cell)
+            on_device = build(True).to(device)(field.to(device),
+                                               cell.to(device)).cpu()
+        relative = float((on_cpu - on_device).abs().max()
+                         / on_cpu.abs().max())
+        assert relative < 1e-5, f"{device.type}: {relative:.3e}"
+
+    def test_it_trains_there_and_stays_equivariant(self):
+        device = self._device()
+        torch.manual_seed(0)
+        model = build(True).to(device)
+        field = sample_field(device=device)
+        target = sample_field(seed=1, device=device)
+        cell = CUBIC.to(device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2)
+
+        first = None
+        for _ in range(10):
+            optimizer.zero_grad()
+            loss = (model(field, cell) - target).square().mean()
+            loss.backward()
+            for index, layer in enumerate(model.blocks):
+                gradient = layer.spectral.weight.grad
+                assert gradient is not None, f"block {index} received none"
+                assert torch.isfinite(gradient).all()
+            optimizer.step()
+            first = float(loss.detach()) if first is None else first
+
+        assert float(loss.detach()) < first
+        model.eval()
+        error = worst_rotation_error(model, field, cell,
+                                     octahedral_rotations()[:6])
+        assert error < 1e-5, f"{device.type}: worst deviation {error:.3e}"
 
 
 class TestTheEquivariantOperatorCanActuallyBeTrained:
