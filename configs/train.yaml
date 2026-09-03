@@ -10,7 +10,7 @@
 
 task:
   type: all                     # all | ext2chg | chg2tau; only `all` reaches a total energy
-  name: platinum_W32-M8-L3      # names models/<name>/ and everything inside it
+  name: platinum_W32_equiv_nr32 # names models/<name>/ and everything inside it
 
 data:
   data_paths:                                            # one entry per dataset root; each holds
@@ -27,17 +27,25 @@ data:
   compression_level: 4                                   # gzip only; ignored by lzf
 
 model:
-  width: 32                     # channels carried through the Fourier layers
+  width: 16                     # channels carried through the Fourier layers
   modes: 8                      # retained Fourier modes per axis
   n_layers: 3                   # Fourier layers
   projection_channels: 64       # hidden width of the read-out head
   mode_selection: fixed         # Options: 'fixed' | 'physical'.
   activation: silu              # stateless; `kan` moves the hyperparameters into kan_setup
   projection_activation: null   # read-out nonlinearity; null follows `activation`
+  use_coordinates: false
+  equivariant: true
+  equivariant_setup:
+    n_radial: 32
+    g_basis: null
+    spherical_cutoff: true
+  embedding_dim: 32
+  precision: float32
 
 training:
   epochs: 500
-  batch_size: 64                # samples per batch within one grid-shape bucket
+  batch_size: 16                # samples per batch within one grid-shape bucket
   learning_rate: 0.002
   weight_decay: 0.0001
   optimizer: adamw              # adamw | adam | sgd; identical to adam at weight_decay 0
@@ -52,9 +60,9 @@ training:
   strict_device: false
   physics_informed: auto        # auto (any weight below) | true (require one) | false (skip the work)
   physics_informed_setup:
-    electron_count_weight: 1.0  # ext2chg: int(rho) must equal the known valence count
-    positivity_weight: 0.1      # rho, tau >= 0 (a Log head is the better fix)
-    von_weizsacker_weight: 0.1  # chg2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
+    electron_count_weight: 0.0  # ext2chg: int(rho) must equal the known valence count
+    positivity_weight:     0.0  # rho, tau >= 0 (a Log head is the better fix)
+    von_weizsacker_weight: 0.0  # chg2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
     euler_lagrange_weight: 0.0
 
 output:
@@ -64,5 +72,5 @@ output:
   write_pdf_report: true        # typeset the PDF into report/; needs a LaTeX toolchain
   checkpoint: true              # write the .poraque
   plot_format: png
-  dpi: 400
+  dpi: 600
   save_raw_plot_data: false

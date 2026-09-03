@@ -63,20 +63,29 @@ class TestAutoAnswersFromTheWeights:
         loss = PhysicsInformedLoss(task="ext2chg", **ACTIVE)
         assert loss.physics_informed is True
 
-    def test_the_shipped_config_is_still_physics_informed(self):
+    def test_the_shipped_config_lets_its_own_weights_decide(self):
         """
-        ``configs/train.yaml`` sets three weights, so it resolves to on.
+        ``configs/train.yaml`` leaves the key at ``auto``, and ``auto`` reads
+        the file rather than overriding it.
 
-        This project's own run *is* physics-informed, which is precisely why
-        ``"auto"`` had to be the default: any other choice would have silently
-        changed the objective of the configuration the repository ships.
+        Written first as "the shipped config *is* physics-informed", which was
+        true of the file on the day and is not a property of the mechanism: the
+        moment somebody zeroed the four weights for an ablation — which is
+        exactly what the key is for — an ordinary config edit became a test
+        failure. What has to hold is that the default defers, whatever the
+        weights happen to be, because any other default would silently change
+        the objective of the configuration the repository ships.
         """
         shipped = os.path.join(os.path.dirname(__file__), "..", "configs",
                                "train.yaml")
         config = TrainingConfig.from_yaml(shipped)
         assert config.training.physics_informed == "auto"
+
         weights = config.training.physics_informed_setup
-        assert sum(float(v) for v in weights.values()) > 0.0
+        live = sum(float(value) for value in weights.values()) > 0.0
+        loss = PhysicsInformedLoss(task="ext2chg", **{
+            name: float(value) for name, value in weights.items()})
+        assert loss.physics_informed is live
 
 
 class TestTrueRefusesToBeAnEmptyClaim:

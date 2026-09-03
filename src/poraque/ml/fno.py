@@ -428,6 +428,42 @@ class SpectralConv3d(nn.Module):
 #: zero.
 DEFAULT_G_BASIS = 8.0
 
+#: Relative slack that lifts the spherical cutoff off the shell it sits on.
+#:
+#: The cutoff is a comparison between two floating-point routes to the same
+#: quantity: ``radius`` comes from the reciprocal cell contracted against the
+#: integer frequencies, ``inscribed`` from :math:`2\pi m_i/|a_i|`. They agree
+#: analytically and differ in the last bits, so a mode sitting *exactly* on
+#: :math:`|\mathbf{G}| = g_{\rm inscribed}` — the face-centre modes
+#: :math:`(\pm m, 0, 0)` and their rotations — falls on whichever side of the
+#: strict ``<`` the round-off puts it, and the three axes need not agree. One
+#: kept where its own rotation image was dropped is a discrete change in the
+#: retained set, and therefore in the operator: measured, **6 of 20 cubic
+#: cells swept from 4 Å to 13.5 Å lost their equivariance in float32**, at
+#: :math:`3\times10^{-4}` to :math:`1.7\times10^{-3}` rather than the
+#: :math:`3\times10^{-7}` of the cells that happen not to tie. It is not a
+#: float32 phenomenon either — two of the same twenty tie in float64.
+#:
+#: The defect is exactly two modes, and always the same two. A tying cell
+#: keeps 150 of them where the other precision keeps 148, and the surplus is
+#: the pair :math:`(-m, 0, 0)` and :math:`(0, -m, 0)`. The third face is the
+#: one ``rfftn`` never stored — axis 3 carries :math:`[0, m_3)` and nothing
+#: negative — which is what makes a retained face *asymmetric* rather than
+#: merely extra, and is why the cutoff has to exclude the shell rather than
+#: include it consistently. Over 200 cubic cells from 3 Å to 13 Å the float32
+#: and float64 retained sets disagreed on 69 to 83 of them, at every mode
+#: count from 4 to 16, and on none afterwards.
+#:
+#: Excluding the shell with a relative slack makes membership independent of
+#: which route computed the radius. The value has to sit far above the
+#: arithmetic disagreement (a few ulps) and far below the spacing between mode
+#: shells, whose nearest relative gap below the cutoff is :math:`1/2m^2` —
+#: :math:`8\times10^{-3}` at ``modes=8``, :math:`5\times10^{-4}` at 32. 1e-5
+#: is two orders clear of both ends. Every cell that was already exact is
+#: unchanged to every digit printed: the slack removes the tie shell and
+#: touches nothing else.
+CUTOFF_SLACK = 1e-5
+
 
 @lru_cache(maxsize=64)
 def _mode_frequencies(modes, device, dtype):
@@ -653,6 +689,12 @@ class RadialSpectralConv3d(nn.Module):
             # which excludes that face -- and the remaining ball is then both
             # rotation-invariant and closed under inversion, without which the
             # equivariance is good to 2e-3 rather than to the float.
+            #
+            # `CUTOFF_SLACK` is what makes that exclusion survive round-off:
+            # the shell modes are exactly *on* the boundary, and the two sides
+            # of the comparison are computed by different routes. See the
+            # constant.
+            inscribed = inscribed * (1.0 - CUTOFF_SLACK)
             basis = basis * (radius < inscribed.view(-1, 1, 1, 1)
                              ).unsqueeze(1).to(basis.dtype)
         return basis

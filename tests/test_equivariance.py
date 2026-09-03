@@ -51,6 +51,7 @@ import itertools
 import pytest
 import torch
 
+from poraque.ml import fno
 from poraque.ml.fno import FNO3d, RadialSpectralConv3d
 
 
@@ -235,6 +236,146 @@ class TestTheRetainedModesMustBeASphereNotABox:
         # Frequency -4 along the first axis sits exactly at 2*pi*4/8.
         assert float(basis[0, :, 4, 0, 0].abs().max()) == 0.0
         assert float(basis[0, :, 0, 0, 0].abs().max()) > 0.0
+
+
+class TestTheCutoffDoesNotTieWithItsOwnRoundOff:
+    r"""
+    The strict ``<`` is exact in intent and inexact in arithmetic.
+
+    Found on a V100 at LNCC by the mixed-batch test in
+    ``tests/test_cuequivariance_gpu.py`` — written to catch a wrongly broadcast
+    ``(B, 3, 3)``, and instead catching a cell that fails on its own — then
+    reproduced here on the CPU, so it is not CUDA-specific and never was.
+
+    The two sides of the comparison are computed by different routes:
+    ``radius`` from the reciprocal cell contracted against the integer
+    frequencies, ``inscribed`` from :math:`2\pi m_i/|a_i|`. They agree
+    analytically and disagree in the last bits, and the face-centre modes
+    :math:`(\pm m, 0, 0)` and their rotations sit *exactly* on the boundary —
+    so round-off decides which side each lands on, and it need not decide the
+    same way for every axis. One face kept where its own rotation image was
+    dropped is a discrete change in the retained set and therefore in the
+    operator. **6 of 20 cubic cells swept from 4 Å to 13.5 Å lost their
+    equivariance in float32** (31 % over a finer 200-cell sweep), at
+    :math:`3\times10^{-4}` to :math:`1.7\times10^{-3}` against the
+    :math:`3\times10^{-7}` of a cell that happens not to tie. Two of the same
+    twenty tie in float64 as well, so raising the precision is not the fix.
+
+    :data:`~poraque.ml.fno.CUTOFF_SLACK` is: it lifts the boundary off the
+    shell by a relative amount far above the arithmetic disagreement and far
+    below the spacing between mode shells.
+    """
+
+    # Six edges measured to tie as shipped, and two that do not. Both halves
+    # are asserted: the counterfactual has to distinguish the cells the
+    # mechanism predicts from the cells it does not, or it is measuring
+    # something else.
+    TIED = (4.5, 5.5, 6.5, 9.0, 11.0, 13.0)
+    UNTIED = (8.0, 12.0)
+
+    @staticmethod
+    def cubic(edge, dtype=torch.float32):
+        return (torch.eye(3, dtype=dtype) * edge).unsqueeze(0)
+
+    @staticmethod
+    def retained(layer, cell, modes, dtype):
+        """
+        How many *modes* the cutoff keeps — reduced over the radial axis.
+
+        Counting non-zero basis *entries* instead is a trap, and one this test
+        fell into on the way: the Gaussians underflow to exactly zero far
+        sooner in float32 than in float64, so an entry count differs between
+        the precisions on most cells for a reason that has nothing to do with
+        the mask. A mode that survives the cutoff always has its nearest
+        centre within half a spacing, which never underflows, so the maximum
+        over the radial axis is a clean membership indicator in either dtype.
+        """
+        basis = layer.radial_basis(cell, modes, torch.device("cpu"), dtype)
+        return int((basis[0].amax(dim=0) > 0.0).sum())
+
+    def test_every_cell_in_the_sweep_is_equivariant_in_float32(self):
+        model = build(True)
+        field = sample_field()
+        rotations = octahedral_rotations()
+        for edge in self.TIED + self.UNTIED:
+            error = worst_rotation_error(model, field, self.cubic(edge),
+                                         rotations)
+            assert error < 1e-4, (
+                f"a {edge} Ang cubic cell deviates by {error:.3e}")
+
+    def test_without_the_slack_exactly_those_cells_fail(self, monkeypatch):
+        """
+        The counterfactual, and the diagnosis with it.
+
+        Removing the slack has to break the six cells the tie mechanism names
+        and leave the other two at float32 round-off. A slack that improved
+        everything uniformly would be hiding a different defect.
+        """
+        monkeypatch.setattr(fno, "CUTOFF_SLACK", 0.0)
+        model = build(True)
+        field = sample_field()
+        rotations = octahedral_rotations()
+        for edge in self.TIED:
+            error = worst_rotation_error(model, field, self.cubic(edge),
+                                         rotations)
+            assert error > 1e-4, (
+                f"a {edge} Ang cell was expected to tie at the cutoff and "
+                f"came out equivariant to {error:.3e}")
+        for edge in self.UNTIED:
+            error = worst_rotation_error(model, field, self.cubic(edge),
+                                         rotations)
+            assert error < 1e-5, (
+                f"a {edge} Ang cell does not tie and should be unaffected, "
+                f"but deviates by {error:.3e}")
+
+    def test_the_retained_set_stops_depending_on_the_precision(self):
+        """
+        The fix stated as what it actually does, one level below the operator.
+
+        A mask decided by round-off is one whose *size* differs between float32
+        and float64 on the same cell. Counting is a sharper instrument than a
+        deviation: it says the retained set changed, not merely that some
+        number moved — and here it says exactly *how*. Without the slack these
+        six cells keep **150** modes in float32 against **148** in float64, and
+        the two extra are the faces :math:`(-m, 0, 0)` and :math:`(0, -m, 0)`.
+        The third face is the one ``rfftn`` never stored, which is what leaves
+        the set asymmetric rather than merely larger. Over 200 cubic cells from
+        3 Å to 13 Å the two precisions disagree on 69 to 83 of them as shipped,
+        depending on ``modes``, and on none of them with the slack.
+        """
+        single = RadialSpectralConv3d(1, 1, modes=(4, 4, 4), n_radial=8)
+        double = RadialSpectralConv3d(1, 1, modes=(4, 4, 4),
+                                      n_radial=8).double()
+        for edge in self.TIED + self.UNTIED:
+            kept = self.retained(single, self.cubic(edge), (4, 4, 4),
+                                 torch.float32)
+            reference = self.retained(double,
+                                      self.cubic(edge, torch.float64),
+                                      (4, 4, 4), torch.float64)
+            assert kept == reference, (
+                f"a {edge} Ang cell keeps {kept} modes in float32 and "
+                f"{reference} in float64")
+
+    def test_the_slack_removes_the_shell_and_nothing_else(self, monkeypatch):
+        """
+        A relative 1e-5 has to be too small to reach the next shell in.
+
+        The nearest genuine gap below the cutoff is :math:`1/2m^2` — 8e-3 at
+        ``modes=4``, and shrinking only as :math:`m^{-2}` — so the slack is
+        two orders clear of it. Asserted in float64, where the tie itself is
+        absent from these cells, so any change in the count is the slack
+        overreaching rather than the round-off it exists to absorb.
+        """
+        layer = RadialSpectralConv3d(1, 1, modes=(4, 4, 4),
+                                     n_radial=8).double()
+        cells = [self.cubic(edge, torch.float64)
+                 for edge in self.TIED + self.UNTIED]
+        with_slack = [self.retained(layer, cell, (4, 4, 4), torch.float64)
+                      for cell in cells]
+        monkeypatch.setattr(fno, "CUTOFF_SLACK", 0.0)
+        exact = [self.retained(layer, cell, (4, 4, 4), torch.float64)
+                 for cell in cells]
+        assert with_slack == exact
 
 
 class TestTheCoordinateChannelsAreNotThreeScalars:

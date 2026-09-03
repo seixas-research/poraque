@@ -16,6 +16,7 @@ recognised for what it is, that a field is *offered* only when it can really be
 produced, and that a mixture reaches the model as one dataset.
 """
 
+import glob
 import gzip
 import os
 import warnings
@@ -1313,3 +1314,116 @@ class TestBuildFieldCache:
 
         assert reference == {}
         assert load_paw_reference(cache) == {}
+
+
+class TestACacheEntryAppearsWholeOrNotAtAll:
+    """
+    Every field is written beside its final name and moved with ``os.replace``.
+
+    Found on Santos Dumont: two jobs in one allocation started against the same
+    cold cache directory and one of them left a **zero-length** ``CHGCAR``
+    behind, which the reader then correctly refused. The text format carries no
+    length field, so a torn file is not always so obvious — a truncated density
+    parses, into a field of the wrong shape — and :func:`_all_present` is a
+    plain ``os.path.exists``, so whatever is at the final name is the answer
+    forever after. It is the between-jobs form of the race
+    :mod:`poraque.ml.distributed`'s barrier already handles inside one job, and
+    nothing guarded it.
+
+    What a rename buys is that a reader sees the old state or the new one and
+    never a half-written one. What it deliberately does *not* buy is
+    exclusion: two builds still do the work twice, because a lock that behaves
+    on a shared parallel filesystem is a far larger promise than this function
+    should make, and duplicated work costs minutes where a torn field costs the
+    dataset.
+    """
+
+    def test_no_temporary_survives_a_finished_build(self, bulk, tmp_path):
+        cache = build_field_cache(bulk, tmp_path / "out", resolution=8,
+                                  charges=CHARGES)
+
+        litter = glob.glob(os.path.join(cache, "*", "*partial*"))
+        assert litter == []
+        assert os.path.getsize(os.path.join(cache, "mp-1", "CHGCAR")) > 0
+
+    def test_every_field_arrives_by_rename(self, bulk, tmp_path, monkeypatch):
+        """
+        Asserted at the moment of the move, which is the only moment it can be.
+
+        A finished cache looks identical either way; what distinguishes the two
+        implementations is whether the destination was ever open for writing.
+        """
+        from poraque.data import cache as cache_module
+
+        moves, replace = [], os.replace
+
+        def record(source, destination):
+            assert os.path.exists(source), source
+            assert not os.path.exists(destination), (
+                f"{destination} already existed, so it was written in place")
+            moves.append((str(source), str(destination)))
+            replace(source, destination)
+
+        monkeypatch.setattr(cache_module.os, "replace", record)
+        cache = build_field_cache(bulk, tmp_path / "out", resolution=8,
+                                  charges=CHARGES)
+
+        assert moves, "nothing was moved into place"
+        for _, destination in moves:
+            assert os.path.exists(destination)
+        assert {os.path.basename(destination) for _, destination in moves} == \
+            {"EXTCAR", "CHGCAR"}
+        assert len(cached_materials(cache)) == 2
+
+    def test_a_writer_that_raises_leaves_no_file_at_the_final_name(
+            self, bulk, tmp_path, monkeypatch):
+        """
+        The counterfactual, and the regression stated exactly.
+
+        The failing writer here still *creates* its file before dying, which is
+        what the interrupted job did. In place, that file is the cache entry
+        from then on; beside it, it is litter — and it has to be cleaned up
+        too, or the next run inherits a directory of temporaries named after
+        processes that no longer exist.
+        """
+        from poraque.fields.base import ScalarField
+
+        def torn(self, path=None, *args, **kwargs):
+            with open(path, "w") as handle:
+                handle.write("half a header\n")
+            raise RuntimeError("the job was cancelled mid-write")
+
+        monkeypatch.setattr(ScalarField, "write", torn)
+        with pytest.raises(RuntimeError, match="cancelled mid-write"):
+            build_field_cache(bulk, tmp_path / "out", resolution=8,
+                              charges=CHARGES)
+
+        out = str(tmp_path / "out")
+        assert glob.glob(os.path.join(out, "*", "*partial*")) == []
+        assert glob.glob(os.path.join(out, "*", "CHGCAR")) == []
+        assert glob.glob(os.path.join(out, "*", "EXTCAR")) == []
+
+    def test_the_temporary_keeps_the_suffix_a_store_is_recognised_by(
+            self, bulk, tmp_path, monkeypatch):
+        """
+        ``fields.partial-1234.h5``, never ``fields.h5.partial-1234``.
+
+        The suffix is load-bearing rather than cosmetic:
+        :meth:`~poraque.fields.base.ScalarField.write` chooses between the text
+        writer and the HDF5 one by looking at it, so a temporary that loses it
+        would write a `CHGCAR` into a file the cache then renames to
+        ``fields.h5``.
+        """
+        from poraque.data import cache as cache_module
+
+        seen, replace = [], os.replace
+
+        def record(source, destination):
+            seen.append(os.path.basename(str(source)))
+            replace(source, destination)
+
+        monkeypatch.setattr(cache_module.os, "replace", record)
+        build_field_cache(bulk, tmp_path / "out", resolution=8,
+                          charges=CHARGES, storage="hdf5")
+
+        assert seen and all(name.endswith(".h5") for name in seen), seen

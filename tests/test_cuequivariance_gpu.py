@@ -16,6 +16,14 @@ Run it on the cluster, deliberately::
 Every test here skips without CUDA, so the ordinary suite passes on a machine
 with no accelerator and ``pytest -m "not gpu"`` deselects the file outright.
 
+**It has now been run**, on a Tesla V100 at LNCC, and it failed on first
+contact — five tests, of which four were one bug in :func:`rotate_field`
+(``addmm_cuda`` has no ``Long`` kernel, so the exact voxel permutation could
+not be built on the device at all) and one was a real defect in the shipped
+layer that nothing else had caught. Both are fixed and both are commented at
+the site, because "written, linted, collected and never run" is a state with a
+characteristic failure mode and this file is the record of it.
+
 Why the file is called this, and does not import ``cuequivariance``
 ------------------------------------------------------------------
 It was asked for under that name, and the name is worth keeping because it is
@@ -87,6 +95,17 @@ pytestmark = pytest.mark.gpu
 CUDA = pytest.mark.skipif(not torch.cuda.is_available(),
                           reason="requires a CUDA device")
 
+#: TF32 is an Ampere feature, and the machine this file was addressed to has
+#: none. `sequana_gpu` at LNCC is Tesla V100, `sm_70`, and
+#: :func:`~poraque.ml.device.enable_tf32`'s own docstring says the flag is a
+#: no-op before Ampere — so the test that measures TF32's effect asserted a
+#: tenfold degradation on hardware physically incapable of producing one, and
+#: reported a failure on precisely the cluster it was written for.
+AMPERE = pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability() < (8, 0),
+    reason="TF32 needs compute capability 8.0; a V100 is sm_70 and has none")
+
 
 # ---------------------------------------------------------------------- #
 # Helpers — deliberately duplicated from tests/test_equivariance.py.
@@ -117,11 +136,19 @@ def rotate_field(field, rotation):
     error being measured.
     """
     shape = field.shape[-3:]
+    # The permutation is built on the **host** and moved once, finished.
+    # `addmm_cuda` is not implemented for Long: an int64 matmul works on the
+    # CPU and on MPS and has no CUDA kernel at all, so doing this arithmetic on
+    # the device raised before any test could measure anything, and every
+    # rotation test in this file failed for that one reason. Casting to float
+    # to reach a CUDA kernel is not the fix -- it would put a rounding step
+    # inside the exactness this permutation exists to provide.
     grid = torch.stack(torch.meshgrid(
-        *[torch.arange(n, device=field.device) for n in shape], indexing="ij"))
-    inverse = torch.linalg.inv(rotation.double()).round().long()
-    source = (inverse.to(field.device) @ grid.reshape(3, -1)).reshape(3, *shape)
-    source = torch.stack([source[i] % shape[i] for i in range(3)])
+        *[torch.arange(n) for n in shape], indexing="ij"))
+    inverse = torch.linalg.inv(rotation.double().cpu()).round().long()
+    source = (inverse @ grid.reshape(3, -1)).reshape(3, *shape)
+    source = torch.stack([source[i] % shape[i]
+                          for i in range(3)]).to(field.device)
     return field[..., source[0], source[1], source[2]]
 
 
@@ -141,6 +168,23 @@ def exact_matmuls():
     yield
     torch.backends.cuda.matmul.allow_tf32 = matmul
     torch.backends.cudnn.allow_tf32 = cudnn
+
+
+def sample_field(shape=(32, 32, 32), seed=0, batch=1,
+                 dtype=torch.float32):
+    """
+    A test field on the device, drawn from a **stated** seed.
+
+    The dense layer's rotation error is a property of the field as much as of
+    the weights — across seeds it runs from 0.086 to 0.93 — so a counterfactual
+    compared against an unseeded ``torch.randn`` is a threshold measured
+    against whatever the rest of the session left in the global RNG. The same
+    repair was made in ``tests/test_equivariance.py`` and did not reach this
+    file, which is what a file written and never run costs.
+    """
+    generator = torch.Generator().manual_seed(seed)
+    return torch.randn(batch, 1, *shape, generator=generator,
+                       dtype=dtype).cuda()
 
 
 def build(equivariant, width=16, seed=7, **kwargs):
@@ -183,18 +227,31 @@ class TestTheRotationPropertyHoldsOnTheDevice:
     """
 
     def test_all_24_rotations_of_the_cube(self, exact_matmuls):
-        field = torch.randn(1, 1, 32, 32, 32, device="cuda")
-        error = worst_rotation_error(build(True), field, cubic(),
+        error = worst_rotation_error(build(True), sample_field(), cubic(),
                                      octahedral_rotations())
         assert error < 1e-4, f"worst relative deviation {error:.3e}"
 
     def test_the_dense_operator_does_not(self, exact_matmuls):
-        field = torch.randn(1, 1, 32, 32, 32, device="cuda")
-        error = worst_rotation_error(build(False, use_coordinates=False),
-                                     field, cubic(), octahedral_rotations())
-        assert error > 0.1, (
-            f"the dense spectral layer came out equivariant to {error:.3e}, "
-            f"which it has no reason to be")
+        """
+        The counterfactual, stated as a **ratio** rather than a threshold.
+
+        The dense layer's rotation error is a property of the field as well as
+        of the weights — 0.086 at one seed, 0.93 at another — so a bare
+        ``> 0.1`` is a bound compared against whatever the session left in the
+        global RNG. The claim that survives is scale-free: on the *same* field,
+        the dense layer is wrong by orders of magnitude more than the radial
+        one.
+        """
+        field = sample_field()
+        rotations = octahedral_rotations()
+        dense = worst_rotation_error(build(False, use_coordinates=False),
+                                     field, cubic(), rotations)
+        radial = worst_rotation_error(build(True), field, cubic(), rotations)
+        assert dense > 1e-3, (
+            f"the dense spectral layer came out equivariant to {dense:.3e}, "
+            f"which it has no reason to be -- if the field or the model has "
+            f"become degenerate the equivariant test above passes for nothing")
+        assert dense > 1e3 * radial, f"dense {dense:.3e}, radial {radial:.3e}"
 
     def test_float64_on_the_device_reaches_machine_precision(self,
                                                              exact_matmuls):
@@ -206,8 +263,7 @@ class TestTheRotationPropertyHoldsOnTheDevice:
         sat at 2e-3 and looked entirely plausible.
         """
         model = build(True).double()
-        field = torch.randn(1, 1, 24, 24, 24, device="cuda",
-                            dtype=torch.float64)
+        field = sample_field((24, 24, 24), dtype=torch.float64)
         error = worst_rotation_error(model, field, cubic().double(),
                                      octahedral_rotations()[:6])
         assert error < 1e-12, f"worst relative deviation {error:.3e}"
@@ -223,12 +279,23 @@ class TestTF32IsTheThingThatWillLookLikeAFailure:
     :math:`\\sim10^{-3}` and reasonably conclude the architecture is broken.
     It is not: it is the matmul. Written down as an assertion so the number is
     on record rather than rediscovered.
+
+    **And it is Ampere and later only.** Run on `sequana_gpu` at LNCC — Tesla
+    V100, ``sm_70`` — the flag does nothing at all: measured, ``exact`` is
+    8.7e-07 and turning ``allow_tf32`` on does not move it. So this test could
+    only ever fail there, on the one machine it was addressed to, while being
+    right about the hazard everywhere else. Hence :data:`AMPERE`. The
+    consequence for anyone debugging on Volta is worth carrying: **you will
+    never see the 1e-3 warned about here**, and a 1e-3 measured there has a
+    different cause — see
+    ``tests/test_equivariance.py::TestTheCutoffDoesNotTieWithItsOwnRoundOff``.
     """
 
+    @AMPERE
     def test_the_error_is_dominated_by_the_matmul_when_tf32_is_on(self):
         matmul = torch.backends.cuda.matmul.allow_tf32
         try:
-            field = torch.randn(1, 1, 32, 32, 32, device="cuda")
+            field = sample_field()
             rotations = octahedral_rotations()[:6]
 
             torch.backends.cuda.matmul.allow_tf32 = False
@@ -264,7 +331,7 @@ class TestABatchOfDifferentCells:
 
     def test_each_sample_gets_its_own_cell(self, exact_matmuls):
         model = build(True)
-        field = torch.randn(3, 1, 24, 24, 24, device="cuda")
+        field = sample_field((24, 24, 24), batch=3)
         cells = torch.stack([torch.eye(3, device="cuda") * edge
                              for edge in (6.0, 8.0, 11.0)])
         with torch.no_grad():
@@ -274,8 +341,20 @@ class TestABatchOfDifferentCells:
         assert torch.allclose(batched, separate, atol=1e-5)
 
     def test_the_rotation_property_survives_a_mixed_batch(self, exact_matmuls):
+        """
+        The test that found a defect it was not written to find.
+
+        It failed at 4.485e-04 on a V100 and the batch was innocent: an
+        11 Ang cell fails **on its own**, because its face modes tie with the
+        spherical cutoff's own round-off. Batch-of-three-identical equalled
+        batch-of-one throughout, so the per-sample basis was broadcast
+        correctly all along. The cause and its fix are
+        :data:`~poraque.ml.fno.CUTOFF_SLACK`; the 11 Ang cell stays in this
+        batch deliberately, as the cheapest possible guard against it coming
+        back.
+        """
         model = build(True)
-        field = torch.randn(3, 1, 24, 24, 24, device="cuda")
+        field = sample_field((24, 24, 24), batch=3)
         cells = torch.stack([torch.eye(3, device="cuda") * edge
                              for edge in (6.0, 8.0, 11.0)])
         error = worst_rotation_error(model, field, cells,

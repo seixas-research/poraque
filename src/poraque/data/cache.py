@@ -39,6 +39,7 @@ needs. A cache built for ``ext2chg`` from an archive that also has :math:`\tau`
 serves ``chg2tau`` afterwards with no rebuild.
 """
 
+import contextlib
 import json
 import os
 import time
@@ -632,43 +633,97 @@ def _build_one(record, cache, resolution, fields, spin, emit, remembered=None,
     os.makedirs(destination, exist_ok=True)
     ranges, warnings = {}, []
 
-    for name in wanted:
-        field = source.read(record, name, native, spin=spin)
+    # Every field is written under a temporary name in its own directory and
+    # moved into place with `os.replace`, which is atomic. Two processes
+    # sharing a cold cache -- two jobs in one allocation, or a resubmission
+    # overlapping its predecessor -- otherwise interleave inside a single
+    # `write` and leave a torn file behind, and the text format has no length
+    # field with which to notice: a truncated `CHGCAR` parses, into a field of
+    # the wrong shape, and `_all_present` then calls that material done
+    # forever. Observed at LNCC as a zero-length density on a cache two jobs
+    # built at once. It is the between-jobs form of the race the DDP barrier
+    # already handles within one job.
+    #
+    # What this does *not* do is stop the two builds duplicating the work.
+    # Only a lock would, and a lock that behaves across a shared parallel
+    # filesystem is a much larger promise than this function should make;
+    # duplicated work costs minutes, a torn field costs the dataset.
+    marker = f".partial-{os.getpid()}"
+    store = os.path.join(destination, HDF5_FILENAME)
+    pending = {}
 
-        if resolution:
-            from .dataset import _resample
+    try:
+        for name in wanted:
+            field = source.read(record, name, native, spin=spin)
 
-            reduced_field = _resample(field, reduced.shape, reduced)
-        else:
-            reduced_field = field
+            if resolution:
+                from .dataset import _resample
 
-        if storage == "hdf5":
-            from ..fields.hdf5 import write_fields
+                reduced_field = _resample(field, reduced.shape, reduced)
+            else:
+                reduced_field = field
 
-            write_fields(os.path.join(destination, HDF5_FILENAME),
-                         {name: reduced_field}, compression=compression,
-                         level=compression_level)
-        else:
-            reduced_field.write(targets[name])
+            # Registered *before* the write, not after: a writer that raises
+            # partway has already created the file, and a temporary the
+            # cleanup below does not know about is litter nothing will ever
+            # remove.
+            if storage == "hdf5":
+                from ..fields.hdf5 import write_fields
 
-        data = reduced_field.data
-        ranges[name] = [float(data.min()), float(data.max())]
+                # One store holds every field, so the whole store is built
+                # beside its final name and moved once, after the loop.
+                temporary = _partial(store, marker)
+                pending[temporary] = store
+                write_fields(temporary, {name: reduced_field},
+                             compression=compression, level=compression_level)
+            else:
+                temporary = _partial(targets[name], marker)
+                pending[temporary] = targets[name]
+                reduced_field.write(temporary)
 
-        # rho and tau are non-negative, but band-limiting a field with sharp
-        # core peaks rings (Gibbs) and can undershoot slightly. That is an
-        # artefact of the truncation, not of the data, and it is why the
-        # dataset uses the sign-tolerant `asinh` normalization.
-        if name in ("CHGCAR", "TAUCAR") and field.data.min() >= 0:
-            negative = int(np.count_nonzero(data < 0))
-            if negative:
-                warnings.append(
-                    f"{name}: {negative} of {data.size} points "
-                    f"({100 * negative / data.size:.2f}%) went negative, min "
-                    f"{data.min():.3g} (Gibbs ringing from band-limiting)")
+            data = reduced_field.data
+            ranges[name] = [float(data.min()), float(data.max())]
+
+            # rho and tau are non-negative, but band-limiting a field with
+            # sharp core peaks rings (Gibbs) and can undershoot slightly. That
+            # is an artefact of the truncation, not of the data, and it is why
+            # the dataset uses the sign-tolerant `asinh` normalization.
+            if name in ("CHGCAR", "TAUCAR") and field.data.min() >= 0:
+                negative = int(np.count_nonzero(data < 0))
+                if negative:
+                    warnings.append(
+                        f"{name}: {negative} of {data.size} points "
+                        f"({100 * negative / data.size:.2f}%) went negative, "
+                        f"min {data.min():.3g} (Gibbs ringing from "
+                        f"band-limiting)")
+    except BaseException:
+        # A half-written temporary is litter, not a cache entry, and it names
+        # a process that is no longer running.
+        for temporary in pending:
+            with contextlib.suppress(OSError):
+                os.remove(temporary)
+        raise
+
+    for temporary, final in pending.items():
+        os.replace(temporary, final)
 
     return {"native": list(native.shape), "shape": list(reduced.shape),
             "ranges": ranges, "warnings": warnings,
             "seconds": time.time() - started}
+
+
+def _partial(path, marker):
+    """
+    A sibling temporary that keeps ``path``'s suffix.
+
+    The suffix is not cosmetic: :meth:`ScalarField.write` dispatches text
+    against HDF5 on it, and so does :func:`poraque.fields.hdf5.is_hdf5_path`.
+    ``fields.h5`` becomes ``fields.partial-1234.h5`` rather than
+    ``fields.h5.partial-1234``; a cache field has no extension at all and
+    simply gains one.
+    """
+    root, extension = os.path.splitext(path)
+    return f"{root}{marker}{extension}"
 
 
 def _all_present(targets, storage):

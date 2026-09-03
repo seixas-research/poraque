@@ -448,6 +448,13 @@ in its first lines.
   must be off, because the three fractional coordinates rotate into each other
   and are an ℓ=1 object in a network that treats every channel as a scalar.
 
+  Trained once, on a V100: at matched *cost* the constrained model reached a
+  validation relative L² of 0.047 against 0.173 for a dense model with 28×
+  the parameters, and the four-times-larger equivariant arm was worse — so what
+  buys the accuracy is the symmetry, not the capacity. One seed, one dataset,
+  neither equivariant arm converged at 400 epochs; a reason to try the flag,
+  not yet a number to quote.
+
 - **It is still a grid-based operator learner, not an equivariant
   message-passing network**, which settles a question people ask: NVIDIA's
   cuequivariance accelerates arithmetic on irreducible representations of

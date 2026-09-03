@@ -168,6 +168,15 @@ model:
   # model of the same width is a much smaller model; n_radial and width are
   # where that is bought back, not modes.
   #
+  # Whether it pays was measured once, on a V100 at LNCC: 400 epochs on 115
+  # Materials Project structures at 32^3, width 32 / n_radial 32 reached a
+  # validation relative L2 of 0.047 against 0.173 for a dense model of 28x the
+  # parameters -- 4.1x better, for 1.3x the time per epoch. The 4x LARGER
+  # equivariant arm (width 128, n_radial 64) was WORSE, at 0.059: capacity is
+  # not what buys this. One seed, one dataset, and neither equivariant arm had
+  # converged at 400 epochs, so read it as a reason to try the flag rather than
+  # as a number.
+  #
   # NVIDIA's cuequivariance is deliberately not used and is not a dependency.
   # It accelerates arithmetic on irreducible representations of O(3), and a
   # scalar field -> scalar field operator carries only l = 0: every tensor

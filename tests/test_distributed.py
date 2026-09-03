@@ -323,7 +323,19 @@ class TestADisabledContextIsANoOp:
         inner = torch.nn.Linear(2, 2)
         assert unwrap(_Wrapper(inner)) is inner
 
-    def test_it_describes_itself_as_single_device(self):
+    def test_it_describes_itself_as_single_device(self, clean_environment):
+        """
+        ``clean_environment`` is the whole point of this one.
+
+        Without it the assertion passes on a workstation and **fails inside
+        any Slurm allocation**, because :func:`describe` then correctly appends
+        the lines saying an allocation is present with no group formed — the
+        behaviour the very next test asserts. Reproduced on the LNCC login
+        node, where it was the only failure outside the ``gpu`` marker and so
+        made ``pytest -m "not gpu"``, the CI command, fail on the cluster for a
+        reason unrelated to GPUs. This test is about a disabled context, not
+        about the environment it was collected in.
+        """
         assert describe(DistributedContext()) == \
             ["single device (no distributed group)"]
 

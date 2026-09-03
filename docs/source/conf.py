@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.abspath("../../src"))  # repository src/ layout
 project = "Poraquê"
 copyright = "Leandro Seixas Rocha, 2026"
 author = "Leandro Seixas Rocha"
-release = "26.9.6"
+release = "26.9.7"
 
 # -- General configuration ---------------------------------------------------
 
