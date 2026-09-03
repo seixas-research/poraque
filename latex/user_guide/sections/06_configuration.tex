@@ -927,10 +927,13 @@ $p \to \infty$ in that probe. \\
 \end{tabular}
 \end{center}
 
-\begin{pwarn}[title={Two blocks named \opt{physics}, and they are not the same}]
-\opt{training.physics} constrains the \textbf{neural operator}: charge
-conservation, positivity of a predicted density, the Euler--Lagrange residual.
-Its terms are added to a training loss over voxels.
+\begin{pwarn}[title={Two blocks of physics weights, and they are not the same}]
+\opt{training.physics\_informed\_setup} constrains the \textbf{neural
+operator}: charge conservation, positivity of a predicted density, the
+Euler--Lagrange residual. Its terms are added to a training loss over voxels,
+and \opt{training.physics\_informed} decides whether any of them is evaluated
+--- \opt{auto} answers from the weights, \opt{true} refuses to be an empty
+claim, \opt{false} also skips the per-batch decode the terms act on.
 
 \opt{symbolic.physics} constrains a \textbf{candidate algebraic expression}
 for the Pauli enhancement factor. Its terms are added to a symbolic-regression

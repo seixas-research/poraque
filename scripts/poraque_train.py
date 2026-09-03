@@ -94,52 +94,13 @@ if os.path.isdir(_SRC):
     sys.path.insert(0, _SRC)
 
 
-def _preimport_symbolic_engine(argv):
-    """
-    Load PySR's Julia runtime **before** PyTorch, when a run will use it.
-
-    Importing ``juliacall`` after ``torch`` can segfault the process --
-    juliacall warns about exactly this, citing pytorch#78829. It is not
-    hypothetical and it is not deterministic: a search with more parallel
-    populations is likelier to hit it, and the crash arrives *after* training
-    has finished, taking the run with it.
-
-    Whether the engine is needed has to be known before ``import torch``, so
-    the decision is made from the command line and the config file directly.
-    Reading a YAML file needs no heavy imports; a failure here is swallowed
-    because the real parser is a few lines further on and gives a better error
-    than anything this could raise.
-    """
-    argv = list(argv or [])
-    enabled = "--symbolic" in argv
-    config_path = None
-    for position, token in enumerate(argv):
-        if token == "--config" and position + 1 < len(argv):
-            config_path = argv[position + 1]
-        elif token.startswith("--config="):
-            config_path = token.split("=", 1)[1]
-    if not enabled and config_path:
-        try:
-            import yaml
-
-            with open(config_path) as handle:
-                document = yaml.safe_load(handle) or {}
-            enabled = bool((document.get("symbolic") or {})
-                           .get("enable_symbolic_distillation", False))
-        except Exception:                               # noqa: BLE001
-            enabled = False
-    if not enabled:
-        return
-
-    try:
-        import pysr  # noqa: F401  (imported for its side effect on load order)
-    except Exception:                                   # noqa: BLE001
-        # Missing or broken; the search reports it properly when it runs.
-        pass
-
-
-_preimport_symbolic_engine(sys.argv[1:])
-
+# There used to be a `_preimport_symbolic_engine(sys.argv[1:])` here, which
+# read the config before `import torch` so that PySR's Julia runtime could be
+# loaded first: importing `juliacall` after `torch` can segfault the process,
+# which juliacall warns about itself citing pytorch#78829, and the crash
+# arrived *after* training had finished and took the run with it. The engine is
+# `poraque.ml.gp` now -- NumPy and SciPy -- so there is no second runtime, no
+# load order to respect, and nothing for this to do.
 import torch  # noqa: E402
 
 from poraque import banner  # noqa: E402
@@ -744,9 +705,32 @@ def format_aggregate(label, rows, log):
 
 
 def build_loss(config, task_name):
-    """Assemble the objective from the ``training`` section of the config."""
-    physics = dict(config.training.physics or {})
-    if physics.get("euler_lagrange_weight", 0.0):
+    """
+    Assemble the objective from the ``training`` section of the config.
+
+    ``physics_informed`` is handed to the loss rather than resolved here: the
+    answer under ``"auto"`` is a statement about the weights, and the weights
+    are what the loss is built from. Resolving it in two places is how the
+    objective and the training loop's decision about whether to decode a
+    prediction come to disagree.
+    """
+    physics = dict(config.training.physics_informed_setup or {})
+    if config.training.physics_informed is False:
+        # Reported, because a block of non-zero weights sitting under a switch
+        # that turns them off is exactly the configuration someone will later
+        # read as evidence that they applied.
+        stated = [key for key, value in physics.items() if value]
+        if stated:
+            import warnings
+
+            warnings.warn(
+                f"training.physics_informed is false, so {', '.join(sorted(stated))} "
+                f"in training.physics_informed_setup are inert. Remove the "
+                f"switch to honour them.",
+                RuntimeWarning, stacklevel=2,
+            )
+    if (physics.get("euler_lagrange_weight", 0.0)
+            and config.training.physics_informed is not False):
         import warnings
 
         warnings.warn(
@@ -764,6 +748,7 @@ def build_loss(config, task_name):
         positivity_weight=physics.get("positivity_weight", 0.0),
         von_weizsacker_weight=physics.get("von_weizsacker_weight", 0.0),
         euler_lagrange_weight=physics.get("euler_lagrange_weight", 0.0),
+        physics_informed=config.training.physics_informed,
     )
 
 
@@ -1575,6 +1560,43 @@ def validate_activation_settings(config):
         raise SystemExit(str(error))
 
 
+def validate_equivariance_settings(config):
+    """
+    Resolve ``model.equivariant`` and its block before anything runs.
+
+    Same timing argument as :func:`validate_activation_settings`, and one more
+    besides: ``equivariant: true`` beside the default ``use_coordinates: true``
+    is a contradiction the constructor refuses, and refusing it here means the
+    run says so on the command line rather than after the cache is built.
+    """
+    try:
+        config.model.equivariant_kwargs()
+    except ValueError as error:
+        raise SystemExit(str(error))
+
+
+def validate_physics_settings(config):
+    """
+    Resolve ``training.physics_informed`` before anything runs.
+
+    ``true`` with every weight at zero is refused, and refusing it here rather
+    than in :func:`build_loss` is the difference between a message on the
+    command line and one an hour later, after the cache: the objective is
+    built per task, and the first task is built after the fields are prepared.
+    """
+    from poraque.ml.losses import PhysicsInformedLoss
+
+    try:
+        PhysicsInformedLoss(
+            task="ext2chg",
+            **{key: float(value) for key, value
+               in dict(config.training.physics_informed_setup or {}).items()},
+            physics_informed=config.training.physics_informed,
+        )
+    except (ValueError, TypeError) as error:
+        raise SystemExit(str(error))
+
+
 def validate_symbolic_settings(settings):
     """
     Check the symbolic settings before anything is trained.
@@ -1616,7 +1638,7 @@ def validate_symbolic_settings(settings):
             f"Unknown key(s) in symbolic.physics: {sorted(unknown)}.\n"
             f"  Note that this block constrains the symbolic *search*. The "
             f"terms that constrain the neural operator -- electron count, "
-            f"Euler-Lagrange -- belong in training.physics.")
+            f"Euler-Lagrange -- belong in training.physics_informed_setup.")
     if physics["enable"] and float(physics["p_infinity"]) <= 0:
         raise SystemExit(
             f"symbolic.physics.p_infinity={physics['p_infinity']!r} must be "
@@ -1629,14 +1651,17 @@ def validate_symbolic_settings(settings):
                 f"symbolic.physics.{key}={physics[key]!r} must not be "
                 f"negative: a negative penalty rewards the violation it is "
                 f"meant to forbid.")
-    # PySR's tournament selection draws 10 individuals by default and refuses
-    # to run when the population cannot supply them. Caught here it is one
-    # line; caught by the engine it is a Julia stack trace after training.
-    if settings.population_size <= 10:
+    # The floor was 10 while PySR was the engine, because its tournament
+    # selection draws 10 individuals by default and refuses to run when the
+    # population cannot supply them. `poraque.ml.gp` draws three, so the real
+    # requirement is now that a tournament can choose between anything at all.
+    # Relaxing it rather than leaving it is the point: a limit kept after the
+    # dependency that justified it has gone is a limit nobody can explain.
+    if settings.population_size < 4:
         raise SystemExit(
             f"symbolic.population_size={settings.population_size} is too "
-            f"small: PySR's tournament selection needs a population larger "
-            f"than 10.")
+            f"small: the search selects by tournament and cannot choose "
+            f"between fewer than four individuals.")
 
 
 def save_task_checkpoint(task, operator, config, log):
@@ -2023,10 +2048,13 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
     # ---------------- the weights, before anything optional ---------------- #
     # The unified bundle is written once every task has trained, which is
     # correct but leaves the trained weights unpersisted while the optional
-    # analyses below run. Symbolic distillation calls into a Julia runtime that
-    # can take the whole process down; losing a finished fit to a post-hoc
-    # analysis is not a trade worth making, so a single-task copy goes to disk
-    # first and the unified bundle supersedes it.
+    # analyses below run. Symbolic distillation is a long stochastic search
+    # over expressions -- minutes to hours, on data the fit has already
+    # produced -- and losing a finished fit to a post-hoc analysis is not a
+    # trade worth making, so a single-task copy goes to disk first and the
+    # unified bundle supersedes it. (The sharper version of this argument was
+    # PySR's Julia runtime, which could take the whole process down after
+    # training had finished. That engine is gone; the ordering is still right.)
     save_task_checkpoint(task, operator, config, log)
 
     # ---------------- symbolic distillation ---------------- #
@@ -2515,8 +2543,7 @@ def build_parser():
                        dest="symbolic.enable_symbolic_distillation",
                        action="store_const", const=True, default=None,
                        help="after training, search for a closed-form "
-                            "expression reproducing the chg2tau operator "
-                            "(requires PySR)")
+                            "expression reproducing the chg2tau operator")
     group.add_argument("--symbolic-target", dest="symbolic.target",
                        choices=["model", "reference"], default=None,
                        help="fit the operator's predictions (model) or the "
@@ -2576,6 +2603,8 @@ def run(argv=None):
     validate_precision_settings(config)
     validate_loss_settings(config)
     validate_activation_settings(config)
+    validate_equivariance_settings(config)
+    validate_physics_settings(config)
 
     # Resolved before anything else, because it decides *which* device this
     # process may use and whether it is allowed to write. Never raises: without

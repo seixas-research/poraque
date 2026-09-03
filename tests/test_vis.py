@@ -255,7 +255,8 @@ class TestParitySplits:
 # ===================================================================== #
 class TestWrappableValues:
     """
-    `training.physics` is 116 characters of nested dict. In an `l` column --
+    `training.physics_informed_setup` is 116 characters of nested dict. In
+    an `l` column --
     a single unbreakable box -- it ran past the right margin of the PDF.
     """
 
@@ -334,7 +335,8 @@ class TestConfigurationKeys:
 
 class TestNestedConfigValues:
     """
-    `training.physics` is a dict. Printed as its repr it is one unreadable
+    `training.physics_informed_setup` is a dict. Printed as its repr it is
+    one unreadable
     116-character run; it belongs in the table as one setting per line.
     """
 
@@ -373,7 +375,7 @@ class TestNestedConfigValues:
     def test_a_real_config_renders(self):
         from poraque.ml.config import TrainingConfig
 
-        physics = TrainingConfig().training.physics
+        physics = TrainingConfig().training.physics_informed_setup
         rendered = _format_value(physics)
         assert rendered.count(r"\newline") == len(physics) - 1
 
@@ -385,9 +387,9 @@ class TestDescribeNesting:
         from poraque.ml.config import TrainingConfig
 
         described = TrainingConfig().describe()
-        assert "physics={" not in described
-        assert "  physics:" in described
-        for key in TrainingConfig().training.physics:
+        assert "physics_informed_setup={" not in described
+        assert "  physics_informed_setup:" in described
+        for key in TrainingConfig().training.physics_informed_setup:
             assert any(line.strip().startswith(key)
                        for line in described.splitlines())
 
@@ -402,7 +404,8 @@ class TestDescribeNesting:
         config = TrainingConfig()
         training = next(line for line in config.describe().splitlines()
                         if line.startswith("training:"))
-        inlined = len(training) + len(str(config.training.physics))
+        inlined = (len(training)
+                   + len(str(config.training.physics_informed_setup)))
         assert len(training) < inlined - 100
         assert "electron_count_weight" not in training
 

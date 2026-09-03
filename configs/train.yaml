@@ -10,23 +10,24 @@
 
 task:
   type: all                     # all | ext2chg | chg2tau; only `all` reaches a total energy
-  name: platinum_W16-M8-L3      # names models/<name>/ and everything inside it
+  name: platinum_W32-M8-L3      # names models/<name>/ and everything inside it
 
 data:
   data_paths:                                            # one entry per dataset root; each holds
     - ./data/vasp/structures                             #   one subdirectory per material
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # without a library V_ext is the Gaussian model
   atomic_reference: ./data/vasp/isolated_atoms           # the Pt atom: the baseline and the PAW records
+  spin: false                                            # Spin polarization for charge density
   paw_source: atomic                                     # the free atom's own record, per element and transferable
   delta_density: true                                    # ext2chg learns rho - rho_sup; predict() still returns the full rho
   resolution: 32                                         # longest grid axis after spectral downsampling
-  cache_in_memory: auto                                  # auto | true | false
+  cache_in_memory: true                                  # auto | true | false
   storage: files                                         # files (a CHGCAR-format text file per field) | hdf5 (one fields.h5)
   compression: null                                      # null | gzip | lzf; hdf5 only, and raises on a text cache
   compression_level: 4                                   # gzip only; ignored by lzf
 
 model:
-  width: 16                     # channels carried through the Fourier layers
+  width: 32                     # channels carried through the Fourier layers
   modes: 8                      # retained Fourier modes per axis
   n_layers: 3                   # Fourier layers
   projection_channels: 64       # hidden width of the read-out head
@@ -36,22 +37,21 @@ model:
 
 training:
   epochs: 500
-  batch_size: 10                # samples per batch within one grid-shape bucket
+  batch_size: 64                # samples per batch within one grid-shape bucket
   learning_rate: 0.002
   weight_decay: 0.0001
   optimizer: adamw              # adamw | adam | sgd; identical to adam at weight_decay 0
   scheduler: cosine             # cosine | null
   loss: relative_l2             # absolute_l2 | relative_l2 | absolute_h1 | relative_h1
-  sobolev_weight: 0.1           # w_Sob: read only by the two h1 losses, so inert here.
-                                #   In an h1, L = L2(f) + w_Sob * L2(grad f), both terms in
-                                #   the same norm
+  sobolev_weight: 0.1           # w_Sob: read only by the two h1 losses
   valid_fraction: 0.2           # held out at the STRUCTURE level; 0 trains on everything
   eval_epoch: 10                # evaluate and log every this many epochs
-  early_stopping: 300           # epochs without improvement before stopping; 0 disables
+  early_stopping: 100           # epochs without improvement before stopping; 0 disables
   seed: 42                      # the validation draw, the fold partition, the batch order
   device: auto                  # auto (CUDA, then MPS, then CPU) or an explicit backend
   strict_device: false
-  physics:
+  physics_informed: auto        # auto (any weight below) | true (require one) | false (skip the work)
+  physics_informed_setup:
     electron_count_weight: 1.0  # ext2chg: int(rho) must equal the known valence count
     positivity_weight: 0.1      # rho, tau >= 0 (a Log head is the better fix)
     von_weizsacker_weight: 0.1  # chg2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
@@ -65,6 +65,4 @@ output:
   checkpoint: true              # write the .poraque
   plot_format: png
   dpi: 400
-  save_raw_plot_data: true      # write the numbers behind each figure beside it
-                                #   (<figure stem>.csv / .npz), so a plot can be
-                                #   redrawn for publication without re-running
+  save_raw_plot_data: false

@@ -66,7 +66,8 @@ def _wrappable(text, threshold=26):
     Escape a configuration value and let it break inside a fixed-width column.
 
     A ``p`` column wraps at spaces, which is enough for a value like the
-    ``training.physics`` dict. It is not enough for a long value with no
+    ``training.physics_informed_setup`` dict. It is not enough for a long
+    value with no
     spaces at all -- an absolute path, or a cache tag such as
     ``res32_blur0.15spec`` -- which stays one unbreakable word and overruns the
     column exactly as an ``l`` column did. Break opportunities are inserted
@@ -92,7 +93,8 @@ def _format_value(value):
     """
     Render one configuration value for a fixed-width table cell.
 
-    A nested mapping -- ``training.physics`` is the only one today -- becomes
+    A nested mapping -- ``training.physics_informed_setup`` is the only one
+    today -- becomes
     one ``key: value`` per line rather than a single 116-character repr. The
     break is ``\\newline`` and not ``\\\\``: inside a ``p`` column ``\\\\`` ends
     the table *row*, which would split one setting across two rows and put the
@@ -799,7 +801,7 @@ class ModelReport:
 
         if configuration:
             # Fixed-width columns, not `ll`. An `l` column is a single
-            # unbreakable box, so a long value -- `training.physics` is 116
+            # unbreakable box, so a long value -- `physics_informed_setup` is 116
             # characters of nested dict -- ran straight past the right margin.
             #
             # The widths are fractions of `\textwidth` rather than centimetres,

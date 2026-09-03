@@ -58,6 +58,8 @@ and FiLM conditioning (:class:`CellEncoder`), so the operator can distinguish a
 dense small cell from a sparse large one.
 """
 
+from functools import lru_cache
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -253,6 +255,38 @@ def complex_contract(equation, x, weight):
 # ---------------------------------------------------------------------- #
 # Spectral convolution
 # ---------------------------------------------------------------------- #
+def effective_modes(modes, shape, max_modes=None):
+    """
+    Modes actually usable on a grid of ``shape``, given a mode capacity.
+
+    Shared by both spectral convolutions rather than written twice: the
+    truncation rule is the same statement about the grid whether the kernel
+    that follows it is dense or radial, and two copies of it would be two
+    places for a physical cutoff to stop agreeing with an index one.
+
+    Parameters
+    ----------
+    modes : tuple of int
+        Per-axis mode *capacity* — how many weights exist.
+    shape : tuple of int
+        Spatial shape ``(Nx, Ny, Nz)``.
+    max_modes : tuple of int, optional
+        Extra per-axis cap, e.g. from a physical ``G_max``.
+
+    Returns
+    -------
+    tuple of int
+        ``(m1, m2, m3)``, each at least 1 and each within the grid.
+    """
+    nx, ny, nz = shape
+    available = (nx // 2, ny // 2, nz // 2 + 1)
+    caps = max_modes if max_modes is not None else modes
+    return tuple(
+        max(1, min(int(modes[i]), int(caps[i]), int(available[i])))
+        for i in range(3)
+    )
+
+
 class SpectralConv3d(nn.Module):
     r"""
     Learned multiplication of the lowest Fourier modes.
@@ -322,13 +356,7 @@ class SpectralConv3d(nn.Module):
         tuple of int
             ``(m1, m2, m3)``, each at least 1.
         """
-        nx, ny, nz = shape
-        available = (nx // 2, ny // 2, nz // 2 + 1)
-        caps = max_modes if max_modes is not None else self.modes
-        return tuple(
-            max(1, min(int(self.modes[i]), int(caps[i]), int(available[i])))
-            for i in range(3)
-        )
+        return effective_modes(self.modes, shape, max_modes)
 
     def forward(self, x, max_modes=None):
         """
@@ -382,6 +410,328 @@ class SpectralConv3d(nn.Module):
     def extra_repr(self):
         return (f"in_channels={self.in_channels}, "
                 f"out_channels={self.out_channels}, modes={self.modes}")
+
+
+# ---------------------------------------------------------------------- #
+# Rotation-equivariant spectral convolution
+# ---------------------------------------------------------------------- #
+#: Radius in Å⁻¹ that the radial basis spans when nothing else fixes one.
+#:
+#: A run with ``mode_selection="physical"`` has already named the band it cares
+#: about, and ``g_basis`` defaults to that ``g_max``; this value is reached only
+#: by a ``"fixed"`` run, where no physical cutoff has been stated at all. 8 Å⁻¹
+#: is :math:`|\mathbf{G}|` at mode 8 in a 6.3 Å cell, which covers this
+#: project's own platinum cells (7–8 Å at ``modes=8``) with the outermost node
+#: just past the corner of the retained box. It is a *scale*, not a cutoff:
+#: modes beyond it are clamped onto the last basis function rather than
+#: dropped, so the operator's high-frequency response goes flat instead of to
+#: zero.
+DEFAULT_G_BASIS = 8.0
+
+
+@lru_cache(maxsize=64)
+def _mode_frequencies(modes, device, dtype):
+    r"""
+    Signed integer frequencies of a retained mode block, ``(3, 2m1, 2m2, m3)``.
+
+    The block's axis order is the one :class:`RadialSpectralConv3d` gathers in:
+    ``[0, 1, …, m-1, -m, …, -1]`` on the two full axes, and ``[0, …, m3-1]`` on
+    the ``rfftn`` axis, which carries no negative half. Reading these as signed
+    frequencies rather than as array indices is the whole point — the radius
+    :math:`|\mathbf{G}|` of mode :math:`-1` is that of mode :math:`+1`, and an
+    unsigned index would put it at the far edge of the basis.
+
+    Memoised on the same argument as
+    :func:`~poraque.ml.physics._integer_mesh` and for the same reason: it
+    depends on the mode counts and not on the cell, while a training step asks
+    for it once per Fourier layer per batch.
+
+    Parameters
+    ----------
+    modes : tuple of int
+        ``(m1, m2, m3)``, already reduced to what the grid supports. Must be a
+        plain tuple: it is a cache key.
+    device : torch.device
+    dtype : torch.dtype
+        A *real* dtype — these are the frequencies the radius is built from,
+        not the coefficients it multiplies.
+
+    Returns
+    -------
+    torch.Tensor
+        ``(3, 2m1, 2m2, m3)``. Shared between callers, so it must not be
+        mutated in place.
+    """
+    m1, m2, m3 = modes
+    axis_1 = torch.cat([torch.arange(0, m1, device=device, dtype=dtype),
+                        torch.arange(-m1, 0, device=device, dtype=dtype)])
+    axis_2 = torch.cat([torch.arange(0, m2, device=device, dtype=dtype),
+                        torch.arange(-m2, 0, device=device, dtype=dtype)])
+    axis_3 = torch.arange(0, m3, device=device, dtype=dtype)
+    return torch.stack(
+        torch.meshgrid(axis_1, axis_2, axis_3, indexing="ij"), dim=0)
+
+
+class RadialSpectralConv3d(nn.Module):
+    r"""
+    Spectral convolution whose kernel depends on :math:`|\mathbf{G}|` alone.
+
+    :class:`SpectralConv3d` learns one complex number per retained mode, so it
+    can — and does — treat :math:`\mathbf{G}` and :math:`R\mathbf{G}`
+    differently for a rotation :math:`R`. That freedom is what stops the
+    surrounding network from being equivariant, and it is the *only* thing that
+    does: every other operation in :class:`FNOBlock` is pointwise in the voxel
+    index (the 1×1×1 convolution, the activation), reduces over statistics a
+    permutation of voxels leaves alone (``GroupNorm``), or is conditioned on
+    quantities that are already rotation-invariant (:class:`CellEncoder`'s
+    lengths, angle cosines and volume).
+
+    Constraining the multiplier to
+
+    .. math::
+
+        R_{io}(\mathbf{G}) = \sum_{r} c_{ior}\,\varphi_r(|\mathbf{G}|),
+        \qquad c_{ior} \in \mathbb{R},
+
+    makes the layer a convolution with a **real radial kernel**, and a
+    convolution with a radial kernel commutes with every rotation. Two
+    consequences follow that are worth stating rather than deriving twice:
+
+    * the coefficients are **real**, not complex, because
+      :math:`R(-\mathbf{G}) = R(\mathbf{G})` for a radial multiplier and a real
+      output field needs :math:`R(-\mathbf{G}) = \overline{R(\mathbf{G})}`.
+      Both hold only for a real :math:`R`. Nothing is lost by it: a real-space
+      kernel that is a function of :math:`|\mathbf{r}|` is real and
+      centrosymmetric already, so the constrained class is exactly the radial
+      one and not a subset of it. The layer is therefore equivariant under the
+      full :math:`O(3)`, inversion included, rather than only the
+      :math:`SE(3)` the construction was asked for;
+    * the arithmetic needs **no complex** ``einsum``. The real and imaginary
+      parts of the spectrum are contracted separately against the same real
+      coefficients, which is why this class does not call
+      :func:`complex_contract` and pays none of its MPS workaround.
+
+    The cost is capacity, and it is large. The dense layer holds
+    :math:`4\,C_{\rm in}C_{\rm out}m_1m_2m_3` complex numbers; this one holds
+    :math:`C_{\rm in}C_{\rm out}R` real ones — at ``width=16``, ``modes=8`` and
+    ``n_radial=16`` that is 4 096 against 1 048 576, a factor of 256. An
+    equivariant model of the same width is a much smaller model, and the width
+    is where that is bought back.
+
+    Parameters
+    ----------
+    in_channels, out_channels : int
+        Channel counts.
+    modes : tuple of int
+        Mode *capacity* per axis, as for :class:`SpectralConv3d`.
+    n_radial : int
+        Number of radial basis functions. Sets the resolution of the kernel in
+        :math:`|\mathbf{G}|`, and is the layer's entire angular-to-radial
+        trade: it replaces :math:`m_1m_2m_3` per channel pair.
+    g_basis : float
+        Radius in Å⁻¹ that the basis spans; see :data:`DEFAULT_G_BASIS`.
+    spherical_cutoff : bool
+        Discard retained modes outside the largest sphere inscribed in the
+        retained box. **A radial multiplier is only half of equivariance**: the
+        set it is applied over has to be rotation-invariant too, and the
+        retained set is a box. On a cubic cell with :math:`m_1 = m_2 = m_3` the
+        box happens to be invariant under the octahedral group, which is why
+        the lattice-symmetry test passes either way; for any other cell, or
+        whenever the grid caps one axis and not another, the corners of the box
+        are modes whose rotations were never retained, and the operator
+        distinguishes :math:`\mathbf{G}` from :math:`R\mathbf{G}` again.
+        Masking to the inscribed sphere costs about half the retained
+        coefficients — the ball is 52 % of the cube — and buys equivariance
+        under *every* rotation rather than under the twenty-four the box
+        tolerates. Off is available and is a deliberate weakening.
+
+    Notes
+    -----
+    The basis is Gaussian on a uniform grid of :math:`u = |\mathbf{G}|/g_{\rm
+    basis} \in [0, 1]`, with the width set to the node spacing so neighbours
+    cross at :math:`e^{-1/4}` and the partition is smooth without being flat.
+    The radius is computed from the sample's **own cell**, so the same
+    coefficient means the same physical wavevector in every material — which
+    is the property that makes a radial kernel a statement about space rather
+    than about an index box.
+    """
+
+    def __init__(self, in_channels, out_channels, modes=(12, 12, 12),
+                 n_radial=16, g_basis=DEFAULT_G_BASIS, spherical_cutoff=True):
+        super().__init__()
+        self.in_channels = int(in_channels)
+        self.out_channels = int(out_channels)
+        self.modes = tuple(int(m) for m in modes)
+        if any(m < 1 for m in self.modes):
+            raise ValueError(f"All mode counts must be >= 1, got {modes!r}.")
+        self.n_radial = int(n_radial)
+        if self.n_radial < 2:
+            raise ValueError(
+                f"n_radial must be >= 2, got {n_radial!r}: a single basis "
+                f"function is a kernel with no dependence on |G| at all, "
+                f"which is a scalar multiple of the identity.")
+        self.g_basis = float(g_basis)
+        if not self.g_basis > 0.0:
+            raise ValueError(f"g_basis must be positive, got {g_basis!r}.")
+        self.spherical_cutoff = bool(spherical_cutoff)
+
+        # He-style scaling, as in the dense layer, but over the radial index:
+        # that is what the channel sum now runs against.
+        scale = 1.0 / (self.in_channels * self.out_channels)
+        self.weight = nn.Parameter(
+            scale * torch.randn(self.in_channels, self.out_channels,
+                                self.n_radial)
+        )
+        # Buffers rather than constants so `.to(device)` and `.double()` carry
+        # them with the parameters; a basis left on the CPU in float32 would
+        # fail the first forward pass of a float64 CUDA model.
+        self.register_buffer("centres",
+                             torch.linspace(0.0, 1.0, self.n_radial))
+        self.register_buffer(
+            "inverse_width",
+            torch.tensor(float(self.n_radial - 1)))
+
+    def effective_modes(self, shape, max_modes=None):
+        """Modes usable on a grid of ``shape``; see :func:`effective_modes`."""
+        return effective_modes(self.modes, shape, max_modes)
+
+    def radial_basis(self, cell, modes, device, dtype):
+        r"""
+        Evaluate the basis at every retained mode: ``(B, R, 2m1, 2m2, m3)``.
+
+        Parameters
+        ----------
+        cell : torch.Tensor
+            ``(B, 3, 3)`` lattice vectors in Å.
+        modes : tuple of int
+            ``(m1, m2, m3)`` actually retained on this grid.
+        device : torch.device
+        dtype : torch.dtype
+            Real dtype of the network's activations.
+
+        Returns
+        -------
+        torch.Tensor
+            ``(B, R, 2m1, 2m2, m3)`` real basis values.
+        """
+        # Local, like `CellEncoder.descriptors`: `ml.physics` imports the
+        # transforms, so a module-level import here closes a cycle.
+        from .physics import cell_reciprocal
+
+        frequencies = _mode_frequencies(tuple(int(m) for m in modes),
+                                        torch.device(device), dtype)
+        reciprocal = cell_reciprocal(cell, device=device, dtype=dtype)
+        # G_alpha = sum_j n_j b_{j alpha}; the same contraction
+        # `reciprocal_vectors` performs, over the mode block rather than the
+        # whole grid.
+        vectors = torch.einsum("bja,jxyz->baxyz", reciprocal, frequencies)
+        radius = torch.linalg.vector_norm(vectors, dim=1)   # (B, 2m1, 2m2, m3)
+
+        # Clamped rather than extrapolated: beyond `g_basis` every mode shares
+        # the outermost basis function, so the response goes flat. Letting the
+        # Gaussians decay instead would silently zero the high modes of any
+        # cell larger than the basis was sized for.
+        reduced = (radius / self.g_basis).clamp(max=1.0).unsqueeze(1)
+        centres = self.centres.to(dtype).view(1, -1, 1, 1, 1)
+        basis = torch.exp(
+            -((reduced - centres) * self.inverse_width.to(dtype)) ** 2)
+
+        if self.spherical_cutoff:
+            # The plane n_i = m_i lies at 2*pi*m_i / |a_i| from the origin, so
+            # the largest sphere inside the retained parallelepiped has that
+            # radius, minimised over the three axes. Cell lengths are all it
+            # takes, for any cell -- no inverse, no per-mode geometry.
+            lengths = torch.linalg.vector_norm(cell, dim=-1)         # (B, 3)
+            counts = torch.tensor([float(m) for m in modes],
+                                  device=lengths.device, dtype=lengths.dtype)
+            inscribed = (2.0 * np.pi * counts / lengths).amin(dim=-1)
+            # Strictly inside, not on the sphere, and the strictness is what
+            # makes the retained set symmetric. `rfftn` gives axis i the
+            # frequencies [0, m_i) and [-m_i, 0): the mode -m_i is kept and
+            # +m_i is not, so the box is lopsided by exactly one face per axis.
+            # |G| < 2*pi*m_i/|a_i| forces |n_i| < m_i on every axis at once,
+            # which excludes that face -- and the remaining ball is then both
+            # rotation-invariant and closed under inversion, without which the
+            # equivariance is good to 2e-3 rather than to the float.
+            basis = basis * (radius < inscribed.view(-1, 1, 1, 1)
+                             ).unsqueeze(1).to(basis.dtype)
+        return basis
+
+    def forward(self, x, cell, max_modes=None):
+        """
+        Apply the equivariant spectral convolution.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            ``(B, C_in, Nx, Ny, Nz)`` real tensor.
+        cell : torch.Tensor
+            ``(B, 3, 3)`` lattice vectors in Å. Required, unlike the dense
+            layer: the kernel is a function of a physical radius, and there is
+            no radius without a cell.
+        max_modes : tuple of int, optional
+            Per-axis cap on the retained modes for this call.
+
+        Returns
+        -------
+        torch.Tensor
+            ``(B, C_out, Nx, Ny, Nz)``.
+        """
+        if cell is None:
+            raise ValueError(
+                "RadialSpectralConv3d requires `cell`: its kernel is a "
+                "function of |G| in 1/Ang, which the mode index alone does "
+                "not determine.")
+        batch, _, nx, ny, nz = x.shape
+        m1, m2, m3 = self.effective_modes((nx, ny, nz), max_modes)
+
+        x_ft = torch.fft.rfftn(x, dim=(-3, -2, -1), norm="forward")
+        head_1, tail_1 = slice(None, m1), slice(nx - m1, None)
+        head_2, tail_2 = slice(None, m2), slice(ny - m2, None)
+
+        # One contiguous block of the retained modes, ordered to match
+        # `_mode_frequencies`. `effective_modes` caps m1 at nx//2 and m2 at
+        # ny//2, so the head and tail slices never overlap and no coefficient
+        # is gathered twice.
+        block = torch.cat([
+            torch.cat([x_ft[:, :, head_1, head_2, :m3],
+                       x_ft[:, :, head_1, tail_2, :m3]], dim=-2),
+            torch.cat([x_ft[:, :, tail_1, head_2, :m3],
+                       x_ft[:, :, tail_1, tail_2, :m3]], dim=-2),
+        ], dim=-3)
+
+        basis = self.radial_basis(cell, (m1, m2, m3), x.device, x.dtype)
+
+        # Real arithmetic throughout. `torch.cat` above returns a contiguous
+        # tensor, so `.real`/`.imag` are dense views rather than the strided
+        # ones `complex_contract` documents MPS getting wrong.
+        real, imaginary = block.real, block.imag
+        weight = self.weight.to(real.dtype)
+        out_real = torch.einsum(
+            "borxyz,brxyz->boxyz",
+            torch.einsum("bixyz,ior->borxyz", real, weight), basis)
+        out_imaginary = torch.einsum(
+            "borxyz,brxyz->boxyz",
+            torch.einsum("bixyz,ior->borxyz", imaginary, weight), basis)
+        out_block = torch.complex(out_real, out_imaginary)
+
+        out_ft = torch.zeros(
+            batch, self.out_channels, nx, ny, nz // 2 + 1,
+            dtype=x_ft.dtype, device=x.device,
+        )
+        out_ft[:, :, head_1, head_2, :m3] = out_block[:, :, :m1, :m2, :]
+        out_ft[:, :, head_1, tail_2, :m3] = out_block[:, :, :m1, m2:, :]
+        out_ft[:, :, tail_1, head_2, :m3] = out_block[:, :, m1:, :m2, :]
+        out_ft[:, :, tail_1, tail_2, :m3] = out_block[:, :, m1:, m2:, :]
+
+        return torch.fft.irfftn(out_ft, s=(nx, ny, nz), dim=(-3, -2, -1),
+                                norm="forward")
+
+    def extra_repr(self):
+        return (f"in_channels={self.in_channels}, "
+                f"out_channels={self.out_channels}, modes={self.modes}, "
+                f"n_radial={self.n_radial}, g_basis={self.g_basis}, "
+                f"spherical_cutoff={self.spherical_cutoff}")
 
 
 # ---------------------------------------------------------------------- #
@@ -517,21 +867,42 @@ class FNOBlock(nn.Module):
         divisor of ``channels`` that does not exceed it. Group normalization is
         used deliberately: batch statistics are meaningless when every sample
         has a different spatial extent, and group statistics are not.
+    equivariant : bool, optional
+        Use :class:`RadialSpectralConv3d` in place of :class:`SpectralConv3d`,
+        making the layer — and, given a lifting stage with no coordinate
+        channels, the whole network — equivariant under rotation. Everything
+        else in this block already is.
+    radial_kwargs : dict, optional
+        ``n_radial``, ``g_basis`` and ``spherical_cutoff``, forwarded to the
+        radial layer. Ignored when ``equivariant`` is false.
     """
 
     def __init__(self, channels, modes, embedding_dim=0, activation="silu",
-                 activation_kwargs=None, n_groups=8):
+                 activation_kwargs=None, n_groups=8, equivariant=False,
+                 radial_kwargs=None):
         super().__init__()
-        self.spectral = SpectralConv3d(channels, channels, modes)
+        self.equivariant = bool(equivariant)
+        if self.equivariant:
+            self.spectral = RadialSpectralConv3d(channels, channels, modes,
+                                                 **(radial_kwargs or {}))
+        else:
+            self.spectral = SpectralConv3d(channels, channels, modes)
         self.pointwise = nn.Conv3d(channels, channels, kernel_size=1)
         self.norm = nn.GroupNorm(_group_count(channels, n_groups), channels)
         self.film = FiLM(embedding_dim, channels) if embedding_dim else None
         self.activation = build_activation(activation, channels,
                                            **(activation_kwargs or {}))
 
-    def forward(self, x, embedding=None, max_modes=None):
+    def forward(self, x, embedding=None, max_modes=None, cell=None):
         """Apply the layer to ``(B, C, Nx, Ny, Nz)``."""
-        y = self.spectral(x, max_modes=max_modes) + self.pointwise(x)
+        # The cell is passed only to the layer that needs it: the dense
+        # spectral convolution's weights are indexed by mode and know nothing
+        # about a lattice, and giving it an argument it ignores would make the
+        # two layers look interchangeable in a way they are not.
+        if self.equivariant:
+            y = self.spectral(x, cell, max_modes=max_modes) + self.pointwise(x)
+        else:
+            y = self.spectral(x, max_modes=max_modes) + self.pointwise(x)
         y = self.norm(y)
         if self.film is not None and embedding is not None:
             y = self.film(y, embedding)
@@ -599,6 +970,30 @@ class FNO3d(nn.Module):
         requires ``cell`` at call time.
     g_max : float, optional
         Cutoff wavevector in Å⁻¹ for ``mode_selection="physical"``.
+    equivariant : bool, optional
+        Build every Fourier layer from :class:`RadialSpectralConv3d` instead of
+        :class:`SpectralConv3d`, making the whole operator equivariant under
+        rotation: rotate the input field and the predicted field rotates with
+        it, to the precision of the float. Requires ``use_coordinates=False``
+        and raises otherwise — the fractional-coordinate channels are a
+        :math:`\ell = 1` object being fed to a network that treats every
+        channel as a scalar, and they break translation equivariance as well.
+        Off by default, so every existing config and checkpoint is unaffected.
+    n_radial : int, optional
+        Radial basis size of the equivariant layers; ignored otherwise. This is
+        the whole capacity of a kernel that has no angular freedom left, so it
+        is the knob to raise before ``modes``.
+    g_basis : float, optional
+        Radius in Å⁻¹ the radial basis spans; ignored otherwise. Defaults to
+        ``g_max`` when ``mode_selection="physical"`` has already named a band,
+        and to :data:`DEFAULT_G_BASIS` when nothing has.
+    spherical_cutoff : bool, optional
+        Mask the retained modes to the sphere inscribed in the retained box.
+        On by default, and it is not decoration: a radial multiplier over a
+        *box* of modes is still equivariant only under the box's own symmetry
+        group. Measured on a tetragonal cell, switching it off takes the
+        rotation error from :math:`3\times10^{-7}` — float32 round-off — to
+        :math:`5\times10^{-2}`.
 
     Examples
     --------
@@ -609,6 +1004,14 @@ class FNO3d(nn.Module):
     torch.Size([1, 1, 16, 16, 16])
     >>> model(torch.randn(1, 1, 12, 20, 24), cell).shape   # different grid, same weights
     torch.Size([1, 1, 12, 20, 24])
+
+    The equivariant variant, whose kernel is a function of :math:`|\mathbf{G}|`
+    alone:
+
+    >>> rotating = FNO3d(width=8, modes=4, n_layers=2, equivariant=True,
+    ...                  use_coordinates=False)
+    >>> rotating.blocks[0].spectral.weight.is_complex()   # real coefficients
+    False
     """
 
     def __init__(self, in_channels=1, out_channels=1, width=32, modes=12,
@@ -618,7 +1021,9 @@ class FNO3d(nn.Module):
                  kan_degree=6, kan_rational_num_degree=4,
                  kan_rational_den_degree=4, kan_use_base=True,
                  mode_selection="fixed", g_max=None,
-                 projection_activation=None):
+                 projection_activation=None,
+                 equivariant=False, n_radial=16, g_basis=None,
+                 spherical_cutoff=True):
         super().__init__()
         if isinstance(modes, int):
             modes = (modes, modes, modes)
@@ -649,6 +1054,16 @@ class FNO3d(nn.Module):
         self.width = int(width)
         self.modes = tuple(int(m) for m in modes)
         self.use_coordinates = bool(use_coordinates)
+        if equivariant and self.use_coordinates:
+            raise ValueError(
+                "equivariant=True is incompatible with use_coordinates=True. "
+                "The three fractional-coordinate channels are not three "
+                "scalar fields: under a rotation of the cell they transform "
+                "into each other, so feeding them to a network built to treat "
+                "every channel as a scalar breaks the equivariance the "
+                "spectral layer was constrained to provide -- and they break "
+                "translation equivariance outright, being absolute positions. "
+                "Set use_coordinates: false.")
         self.mode_selection = mode_selection
         self.g_max = None if g_max is None else float(g_max)
         # Recorded as plain attributes so FieldOperator.state() can persist
@@ -657,6 +1072,22 @@ class FNO3d(nn.Module):
         self.cell_conditioning = bool(cell_conditioning)
         self.embedding_dim = int(embedding_dim)
         self.activation = activation
+        # Rotational equivariance. Recorded whether or not it is on, for the
+        # same reason `g_max` is: a checkpoint's architecture record has one
+        # shape regardless of which variant trained it.
+        self.equivariant = bool(equivariant)
+        self.n_radial = int(n_radial)
+        self.spherical_cutoff = bool(spherical_cutoff)
+        # `g_max` when the run has already named a physical band, and only then
+        # the bare default. Resolving it here rather than at forward time is
+        # what puts the number in the architecture record, where a reader can
+        # see which of the two a model was trained with.
+        if g_basis is not None:
+            self.g_basis = float(g_basis)
+        elif self.g_max is not None:
+            self.g_basis = float(self.g_max)
+        else:
+            self.g_basis = float(DEFAULT_G_BASIS)
         # KAN hyperparameters. Recorded unconditionally, the same way g_max is
         # recorded even under mode_selection="fixed": harmless when unused,
         # and it means a checkpoint's architecture record has one shape
@@ -683,9 +1114,12 @@ class FNO3d(nn.Module):
         )
         lifting_channels = self.in_channels + (3 if use_coordinates else 0)
         self.lift = nn.Conv3d(lifting_channels, self.width, kernel_size=1)
+        radial_kwargs = {"n_radial": self.n_radial, "g_basis": self.g_basis,
+                         "spherical_cutoff": self.spherical_cutoff}
         self.blocks = nn.ModuleList([
             FNOBlock(self.width, self.modes, embedding_dim=conditioning,
-                     activation=activation, activation_kwargs=activation_kwargs)
+                     activation=activation, activation_kwargs=activation_kwargs,
+                     equivariant=self.equivariant, radial_kwargs=radial_kwargs)
             for _ in range(int(n_layers))
         ])
         self.project = nn.Sequential(
@@ -772,9 +1206,13 @@ class FNO3d(nn.Module):
                 raise ValueError("mode_selection='physical' requires `cell` at forward time.")
             max_modes = self.physical_modes(cell, shape)
 
+        if self.equivariant and cell is None:
+            raise ValueError("equivariant=True requires `cell` at forward "
+                             "time: the spectral kernel is a function of |G|.")
+
         v = self.lift(x)
         for block in self.blocks:
-            v = block(v, embedding=embedding, max_modes=max_modes)
+            v = block(v, embedding=embedding, max_modes=max_modes, cell=cell)
         return self.project(v)
 
     def n_parameters(self):

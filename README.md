@@ -43,8 +43,10 @@ cd poraque
 pip install -e .
 ```
 
-Python 3.11 or newer. Symbolic distillation is an optional extra:
-`pip install "poraque[symbolic]"`. Installing registers seven console commands
+Python 3.11 or newer. Symbolic distillation needs one optional package —
+SymPy, to render its result and check its limits — as
+`pip install "poraque[symbolic]"`; the search itself is genetic programming in
+NumPy and needs nothing training does not. Installing registers seven console commands
 — `poraque-train`, `poraque-inference`, `poraque-committee`,
 `poraque-active-learning`, `poraque-atoms`, `poraque-vasp` and `poraque-mp` —
 which run from any directory once the environment is active. All but the last
@@ -430,11 +432,28 @@ in its first lines.
 - **CUDA, Apple Metal and CPU**, selected automatically — and the run says
   which, with the compute capability, because a request that quietly fell back
   to the CPU is the most expensive silent failure this package has.
-- **It is a grid-based operator learner, not an equivariant message-passing
-  network.** That is worth stating because it settles a question people ask:
-  NVIDIA's cuequivariance accelerates arithmetic on irreducible representations
-  of O(3) — tensor products, spherical harmonics, symmetric contractions — and
-  Poraquê has no irreps to accelerate. Profiled by CUDA kernel on a V100, its
+- **Rotational equivariance is available, and it is a constraint on the kernel
+  rather than a library.** `model.equivariant: true` makes every Fourier
+  multiplier a function of |**G**| alone, which is exactly a convolution with a
+  radial kernel and therefore commutes with every rotation: measured over the
+  24 rotations of the cube, the prediction follows the input field to 2.9e-07
+  in float32 and 6.7e-16 in float64, against 0.93 for the dense layer. It is
+  off by default, because the constraint is paid for in capacity — the dense
+  layer holds `4·width²·modes³` complex numbers and the radial one
+  `width²·n_radial` real ones.
+
+  Two conditions come with it and both raise rather than degrade: the retained
+  modes are masked to a sphere, since a radial kernel over a *box* is
+  equivariant only under the box's own symmetry group; and `use_coordinates`
+  must be off, because the three fractional coordinates rotate into each other
+  and are an ℓ=1 object in a network that treats every channel as a scalar.
+
+- **It is still a grid-based operator learner, not an equivariant
+  message-passing network**, which settles a question people ask: NVIDIA's
+  cuequivariance accelerates arithmetic on irreducible representations of
+  O(3) — tensor products, spherical harmonics, symmetric contractions — and a
+  scalar-field-to-scalar-field operator carries only ℓ=0, so every tensor
+  product in it is a scalar multiply. Profiled by CUDA kernel on a V100, its
   share of a training step is 0.0 %. The Fourier layer is a complex `einsum`
   diagonal in the mode index and dense in channels, which cuequivariance cannot
   express; the NVIDIA library that already accelerates this code is cuFFT,

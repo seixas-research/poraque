@@ -12,14 +12,15 @@ with `--symbolic` on the command line.
 ```
 
 ```bash
-pip install -e ".[symbolic]"     # PySR + sympy; not installed by default
+pip install -e ".[symbolic]"     # sympy, for LaTeX and the limit checks
 poraque-train --config configs/train.yaml --task chg2tau --symbolic
 ```
 
-The extra is separate because PySR carries a **Julia toolchain**, which it
-fetches the first time a search runs. Without it everything else in the package
-works unchanged, and a run with distillation enabled reports the missing
-dependency and keeps its trained model rather than failing.
+The extra is one package, and only for *reporting*: SymPy renders the result
+as LaTeX and checks its asymptotic limits. The search itself needs nothing that
+training does not. Without the extra everything else in the package works
+unchanged, and a run with distillation enabled reports the missing dependency
+and keeps its trained model rather than failing.
 
 ## What it can and cannot find
 
@@ -375,12 +376,28 @@ result.badge()       # 'TF/vW'
 
 ## Engine
 
-[PySR](https://github.com/MilesCranmer/PySR) is the backend, installed with the
-`symbolic` extra. It fetches a Julia toolchain the first time a search runs, so
-the first distillation of a session is slower than the rest.
+[`poraque.ml.gp`](../api/index.rst) is the backend: genetic programming over
+expression trees in NumPy, with SciPy fitting the constants of the final front.
+Populations evolve under tournament selection with a small elite, reseeding
+around it when one stops improving, and the accuracy/complexity front is kept
+as the best expression at every size.
 
-The engine is injected rather than imported at module scope, so everything
-except the search itself works and is testable without it:
+It replaced [PySR](https://github.com/MilesCranmer/PySR) on 2026-09-03. PySR is
+excellent and searches harder per second than this does; it also installs a
+**Julia toolchain** on first use, which on a supercomputer is a network fetch
+from a compute node, a writable depot on a filesystem that may be read-only or
+purged between jobs, a precompilation pass per architecture, and a second
+language runtime inside an MPI job — for minutes of work at the end of a run
+that already took hours.
+
+**The objective is unchanged, term for term.** The physics is enforced as
+fitness over the same probe points, with the same weights and the same penalty
+ceiling, so a constrained `loss` from this engine is comparable with one from
+the old.
+
+The engine is still injected rather than imported at module scope, so a
+different backend — PySR included, for anyone who wants it and has the
+toolchain — stays a parameter rather than a rewrite:
 
 ```python
 from poraque.ml.symbolic import SymbolicDistiller, build_features
@@ -389,8 +406,10 @@ table = build_features(rho, tau, grid, scheme="gga")
 result = SymbolicDistiller(config, engine=my_engine).fit(table)
 ```
 
-```{warning}
-The search is stochastic. Two runs with the same `seed` can still differ unless
-PySR is also put in deterministic, serial mode — it warns about this itself.
-Treat a single expression as one sample, not as *the* answer.
+```{note}
+The search is stochastic, but a `seed` is now an unconditional promise: it runs
+in one process, so the same seed gives the same front and `deterministic` is
+accepted and ignored rather than traded against parallelism. Two *different*
+seeds will still differ, so treat a single expression as one sample rather than
+as *the* answer.
 ```

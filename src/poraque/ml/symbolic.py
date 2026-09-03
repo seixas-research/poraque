@@ -21,7 +21,7 @@ can be read, published, and checked against known physics.
     rho(r) --> features: rho, p = |grad rho| / (2 k_F rho)
                               q = lap rho  / (4 k_F^2 rho)
                                     |
-                            symbolic regression (PySR)
+                       symbolic regression (native GP)
                                     |
                              tau = f(rho, p, q)
 
@@ -68,13 +68,35 @@ approximating.
 
 Engine
 ------
-`PySR <https://github.com/MilesCranmer/PySR>`_ is the backend. It is an
-optional dependency (``pip install pysr``; it fetches a Julia toolchain on
-first use), and the engine is injected rather than imported at module scope, so
-everything except the search itself is usable and testable without it.
+:func:`poraque.ml.gp.native_engine` is the backend: genetic programming over
+expression trees, in NumPy, with SciPy fitting the constants of the final
+front. Both are already hard dependencies, so distillation now needs nothing
+that training does not.
+
+It replaced `PySR <https://github.com/MilesCranmer/PySR>`_ on 2026-09-03, and
+the reason was operational rather than scientific. PySR is excellent and its
+Julia backend is faster than this one; it also installs a Julia toolchain on
+first use, which on a supercomputer means a network fetch from a compute node,
+a writable depot on a filesystem that may be read-only or purged between jobs,
+a precompilation pass per architecture, and a second language runtime inside an
+MPI job. Distillation is minutes of work at the end of a run that already took
+hours. Carrying a second toolchain for it was the wrong trade.
+
+**The objective is unchanged, term for term** — the physics is enforced as
+fitness rather than as a filter applied afterwards, over the same probe points
+with the same weights and the same penalty ceiling — so a constrained ``loss``
+from this engine is comparable with one from the old. What did change is
+notation: expressions come back in Python spelling, with ``**`` for
+exponentiation rather than Julia's ``^``. That is a change of spelling and not
+a correction — :func:`sympy.sympify` defaults to ``convert_xor=True`` and read
+the old spelling as a power perfectly well — but it makes a distilled
+functional something a reader can paste into Python unchanged.
+
+The engine is still *injected* rather than imported by
+:class:`SymbolicDistiller`, so a different backend — PySR included, for anyone
+who wants it and has the toolchain — remains a parameter and not a rewrite.
 """
 
-import tempfile
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -563,7 +585,9 @@ def stack_tables(tables):
 #: Reduced gradient standing in for :math:`p\to\infty` in the von Weizsäcker
 #: probe. Large enough that no smooth interpolating form is still in its
 #: crossover region, small enough that :math:`p^2` and :math:`p^{8/3}` stay far
-#: inside the range of a 32-bit float, which is the precision PySR searches in.
+#: inside the range of a 32-bit float. The search itself runs in float64, but
+#: the value is left where it was: it is a stand-in for infinity, and the one
+#: that has been used on this project's own data.
 DEFAULT_P_INFINITY = 1e6
 
 #: Densities the probes are swept over when :math:`\rho` is itself a feature
@@ -710,25 +734,14 @@ def physics_probes(feature_names, template, p_infinity=DEFAULT_P_INFINITY,
     return probes
 
 
-def _julia_float(value):
-    """One float, in a spelling Julia's parser accepts."""
-    number = float(value)
-    if not np.isfinite(number):
-        raise ValueError(f"cannot emit a non-finite constant ({number}) into "
-                         f"a Julia loss function.")
-    return repr(number)
-
-
-def _julia_vector(values, element="T"):
-    """``T[a, b, c]`` — a typed vector literal, correct even for one element."""
-    return f"{element}[{', '.join(_julia_float(v) for v in values)}]"
-
-
-def julia_physics_loss(feature_names, template, weights=None,
-                       p_infinity=DEFAULT_P_INFINITY, data_loss="mse",
-                       densities=PROBE_DENSITIES, ceiling=PENALTY_CEILING):
+# ===================================================================== #
+# Engine
+# ===================================================================== #
+def physics_constraints(feature_names, template, weights=None,
+                        p_infinity=DEFAULT_P_INFINITY,
+                        densities=PROBE_DENSITIES, ceiling=PENALTY_CEILING):
     r"""
-    Build the Julia objective that enforces the physics during the search.
+    The physics the search is scored against, as data the engine can read.
 
     Filtering candidates *after* a run only reports how few of them were
     physical. This makes the constraints part of the fitness instead, so the
@@ -737,7 +750,7 @@ def julia_physics_loss(feature_names, template, weights=None,
 
     .. math::
 
-        \mathcal{L} = \underbrace{\frac1n\sum_i (F_i - y_i)^2}_{\text{data}}
+        \mathcal{L} = \underbrace{\frac1n\sum_i \ell(F_i - y_i)}_{\text{data}}
         \;+\; w_{+}\,\frac1n\sum_i \min(F_i, 0)^2
         \;+\; \sum_{\rm probes} w_\ell\,
               \frac{|F(\mathbf x_\ell) - t_\ell|}{s_\ell} .
@@ -746,10 +759,15 @@ def julia_physics_loss(feature_names, template, weights=None,
     the whole violation: :math:`\tau \ge 0` always, and
     :math:`\tau - \tau_{\rm vW}\ge0` by Hoffmann-Ostenhof, so a negative value
     is unphysical under every template. The rest are evaluated on the synthetic
-    points of :func:`physics_probes`, which is why this has to be PySR's
-    **full objective** rather than an elementwise loss: an elementwise loss
-    receives only ``(prediction, target)`` pairs and can never evaluate the
-    candidate anywhere the data does not already sit.
+    points of :func:`physics_probes`, which is why the constraints cannot be an
+    elementwise loss: an elementwise loss receives only ``(prediction,
+    target)`` pairs and can never evaluate a candidate anywhere the data does
+    not already sit.
+
+    This used to be rendered as Julia source for PySR's ``loss_function``.
+    Returning it as a plain mapping instead is what lets
+    :mod:`poraque.ml.gp` evaluate the identical expression without importing
+    anything from this module — the two would otherwise be a cycle.
 
     Parameters
     ----------
@@ -762,9 +780,6 @@ def julia_physics_loss(feature_names, template, weights=None,
         ``"positivity"``, ``"thomas_fermi"`` and ``"von_weizsacker"``.
     p_infinity : float, optional
         Reduced gradient standing in for the von Weizsäcker limit.
-    data_loss : {"mse", "mae"}, optional
-        The unpenalised term. MAE is the more robust choice on a density whose
-        tails span orders of magnitude.
     densities : sequence of float, optional
         Passed to :func:`physics_probes`.
     ceiling : float, optional
@@ -772,11 +787,11 @@ def julia_physics_loss(feature_names, template, weights=None,
 
     Returns
     -------
-    tuple of (str, list of str)
-        The Julia source, and the names of the constraints it actually
-        enforces — which is what the run should report, since a limit that
-        cannot be expressed in the chosen variables is silently absent
-        otherwise.
+    tuple of (dict, list of str)
+        The constraint block — ``probes``, ``weights`` and ``ceiling`` — and
+        the names of the constraints it actually enforces, which is what the
+        run should report: a limit that cannot be expressed in the chosen
+        variables is silently absent otherwise.
 
     Notes
     -----
@@ -787,165 +802,22 @@ def julia_physics_loss(feature_names, template, weights=None,
 
     Examples
     --------
-    >>> source, enforced = julia_physics_loss(["p", "q"], "pauli")
+    >>> block, enforced = physics_constraints(["p", "q"], "pauli")
     >>> enforced
     ['positivity', 'thomas_fermi', 'von_weizsacker']
-    >>> "eval_tree_array" in source
-    True
+    >>> len(block["probes"])
+    2
     """
-    if data_loss not in DATA_LOSSES:
-        raise ValueError(f"Unknown data loss {data_loss!r}; expected one of "
-                         f"{sorted(DATA_LOSSES)}.")
-
-    names = list(feature_names)
     scored = dict(DEFAULT_PHYSICS_WEIGHTS)
     scored.update(weights or {})
 
-    probes = physics_probes(names, template, p_infinity=p_infinity,
-                            densities=densities)
+    probes = physics_probes(list(feature_names), template,
+                            p_infinity=p_infinity, densities=densities)
     enforced = ["positivity"]
     enforced += sorted({probe["limit"] for probe in probes},
                        key=["thomas_fermi", "von_weizsacker"].index)
-
-    lines = [
-        "function poraque_constrained_loss(tree, dataset::Dataset{T,L}, "
-        "options)::L where {T,L}",
-        "    prediction, complete = eval_tree_array(tree, dataset.X, options)",
-        "    if !complete",
-        "        return L(Inf)",
-        "    end",
-        f"    data = sum({DATA_LOSSES[data_loss]}, prediction .- dataset.y) "
-        f"/ dataset.n",
-        f"    ceiling = L({_julia_float(ceiling)})",
-        "",
-        "    # Positivity: tau >= 0 always, and tau - tau_vW >= 0 by",
-        "    # Hoffmann-Ostenhof, so a negative value is unphysical under every",
-        "    # template. Squared so the penalty is smooth in the constants the",
-        "    # optimiser tunes, and averaged so it does not scale with n.",
-        "    shortfall = sum(x -> abs2(min(x, zero(T))), prediction) / dataset.n",
-        f"    penalty = L({_julia_float(scored['positivity'])}) "
-        f"* min(L(shortfall), ceiling)",
-    ]
-
-    if probes:
-        # Column-major: reshape reads the flat vector down each column, so the
-        # values are emitted feature-by-feature within one probe, probe by
-        # probe. A `T[a; b]` literal would build a *vector* for a single probe
-        # and silently change rank.
-        flat = [probe["point"][name] for probe in probes for name in names]
-        # One limit carries one weight however many probes express it, so the
-        # density sweep of the gga scheme raises the resolution of the check
-        # rather than its price.
-        share = {limit: sum(p["limit"] == limit for p in probes)
-                 for limit in {p["limit"] for p in probes}}
-        per_probe = [scored[p["limit"]] / share[p["limit"]] for p in probes]
-        lines += [
-            "",
-            "    # The asymptotic limits are statements about specific points of",
-            "    # feature space, not about the batch, so the tree is evaluated",
-            "    # on synthetic probes. A candidate that cannot be evaluated at",
-            "    # the uniform-gas point does not have a Thomas-Fermi limit.",
-            f"    probes = reshape({_julia_vector(flat)}, "
-            f"{len(names)}, {len(probes)})",
-            f"    targets = {_julia_vector(p['target'] for p in probes)}",
-            f"    scales = {_julia_vector(p['scale'] for p in probes)}",
-            f"    penalties = {_julia_vector(per_probe, element='L')}",
-            "    probed, probed_ok = eval_tree_array(tree, probes, options)",
-            "    if !probed_ok",
-            "        penalty += ceiling",
-            "    else",
-            "        for i in eachindex(targets)",
-            "            value = probed[i]",
-            "            deviation = isfinite(value) ?",
-            "                L(abs(value - targets[i]) / scales[i]) : ceiling",
-            "            penalty += penalties[i] * min(deviation, ceiling)",
-            "        end",
-            "    end",
-        ]
-
-    lines += ["", "    return L(data) + penalty", "end"]
-    return "\n".join(lines), enforced
-
-
-# ===================================================================== #
-# Engine
-# ===================================================================== #
-def pysr_engine(features, target, feature_names, parameters):
-    """
-    Run PySR and return its accuracy/complexity front.
-
-    The configured operator alphabet is passed through untouched: an operator
-    the user asked for is one the search gets, and PySR is the authority on
-    which names it accepts.
-
-    A ``loss_function`` in ``parameters`` replaces PySR's own objective with
-    the physics-constrained one built by :func:`julia_physics_loss`. It is
-    passed as ``loss_function`` rather than ``loss``: PySR renamed the latter
-    to ``elementwise_loss``, which receives one ``(prediction, target)`` pair
-    at a time and therefore cannot evaluate a candidate at the probe points the
-    asymptotic limits are defined at.
-
-    Returns
-    -------
-    list of dict
-        ``{"complexity", "loss", "expression"}``, best-first is not assumed.
-    """
-    try:
-        from pysr import PySRRegressor
-    except ImportError as error:  # pragma: no cover - optional dependency
-        raise ImportError(
-            "Symbolic distillation requires PySR: `pip install pysr`. "
-            "PySR installs a Julia toolchain the first time it runs, which "
-            "needs network access and a few minutes."
-        ) from error
-
-    # PySR writes its hall-of-fame files to `outputs/` under the *working
-    # directory* by default, which drops build artefacts into whatever
-    # repository the run was launched from. The whole front is captured in the
-    # returned value, the JSON summary and the report, so the scratch copies
-    # go to a temporary directory that is removed with it.
-    with tempfile.TemporaryDirectory(prefix="poraque_pysr_") as workdir:
-        model = PySRRegressor(
-            niterations=parameters["iterations"],
-            binary_operators=list(parameters["binary_operations"]),
-            unary_operators=list(parameters["unary_operations"]),
-            population_size=parameters["population_size"],
-            populations=parameters["populations"],
-            maxsize=parameters["max_size"],
-            maxdepth=parameters["max_depth"],
-            parsimony=parameters["parsimony"],
-            # A seed only reaches the engine when it can actually honour it.
-            # PySR requires serial evaluation for a reproducible search, and
-            # warns -- rightly -- when given a seed it cannot keep a promise
-            # about. Passing it anyway would put a reproducibility claim in the
-            # log that the run does not deliver.
-            **({"random_state": parameters["seed"],
-                "deterministic": True,
-                "parallelism": "serial"}
-               if parameters.get("deterministic") else {}),
-            # Argument-complexity limits, `{"^": (-1, 1)}` by default: the
-            # exponent is held to a single node. An unconstrained exponent is
-            # the main source of nonsense from a power operator -- a fractional
-            # power of a negative quantity leaves the reals, and an exponent
-            # that is itself a subtree is unreadable and almost never physical.
-            constraints=parameters.get("constraints") or None,
-            # The physics, as fitness rather than as a filter. Absent, PySR
-            # uses its own mean-square objective and nothing stops a population
-            # converging on a form that has to be discarded afterwards.
-            **({"loss_function": parameters["loss_function"]}
-               if parameters.get("loss_function") else {}),
-            output_directory=workdir,
-            progress=False,
-            verbosity=0,
-        )
-        model.fit(features, target, variable_names=list(feature_names))
-
-        front = []
-        for _, row in model.equations_.iterrows():
-            front.append({"complexity": int(row["complexity"]),
-                          "loss": float(row["loss"]),
-                          "expression": str(row["equation"])})
-    return front
+    return ({"probes": probes, "weights": scored, "ceiling": float(ceiling)},
+            enforced)
 
 
 #: Decimal places kept in a reported expression.
@@ -1375,9 +1247,10 @@ class SymbolicDistiller:
         Supplies every search parameter. Omit it to take the defaults.
     engine : callable, optional
         ``(features, target, feature_names, parameters) -> front``. Defaults to
-        :func:`pysr_engine`. Injected rather than imported so the pipeline can
-        be exercised without a Julia toolchain, and so a different backend is a
-        parameter rather than a rewrite.
+        :func:`~poraque.ml.gp.native_engine`. Injected rather than imported
+        so the pipeline can be exercised against a stub, and so a different
+        backend -- PySR included, for anyone who wants it and has the Julia
+        toolchain -- stays a parameter rather than a rewrite.
 
     Examples
     --------
@@ -1390,7 +1263,11 @@ class SymbolicDistiller:
         from .config import SymbolicConfig
 
         self.config = config if config is not None else SymbolicConfig()
-        self.engine = engine if engine is not None else pysr_engine
+        if engine is None:
+            from .gp import native_engine
+
+            engine = native_engine
+        self.engine = engine
         self.limit_tolerance = float(limit_tolerance)
 
     def parameters(self, table=None):
@@ -1403,21 +1280,22 @@ class SymbolicDistiller:
             The design matrix the search will run on. It is what selects the
             physical constraints: which limits are even expressible depends on
             the variables and the template, neither of which the config knows
-            on its own. Without it no ``loss_function`` is built, and the
-            engine keeps its own objective.
+            on its own. Without it no ``physics`` block is built, and the
+            engine scores on the data term alone.
 
         Returns
         -------
         dict
-            Engine settings, plus ``loss_function`` (Julia source, or ``None``)
-            and ``constraints_enforced`` (the constraint names that source
-            actually imposes).
+            Engine settings, plus ``physics`` (the probes, weights and
+            penalty ceiling, or ``None``) and ``constraints_enforced`` (the
+            constraint names that block actually imposes).
         """
         config = self.config
         unary = list(config.unary_operations or DEFAULT_UNARY)
         binary = list(config.binary_operations or DEFAULT_BINARY)
 
-        # `symbolic.physics`, never `training.physics`: the latter constrains
+        # `symbolic.physics`, never `training.physics_informed_setup`: that one
+        # constrains
         # the neural operator over voxels, this constrains a candidate algebraic
         # expression over probe points. Two of the key names are the same in
         # both blocks and mean different things, which is why they are nested
@@ -1425,7 +1303,7 @@ class SymbolicDistiller:
         physics = symbolic_physics(config)
         objective, enforced = None, []
         if table is not None and physics.get("enable", False):
-            objective, enforced = julia_physics_loss(
+            objective, enforced = physics_constraints(
                 table.feature_names, table.template,
                 weights={
                     "positivity": float(physics["positivity_weight"]),
@@ -1433,11 +1311,11 @@ class SymbolicDistiller:
                     "von_weizsacker": float(physics["von_weizsacker_weight"]),
                 },
                 p_infinity=float(physics["p_infinity"]),
-                data_loss=str(config.data_loss),
             )
         return {
-            "loss_function": objective,
+            "physics": objective,
             "constraints_enforced": enforced,
+            "data_loss": str(config.data_loss),
             "unary_operations": unary,
             "binary_operations": binary,
             "iterations": int(config.iterations),
@@ -1448,9 +1326,9 @@ class SymbolicDistiller:
             "parsimony": float(config.parsimony),
             "seed": int(config.seed),
             "deterministic": bool(getattr(config, "deterministic", False)),
-            # PySR wants tuples for a binary operator's (left, right) limits;
-            # YAML can only give lists, so they are converted here rather than
-            # asking the user to write something YAML cannot express.
+            # A binary operator's limits are a (left, right) pair; YAML can
+            # only give a list, so they are converted here rather than asking
+            # the user to write something YAML cannot express.
             "constraints": {
                 str(name): (tuple(limit) if isinstance(limit, (list, tuple))
                             else limit)

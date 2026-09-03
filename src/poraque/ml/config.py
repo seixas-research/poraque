@@ -132,6 +132,11 @@ RETIRED_KEYS = {
                "of the model that mattered",
     "compile_mode": "nothing -- see 'compile'",
     "compile_dynamic": "nothing -- see 'compile'",
+    # Renamed in 26.9.5 alongside the `physics_informed` switch that governs
+    # it. The block was always read; whether any of it applied was a question
+    # you answered by reading four weights and checking none of them was zero.
+    "physics": "physics_informed_setup, with training.physics_informed "
+               "(auto | true | false) deciding whether it applies at all",
     "train_paths": "data_paths",
     "root": "data_paths (a list; the single-path fallback is gone)",
     "source": "nothing -- the layout of every path is detected, and every "
@@ -606,6 +611,17 @@ KAN_SETUP_KEYS = {
     "rational_den_degree": "kan_rational_den_degree",
 }
 
+#: ``equivariant_setup`` keys, and the :class:`~poraque.ml.fno.FNO3d` keyword
+#: each becomes. Grouped for the same reason ``kan_setup`` is: all three are
+#: read by one architecture and by no other, so as flat keys they would sit
+#: beside ``width`` and ``modes``, which apply always, and read as decisions
+#: every run should be making.
+EQUIVARIANT_SETUP_KEYS = {
+    "n_radial": "n_radial",
+    "g_basis": "g_basis",
+    "spherical_cutoff": "spherical_cutoff",
+}
+
 
 @dataclass
 class ModelConfig:
@@ -1003,10 +1019,66 @@ class ModelConfig:
     embedding_dim: int = 32
     mode_selection: str = "fixed"
     g_max: float = None
+    equivariant: bool = False
+    equivariant_setup: dict = None
     pauli_residual: bool = False
     pauli_scale: float = None
     learn_pauli_scale: bool = True
     precision: str = "float32"
+
+    def equivariant_kwargs(self):
+        """
+        The radial-kernel keywords :class:`~poraque.ml.fno.FNO3d` wants,
+        resolved from ``equivariant`` and ``equivariant_setup``.
+
+        Returns
+        -------
+        dict
+            ``n_radial``, ``g_basis`` and ``spherical_cutoff``, restricted to
+            what the block actually stated — so a non-equivariant run passes
+            nothing and records nothing about a kernel it does not have, and an
+            equivariant one that named only ``n_radial`` still gets the
+            constructor's own ``g_basis`` resolution against ``g_max``.
+
+        Raises
+        ------
+        ValueError
+            On an unknown key inside the block. It changes the architecture,
+            and a typo that is quietly ignored changes it back without saying
+            so.
+        """
+        setup = dict(self.equivariant_setup or {})
+        unknown = sorted(set(setup) - set(EQUIVARIANT_SETUP_KEYS))
+        if unknown:
+            raise ValueError(
+                f"Unknown key(s) in model.equivariant_setup: {unknown}. "
+                f"Valid keys: {sorted(EQUIVARIANT_SETUP_KEYS)}.")
+
+        if not self.equivariant:
+            if setup:
+                import warnings
+
+                warnings.warn(
+                    "model.equivariant_setup was given with "
+                    "equivariant: false, so every setting in it is ignored: "
+                    "the dense spectral layer has no radial basis to size. "
+                    "Set equivariant: true, or drop the block.",
+                    RuntimeWarning, stacklevel=2,
+                )
+            return {}
+
+        if self.use_coordinates:
+            raise ValueError(
+                "model.equivariant: true requires use_coordinates: false. "
+                "The three fractional-coordinate channels rotate into each "
+                "other rather than each transforming as a scalar, so a "
+                "network that treats every channel alike stops being "
+                "equivariant the moment they are appended -- and they are "
+                "absolute positions, which costs translation equivariance "
+                "outright. Set model.use_coordinates: false.")
+
+        return {EQUIVARIANT_SETUP_KEYS[key]: value
+                for key, value in setup.items()}
 
     def activation_kwargs(self):
         """
@@ -1294,7 +1366,31 @@ class TrainingConfig_:
         norm -- so at zero the objective and the column are both a plain
         :math:`L^2`, and the log says so rather than claiming an :math:`H^1`
         the run is not measuring.
-    physics : dict
+    physics_informed : {"auto", True, False}
+        Whether the constraints below are evaluated at all.
+
+        ``"auto"`` (the default) answers from the weights: the run is
+        physics-informed iff at least one of them is positive. That is what
+        every configuration written before this key existed already meant, so
+        nothing changes for one.
+
+        ``true`` **raises** when no weight is set. A run that declares
+        physics-informed training and silently optimises the supervised
+        baseline is the failure the flag exists to prevent — its loss curve is
+        entirely ordinary and its report says "physics-informed".
+
+        ``false`` switches them off, and it is not only a change of objective.
+        Every constraint acts on *decoded* fields, so with any of them live the
+        training loop must, on every batch, copy the reference field to the
+        device, run the target transform's inverse over the prediction —
+        inside the autograd graph, so it is paid again on the backward pass and
+        its activations are held for the duration — run the input transform's
+        inverse too, and in delta-density mode copy the baseline across and add
+        it back twice. With the constraints off, all of that is work whose
+        result is discarded, and ``false`` (or ``"auto"`` with no weight set)
+        skips it rather than computing it.
+
+    physics_informed_setup : dict
         Weights of the physics-informed terms for the **neural operator**. All
         default to zero, so the objective is the supervised baseline until one
         is enabled deliberately.
@@ -1306,7 +1402,8 @@ class TrainingConfig_:
            probe points. Two of the names collide — ``positivity_weight`` and
            ``von_weizsacker_weight`` — and mean different things in each,
            which is why they live in separate blocks rather than sharing a
-           prefix.
+           prefix. Renaming this one is what finally makes the pair readable
+           at a glance.
 
         **The shape of the objective.**
         :class:`~poraque.ml.losses.PhysicsInformedLoss` builds one scalar,
@@ -1464,7 +1561,8 @@ class TrainingConfig_:
     tf32: bool = True
     loss: str = "relative_l2"
     sobolev_weight: float = 0.1
-    physics: dict = field(default_factory=lambda: {
+    physics_informed: object = "auto"
+    physics_informed_setup: dict = field(default_factory=lambda: {
         "electron_count_weight": 0.0,
         "positivity_weight": 0.0,
         "von_weizsacker_weight": 0.0,
@@ -1660,7 +1758,8 @@ class SymbolicConfig:
 
         .. important::
 
-           This is not ``training.physics``. That block constrains the *neural
+           This is not ``training.physics_informed_setup``. That block
+           constrains the *neural
            operator* — charge conservation, positivity of a predicted density,
            the Euler-Lagrange residual — and its terms are added to a training
            loss over voxels. This block constrains a *candidate algebraic
@@ -2237,7 +2336,8 @@ class TrainingConfig:
         itself.
         """
         excluded = {"pauli_residual", "pauli_scale", "learn_pauli_scale",
-                    "precision", "activation", "kan_setup"}
+                    "precision", "activation", "kan_setup",
+                    "equivariant_setup"}
         kwargs = {f.name: getattr(self.model, f.name)
                   for f in fields(self.model) if f.name not in excluded}
         # `activation` and `kan_setup` are one setting in the file and two in
@@ -2246,6 +2346,9 @@ class TrainingConfig:
         name, kan = self.model.activation_kwargs()
         kwargs["activation"] = name
         kwargs.update(kan)
+        # Same shape, same reason. `equivariant` itself is a plain field and
+        # rides along above; only the block has to be unpacked.
+        kwargs.update(self.model.equivariant_kwargs())
         return kwargs
 
     #: How a value is written back out in :meth:`describe`. The header echoes a
@@ -2267,7 +2370,8 @@ class TrainingConfig:
         """
         One ``key = value`` per line, with the ``=`` signs aligned.
 
-        Recursive, because ``training.physics`` is itself a mapping and a
+        Recursive, because ``training.physics_informed_setup`` is itself a
+        mapping and a
         nested dict rendered as a repr is exactly the unreadable run this
         avoids.
         """
@@ -2295,7 +2399,8 @@ class TrainingConfig:
         what is switched on before committing hours of GPU to it, and a
         comma-separated section wrapped across the terminal at whatever column
         it happened to reach: the settings that mattered were wherever the
-        wrapping put them, and ``training.physics`` was 116 characters of
+        wrapping put them, and ``training.physics_informed_setup`` was 116
+        characters of
         ``{'electron_count_weight': 0.0, ...}`` riding on the end of one.
 
         Values are written in YAML's spelling — ``null``, ``true``, ``false``

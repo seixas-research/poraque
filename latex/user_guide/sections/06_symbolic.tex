@@ -7,9 +7,13 @@ for one that reproduces the same mapping --- trading accuracy for a formula you
 can read, publish, and check against known physics.
 
 \begin{pnote}
-Off by default, and an optional install. PySR carries a \textbf{Julia}
-toolchain, which it fetches the first time a search runs, so it is not pulled
-in by a plain installation.
+Off by default. The one optional package is SymPy, used to render the result and
+check its limits; the search itself is \opt{poraque.ml.gp}, genetic programming
+in NumPy with SciPy fitting the constants, and both are already required.
+Until 2026-09-03 this extra carried PySR and its \textbf{Julia} toolchain,
+fetched on first use --- which on a supercomputer means a download from a
+compute node, a writable depot on a filesystem that may be purged between jobs,
+and a second language runtime inside an MPI job.
 \end{pnote}
 
 \begin{lstlisting}
@@ -375,8 +379,10 @@ The most accurate expression is frequently the least physical, so the compliant
 candidates are listed separately --- a slightly worse expression that obeys
 both limits is usually the better functional.
 
-\begin{pwarn}
-The search is stochastic. Two runs with the same \opt{seed} can still differ
-unless PySR is also put in deterministic, serial mode --- it warns about this
-itself. Treat a single expression as one sample, not as \emph{the} answer.
-\end{pwarn}
+\begin{pnote}
+The search is stochastic, but a \opt{seed} is now an unconditional promise: it
+runs in one process, so the same seed gives the same front, and
+\opt{deterministic} is accepted and ignored rather than traded against
+parallelism. Two \emph{different} seeds will still differ, so treat a single
+expression as one sample rather than \emph{the} answer.
+\end{pnote}

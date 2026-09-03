@@ -285,13 +285,30 @@ class PhysicsInformedLoss(nn.Module):
         Weight of the OF-DFT stationarity residual (``ext2chg`` only).
     euler_lagrange_lambda : float, optional
         von Weizsäcker fraction in the kinetic functional used by that residual.
+    physics_informed : {"auto", True, False}, optional
+        Whether the constraints run at all. ``"auto"`` (the default) answers
+        from the weights: physics is informed iff at least one of them is
+        positive, which is what every existing caller already meant. ``True``
+        **raises** when no weight is set — a run that asks for physics-informed
+        training and gets the supervised baseline is the failure this flag
+        exists to make impossible. ``False`` zeroes every weight, so a
+        configured constraint is inert *and known to be*, rather than quietly
+        contributing.
+
+        The resolved answer is published as :attr:`physics_informed`, and
+        :func:`~poraque.ml.training.train` reads it from there to decide
+        whether to decode a prediction into physical units at all. That is the
+        one place the decision can live without two layers disagreeing: the
+        loop cannot ask a config it does not see, and a weight it inferred for
+        itself would drift from the one the objective was built with.
     """
 
     def __init__(self, task="ext2chg", data_loss=None, loss="relative_l2",
                  sobolev_weight=0.1,
                  electron_count_weight=0.0, positivity_weight=0.0,
                  von_weizsacker_weight=0.0, euler_lagrange_weight=0.0,
-                 euler_lagrange_lambda=1.0 / 9.0):
+                 euler_lagrange_lambda=1.0 / 9.0,
+                 physics_informed="auto"):
         super().__init__()
         self.task = str(task)
         # Recorded so the training loop can label its validation column with
@@ -310,6 +327,53 @@ class PhysicsInformedLoss(nn.Module):
         self.von_weizsacker_weight = float(von_weizsacker_weight)
         self.euler_lagrange_weight = float(euler_lagrange_weight)
         self.euler_lagrange_lambda = float(euler_lagrange_lambda)
+        self.physics_informed = self._resolve_physics_informed(
+            physics_informed)
+        if not self.physics_informed:
+            # Zeroed rather than merely skipped, so `physics_informed` and the
+            # weights cannot tell a reader two different stories -- the log
+            # header, the PDF report and `state()` all print the weights.
+            self.electron_count_weight = 0.0
+            self.positivity_weight = 0.0
+            self.von_weizsacker_weight = 0.0
+            self.euler_lagrange_weight = 0.0
+
+    #: The four constraint weights, in the order they are applied.
+    PHYSICS_WEIGHT_NAMES = ("electron_count_weight", "positivity_weight",
+                            "von_weizsacker_weight", "euler_lagrange_weight")
+
+    def _resolve_physics_informed(self, requested):
+        """
+        Turn ``"auto"`` / ``True`` / ``False`` into one boolean.
+
+        Raises
+        ------
+        ValueError
+            When ``True`` was asked for and no weight is positive. Silently
+            training the supervised baseline under a flag that says otherwise
+            is the one outcome this must not have: the loss curve is ordinary,
+            the report says "physics-informed", and nothing anywhere is.
+        """
+        active = [name for name in self.PHYSICS_WEIGHT_NAMES
+                  if getattr(self, name) > 0.0]
+        if requested == "auto" or requested is None:
+            return bool(active)
+        if not isinstance(requested, bool):
+            # `bool("off")` is True, and a config saying `off` would switch the
+            # constraints on. Three spellings, and nothing that looks like a
+            # fourth is guessed at.
+            raise ValueError(
+                f"physics_informed={requested!r} is not one of 'auto', true "
+                f"or false.")
+        if requested and not active:
+            raise ValueError(
+                "physics_informed is true but every constraint weight is "
+                "zero, so the objective would be the supervised baseline "
+                "under a name that says it is not. Set one of "
+                + ", ".join(self.PHYSICS_WEIGHT_NAMES)
+                + " in training.physics_informed_setup, or set "
+                  "training.physics_informed: false.")
+        return bool(requested)
 
     def forward(self, prediction, target, cell=None, physical_prediction=None,
                 physical_input=None, physical_target=None, n_electrons=None):
@@ -352,7 +416,12 @@ class PhysicsInformedLoss(nn.Module):
             total = self.data_loss(prediction, target)
         terms = {"data": total.detach()}
 
-        if physical_prediction is None:
+        # Two ways to reach the data term alone, and they mean different
+        # things. `physics_informed` false is a decision -- the caller has
+        # skipped decoding the prediction and there is nothing to evaluate a
+        # constraint on. `physical_prediction is None` is the older contract,
+        # kept because plenty of callers pass only what the data term needs.
+        if not self.physics_informed or physical_prediction is None:
             return {"total": total, **terms}
 
         if self.positivity_weight > 0.0 and self.task in ("ext2chg", "chg2tau"):

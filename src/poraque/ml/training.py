@@ -437,7 +437,9 @@ class FieldOperator:
                         "cell_conditioning", "embedding_dim",
                         "kan_grid_size", "kan_spline_order", "kan_grid_range",
                         "kan_degree", "kan_rational_num_degree",
-                        "kan_rational_den_degree", "kan_use_base")
+                        "kan_rational_den_degree", "kan_use_base",
+                        "equivariant", "n_radial", "g_basis",
+                        "spherical_cutoff")
             if hasattr(backbone, key)
         }
         # A LoRA fine-tune stores its adapter and *not* the base it adapts.
@@ -524,6 +526,12 @@ class FieldOperator:
         # model computes, which is the exact failure the architecture record
         # exists to prevent.
         architecture.setdefault("projection_activation", "gelu")
+        # Same rule, same reason: a checkpoint with no `equivariant` entry
+        # predates the flag, so False is the answer and not a default. Here it
+        # is also checkable -- `infer_backbone_kwargs` reads the variant off
+        # the rank of the spectral weight -- which is why the two must agree
+        # rather than one quietly overriding the other.
+        architecture.setdefault("equivariant", False)
         # Recorded architecture wins over the inference: mode_selection,
         # g_max, activation, cell_conditioning and embedding_dim live in no
         # tensor shape, so inference alone would silently reset them to the
@@ -731,6 +739,9 @@ def infer_backbone_kwargs(model_state):
     dict
         ``width``, ``modes``, ``n_layers``, ``projection_channels``,
         ``out_channels`` and ``use_coordinates``, where each can be determined.
+        An equivariant backbone reports ``equivariant`` and ``n_radial``
+        instead of ``modes``: its kernel is radial, so no mode index survives
+        in a tensor shape and ``modes`` comes from the architecture record.
 
     Notes
     -----
@@ -752,10 +763,21 @@ def infer_backbone_kwargs(model_state):
 
     kwargs = {}
     if spectral:
-        # (4, in, out, m1, m2, m3) -- four corner blocks of the rfftn.
-        kwargs["width"] = int(spectral[0].shape[1])
-        kwargs["modes"] = int(spectral[0].shape[3])
         kwargs["n_layers"] = len(spectral)
+        if spectral[0].dim() == 3:
+            # (in, out, n_radial) -- RadialSpectralConv3d. The kernel is a
+            # function of |G| and carries no per-mode index, so `modes` is not
+            # in the tensor at all and has to come from the architecture
+            # record. `equivariant` is: a rank-3 spectral weight cannot be
+            # anything else, which is the one architectural fact here that
+            # does not depend on a record having been written.
+            kwargs["width"] = int(spectral[0].shape[1])
+            kwargs["n_radial"] = int(spectral[0].shape[2])
+            kwargs["equivariant"] = True
+        else:
+            # (4, in, out, m1, m2, m3) -- four corner blocks of the rfftn.
+            kwargs["width"] = int(spectral[0].shape[1])
+            kwargs["modes"] = int(spectral[0].shape[3])
     if projection:
         # First conv widens to projection_channels, last narrows to the output.
         kwargs["projection_channels"] = int(projection[0].shape[0])
@@ -1253,6 +1275,19 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     # objective it describes.
     data_loss_name = str(getattr(criterion, "loss", "relative_l2"))
     sobolev_weight = float(getattr(criterion, "sobolev_weight", 0.0) or 0.0)
+    # Read off the criterion, never re-derived from a config this function does
+    # not see -- the same discipline `sobolev_weight` above is read with, and
+    # for the same reason: a loop that decided this for itself could decide it
+    # differently from the objective it is stepping on.
+    #
+    # The default is **True**, which is the opposite of what saves the work,
+    # and deliberately so: an injected `loss=` that is not a
+    # `PhysicsInformedLoss` has always been handed the physical fields, and
+    # withholding them from it on the strength of a missing attribute would
+    # change what somebody else's objective computes without saying so. The
+    # saving comes from `PhysicsInformedLoss` itself answering False, which it
+    # does whenever no weight is set -- the default configuration.
+    physics_informed = bool(getattr(criterion, "physics_informed", True))
     val_metric = str(getattr(criterion, "metric_label", "rel L2"))
     # One number for the objective, whatever it is made of. A physics-informed
     # run's `train loss` is the total the optimiser actually stepped on --
@@ -1306,31 +1341,52 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             optimizer.zero_grad(set_to_none=True)
             prediction = forward(inputs, cell)
 
-            # The reference in physical units serves two terms: it is rho for
-            # the von Weizsacker bound on chg2tau -- where the *input* is the
-            # density -- and its integral is the electron count the
-            # charge-conservation term on ext2chg is measured against.
-            physical_target = batch["target_physical"].to(
-                operator.device, non_blocking=pin_memory)
-            physical_prediction = operator.target_transform.inverse(prediction)
+            # Everything in this block exists for the constraints and for
+            # nothing else, so with them off it is work whose result is
+            # discarded: a host-to-device copy of a whole reference field, two
+            # inverse transforms, and in delta-density mode a second copy and
+            # two full-tensor adds -- per batch, with the data term needing
+            # none of it. Measured on MPS at batch 8, 32^3, width 16: 303.0 ms
+            # against 295.7, so 2.4 % of a step whose cost is overwhelmingly
+            # the operator itself.
+            #
+            # Note what is *not* saved, because it would be easy to claim: the
+            # backward pass. `total` never depended on `physical_prediction`
+            # when every weight was zero, so autograd never traversed the
+            # inverse transform. What it did do was hold that graph's
+            # intermediates alive until the graph was freed, which is memory
+            # rather than arithmetic.
+            physical = {}
+            if physics_informed:
+                # The reference in physical units serves two terms: it is rho
+                # for the von Weizsacker bound on chg2tau -- where the *input*
+                # is the density -- and its integral is the electron count the
+                # charge-conservation term on ext2chg is measured against.
+                physical_target = batch["target_physical"].to(
+                    operator.device, non_blocking=pin_memory)
+                physical_prediction = operator.target_transform.inverse(
+                    prediction)
 
-            # Delta-density mode: the data term above compares residuals, which
-            # is the whole point, but every *physics* term is a statement about
-            # the absolute density -- positivity, the electron count, the
-            # Euler-Lagrange residual. Adding the baseline back here is what
-            # makes them true again, and it means no loss term had to change.
-            baseline = batch.get("baseline")
-            if baseline is not None:
-                baseline = baseline.to(operator.device, non_blocking=pin_memory)
-                physical_prediction = physical_prediction + baseline
-                physical_target = physical_target + baseline
+                # Delta-density mode: the data term above compares residuals,
+                # which is the whole point, but every *physics* term is a
+                # statement about the absolute density -- positivity, the
+                # electron count, the Euler-Lagrange residual. Adding the
+                # baseline back here is what makes them true again, and it
+                # means no loss term had to change.
+                baseline = batch.get("baseline")
+                if baseline is not None:
+                    baseline = baseline.to(operator.device,
+                                           non_blocking=pin_memory)
+                    physical_prediction = physical_prediction + baseline
+                    physical_target = physical_target + baseline
 
-            terms = criterion(
-                prediction, targets, cell=cell,
-                physical_prediction=physical_prediction,
-                physical_input=operator.input_transform.inverse(inputs),
-                physical_target=physical_target,
-            )
+                physical = {
+                    "physical_prediction": physical_prediction,
+                    "physical_input": operator.input_transform.inverse(inputs),
+                    "physical_target": physical_target,
+                }
+
+            terms = criterion(prediction, targets, cell=cell, **physical)
             terms["total"].backward()
 
             if grad_clip:

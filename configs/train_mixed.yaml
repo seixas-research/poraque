@@ -37,7 +37,7 @@ model:
 training:
   epochs: 200                   # this set is large, so an epoch is expensive
   early_stopping: 50            # and the patience can be tighter
-  physics:
+  physics_informed_setup:
     electron_count_weight: 0.1  # int(rho) = the known valence count
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0

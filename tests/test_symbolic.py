@@ -4,10 +4,11 @@
 """
 Tests for symbolic distillation.
 
-The engine (PySR) is optional and stochastic, so it is injected here rather
-than run. That is not a gap: everything the package is responsible for —
-building the features, the units they are built in, sampling, scoring, LaTeX —
-is deterministic and lives outside the search.
+The engine is stochastic, so it is injected here rather than run — the search
+itself is exercised in ``tests/test_gp.py``. That is not a gap: everything the
+package is responsible for around it — building the features, the units they
+are built in, sampling, scoring, LaTeX — is deterministic and lives outside the
+search.
 
 The featurisation carries the real risk, because an error there is silent: a
 wrong unit or a wrong derivative still yields a plausible expression, just not
@@ -16,7 +17,6 @@ forms are known exactly.
 """
 
 import json
-import os
 
 import numpy as np
 import pytest
@@ -28,10 +28,11 @@ from poraque.ml.symbolic import (
     DEFAULT_BINARY,
     check_asymptotic_limits,
     DEFAULT_UNARY,
+    PENALTY_CEILING,
     SymbolicDistiller,
     build_features,
     expression_to_latex,
-    julia_physics_loss,
+    physics_constraints,
     physics_probes,
     sample_rows,
     spectral_laplacian,
@@ -576,8 +577,8 @@ class TestPhysicsConstraints:
     The property that matters is what the objective **charges** for: an
     expression violating a limit must cost more than any accuracy gain can
     recover, and one that satisfies it must cost nothing beyond its data term.
-    The Julia source is checked structurally here and executed for real in
-    :class:`TestPhysicsConstraintsInJulia`.
+    The probe data is checked here and the charge it produces is measured in
+    :class:`TestWhatTheObjectiveCharges`.
     """
 
     def test_probes_pin_both_limits_on_the_pauli_factor(self):
@@ -626,7 +627,7 @@ class TestPhysicsConstraints:
     def test_positivity_is_enforced_under_every_template(self):
         """tau >= 0 always, and tau - tau_vW >= 0 by Hoffmann-Ostenhof."""
         for template in ("none", "thomas_fermi", "pauli"):
-            _, enforced = julia_physics_loss(["rho", "p", "q"], template)
+            _, enforced = physics_constraints(["rho", "p", "q"], template)
             assert "positivity" in enforced
 
     def test_reports_only_the_constraints_it_can_express(self):
@@ -635,52 +636,31 @@ class TestPhysicsConstraints:
         reported as enforced — the run would otherwise claim a guarantee it
         does not deliver.
         """
-        _, reduced = julia_physics_loss(["p", "q"], "pauli")
-        _, raw = julia_physics_loss(["rho", "grad_rho", "lap_rho"], "none")
+        _, reduced = physics_constraints(["p", "q"], "pauli")
+        _, raw = physics_constraints(["rho", "grad_rho", "lap_rho"], "none")
         assert reduced == ["positivity", "thomas_fermi", "von_weizsacker"]
         assert raw == ["positivity"]
 
-    def test_the_probe_matrix_is_features_by_probes(self):
+    def test_the_probes_carry_a_coordinate_for_every_variable(self):
         """
-        SymbolicRegression.jl evaluates on ``(n_features, n_points)``, and
-        `reshape` fills column-major. Transposing this silently evaluates the
-        candidate at the wrong points and every limit check becomes noise.
+        A probe is a point in feature space, so it has to give a value to every
+        variable. One missing coordinate is not a smaller probe, it is a
+        candidate that cannot be evaluated there — and a limit silently not
+        checked reads exactly like a limit satisfied.
         """
-        source, _ = julia_physics_loss(["rho", "p", "q"], "pauli",
+        block, _ = physics_constraints(["rho", "p", "q"], "pauli",
                                        densities=(0.1,), p_infinity=1e6)
-        assert "reshape(T[0.1, 0.0, 0.0, 0.1, 1000000.0, 0.0], 3, 2)" in source
+        assert [probe["point"] for probe in block["probes"]] == [
+            {"rho": 0.1, "p": 0.0, "q": 0.0},
+            {"rho": 0.1, "p": 1e6, "q": 0.0},
+        ]
 
-    def test_a_single_probe_is_still_a_matrix(self):
-        """`T[a; b]` builds a *vector*; the rank has to be forced."""
-        source, _ = julia_physics_loss(["p", "q"], "pauli")
-        assert "reshape(" in source and ", 2, 2)" in source
-
-    def test_one_limit_carries_one_weight_however_many_probes_express_it(self):
-        source, _ = julia_physics_loss(
-            ["rho", "p", "q"], "pauli", densities=(0.1, 0.5, 0.9),
-            weights={"thomas_fermi": 300.0, "von_weizsacker": 300.0})
-        weights = source.split("penalties = L[")[1].split("]")[0]
-        assert [float(value) for value in weights.split(", ")] == [100.0] * 6
-
-    def test_the_data_term_is_selectable(self):
-        squared, _ = julia_physics_loss(["p", "q"], "pauli", data_loss="mse")
-        absolute, _ = julia_physics_loss(["p", "q"], "pauli", data_loss="mae")
-        assert "sum(abs2, prediction .- dataset.y)" in squared
-        assert "sum(abs, prediction .- dataset.y)" in absolute
-
-    def test_rejects_an_unknown_data_term(self):
-        with pytest.raises(ValueError, match="Unknown data loss"):
-            julia_physics_loss(["p", "q"], "pauli", data_loss="huber")
-
-    def test_penalties_are_clamped_rather_than_allowed_to_overflow(self):
-        """
-        A candidate built from `exp` evaluates to `Inf` at p = 1e6. Left
-        unclamped it would swamp the accumulator and make every unphysical
-        candidate equally unphysical.
-        """
-        source, _ = julia_physics_loss(["p", "q"], "pauli")
-        assert "isfinite(value)" in source
-        assert "min(deviation, ceiling)" in source
+    def test_the_weights_and_the_ceiling_travel_with_them(self):
+        block, _ = physics_constraints(["p", "q"], "pauli",
+                                       weights={"positivity": 7.0})
+        assert block["weights"]["positivity"] == 7.0
+        assert block["weights"]["thomas_fermi"] == 100.0
+        assert block["ceiling"] == PENALTY_CEILING
 
     def test_reaches_the_engine_through_the_distiller(self, cell):
         """The objective is worth nothing if it does not arrive."""
@@ -696,7 +676,8 @@ class TestPhysicsConstraints:
         SymbolicDistiller(SymbolicConfig(),
                           engine=recording_engine).fit(table)
 
-        assert "poraque_constrained_loss" in seen["loss_function"]
+        assert len(seen["physics"]["probes"]) == 2
+        assert seen["physics"]["weights"]["positivity"] > 0.0
         assert seen["constraints_enforced"] == \
             ["positivity", "thomas_fermi", "von_weizsacker"]
 
@@ -713,7 +694,7 @@ class TestPhysicsConstraints:
         SymbolicDistiller(SymbolicConfig(physics={"enable": False}),
                           engine=recording_engine).fit(table)
 
-        assert seen["loss_function"] is None
+        assert seen["physics"] is None
         assert seen["constraints_enforced"] == []
 
     def test_the_configured_weights_reach_the_objective(self, cell):
@@ -734,9 +715,12 @@ class TestPhysicsConstraints:
                                     "p_infinity": 1234.0}),
             engine=recording_engine).fit(table)
 
-        assert "L(7.0) * min(L(shortfall), ceiling)" in seen["loss_function"]
-        assert "L[11.0, 13.0]" in seen["loss_function"]
-        assert "1234.0" in seen["loss_function"]
+        physics = seen["physics"]
+        assert physics["weights"] == {"positivity": 7.0,
+                                      "thomas_fermi": 11.0,
+                                      "von_weizsacker": 13.0}
+        assert [probe["point"]["p"] for probe in physics["probes"]] == \
+            [0.0, 1234.0]
 
     def test_the_result_records_what_was_enforced(self, cell):
         """
@@ -780,7 +764,8 @@ class TestPhysicsConstraints:
 
     def test_it_does_not_share_names_with_the_operator_block(self):
         """
-        `training.physics` constrains the FNO over voxels; `symbolic.physics`
+        `training.physics_informed_setup` constrains the FNO over voxels;
+        `symbolic.physics`
         constrains an algebraic expression over probe points. Two key names
         appear in both and mean different things, which is why they are nested
         separately instead of sharing a prefix.
@@ -788,100 +773,124 @@ class TestPhysicsConstraints:
         from poraque.ml.config import TrainingConfig
 
         config = TrainingConfig()
-        shared = set(config.training.physics) & set(config.symbolic.physics)
+        shared = (set(config.training.physics_informed_setup)
+                  & set(config.symbolic.physics))
         assert shared == {"positivity_weight", "von_weizsacker_weight"}, (
             "the collision is real, which is the reason for the nesting")
-        assert config.training.physics is not config.symbolic.physics
+        assert (config.training.physics_informed_setup
+                is not config.symbolic.physics)
 
 
-@pytest.mark.skipif(
-    os.environ.get("PORAQUE_TEST_PYSR") != "1",
-    reason="needs the Julia toolchain; set PORAQUE_TEST_PYSR=1 to run")
-class TestPhysicsConstraintsInJulia:
+class TestWhatTheObjectiveCharges:
     """
-    The objective, executed by the backend that will actually run it.
+    The penalties, measured rather than read.
 
-    Everything above checks the *text* of the Julia function. Only this checks
-    that Julia accepts it, that ``eval_tree_array`` reads the probe matrix the
-    way the layout assumes, and that the penalty lands on the expression it was
-    meant for. It is skipped by default because the toolchain takes minutes to
-    precompile.
+    These assertions used to live in ``TestPhysicsConstraintsInJulia`` and were
+    **skipped unless ``PORAQUE_TEST_PYSR=1``**, because they needed a Julia
+    toolchain that took minutes to precompile — so in practice they ran almost
+    nowhere. They are the same five statements, against
+    :class:`~poraque.ml.gp.ConstrainedObjective`, and they now run every time.
+
+    That is the real dividend of dropping the second runtime, and it is worth
+    stating plainly: this repository has already been bitten once by a fixture
+    that skipped everywhere and quietly let six assertions rot for a month.
     """
 
-    @pytest.fixture(scope="class")
-    def objective(self):
-        pytest.importorskip("pysr")
-        from pysr.julia_import import jl
+    @pytest.fixture
+    def charge(self):
+        """
+        The objective's value for one expression, on limit-satisfying data.
 
-        source, _ = julia_physics_loss(["p", "q"], "pauli")
-        jl.seval("using SymbolicRegression")
-        return jl.seval(source)
+        ``F = 1/(1 + p^2)`` has ``F(0,0) = 1`` and ``F -> 0`` as ``p -> inf``,
+        so the data and both limits agree and any penalty seen is the
+        objective's own doing rather than a disagreement between them.
+        """
+        from poraque.ml.gp import ConstrainedObjective, resolve_operations
+
+        rng = np.random.default_rng(0)
+        p = np.abs(rng.normal(0, 0.4, 200))
+        features = np.column_stack([p, np.zeros_like(p)])
+        target = 1.0 / (1.0 + p ** 2)
+        block, _ = physics_constraints(["p", "q"], "pauli")
+        unary, binary = resolve_operations(["exp"], ["+", "-", "*", "/"])
+        objective = ConstrainedObjective(
+            features, target, ["p", "q"], unary, binary,
+            probes=block["probes"], weights=block["weights"],
+            ceiling=block["ceiling"])
+
+        def score(tree):
+            return objective(tree)
+
+        return score
 
     @staticmethod
-    def _loss(objective, expression):
-        """The objective's value for one expression, on limit-satisfying data."""
-        from pysr.julia_import import jl
+    def constant(value):
+        return ("const", float(value))
 
-        jl.seval("using SymbolicRegression")
-        options = jl.Options(
-            binary_operators=jl.seval("[+, -, *, /]"),
-            unary_operators=jl.seval("[exp]"))
-        # F = 1 / (1 + p^2): F(0,0) = 1 and F(p -> inf) -> 0, so the data and
-        # both limits agree and any penalty seen is the objective's own doing.
-        p = np.abs(np.random.default_rng(0).normal(0, 0.4, 200))
-        X = np.stack([p, np.zeros_like(p)])
-        y = 1.0 / (1.0 + p ** 2)
-        dataset = jl.Dataset(X, y)
-        tree = jl.seval(f"opts -> parse_expression(:({expression}); "
-                        f"operators=opts.operators, "
-                        f"variable_names=[\"p\", \"q\"])")(options)
-        return float(objective(tree, dataset, options))
+    @property
+    def _p(self):
+        return ("var", 0)
 
-    def test_a_form_satisfying_both_limits_pays_no_penalty(self, objective):
-        assert self._loss(objective, "1 / (1 + p * p)") < 1e-6
+    def test_a_form_satisfying_both_limits_pays_no_penalty(self, charge):
+        # 1 / (1 + p * p)
+        tree = ("bin", "/", self.constant(1.0),
+                ("bin", "+", self.constant(1.0),
+                 ("bin", "*", self._p, self._p)))
+        assert charge(tree) < 1e-6
 
-    def test_a_constant_pays_for_both_limits(self, objective):
-        """F = 1 has the Thomas-Fermi limit and not the von Weizsacker one."""
-        assert self._loss(objective, "1.0") == pytest.approx(100.0, rel=1e-3)
+    def test_a_constant_pays_for_the_limit_it_does_not_have(self, charge):
+        """``F = 1`` has the Thomas-Fermi limit and not the von Weizsacker one."""
+        assert charge(self.constant(1.0)) == pytest.approx(100.0, rel=1e-3)
 
-    def test_a_wrong_uniform_gas_limit_is_charged(self, objective):
-        """F(0,0) = 0.5 is off by 0.5, at weight 100."""
-        loss = self._loss(objective, "0.5 / (1 + p * p)")
-        assert loss == pytest.approx(50.0, rel=1e-2)
+    def test_a_wrong_uniform_gas_limit_is_charged(self, charge):
+        """``F(0,0) = 0.5`` is off by 0.5, at weight 100."""
+        tree = ("bin", "/", self.constant(0.5),
+                ("bin", "+", self.constant(1.0),
+                 ("bin", "*", self._p, self._p)))
+        assert charge(tree) == pytest.approx(50.0, rel=1e-2)
 
-    def test_a_divergent_form_is_charged_the_ceiling(self, objective):
-        """F = p^2 diverges at p = 1e6 and must be decisively rejected."""
-        assert self._loss(objective, "p * p") > 1e6
+    def test_a_divergent_form_is_charged_the_ceiling(self, charge):
+        """``F = p^2`` diverges at ``p = 1e6`` and must be decisively rejected."""
+        assert charge(("bin", "*", self._p, self._p)) > 1e6
 
-    def test_a_negative_prediction_is_charged(self, objective):
-        assert self._loss(objective, "-1.0") > self._loss(objective, "1.0")
+    def test_a_negative_prediction_is_charged(self, charge):
+        assert charge(self.constant(-1.0)) > charge(self.constant(1.0))
 
-    def test_the_search_is_driven_towards_a_physical_form(self, tmp_path):
+    def test_one_limit_carries_one_weight_however_many_probes_express_it(self):
         """
-        End to end: the constrained objective run by PySR itself. The point of
-        moving the physics into the loop is that the *front* comes back
-        satisfying the limits, not that a filter removes what does not.
+        The density sweep of the ``gga`` scheme raises the *resolution* of a
+        check, not its price. Three densities means six probes and still two
+        limits, so a functional that satisfies both is not charged three times
+        for a Thomas-Fermi limit it has.
         """
-        from pysr import PySRRegressor
+        from poraque.ml.gp import ConstrainedObjective, resolve_operations
 
-        source, _ = julia_physics_loss(["p", "q"], "pauli")
-        rng = np.random.default_rng(0)
-        p = np.abs(rng.normal(0, 0.4, 400))
-        X = np.column_stack([p, rng.normal(0, 0.4, 400)])
+        block, _ = physics_constraints(
+            ["rho", "p", "q"], "pauli", densities=(0.1, 0.5, 0.9),
+            weights={"thomas_fermi": 300.0, "von_weizsacker": 300.0})
+        unary, binary = resolve_operations([], ["+", "*"])
+        objective = ConstrainedObjective(
+            np.ones((4, 3)), np.ones(4), ["rho", "p", "q"], unary, binary,
+            probes=block["probes"], weights=block["weights"])
+        assert len(block["probes"]) == 6
+        assert objective.probe_weights.tolist() == [100.0] * 6
 
-        model = PySRRegressor(
-            niterations=3, binary_operators=["+", "-", "*", "/"],
-            unary_operators=["exp"], population_size=20, populations=4,
-            maxsize=15, loss_function=source, progress=False, verbosity=0,
-            output_directory=str(tmp_path), deterministic=True,
-            parallelism="serial", random_state=0)
-        model.fit(X, 1.0 / (1.0 + p ** 2), variable_names=["p", "q"])
+    def test_the_data_term_is_selectable_and_checked(self):
+        from poraque.ml.gp import ConstrainedObjective, resolve_operations
 
-        best = model.equations_.iloc[-1]
-        compliance = check_asymptotic_limits(str(best["equation"]),
-                                             ["p", "q"], "reduced",
-                                             template="pauli")
-        assert compliance.passes
+        unary, binary = resolve_operations([], ["+"])
+        features, target = np.zeros((3, 1)), np.array([1.0, 2.0, 3.0])
+        squared = ConstrainedObjective(features, target, ["p"], unary, binary,
+                                       data_loss="mse")
+        absolute = ConstrainedObjective(features, target, ["p"], unary, binary,
+                                        data_loss="mae")
+        zero = ("const", 0.0)
+        assert squared(zero) == pytest.approx((1 + 4 + 9) / 3)
+        assert absolute(zero) == pytest.approx((1 + 2 + 3) / 3)
+
+        with pytest.raises(ValueError, match="Unknown data loss"):
+            ConstrainedObjective(features, target, ["p"], unary, binary,
+                                 data_loss="huber")
 
 
 class TestLatex:

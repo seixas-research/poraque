@@ -21,8 +21,9 @@ pip install -e .
 \end{lstlisting}
 
 Either way this installs NumPy, SciPy, ASE, Matplotlib, PyYAML and PyTorch.
-Symbolic distillation (Chapter~\ref{ch:symbolic}) needs an optional extra,
-which pulls in PySR and its Julia toolchain:
+Symbolic distillation (Chapter~\ref{ch:symbolic}) needs one optional extra,
+SymPy, and only to render its result and check its limits --- the search itself
+runs on the NumPy and SciPy installed above:
 
 \begin{lstlisting}
 pip install "poraque[symbolic]"

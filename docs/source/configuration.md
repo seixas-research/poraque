@@ -441,7 +441,8 @@ the training log reports any reference points that violate it.
 | `tf32` | `true` | TensorFloat-32 matmul and convolution; CUDA, Ampere and later |
 | `loss` | `relative_l2` | `absolute_l2`, `relative_l2`, `absolute_h1` or `relative_h1` |
 | `sobolev_weight` | `0.1` | gradient-term weight for the two `h1` losses |
-| `physics` | all `0.0` | physics-informed loss weights |
+| `physics_informed` | `auto` | whether the constraints run at all |
+| `physics_informed_setup` | all `0.0` | physics-informed loss weights |
 
 (strict-device)=
 ### `device` and `strict_device`
@@ -916,16 +917,19 @@ task:     {type: all, name: poraque_models_cv}
 training: {enable_kfold: true, k_folds: 5}
 ```
 
-Two runs over the same data with different physics, kept side by side:
+Two runs over the same data with different physics, kept side by side. The
+first is explicit rather than left to `auto`: a baseline that says
+`physics_informed: false` cannot be misread later as one whose weights happened
+to be zero, and it also skips the per-batch decode the constraints need.
 
 ```yaml
 task:     {type: ext2chg, name: agaupt_baseline}
-training: {physics: {electron_count_weight: 0.0}}
+training: {physics_informed: false}
 ```
 
 ```yaml
 task:     {type: ext2chg, name: agaupt_charge_conserving}
-training: {physics: {electron_count_weight: 0.1}}
+training: {physics_informed_setup: {electron_count_weight: 0.1}}
 ```
 
 A fast smoke test:

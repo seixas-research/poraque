@@ -112,7 +112,7 @@ def _material(cell, shape, element="Si", counts=(2,), seed=0):
 #: POTCAR-dependent tests skip in a bare checkout — which is right, and which
 #: also means the *positive* half of every "did the library serve this
 #: element?" question goes unexercised wherever they skip. `PORAQUE_TEST_POTCAR_DIR`
-#: is the opt-in, in the same spirit as `PORAQUE_TEST_PYSR`: a path stated by
+#: is the opt-in, in the spirit `PORAQUE_TEST_PYSR` used to set: a path stated by
 #: the person running the suite rather than a home directory committed to git.
 LIBRARY_POTCAR_DIR = os.environ.get("PORAQUE_TEST_POTCAR_DIR") or None
 

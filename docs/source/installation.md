@@ -46,11 +46,21 @@ entry points are registered at install time, not import time.
 | --- | --- | --- |
 | CUDA build of PyTorch | NVIDIA GPUs | [see below](nvidia-gpus) |
 | `pdflatex` / `latexmk` | automatic PDF reports | TeX Live or MacTeX |
-| PySR + sympy | [symbolic distillation](symbolic/index.md) | `pip install -e ".[symbolic]"` |
+| `sympy` | [symbolic distillation](symbolic/index.md) | `pip install -e ".[symbolic]"` |
 
-The `symbolic` extra is kept separate because PySR carries a Julia toolchain,
-which it downloads the first time a search runs. Everything else in the package
-works without it.
+The `symbolic` extra is one package now, and it is only for *reporting*: SymPy
+renders a distilled expression as LaTeX and checks its asymptotic limits. The
+search itself is `poraque.ml.gp` — genetic programming in NumPy, with SciPy
+fitting the constants — and both of those are already hard dependencies, so
+nothing about distillation needs a second install any more.
+
+Until 2026-09-03 this extra carried PySR and, through it, a **Julia
+toolchain** fetched on first use. That was the reason it was kept separate, and
+removing it was an HPC decision rather than a scientific one: on a
+supercomputer a first-use download is a network fetch from a compute node, a
+writable depot on a filesystem that may be read-only or purged between jobs, a
+precompilation pass per architecture, and a second language runtime inside an
+MPI job.
 
 Apple Silicon needs nothing extra: the Metal (MPS) backend ships with the
 standard PyTorch wheel and is selected automatically.

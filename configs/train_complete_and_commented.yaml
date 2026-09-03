@@ -133,6 +133,46 @@ model:
 
   use_coordinates: true         # append three fractional-coordinate channels to the input
   cell_conditioning: true       # condition every layer on the lattice through FiLM
+
+  equivariant: false            # constrain the Fourier kernel to a function of |G| alone
+  equivariant_setup: null       # read ONLY when equivariant: true; null means the defaults below
+  # equivariant_setup:
+  #   n_radial: 16              # radial basis functions -- the whole capacity of the kernel
+  #   g_basis: null             # radius in 1/Ang the basis spans; null takes g_max, else 8.0
+  #   spherical_cutoff: true    # mask the retained modes to the inscribed sphere
+  #
+  # Rotate the input field and the prediction rotates with it, to the precision
+  # of the float -- which the ordinary spectral layer does NOT do: it learns one
+  # complex number per mode, so it can treat G and R.G differently, and measured
+  # over the 24 rotations of the cube it does, by 93% of the field's amplitude.
+  #
+  # THREE conditions have to hold together, and each fails silently:
+  #   1. the kernel is radial               -> equivariant: true
+  #   2. the retained set is a BALL, not a  -> spherical_cutoff: true. A radial
+  #      box                                   kernel over a box is equivariant
+  #                                            only under the box's own symmetry
+  #                                            group; on a tetragonal cell,
+  #                                            leaving this off costs 5e-2.
+  #   3. NO coordinate channels             -> use_coordinates: false, which is
+  #                                            REQUIRED and raises otherwise.
+  #                                            The three fractional coordinates
+  #                                            rotate into each other -- they are
+  #                                            an l=1 object in a network that
+  #                                            treats every channel as a scalar --
+  #                                            and being absolute positions they
+  #                                            cost translation equivariance too.
+  #
+  # The cost is capacity, and it is large: the dense layer holds
+  # 4*width^2*modes^3 COMPLEX numbers, this one holds width^2*n_radial REAL ones
+  # -- 4096 against 1048576 at width 16, modes 8, n_radial 16. An equivariant
+  # model of the same width is a much smaller model; n_radial and width are
+  # where that is bought back, not modes.
+  #
+  # NVIDIA's cuequivariance is deliberately not used and is not a dependency.
+  # It accelerates arithmetic on irreducible representations of O(3), and a
+  # scalar field -> scalar field operator carries only l = 0: every tensor
+  # product is a scalar multiply. Equivariance here is a constraint on the
+  # kernel, not a kernel library. See tests/test_cuequivariance_gpu.py.
   embedding_dim: 32             # width of the cell embedding FiLM reads
   precision: float32            # float32 | float64; what the operator computes in
 
@@ -223,7 +263,26 @@ training:
   # Only the total is reported. Introduce one at a time against a measured
   # baseline -- a badly scaled constraint degrades accuracy while looking
   # principled. Not to be confused with symbolic.physics below.
-  physics:
+  #
+  # physics_informed decides whether ANY of it runs, and it is not only a
+  # change of objective. Every constraint acts on DECODED fields, so with one
+  # live the loop must, per batch: copy the reference field to the device, run
+  # the target transform's inverse over the prediction -- inside the autograd
+  # graph, so it is paid again on the backward pass and its activations are
+  # held -- run the input transform's inverse too, and in delta-density mode
+  # copy the baseline over and add it back twice. Off, that is all work whose
+  # result is discarded, and it is skipped rather than computed.
+  #
+  #   auto   physics-informed iff a weight below is positive. What every
+  #          config written before this key existed already meant.
+  #   true   RAISES when no weight is set. A run that says physics-informed and
+  #          quietly optimises the supervised baseline has an ordinary loss
+  #          curve and a report that claims otherwise; this is the guard.
+  #   false  skips them, and warns if a weight below is non-zero -- a live
+  #          weight under a switch that ignores it is the configuration someone
+  #          later reads as evidence that it applied.
+  physics_informed: auto
+  physics_informed_setup:
     electron_count_weight: 0.0  # ext2chg: int(rho) must equal the known valence count
     positivity_weight: 0.0      # rho, tau >= 0 (a Log head is the better fix)
     von_weizsacker_weight: 0.0  # chg2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
@@ -241,7 +300,7 @@ output:
   dpi: 200
 
 symbolic:
-  enable_symbolic_distillation: false   # minutes to hours of CPU after the fit, and needs PySR
+  enable_symbolic_distillation: false   # minutes of CPU after the fit; needs only sympy, to report
   target: model                 # model distils what the operator learned; reference fits the DFT data
   features: gga                 # gga (rho, p, q) | reduced (p, q) | raw | enhancement (alias)
   template: none                # none fits tau directly; pauli fits F = (tau - tau_vW)/tau_TF

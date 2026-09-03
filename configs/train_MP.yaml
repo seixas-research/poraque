@@ -35,7 +35,7 @@ model:
   activation: silu              # stateless; `kan` moves the hyperparameters into kan_setup
 
 training:
-  physics:                      # these constrain the NEURAL OPERATOR, not the symbolic search
+  physics_informed_setup:       # these constrain the NEURAL OPERATOR, not the symbolic search
     electron_count_weight: 0.1  # int(rho) = the known valence count
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0

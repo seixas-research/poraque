@@ -76,6 +76,7 @@ _LAZY = {
     "FNO3d": "poraque.ml.fno",
     "FNOBlock": "poraque.ml.fno",
     "SpectralConv3d": "poraque.ml.fno",
+    "RadialSpectralConv3d": "poraque.ml.fno",
     # activations, incl. KAN-style learnable ones
     "ACTIVATIONS": "poraque.ml.kan",
     "KAN_ACTIVATIONS": "poraque.ml.kan",
@@ -127,7 +128,7 @@ _LAZY = {
     "LEGACY_BUNDLE_SUFFIXES": "poraque.ml.training",
     "resolve_bundle_path": "poraque.ml.training",
     # symbolic distillation
-    "julia_physics_loss": "poraque.ml.symbolic",
+    "physics_constraints": "poraque.ml.symbolic",
     "physics_probes": "poraque.ml.symbolic",
     "FeatureTable": "poraque.ml.symbolic",
     "SymbolicDistiller": "poraque.ml.symbolic",
@@ -135,7 +136,9 @@ _LAZY = {
     "build_features": "poraque.ml.symbolic",
     "distill_dataset": "poraque.ml.symbolic",
     "expression_to_latex": "poraque.ml.symbolic",
-    "pysr_engine": "poraque.ml.symbolic",
+    "native_engine": "poraque.ml.gp",
+    "ConstrainedObjective": "poraque.ml.gp",
+    "TreeFactory": "poraque.ml.gp",
     "sample_rows": "poraque.ml.symbolic",
     # query by committee
     "Committee": "poraque.ml.committee",

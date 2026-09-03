@@ -610,7 +610,8 @@ class TestShippedConfigs:
     #: ``model.projection_channels``
     #: ``model.mode_selection`` the choice to revisit when the cells stop
     #:                    being uniform, and silent when it is wrong
-    #: ``symbolic.physics`` shown beside ``training.physics`` so the two are
+    #: ``symbolic.physics`` shown beside ``training.physics_informed_setup`` so
+    #: the two are
     #:                    visibly separate objectives on separate objects
     #: ``data.delta_density`` what the operator is trained on at all -- a reader
     #:                    who does not know this is on cannot interpret a

@@ -27,7 +27,7 @@ model:
     degree: 6                 # highest Chebyshev order; degree+1 coefficients (the default)
 
 training:
-  physics:
+  physics_informed_setup:
     electron_count_weight: 0.1  # int(rho) = the known valence count
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
