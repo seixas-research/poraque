@@ -106,6 +106,7 @@ import torch  # noqa: E402
 from poraque import banner  # noqa: E402
 from poraque.fields import (  # noqa: E402
     FIELD_DTYPES,
+    charge_channel,
     field_integral,
     set_default_dtype,
 )
@@ -525,13 +526,40 @@ def metrics(prediction, target, grid=None):
     prediction, target : array_like
         The predicted and reference fields.
     grid : FieldGrid, optional
-        When given *and* both fields are non-negative densities, the
-        Jensen-Shannon divergence is added under ``jsd``. It needs the grid
-        because it is an integral over the cell, not a sum over voxels.
+        Enables the three metrics that are integrals over the cell rather than
+        sums over voxels, and cannot be taken without one:
+
+        ``relative_h1``
+            The relative :math:`H^1` error, values and gradients together.
+        ``integral_error``
+            :math:`|\int\hat f - \int f|`, which for ``ext2chg`` is the
+            electron-count error in electrons.
+        ``jsd``
+            The Jensen-Shannon divergence, when both fields are non-negative
+            densities.
 
     Returns
     -------
     dict
+
+    Notes
+    -----
+    **Nothing here is told what the run was optimising**, and that is what
+    keeps two runs with different objectives comparable. ``relative_h1`` is
+    therefore *not* the :math:`H^1` objective
+    :class:`~poraque.ml.losses.SobolevLoss` minimises: that one is two
+    separately-normalised terms combined with ``training.sobolev_weight``, and
+    its value depends on a run setting. This is the textbook relative Sobolev
+    norm,
+
+    .. math::
+
+        \frac{\lVert \hat f - f \rVert^2_{L^2}
+               + \lVert \nabla\hat f - \nabla f \rVert^2_{L^2}}
+              {\lVert f \rVert^2_{L^2} + \lVert \nabla f \rVert^2_{L^2}}
+        \quad\text{(square-rooted)},
+
+    which has no free parameter and means the same thing in every report.
     """
     predicted_field, reference_field = prediction, target
     prediction = np.asarray(prediction, dtype=float).ravel()
@@ -550,8 +578,92 @@ def metrics(prediction, target, grid=None):
         else float("nan"),
     }
     if grid is not None:
+        values["relative_h1"] = sobolev_error(
+            predicted_field, reference_field, grid)
+        values["integral_error"] = integral_error(
+            predicted_field, reference_field, grid)
         values["jsd"] = shape_divergence(predicted_field, reference_field, grid)
     return values
+
+
+def sobolev_error(prediction, target, grid):
+    r"""
+    Relative :math:`H^1` error: values and gradients in one number.
+
+    .. math::
+
+        \sqrt{\frac{\lVert \Delta f \rVert^2
+                     + \lVert \nabla \Delta f \rVert^2}
+                    {\lVert f \rVert^2 + \lVert \nabla f \rVert^2}}
+
+    The gradients are spectral, which is exact for the band-limited periodic
+    fields a plane-wave grid carries --- a finite-difference stencil would put
+    its own truncation error into a number meant to describe the model's.
+
+    Why it earns a column beside the relative :math:`L^2`: a prediction can
+    match a density pointwise and still be *rough*, and the von Weizsacker
+    kinetic energy --- the dominant term wherever the density is inhomogeneous
+    --- depends on :math:`\nabla\rho` rather than on :math:`\rho`. A model
+    with a small :math:`L^2` and a large :math:`H^1` is one whose downstream
+    energetics will be worse than its headline number suggests.
+
+    Returns
+    -------
+    float or None
+        ``None`` if the target has no gradient to speak of (a constant field),
+        where the ratio is 0/0.
+    """
+    from poraque.fields.density import spectral_gradient
+
+    prediction = np.asarray(prediction, dtype=float)
+    target = np.asarray(target, dtype=float)
+    if prediction.shape != target.shape or prediction.shape != tuple(grid.shape):
+        # A spin-polarised (2, ...) stack, or a shape the grid does not
+        # describe: the FFT would be taken over the wrong axes and return a
+        # plausible number. Better to report nothing.
+        return None
+
+    difference = prediction - target
+    gradient_difference = spectral_gradient(difference, grid)
+    gradient_target = spectral_gradient(target, grid)
+
+    numerator = (np.sum(difference ** 2)
+                 + sum(np.sum(component ** 2)
+                       for component in gradient_difference))
+    denominator = (np.sum(target ** 2)
+                   + sum(np.sum(component ** 2)
+                         for component in gradient_target))
+    if not denominator > 0:
+        return None
+    return float(np.sqrt(numerator / denominator))
+
+
+def integral_error(prediction, target, grid):
+    r"""
+    :math:`|\int \hat f\,d^3r - \int f\,d^3r|` over the cell.
+
+    For ``ext2chg`` this is the **electron-count error in electrons**, and it is
+    the one metric here that a pointwise loss controls worst: a per-voxel MSE is
+    nearly indifferent to a uniform 2 % error in :math:`\rho`, while the
+    electrostatic terms built from that density are of order :math:`10^4` eV,
+    so the same 2 % moves a total energy by tens of eV --- by a different amount
+    for every structure, so it does not cancel in a difference.
+
+    Signed inside the absolute value, not summed as absolute voxel errors: the
+    quantity being asked about is whether the *totals* agree. A prediction that
+    is 1 % high in one half of the cell and 1 % low in the other conserves
+    charge exactly, and should read zero here and badly under ``mae``.
+
+    Returns
+    -------
+    float or None
+        ``None`` when the field's shape is not the grid's.
+    """
+    prediction = np.asarray(prediction, dtype=float)
+    target = np.asarray(target, dtype=float)
+    if prediction.shape != target.shape or prediction.shape != tuple(grid.shape):
+        return None
+    return float(abs(np.sum(prediction - target)) * grid.volume_element)
 
 
 def shape_divergence(prediction, target, grid):
@@ -714,8 +826,9 @@ def build_loss(config, task_name):
     objective and the training loop's decision about whether to decode a
     prediction come to disagree.
     """
-    physics = dict(config.training.physics_informed_setup or {})
-    if config.training.physics_informed is False:
+    physics = config.training.physics_weights()
+    enable = config.training.physics_informed_enabled
+    if enable is False:
         # Reported, because a block of non-zero weights sitting under a switch
         # that turns them off is exactly the configuration someone will later
         # read as evidence that they applied.
@@ -724,13 +837,12 @@ def build_loss(config, task_name):
             import warnings
 
             warnings.warn(
-                f"training.physics_informed is false, so {', '.join(sorted(stated))} "
-                f"in training.physics_informed_setup are inert. Remove the "
-                f"switch to honour them.",
+                f"training.physics_informed.enable is false, so "
+                f"{', '.join(sorted(stated))} in the same block are inert. "
+                f"Remove the switch to honour them.",
                 RuntimeWarning, stacklevel=2,
             )
-    if (physics.get("euler_lagrange_weight", 0.0)
-            and config.training.physics_informed is not False):
+    if physics["euler_lagrange_weight"] and enable is not False:
         import warnings
 
         warnings.warn(
@@ -744,11 +856,8 @@ def build_loss(config, task_name):
         task=task_name,
         loss=config.training.loss,
         sobolev_weight=config.training.sobolev_weight,
-        electron_count_weight=physics.get("electron_count_weight", 0.0),
-        positivity_weight=physics.get("positivity_weight", 0.0),
-        von_weizsacker_weight=physics.get("von_weizsacker_weight", 0.0),
-        euler_lagrange_weight=physics.get("euler_lagrange_weight", 0.0),
-        physics_informed=config.training.physics_informed,
+        **physics,
+        physics_informed=enable,
     )
 
 
@@ -1374,6 +1483,54 @@ def plot_channel(field):
     return field if total is None else total
 
 
+def compare_fields(prediction, target):
+    r"""
+    Metrics for one predicted field against its reference, channel-correctly.
+
+    **The reduction to the density channel is the point of this function.**
+    ``operator.predict`` returns a :class:`~poraque.fields.SpinDensity`
+    whenever ``data.spin`` resolved on --- which is every model trained on the
+    platinum data --- and ``SpinDensity.data`` is a ``(2, Nx, Ny, Nz)`` stack.
+    Handed straight to :func:`metrics`, every number in the report is then
+    taken over :math:`\rho` *and* :math:`m` together, in a table whose unit
+    column says :math:`e/\mathrm{\AA}^3`.
+
+    That is not a small distortion, and it is not conservative. A prediction
+    exact in :math:`\rho` and wrong only in the magnetisation was measured
+    reporting ``relative_l2`` 1.3e-3, ``mae`` 7.9e-4 and ``max_abs`` 6.1e-3 ---
+    a density error that does not exist. And ``relative_h1`` and
+    ``integral_error`` came back ``None``, because a ``(2, ...)`` stack is not
+    the grid's shape, so the two metrics added for the split table would have
+    been silently absent from every spin-polarised run's report.
+
+    This is the same defect the six inference sites carried until 2026-09-02,
+    in a seventh place: :func:`~poraque.fields.base.charge_channel` exists
+    precisely so a call site that does not know which kind of field it was
+    handed can be written once.
+
+    The magnetisation is **reported rather than folded in**, under
+    ``magnetisation_relative_l2``. Dropping it would leave half of a
+    two-channel model's output unmeasured, which is the mirror of the mistake
+    being fixed.
+
+    Returns
+    -------
+    dict
+        As :func:`metrics`, plus ``magnetisation_relative_l2`` for a
+        two-channel field.
+    """
+    density, reference = charge_channel(prediction), charge_channel(target)
+    values = metrics(density.data, reference.data, grid=reference.grid)
+
+    moment = getattr(target, "magnetization", None)
+    if moment is not None and getattr(prediction, "magnetization", None) is not None:
+        difference = np.asarray(prediction.magnetization) - np.asarray(moment)
+        scale = np.linalg.norm(np.asarray(moment))
+        values["magnetisation_relative_l2"] = (
+            float(np.linalg.norm(difference) / scale) if scale > 0 else None)
+    return values
+
+
 def dataset_metric_probe(operator, dataset):
     """
     Metrics for one material, to decide which columns the table needs.
@@ -1383,8 +1540,7 @@ def dataset_metric_probe(operator, dataset):
     that is otherwise reporting progress as it goes.
     """
     source, target = dataset.load_fields(0)
-    prediction = operator.predict(source)
-    return metrics(prediction.data, target.data, grid=target.grid)
+    return compare_fields(operator.predict(source), target)
 
 
 def evaluate_material(operator, dataset, index, log, label,
@@ -1406,9 +1562,10 @@ def evaluate_material(operator, dataset, index, log, label,
     """
     source, target = dataset.load_fields(index)
     prediction = operator.predict(source)
-    # The grid enables the Jensen-Shannon divergence, which is an integral over
-    # the cell; it is skipped for a signed target, which has no distribution.
-    values = metrics(prediction.data, target.data, grid=target.grid)
+    # Through `compare_fields`, not `metrics` directly: a spin-polarised
+    # prediction is a (2, ...) stack, and every number in this table is a
+    # statement about the density alone.
+    values = compare_fields(prediction, target)
     log(format_metrics_row(label, split, values, width,
                            columns or METRIC_COLUMNS))
     return prediction, target, values
@@ -1589,9 +1746,8 @@ def validate_physics_settings(config):
     try:
         PhysicsInformedLoss(
             task="ext2chg",
-            **{key: float(value) for key, value
-               in dict(config.training.physics_informed_setup or {}).items()},
-            physics_informed=config.training.physics_informed,
+            **config.training.physics_weights(),
+            physics_informed=config.training.physics_informed_enabled,
         )
     except (ValueError, TypeError) as error:
         raise SystemExit(str(error))
@@ -1606,7 +1762,7 @@ def validate_symbolic_settings(settings):
     only casualty but the feedback uselessly late. Checked here it costs a
     millisecond and fails on the command line.
     """
-    if not settings.enable_symbolic_distillation:
+    if not settings.enable:
         return
     if settings.template not in TEMPLATES:
         raise SystemExit(
@@ -1638,7 +1794,7 @@ def validate_symbolic_settings(settings):
             f"Unknown key(s) in symbolic.physics: {sorted(unknown)}.\n"
             f"  Note that this block constrains the symbolic *search*. The "
             f"terms that constrain the neural operator -- electron count, "
-            f"Euler-Lagrange -- belong in training.physics_informed_setup.")
+            f"Euler-Lagrange -- belong in training.physics_informed.")
     if physics["enable"] and float(physics["p_infinity"]) <= 0:
         raise SystemExit(
             f"symbolic.physics.p_infinity={physics['p_infinity']!r} must be "
@@ -1725,7 +1881,7 @@ def run_symbolic_distillation(task, dataset, operator, config, log,
         analysis would be the worse outcome.
     """
     settings = config.symbolic
-    if not settings.enable_symbolic_distillation:
+    if not settings.enable:
         return None
     if task.name != "chg2tau":
         log(f"\n  symbolic distillation: skipped for {task.name} "
@@ -2074,6 +2230,17 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
                 "No structure was held out, so every number in the table is "
                 "training fit, not a generalisation estimate."
             )
+        if any(row["metrics"].get("magnetisation_relative_l2") is not None
+               for row in per_material.values()):
+            # The table's units say e/Ang^3 and its numbers are the density's.
+            # A two-channel model also predicts a magnetisation, and a reader
+            # who assumes the table covers everything the model outputs is
+            # reading half of it.
+            caveats.append(
+                "This is a two-channel model. Every number in the table is "
+                "the DENSITY channel; the magnetisation is measured "
+                "separately, as magnetisation_relative_l2 in the metrics JSON."
+            )
         reporter = ModelReport(config.report_dir())
         summary = {
             "name": model_name(config),
@@ -2081,7 +2248,12 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
             "model": type(operator.model).__name__,
             "parameters": f"{operator.model.n_parameters():,}",
             "training structures": str(len(train_set)),
-            "grid shapes": ", ".join(str(s) for s in sorted(buckets)),
+            # A count, not the shapes themselves. The shapes are one line per
+            # distinct grid and the distinct grids are a property of the
+            # dataset, so an MP set put dozens of tuples into a summary table
+            # meant to be read at a glance. `format_shapes` still writes every
+            # one of them to the run log, where length costs nothing.
+            "grid resolutions": str(len(buckets)),
             "epochs": str(config.training.epochs),
             "batch size": str(config.training.batch_size),
             "device": describe_device(operator.device),
@@ -2540,7 +2712,7 @@ def build_parser():
 
     group = parser.add_argument_group("symbolic distillation")
     group.add_argument("--symbolic",
-                       dest="symbolic.enable_symbolic_distillation",
+                       dest="symbolic.enable",
                        action="store_const", const=True, default=None,
                        help="after training, search for a closed-form "
                             "expression reproducing the chg2tau operator")
@@ -2736,7 +2908,7 @@ def run(argv=None):
             if config.fine_tuning.enable:
                 log("  NOTE: --kfold ignores fine_tuning.* -- every fold "
                     "trains from scratch.")
-            if config.symbolic.enable_symbolic_distillation:
+            if config.symbolic.enable:
                 log("  NOTE: --kfold ignores symbolic distillation -- it "
                     "runs only on a deployable single-split model.")
         results = [result for result in

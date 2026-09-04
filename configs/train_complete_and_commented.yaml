@@ -120,26 +120,33 @@ model:
   projection_activation: null   # read-out nonlinearity; null follows `activation`
   kan_setup: null               # read ONLY when activation: kan; null means the defaults below
   # kan_setup:
-  #   variant: bspline          # bspline (the KAN paper) | cheby | rbf | rational
+  #   variant: bspline          # bspline (the KAN paper) | chebyshev | rbf | rational
   #   use_base: true            # keep the w_c*silu(x) base term; false is a "pure" KAN
   #   grid_size: 8              # knot intervals (bspline) / RBF centers - 1 (rbf)
   #   spline_order: 3           # B-spline degree; bspline only
   #   grid_range: [-2.0, 2.0]   # support of that grid; bspline clamps outside it, rbf decays
-  #   degree: 6                 # highest Chebyshev order; cheby only
+  #   degree: 6                 # highest Chebyshev order; chebyshev only
   #   rational_num_degree: 4    # numerator power; rational only
   #   rational_den_degree: 4    # even denominator powers; rational only
-  # Cost relative to gelu at width=16 on CPU: cheby 1.36x, rational 1.54x,
+  # Cost relative to gelu at width=16 on CPU: chebyshev 1.36x, rational 1.54x,
   # rbf 2.00x, bspline 5.50x. Every variant starts close to silu.
 
   use_coordinates: true         # append three fractional-coordinate channels to the input
   cell_conditioning: true       # condition every layer on the lattice through FiLM
 
-  equivariant: false            # constrain the Fourier kernel to a function of |G| alone
-  equivariant_setup: null       # read ONLY when equivariant: true; null means the defaults below
-  # equivariant_setup:
-  #   n_radial: 16              # radial basis functions -- the whole capacity of the kernel
-  #   g_basis: null             # radius in 1/Ang the basis spans; null takes g_max, else 8.0
-  #   spherical_cutoff: true    # mask the retained modes to the inscribed sphere
+  # ONE BLOCK, and that is the schema-wide convention: a feature that can be
+  # switched off is `<feature>: {enable: ..., <its settings>}`, never a scalar
+  # beside a separate `<feature>_setup` group. The two-key spelling was tried
+  # and drifted -- `equivariant: false` above a populated `equivariant_setup`
+  # reads as an equivariant run and is not one, and nothing put the switch in
+  # the same field of view as the settings it governs. Every setting below is
+  # read ONLY when enable is true; omit one and it takes the default named in
+  # its comment.
+  equivariant:
+    enable: false               # constrain the Fourier kernel to a function of |G| alone
+    # n_radial: 16              # radial basis functions -- the whole capacity of the kernel
+    # g_basis: null             # radius in 1/Ang the basis spans; null takes g_max, else 8.0
+    # spherical_cutoff: true    # mask the retained modes to the inscribed sphere
   #
   # Rotate the input field and the prediction rotates with it, to the precision
   # of the float -- which the ordinary spectral layer does NOT do: it learns one
@@ -147,7 +154,7 @@ model:
   # over the 24 rotations of the cube it does, by 93% of the field's amplitude.
   #
   # THREE conditions have to hold together, and each fails silently:
-  #   1. the kernel is radial               -> equivariant: true
+  #   1. the kernel is radial               -> equivariant.enable: true
   #   2. the retained set is a BALL, not a  -> spherical_cutoff: true. A radial
   #      box                                   kernel over a box is equivariant
   #                                            only under the box's own symmetry
@@ -273,8 +280,9 @@ training:
   # baseline -- a badly scaled constraint degrades accuracy while looking
   # principled. Not to be confused with symbolic.physics below.
   #
-  # physics_informed decides whether ANY of it runs, and it is not only a
-  # change of objective. Every constraint acts on DECODED fields, so with one
+  # ONE BLOCK, the same convention as model.equivariant above: `enable`
+  # decides whether ANY of it runs, and the weights it governs sit beside it.
+  # That is not only a change of objective. Every constraint acts on DECODED fields, so with one
   # live the loop must, per batch: copy the reference field to the device, run
   # the target transform's inverse over the prediction -- inside the autograd
   # graph, so it is paid again on the backward pass and its activations are
@@ -290,8 +298,8 @@ training:
   #   false  skips them, and warns if a weight below is non-zero -- a live
   #          weight under a switch that ignores it is the configuration someone
   #          later reads as evidence that it applied.
-  physics_informed: auto
-  physics_informed_setup:
+  physics_informed:
+    enable: auto                # auto | true | false, as above
     electron_count_weight: 0.0  # ext2chg: int(rho) must equal the known valence count
     positivity_weight: 0.0      # rho, tau >= 0 (a Log head is the better fix)
     von_weizsacker_weight: 0.0  # chg2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
@@ -307,9 +315,21 @@ output:
   json: null                    # explicit metrics path; null uses the run folder
   plot_format: png
   dpi: 200
+  save_raw_plot_data: false     # write the numbers behind every figure beside it,
+                                #   so a plot can be redrawn for publication without
+                                #   re-running the model. Each sidecar takes the STEM
+                                #   of its figure (ext2chg_parity.png -> .csv), so the
+                                #   pairing is a property of the listing. Loss curve ->
+                                #   CSV, one row per epoch, with the unmeasured epochs
+                                #   left EMPTY rather than interpolated; parity -> CSV,
+                                #   one row per occupied bin plus a bin-edges file,
+                                #   since a log axis makes edges unrecoverable from
+                                #   centres; slices -> compressed .npz.
 
 symbolic:
-  enable_symbolic_distillation: false   # minutes of CPU after the fit; needs only sympy, to report
+  enable: false                 # minutes of CPU after the fit; needs only sympy, to report
+                                #   spelled `enable` like every other optional feature; it was
+                                #   `enable_symbolic_distillation`, which restated its own section
   target: model                 # model distils what the operator learned; reference fits the DFT data
   features: gga                 # gga (rho, p, q) | reduced (p, q) | raw | enhancement (alias)
   template: none                # none fits tau directly; pauli fits F = (tau - tau_vW)/tau_TF

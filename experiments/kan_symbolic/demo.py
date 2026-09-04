@@ -13,7 +13,7 @@ short expression to what a whole trained *operator* computes; see that
 module (and its own `experiments/euler_lagrange`) for the search-based kind.
 
 For every one of the eight checkpoints trained in this repo -- the four
-base-carrying variants (`kan_cheby`, `kan_bspline`, `kan_rbf`,
+base-carrying variants (`kan_chebyshev`, `kan_bspline`, `kan_rbf`,
 `kan_rational`; `models/pt_w16_m8_l3_<variant>/`) and their four
 `kan_use_base: false` ("pure") twins (`models/pt_w16_m8_l3_<variant>_purekan/`)
 -- this script:
@@ -53,13 +53,13 @@ from poraque.ml import load_bundle  # noqa: E402
 from poraque.ml.kan import BSplineKANActivation, symbolic_expression  # noqa: E402
 
 BASE_CHECKPOINTS = {
-    "kan_cheby": "models/pt_w16_m8_l3_kancheby/pt_w16_m8_l3_kancheby.poraque",
+    "kan_chebyshev": "models/pt_w16_m8_l3_kanchebyshev/pt_w16_m8_l3_kanchebyshev.poraque",
     "kan_bspline": "models/pt_w16_m8_l3_kanbspline/pt_w16_m8_l3_kanbspline.poraque",
     "kan_rbf": "models/pt_w16_m8_l3_rbf/pt_w16_m8_l3_rbf.poraque",
     "kan_rational": "models/pt_w16_m8_l3_rational/pt_w16_m8_l3_rational.poraque",
 }
 PURE_CHECKPOINTS = {
-    "kan_cheby (pure)": "models/pt_w16_m8_l3_kancheby_purekan/pt_w16_m8_l3_kancheby_purekan.poraque",
+    "kan_chebyshev (pure)": "models/pt_w16_m8_l3_kanchebyshev_purekan/pt_w16_m8_l3_kanchebyshev_purekan.poraque",
     "kan_bspline (pure)": "models/pt_w16_m8_l3_kanbspline_purekan/pt_w16_m8_l3_kanbspline_purekan.poraque",
     "kan_rbf (pure)": "models/pt_w16_m8_l3_kanrbf_purekan/pt_w16_m8_l3_kanrbf_purekan.poraque",
     "kan_rational (pure)": "models/pt_w16_m8_l3_kanrational_purekan/pt_w16_m8_l3_kanrational_purekan.poraque",

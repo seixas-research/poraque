@@ -339,7 +339,7 @@ def augmentation_from_atoms(reference, structure, log):
         "the")
     log("        training-set average. Use them only for an element the "
         "training set")
-    log("        does not cover. See DESIGN_PAW.md 3.2.")
+    log("        does not cover.")
     return lines
 
 
@@ -350,7 +350,7 @@ def resolve_augmentation(directory, bundle, structure, shape, log,
 
     The order is a ranking by how close each source is to *this* structure's
     own occupancies, and it is not arbitrary — the gaps between the three were
-    measured (``DESIGN_PAW.md`` §3.2):
+    measured on this project's platinum data:
 
     1. **A reference calculation beside the structure.** Exact: these are that
        system's own records.
@@ -397,7 +397,8 @@ def resolve_augmentation(directory, bundle, structure, shape, log,
         f"(LCHARG=.TRUE.) and point at that directory, or retrain so the "
         f"bundle carries a reference, or build an isolated-atom database with "
         f"`poraque-atoms` and pass --paw-source atomic (a much rougher "
-        f"approximation — see DESIGN_PAW.md), or drop --add-paw and use the "
+        f"approximation: ~86 % RMS from a real site, against ~9 % for the "
+        f"bundle's average), or drop --add-paw and use the "
         f"file for visualisation rather than as an ICHARG=1 restart.")
 
 

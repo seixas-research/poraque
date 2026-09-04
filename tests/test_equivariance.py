@@ -397,7 +397,8 @@ class TestTheCoordinateChannelsAreNotThreeScalars:
     def test_the_config_refuses_before_the_cache_is_built(self):
         from poraque.ml.config import TrainingConfig
 
-        config = TrainingConfig.from_dict({"model": {"equivariant": True}})
+        config = TrainingConfig.from_dict(
+            {"model": {"equivariant": {"enable": True}}})
         with pytest.raises(ValueError, match="use_coordinates"):
             config.model_kwargs()
 
@@ -586,45 +587,98 @@ class TestAnEquivariantCheckpointReloadsAsOne:
         assert inferred["modes"] == 4
 
 
-class TestTheSetupBlockBehavesLikeKanSetup:
+class TestTheEquivarianceBlockIsOneKey:
     """
-    One flag plus one block, read only when the flag is on.
+    The switch lives *inside* the settings it governs.
 
-    The same shape as ``model.activation`` / ``model.kan_setup``, and for the
-    same reason: all three settings are read by one architecture and by no
-    other, so as flat keys they would sit beside ``width`` and ``modes`` and
-    read as decisions every run should be making.
+    It did not always. Until 26.9.8 this was ``equivariant: true`` beside a
+    separately-named ``equivariant_setup`` group, and the two halves drifted in
+    exactly the way a two-key layout invites: a config with ``equivariant:
+    false`` above a populated ``equivariant_setup`` reads at a glance as an
+    equivariant run and is not one, and nothing brings the flag and the
+    settings into the same field of view. The block is now what
+    ``fine_tuning``, ``symbolic.physics`` and ``training.physics_informed``
+    already were.
+
+    What has *not* changed is the constructor: :class:`FNO3d` still takes flat
+    ``equivariant=`` / ``n_radial=`` keywords, and every checkpoint's
+    ``architecture`` record is unaffected. The grouping is a property of the
+    configuration file.
     """
 
-    def test_an_unknown_key_raises(self):
+    @staticmethod
+    def _config(**model):
         from poraque.ml.config import TrainingConfig
 
-        config = TrainingConfig.from_dict({"model": {
-            "equivariant": True, "use_coordinates": False,
-            "equivariant_setup": {"nradial": 4}}})
-        with pytest.raises(ValueError, match="equivariant_setup"):
-            config.model_kwargs()
+        return TrainingConfig.from_dict({"model": model})
 
-    def test_a_block_beside_a_dense_model_warns_rather_than_acting(self):
-        from poraque.ml.config import TrainingConfig
+    def test_an_unknown_setting_raises_and_names_the_block(self):
+        """
+        At load, and the message says which block --- there are three.
 
-        config = TrainingConfig.from_dict({"model": {
-            "equivariant_setup": {"n_radial": 4}}})
-        with pytest.warns(RuntimeWarning, match="equivariant_setup"):
+        "Unknown key: nradal" is true of a schema with one such block and
+        useless in one with several.
+        """
+        with pytest.raises(ValueError, match=r"model\.equivariant.*nradial"):
+            self._config(equivariant={"enable": True, "nradial": 4},
+                         use_coordinates=False)
+
+    def test_a_setting_beside_a_dense_model_warns_rather_than_acting(self):
+        config = self._config(equivariant={"n_radial": 4})
+        with pytest.warns(RuntimeWarning, match="enable false"):
             kwargs = config.model_kwargs()
         assert "n_radial" not in kwargs
+        assert kwargs["equivariant"] is False
 
     def test_the_block_reaches_the_constructor(self):
-        from poraque.ml.config import TrainingConfig
-
-        config = TrainingConfig.from_dict({"model": {
-            "equivariant": True, "use_coordinates": False,
-            "equivariant_setup": {"n_radial": 24, "g_basis": 5.0,
-                                  "spherical_cutoff": False}}})
+        config = self._config(
+            use_coordinates=False,
+            equivariant={"enable": True, "n_radial": 24, "g_basis": 5.0,
+                         "spherical_cutoff": False})
         kwargs = config.model_kwargs()
+        assert kwargs["equivariant"] is True
         assert kwargs["n_radial"] == 24
         assert kwargs["g_basis"] == 5.0
         assert kwargs["spherical_cutoff"] is False
+
+    def test_an_unstated_setting_stays_unstated(self):
+        """
+        Not filled in with a default, and that is load-bearing.
+
+        ``g_basis`` unstated means "follow ``g_max`` if
+        ``mode_selection: physical`` named a band, else the module default" ---
+        a resolution :class:`FNO3d` performs and the config cannot, because it
+        depends on a key in the same section. A block that helpfully passed
+        ``g_basis: 8.0`` would bypass it and silently ignore ``g_max``.
+        """
+        config = self._config(use_coordinates=False,
+                              equivariant={"enable": True, "n_radial": 24})
+        kwargs = config.model_kwargs()
+        assert "g_basis" not in kwargs and "spherical_cutoff" not in kwargs
+
+    def test_the_old_two_key_spelling_says_what_to_write_instead(self):
+        """A config written against the old schema is refused, not reinterpreted."""
+        from poraque.ml.config import TrainingConfig
+
+        with pytest.raises(ValueError, match="must be a block"):
+            TrainingConfig.from_dict({"model": {"equivariant": True}})
+
+        with pytest.raises(ValueError, match="equivariant_setup"):
+            TrainingConfig.from_dict(
+                {"model": {"equivariant_setup": {"n_radial": 4}}})
+
+    def test_a_bad_switch_value_is_refused_at_load(self):
+        """
+        ``from_dict`` validates the block, so a run says so on the command line.
+
+        Not at ``model_kwargs()`` time: the model is built after the field
+        cache, which on a real dataset is minutes.
+        """
+        from poraque.ml.config import TrainingConfig
+
+        with pytest.raises(ValueError, match="enable is 'yes'"):
+            TrainingConfig.from_dict(
+                {"model": {"equivariant": {"enable": "yes"}}})
 
 
 def accelerator():
@@ -808,3 +862,128 @@ class TestTheBasisRadiusFollowsTheBandTheRunNamed:
         model = FNO3d(width=8, modes=4, n_layers=2, use_coordinates=False,
                       equivariant=True)
         assert model.g_basis == DEFAULT_G_BASIS
+
+
+class TestTheRadialBasisIsBuiltOncePerForwardPass:
+    r"""
+    Every layer in the stack rebuilt the same tensor, and it was not cheap.
+
+    The basis depends on the batch's cells, the retained mode counts, the
+    device and the dtype --- and on the layer's own ``n_radial``, ``g_basis``
+    and ``spherical_cutoff``, which :meth:`FNO3d.__init__` gives every block
+    from one ``radial_kwargs``. So an ``n_layers=3`` model computed three
+    bit-identical tensors per forward pass and threw two away.
+
+    The cost is not the arithmetic. Building it calls
+    :func:`~poraque.ml.physics.cell_reciprocal`, which moves the cell **to the
+    host** to widen it to float64 --- MPS cannot represent one --- inverts it
+    there and copies it back. That is a device-to-host-to-device round trip
+    per Fourier layer per batch, against a dense backbone that makes none at
+    all; on CUDA the device-to-host half also drains the queue, so what is
+    being paid for is a synchronisation rather than a 3x3 inverse.
+
+    Measured on MPS, batch 4 at 32^3, ``width 32 / n_radial 32``: 55.8 ms per
+    forward down to 47.2, **15 %**; at ``width 16 / n_radial 16`` where the
+    FFTs hide less of it, 32.9 down to 25.8, **21 %**. The saving is forward
+    only --- the basis carries no gradient, so the backward pass never
+    traversed the copies either way.
+    """
+
+    @staticmethod
+    def _model(n_layers=3, **kwargs):
+        torch.manual_seed(0)
+        return FNO3d(1, 1, width=8, modes=4, n_layers=n_layers,
+                     equivariant=True, use_coordinates=False,
+                     n_radial=6, **kwargs)
+
+    @staticmethod
+    def _batch(batch=2, n=16):
+        x = torch.randn(batch, 1, n, n, n)
+        cell = torch.eye(3).mul(6.0).unsqueeze(0).repeat(batch, 1, 1)
+        # Not all alike: a shared basis that quietly used the first sample's
+        # cell for all of them would pass on a batch of identical cells.
+        cell[1] *= 1.4
+        return x, cell
+
+    def test_the_geometry_is_resolved_once_however_deep_the_stack(self,
+                                                                  monkeypatch):
+        from poraque.ml import physics
+
+        calls = []
+        original = physics.cell_reciprocal
+        monkeypatch.setattr(
+            physics, "cell_reciprocal",
+            lambda *a, **k: (calls.append(1), original(*a, **k))[1])
+
+        x, cell = self._batch()
+        for n_layers in (1, 3, 6):
+            calls.clear()
+            self._model(n_layers=n_layers)(x, cell)
+            assert len(calls) == 1, (
+                f"{len(calls)} host round trips for {n_layers} layers")
+
+    def test_sharing_it_changes_nothing_about_the_answer(self):
+        """
+        Bit-identical, not merely close.
+
+        A shared basis is an optimisation: it earns its place only if the
+        operator it computes is the same operator, so the assertion is
+        `torch.equal` and not a tolerance.
+        """
+        model = self._model().eval()
+        x, cell = self._batch()
+        with torch.no_grad():
+            shared = model(x, cell)
+            # `basis=None` per block: exactly what the code did before.
+            v = model.lift(x)
+            for block in model.blocks:
+                v = block(v, embedding=None, max_modes=None, cell=cell,
+                          basis=None)
+            per_layer = model.project(v)
+        assert torch.equal(shared, per_layer)
+
+    def test_a_layer_on_its_own_still_builds_its_own(self):
+        """The sharing is `FNO3d`'s doing; the layer is complete without it."""
+        layer = RadialSpectralConv3d(2, 2, (4, 4, 4), n_radial=6)
+        x = torch.randn(2, 2, 16, 16, 16)
+        cell = torch.eye(3).mul(6.0).unsqueeze(0).repeat(2, 1, 1)
+        assert layer(x, cell).shape == x.shape
+
+    def test_a_basis_from_the_wrong_geometry_raises(self):
+        """
+        Every axis but the radial one would broadcast, and silently.
+
+        A basis built for another grid, another mode count or a batch of one
+        does not fail to multiply against the mode block -- it broadcasts, and
+        returns a finite field computed from a geometry that is not the
+        sample's. That is the failure this optimisation makes possible, so it
+        is the one it has to refuse.
+        """
+        layer = RadialSpectralConv3d(2, 2, (4, 4, 4), n_radial=6)
+        x = torch.randn(2, 2, 16, 16, 16)
+        cell = torch.eye(3).mul(6.0).unsqueeze(0).repeat(2, 1, 1)
+        good = layer.radial_basis(cell, (4, 4, 4), x.device, x.dtype)
+        assert layer(x, cell, basis=good).shape == x.shape
+
+        for wrong in (good[:1],                       # one sample's basis
+                      good[:, :3],                    # too few radial functions
+                      good[..., :2]):                 # a smaller mode block
+            with pytest.raises(ValueError, match="basis has shape"):
+                layer(x, cell, basis=wrong)
+
+    def test_the_mode_counts_are_not_rebuilt_on_the_host_every_call(self):
+        """
+        Three numbers, and building them was a host-to-device copy per call.
+
+        ``torch.tensor([...], device=...)`` is a transfer whatever its size,
+        and on an accelerator a small transfer costs its launch rather than
+        its bytes. They are constants of the run.
+        """
+        from poraque.ml.fno import _mode_counts
+
+        _mode_counts.cache_clear()
+        first = _mode_counts((4, 4, 4), torch.device("cpu"), torch.float32)
+        second = _mode_counts((4, 4, 4), torch.device("cpu"), torch.float32)
+        assert first is second
+        assert _mode_counts.cache_info().hits == 1
+        assert torch.equal(first, torch.tensor([4.0, 4.0, 4.0]))

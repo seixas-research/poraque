@@ -48,15 +48,18 @@ _BREAK_AFTER = ("/", ",", ":", ";", "-", r"\_")
 #: Share of the text block given to the *key* column of the configuration
 #: appendix.
 #:
-#: Sized to the content rather than guessed. The longest key any config
-#: produces is ``symbolic.enable_symbolic_distillation``, which sets 184.5 pt
-#: wide at 11 pt Latin Modern -- 0.405 of the 455 pt text block on A4 with the
-#: 2.5 cm margins this report uses. The value here leaves a little over 15 pt
-#: of headroom on top of that, so every key of every section fits on **one
-#: line** and is read as the identifier it is.
+#: Sized to the content rather than guessed. It was set against
+#: ``symbolic.enable_symbolic_distillation``, 37 characters and 184.5 pt wide
+#: at 11 pt Latin Modern -- 0.405 of the 455 pt text block on A4 with the
+#: 2.5 cm margins this report uses -- with a little over 15 pt of headroom on
+#: top. That key became ``symbolic.enable`` in 26.9.8 and the longest is now
+#: ``fine_tuning.pretrained_checkpoint`` at 33, so the headroom has grown
+#: rather than shrunk. It is **not** being retightened: this column is sized so
+#: that every key of every section fits on one line, and a fraction trimmed to
+#: today's longest key is one the next key breaks.
 #:
-#: A key broken across two lines is not merely untidy: ``symbolic.enable\_``
-#: over ``symbolic\_distillation`` reads as two settings, and the reader has to
+#: A key broken across two lines is not merely untidy: ``fine\_tuning.pre``
+#: over ``trained\_checkpoint`` reads as two settings, and the reader has to
 #: reassemble the name of the thing whose value sits beside it.
 CONFIG_KEY_FRACTION = 0.44
 
@@ -66,7 +69,7 @@ def _wrappable(text, threshold=26):
     Escape a configuration value and let it break inside a fixed-width column.
 
     A ``p`` column wraps at spaces, which is enough for a value like the
-    ``training.physics_informed_setup`` dict. It is not enough for a long
+    ``training.physics_informed`` dict. It is not enough for a long
     value with no
     spaces at all -- an absolute path, or a cache tag such as
     ``res32_blur0.15spec`` -- which stays one unbreakable word and overruns the
@@ -93,9 +96,9 @@ def _format_value(value):
     """
     Render one configuration value for a fixed-width table cell.
 
-    A nested mapping -- ``training.physics_informed_setup`` is the only one
-    today -- becomes
-    one ``key: value`` per line rather than a single 116-character repr. The
+    A nested mapping -- since 26.9.8 there are three, ``model.equivariant``,
+    ``training.physics_informed`` and ``symbolic.physics`` -- becomes
+    one ``key: value`` per line rather than a single 140-character repr. The
     break is ``\\newline`` and not ``\\\\``: inside a ``p`` column ``\\\\`` ends
     the table *row*, which would split one setting across two rows and put the
     rest of the table out of step with its keys.
@@ -282,75 +285,150 @@ class ModelReport:
 \vspace{{0.55cm}}
 """
 
+    #: Order the split rows are printed in. `train` before `validation`
+    #: because that is the order they happen in, and anything else -- a
+    #: `k`-fold's `fold 3`, a split nobody anticipated -- follows in whatever
+    #: order it sorts, rather than being dropped for not being one of the two.
+    _SPLIT_ORDER = {"train": 0, "validation": 1}
+
+    #: The columns of the split table: ``(heading, key, has a unit)``.
+    #:
+    #: Five metrics, chosen so that each answers a question the others cannot,
+    #: and no more than five because the table has to fit the text block:
+    #:
+    #: ``relative_l2``
+    #:     the headline error, and the one every other run in this repository
+    #:     is quoted in.
+    #: ``relative_h1``
+    #:     values *and* gradients. A prediction can match a density pointwise
+    #:     and still be rough, and the von Weizsacker kinetic energy depends on
+    #:     the gradient -- so an L2 that is small beside an H1 that is not is a
+    #:     model whose downstream energetics will disappoint.
+    #: ``mae``
+    #:     the typical voxel, in the field's own units, where a squared error
+    #:     is not readable as a quantity.
+    #: ``max_abs``
+    #:     the worst voxel. Means and RMS both hide a single catastrophic site,
+    #:     and near a nucleus is exactly where one occurs.
+    #: ``integral_error``
+    #:     conservation. For ``ext2chg`` this is the electron-count error in
+    #:     electrons, and it is the metric a pointwise loss controls worst: a
+    #:     per-voxel MSE is nearly indifferent to a uniform 2 % error in rho,
+    #:     while the electrostatics built from that density are of order 1e4 eV.
+    #:
+    #: ``mse``, ``rmse``, ``r2``, ``nrmse_range`` and ``jsd`` are not dropped,
+    #: only not typeset: every one of them is still written per structure into
+    #: the run's metrics JSON, which is machine-readable and has no margins.
+    _SPLIT_COLUMNS = (
+        (r"rel.\ $L^2$", "relative_l2", False),
+        (r"rel.\ $H^1$", "relative_h1", False),
+        ("MAE", "mae", True),
+        (r"Max.\ error", "max_abs", True),
+        (r"$|\Delta N|$", "integral_error", "integral"),
+    )
+
+    @staticmethod
+    def _integral_unit(unit):
+        """
+        The unit of a field's integral over the cell.
+
+        ``e/Ang^3`` integrates to ``e`` and ``eV/Ang^3`` to ``eV``, so the rule
+        is to strip the volume. Anything else is left alone and marked, because
+        a wrong unit on a conservation error is worse than none: the number is
+        small either way and only its unit says whether it is small *enough*.
+        """
+        volume = "/Ang^3"
+        return unit[:-len(volume)] if unit.endswith(volume) else ""
+
     def _metrics_table(self, per_material, unit):
         r"""
-        Per-structure metrics as a booktabs table.
+        Dataset counts and five metrics, one row per split.
 
-        A ``longtable``, not a ``tabular``. The number of rows is the number of
-        structures in the run, which is unbounded -- a ``tabular`` is a single
-        unbreakable box, so past roughly forty structures it overran the bottom
-        of the page and every row after that was simply not printed. The table
-        that most needs to be complete was the one silently truncated.
+        **This used to be one row per structure, and that is what made the
+        report unreadable.** The row count was the size of the dataset, so a
+        115-material run printed a hundred and fifteen lines of seven columns
+        -- six pages of numbers nobody reads individually -- and the two
+        questions a reader actually brings to it, *how big was the set* and
+        *did it generalise*, had to be answered by scrolling and averaging.
 
-        The header repeats on each continuation page, because a column of bare
-        numbers three pages from its heading cannot be read.
+        Both are answered directly now. The counts are the dataset summary the
+        report never had; and the ``train`` and ``validation`` rows side by
+        side are the generalisation gap, which is the single most useful thing
+        this table can say and was previously spread over a column of a hundred
+        rows sorted by something else.
+
+        Nothing measured is lost. The per-structure numbers -- and the four
+        metrics not typeset here -- stay in the run's metrics JSON, and the
+        parity figure plots every voxel of every structure, so the *spread* the
+        old table carried is still on the page, drawn rather than enumerated.
+
+        The rows are ``train``, ``validation`` and ``all``. A run with nothing
+        held out prints ``train`` alone: a ``validation`` row of dashes reads
+        as a measurement that came out undefined, and there was no measurement,
+        while an ``all`` row would repeat the row above it verbatim.
+
+        A column every structure left ``None`` is dropped rather than printed
+        empty -- ``relative_h1`` and ``integral_error`` are ``None`` for a
+        two-channel prediction, whose shape is not the grid's.
         """
-        rows = []
-        for name, entry in sorted(per_material.items()):
+        collected = {}
+        for entry in per_material.values():
             values = entry.get("metrics", entry)
-            split = entry.get("split", "")
-            rows.append(
-                f"{_wrappable(name, 18)} & {_escape(split)} & "
-                f"{_number(values.get('mse'))} & {_number(values.get('mae'))} & "
-                f"{_number(values.get('rmse'))} & "
-                f"{_number(values.get('relative_l2'), 4)} & "
-                f"{_number(values.get('r2'), 4)} \\\\"
-            )
+            collected.setdefault(entry.get("split", "") or "unsplit",
+                                 []).append(values)
+        every = [entry for entries in collected.values() for entry in entries]
 
-        aggregate = ""
-        collected = [e.get("metrics", e) for e in per_material.values()]
-        if collected:
-            def mean(key):
-                values = [c[key] for c in collected
-                          if c.get(key) is not None and np.isfinite(c[key])]
-                return _number(np.mean(values)) if values else "--"
+        def finite(entries, key):
+            return [entry[key] for entry in entries
+                    if entry.get(key) is not None and np.isfinite(entry[key])]
 
-            aggregate = (
-                r"\midrule" "\n"
-                f"\\textbf{{mean}} & & \\textbf{{{mean('mse')}}} & "
-                f"\\textbf{{{mean('mae')}}} & \\textbf{{{mean('rmse')}}} & "
-                f"\\textbf{{{mean('relative_l2')}}} & \\textbf{{{mean('r2')}}} \\\\"
-            )
+        columns = [column for column in self._SPLIT_COLUMNS
+                   if finite(every, column[1])]
+        if not columns:
+            # No metric survived -- an empty `per_material`, or one carrying
+            # nothing this table knows. Say so rather than typesetting a table
+            # of one blank column.
+            return (r"\begin{center}\small\color{shadegray}"
+                    r"No per-structure metrics were recorded."
+                    r"\end{center}" "\n")
 
-        heading = ("Structure & Split & MSE & MAE & RMSE & "
-                   "rel.\\ $L^2$ & $R^2$ \\\\\n")
+        def row(label, entries, bold=False):
+            cells = [_escape(label), f"{len(entries)}"]
+            for _, key, _unit in columns:
+                values = finite(entries, key)
+                cells.append(_number(np.mean(values)) if values else "--")
+            if bold:
+                cells = [rf"\textbf{{{cell}}}" for cell in cells]
+            return " & ".join(cells) + r" \\"
+
+        rows = [row(split, entries) for split, entries in
+                sorted(collected.items(),
+                       key=lambda item: (self._SPLIT_ORDER.get(item[0], 2),
+                                         item[0]))]
+        if len(collected) > 1:
+            rows.append(r"\midrule")
+            rows.append(row("all", every, bold=True))
+
+        integral_unit = self._integral_unit(unit)
+        units = {True: f"[{_escape(unit)}]",
+                 "integral": f"[{_escape(integral_unit)}]" if integral_unit
+                             else r"{\footnotesize per cell}",
+                 False: ""}
+        heading = " & ".join(
+            [r"\textbf{Split}", r"\textbf{Structures}"]
+            + [rf"\textbf{{{title}}}" for title, _, _ in columns])
+        unit_row = " & ".join(["", ""] + [units[has_unit]
+                                          for _, _, has_unit in columns])
+
         return (
-            r"\begin{longtable}{@{}"
-            r">{\raggedright\arraybackslash}p{0.20\textwidth}"
-            r"lrrrrr@{}}" "\n"
-            # First page: the full heading, with the unit row.
+            r"\begin{center}\begin{tabular}{@{}l"
+            + "r" * (len(columns) + 1) + r"@{}}" "\n"
             r"\toprule" "\n"
-            + heading
-            + f"& & \\multicolumn{{3}}{{c}}{{[{_escape(unit)}]}} & & \\\\\n"
-            + r"\midrule" "\n"
-            r"\endfirsthead" "\n"
-            # Continuation pages: the same columns, marked as a continuation so
-            # the second page is not mistaken for a second table.
-            r"\multicolumn{7}{@{}l}{\small\color{shadegray}"
-            r"Per-structure metrics, continued}\\[2pt]" "\n"
-            r"\toprule" "\n"
-            + heading
-            + r"\midrule" "\n"
-            r"\endhead" "\n"
+            + heading + r" \\" "\n"
+            + unit_row + r" \\" "\n"
             r"\midrule" "\n"
-            r"\multicolumn{7}{r@{}}{\small\color{shadegray}"
-            r"continued on the next page}\\" "\n"
-            r"\endfoot" "\n"
-            r"\bottomrule" "\n"
-            r"\endlastfoot" "\n"
             + "\n".join(rows) + "\n"
-            + aggregate + "\n"
-            r"\end{longtable}" "\n"
+            + r"\bottomrule\end{tabular}\end{center}" "\n"
         )
 
     #: Maths symbols for the quantities a distillation can fit. Without this
@@ -801,7 +879,7 @@ class ModelReport:
 
         if configuration:
             # Fixed-width columns, not `ll`. An `l` column is a single
-            # unbreakable box, so a long value -- `physics_informed_setup` is 116
+            # unbreakable box, so a long value -- `physics_informed` is 140
             # characters of nested dict -- ran straight past the right margin.
             #
             # The widths are fractions of `\textwidth` rather than centimetres,
@@ -821,7 +899,7 @@ class ModelReport:
                 r"@{}}\toprule" "\n")
             for key, value in sorted(configuration.items()):
                 # The key needs the same break opportunities as the value.
-                # `symbolic.enable_symbolic_distillation` is 37 characters with
+                # `fine_tuning.pretrained_checkpoint` is 33 characters with
                 # no space in it, so escaping alone leaves one unbreakable word
                 # that overruns its column and prints on top of the value.
                 body.append(f"{_wrappable(key)} & {_format_value(value)} \\\\\n")

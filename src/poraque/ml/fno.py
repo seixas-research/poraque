@@ -508,6 +508,25 @@ def _mode_frequencies(modes, device, dtype):
         torch.meshgrid(axis_1, axis_2, axis_3, indexing="ij"), dim=0)
 
 
+@lru_cache(maxsize=64)
+def _mode_counts(modes, device, dtype):
+    """
+    ``(m1, m2, m3)`` as a device tensor, memoised.
+
+    Three numbers, and building them cost a host allocation and a
+    host-to-device copy on **every forward pass of every equivariant layer** --
+    ``torch.tensor([...], device=...)`` is a transfer however small its
+    payload, and on CUDA a small transfer is dominated by its launch rather
+    than by its bytes. They are constant for the run, so they are built once.
+
+    Memoised on the same key as :func:`_mode_frequencies`, and bounded for the
+    same reason: the distinct mode counts in a run are the distinct grid shapes
+    a :class:`~poraque.ml.data.ShapeBucketSampler` produces, which was 19 on
+    the dataset this was measured against.
+    """
+    return torch.tensor([float(m) for m in modes], device=device, dtype=dtype)
+
+
 class RadialSpectralConv3d(nn.Module):
     r"""
     Spectral convolution whose kernel depends on :math:`|\mathbf{G}|` alone.
@@ -678,8 +697,8 @@ class RadialSpectralConv3d(nn.Module):
             # radius, minimised over the three axes. Cell lengths are all it
             # takes, for any cell -- no inverse, no per-mode geometry.
             lengths = torch.linalg.vector_norm(cell, dim=-1)         # (B, 3)
-            counts = torch.tensor([float(m) for m in modes],
-                                  device=lengths.device, dtype=lengths.dtype)
+            counts = _mode_counts(tuple(int(m) for m in modes),
+                                  lengths.device, lengths.dtype)
             inscribed = (2.0 * np.pi * counts / lengths).amin(dim=-1)
             # Strictly inside, not on the sphere, and the strictness is what
             # makes the retained set symmetric. `rfftn` gives axis i the
@@ -699,7 +718,7 @@ class RadialSpectralConv3d(nn.Module):
                              ).unsqueeze(1).to(basis.dtype)
         return basis
 
-    def forward(self, x, cell, max_modes=None):
+    def forward(self, x, cell, max_modes=None, basis=None):
         """
         Apply the equivariant spectral convolution.
 
@@ -713,6 +732,12 @@ class RadialSpectralConv3d(nn.Module):
             no radius without a cell.
         max_modes : tuple of int, optional
             Per-axis cap on the retained modes for this call.
+        basis : torch.Tensor, optional
+            A basis from :meth:`radial_basis` for this batch and these modes,
+            computed once by :meth:`FNO3d.forward` and shared by every layer in
+            the stack. Omitted, the layer builds its own --- which is what a
+            standalone call does, and what every call did before the sharing
+            was added.
 
         Returns
         -------
@@ -742,11 +767,29 @@ class RadialSpectralConv3d(nn.Module):
                        x_ft[:, :, tail_1, tail_2, :m3]], dim=-2),
         ], dim=-3)
 
-        basis = self.radial_basis(cell, (m1, m2, m3), x.device, x.dtype)
+        if basis is None:
+            basis = self.radial_basis(cell, (m1, m2, m3), x.device, x.dtype)
+        elif tuple(basis.shape) != (batch, self.n_radial, 2 * m1, 2 * m2, m3):
+            # A shared basis is an optimisation, and an optimisation that can
+            # be handed the wrong tensor has to say so. Every axis but the
+            # radial one would broadcast against the mode block, so a basis
+            # built for another grid or another sample would return a finite
+            # field computed from the wrong geometry.
+            raise ValueError(
+                f"basis has shape {tuple(basis.shape)}, expected "
+                f"{(batch, self.n_radial, 2 * m1, 2 * m2, m3)} for a "
+                f"{(m1, m2, m3)} mode block of {batch} sample(s).")
 
         # Real arithmetic throughout. `torch.cat` above returns a contiguous
         # tensor, so `.real`/`.imag` are dense views rather than the strided
         # ones `complex_contract` documents MPS getting wrong.
+        #
+        # Two contractions rather than one, and that was measured. Stacking the
+        # real and imaginary halves into a single `(2B, ...)` einsum halves the
+        # kernel launches, but the `torch.cat` and the `basis.repeat` it needs
+        # copy more than the launches cost: 3.83 ms against 5.26 ms on MPS at
+        # batch 8, width 32, n_radial 32. The launches are not what this layer
+        # is spending its time on -- the FFTs are.
         real, imaginary = block.real, block.imag
         weight = self.weight.to(real.dtype)
         out_real = torch.einsum(
@@ -898,7 +941,7 @@ class FNOBlock(nn.Module):
     activation : str, optional
         One of :data:`~poraque.ml.kan.ACTIVATIONS`: ``'silu'`` (default),
         ``'gelu'``, ``'relu'``, ``'tanh'`` (stateless), or ``'kan_bspline'``
-        / ``'kan_cheby'`` / ``'kan_rbf'`` / ``'kan_rational'`` (per-channel
+        / ``'kan_chebyshev'`` / ``'kan_rbf'`` / ``'kan_rational'`` (per-channel
         learnable — see :mod:`poraque.ml.kan`).
     activation_kwargs : dict, optional
         Variant-specific hyperparameters, forwarded to
@@ -935,14 +978,17 @@ class FNOBlock(nn.Module):
         self.activation = build_activation(activation, channels,
                                            **(activation_kwargs or {}))
 
-    def forward(self, x, embedding=None, max_modes=None, cell=None):
+    def forward(self, x, embedding=None, max_modes=None, cell=None,
+                basis=None):
         """Apply the layer to ``(B, C, Nx, Ny, Nz)``."""
         # The cell is passed only to the layer that needs it: the dense
         # spectral convolution's weights are indexed by mode and know nothing
         # about a lattice, and giving it an argument it ignores would make the
-        # two layers look interchangeable in a way they are not.
+        # two layers look interchangeable in a way they are not. The same goes
+        # for `basis`, which only exists for the radial kernel.
         if self.equivariant:
-            y = self.spectral(x, cell, max_modes=max_modes) + self.pointwise(x)
+            y = (self.spectral(x, cell, max_modes=max_modes, basis=basis)
+                 + self.pointwise(x))
         else:
             y = self.spectral(x, max_modes=max_modes) + self.pointwise(x)
         y = self.norm(y)
@@ -980,7 +1026,7 @@ class FNO3d(nn.Module):
         (default as of 2026-08-17; ``'gelu'`` was the default before then —
         see FUTURE.md for the measurements that motivated the switch),
         ``'gelu'``, ``'relu'``, ``'tanh'``, or the per-channel learnable
-        Kolmogorov-Arnold variants ``'kan_bspline'`` / ``'kan_cheby'`` /
+        Kolmogorov-Arnold variants ``'kan_bspline'`` / ``'kan_chebyshev'`` /
         ``'kan_rbf'`` / ``'kan_rational'`` (see :mod:`poraque.ml.kan`). Every
         learnable variant starts at initialisation close to ``silu`` (its own
         base term, matching the original KAN paper) and is opt-in: every
@@ -994,7 +1040,7 @@ class FNO3d(nn.Module):
     kan_spline_order : int, optional
         Hyperparameter of ``'kan_bspline'``; ignored otherwise.
     kan_degree : int, optional
-        Hyperparameter of ``'kan_cheby'``; ignored otherwise. See
+        Hyperparameter of ``'kan_chebyshev'``; ignored otherwise. See
         :class:`~poraque.ml.kan.ChebyKANActivation`.
     kan_rational_num_degree, kan_rational_den_degree : int, optional
         Hyperparameters of ``'kan_rational'``; ignored otherwise. See
@@ -1252,9 +1298,32 @@ class FNO3d(nn.Module):
             raise ValueError("equivariant=True requires `cell` at forward "
                              "time: the spectral kernel is a function of |G|.")
 
+        # The radial basis is a property of the batch geometry, not of a layer,
+        # so it is built here once and handed down -- exactly as `embedding`
+        # and `max_modes` above it already are, and for the same reason. Every
+        # block in the stack is constructed from the same `self.modes` and the
+        # same `radial_kwargs`, and they all see this call's `cell`, `shape`
+        # and `max_modes`, so the tensor each one used to build for itself was
+        # bit-identical to its neighbours'.
+        #
+        # It is not a micro-optimisation. Building it calls `cell_reciprocal`,
+        # which moves the cell to the host to widen it to float64 (MPS cannot
+        # represent one) and copies the result back -- so an `n_layers=3` model
+        # made three device-to-host-to-device round trips per forward pass,
+        # where the dense backbone makes none at all. On CUDA a device-to-host
+        # copy also drains the queue, which is the part that costs more than
+        # the arithmetic it was synchronising for.
+        basis = None
+        if self.equivariant:
+            spectral = self.blocks[0].spectral
+            basis = spectral.radial_basis(
+                cell, spectral.effective_modes(shape, max_modes),
+                x.device, x.dtype)
+
         v = self.lift(x)
         for block in self.blocks:
-            v = block(v, embedding=embedding, max_modes=max_modes, cell=cell)
+            v = block(v, embedding=embedding, max_modes=max_modes, cell=cell,
+                      basis=basis)
         return self.project(v)
 
     def n_parameters(self):

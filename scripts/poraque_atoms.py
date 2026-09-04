@@ -33,8 +33,9 @@ part that was never in doubt --- including nearly all of the dynamic range the
 record travels with it, which is the only thing available for an element the
 training set has never seen. It is *not* the better source when the element
 **is** in the training set: measured here, a free Pt atom's record is 86.6 % RMS
-away from a bulk Pt site while the training-set average is 9.9 % away. See
-``DESIGN_PAW.md`` §3.2.
+away from a bulk Pt site while the training-set average is 9.9 % away. Nothing
+selects it silently; ``poraque-inference --paw-source atomic`` is the only way
+to ask for it.
 
 What a reference calculation has to be
 --------------------------------------

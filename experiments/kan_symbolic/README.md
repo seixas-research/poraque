@@ -33,7 +33,7 @@ features it is given.
 ## What the demo does
 
 For each of the eight checkpoints trained in this repo -- the four
-base-carrying variants (`models/pt_w16_m8_l3_kancheby`, `_kanbspline`,
+base-carrying variants (`models/pt_w16_m8_l3_kanchebyshev`, `_kanbspline`,
 `_rbf`, `_rational`) and their four `kan_use_base: false` ("pure") twins
 (`models/pt_w16_m8_l3_<variant>_purekan`; see `FUTURE.md` for how all eight
 compare on accuracy), it:
@@ -56,7 +56,7 @@ closed form needs none; an earlier version of this readout used GELU,
 correction"):
 
 ```
-kan_cheby:
+kan_chebyshev:
   phi(x) = 0.9929*x/(1+exp(-x)) + 1.3152*tanh(x)**6 - 0.4272*tanh(x)**5
            - 2.08*tanh(x)**4 + 0.0892*tanh(x)**3 + 0.4974*tanh(x)**2
            + 0.2118*tanh(x) + 0.1765
@@ -88,7 +88,7 @@ checkpoints trained with the base term switched off. The SiLU term is gone
 `exp`, but only from its own Gaussian residual, never from a base function:
 
 ```
-kan_cheby (pure):
+kan_chebyshev (pure):
   phi(x) = -0.1408*tanh(x)**6 - 0.1664*tanh(x)**5 + 0.0648*tanh(x)**4
            + 0.0084*tanh(x)**3 - 0.1864*tanh(x)**2 + 0.0632*tanh(x) + 0.1672
   max |forward - symbolic| on 8 real struct_016 voxels: 1.3e-04

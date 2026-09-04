@@ -1294,7 +1294,7 @@ class SymbolicDistiller:
         unary = list(config.unary_operations or DEFAULT_UNARY)
         binary = list(config.binary_operations or DEFAULT_BINARY)
 
-        # `symbolic.physics`, never `training.physics_informed_setup`: that one
+        # `symbolic.physics`, never `training.physics_informed`: that one
         # constrains
         # the neural operator over voxels, this constrains a candidate algebraic
         # expression over probe points. Two of the key names are the same in

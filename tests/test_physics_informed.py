@@ -79,12 +79,11 @@ class TestAutoAnswersFromTheWeights:
         shipped = os.path.join(os.path.dirname(__file__), "..", "configs",
                                "train.yaml")
         config = TrainingConfig.from_yaml(shipped)
-        assert config.training.physics_informed == "auto"
+        assert config.training.physics_informed_enabled == "auto"
 
-        weights = config.training.physics_informed_setup
-        live = sum(float(value) for value in weights.values()) > 0.0
-        loss = PhysicsInformedLoss(task="ext2chg", **{
-            name: float(value) for name, value in weights.items()})
+        weights = config.training.physics_weights()
+        live = sum(weights.values()) > 0.0
+        loss = PhysicsInformedLoss(task="ext2chg", **weights)
         assert loss.physics_informed is live
 
 
@@ -105,8 +104,8 @@ class TestTrueRefusesToBeAnEmptyClaim:
         with pytest.raises(ValueError) as raised:
             PhysicsInformedLoss(task="ext2chg", physics_informed=True)
         message = str(raised.value)
-        assert "physics_informed_setup" in message
-        assert "physics_informed: false" in message
+        assert "training.physics_informed" in message
+        assert "physics_informed.enable: false" in message
 
     def test_it_is_content_when_a_weight_is_set(self):
         loss = PhysicsInformedLoss(task="ext2chg", physics_informed=True,
@@ -156,8 +155,7 @@ class TestFalseMakesTheWeightsInertAndSaysSo:
         import scripts.poraque_train as train_script
 
         config = TrainingConfig.from_dict({"training": {
-            "physics_informed": False,
-            "physics_informed_setup": {"positivity_weight": 0.5}}})
+            "physics_informed": {"enable": False, "positivity_weight": 0.5}}})
         with pytest.warns(RuntimeWarning, match="inert"):
             train_script.build_loss(config, "ext2chg")
 
@@ -165,7 +163,7 @@ class TestFalseMakesTheWeightsInertAndSaysSo:
         import scripts.poraque_train as train_script
 
         config = TrainingConfig.from_dict(
-            {"training": {"physics_informed": False}})
+            {"training": {"physics_informed": {"enable": False}}})
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             loss = train_script.build_loss(config, "ext2chg")
@@ -276,8 +274,28 @@ class TestTheOldKeyNamesItsReplacement:
         with pytest.raises(ValueError) as raised:
             TrainingConfig.from_dict({"training": {"physics": {}}})
         message = str(raised.value)
-        assert "physics_informed_setup" in message
-        assert "physics_informed" in message
+        assert "training.physics_informed" in message
+        assert "enable" in message
+
+    def test_the_intermediate_spelling_raises_too(self):
+        """
+        ``physics`` became ``physics_informed_setup`` in 26.9.5 and that became
+        the ``physics_informed`` block in 26.9.8, so there are two dead
+        spellings, not one. A config written against the middle one is as
+        stale as a config written against the first.
+        """
+        with pytest.raises(ValueError, match="physics_informed_setup"):
+            TrainingConfig.from_dict({"training": {
+                "physics_informed_setup": {"positivity_weight": 0.1}}})
+
+    def test_the_bare_switch_says_it_is_a_block_now(self):
+        """
+        ``physics_informed: auto`` is not an unknown key --- the key is still
+        there, it is the *shape* that changed --- so it cannot be caught by
+        ``RETIRED_KEYS`` and needs its own message.
+        """
+        with pytest.raises(ValueError, match="must be a block"):
+            TrainingConfig.from_dict({"training": {"physics_informed": "auto"}})
 
     def test_the_symbolic_block_is_untouched(self):
         """
@@ -303,7 +321,7 @@ class TestTheRunRefusesAnEmptyClaimBeforeTheCacheIsBuilt:
         import scripts.poraque_train as train_script
 
         config = TrainingConfig.from_dict(
-            {"training": {"physics_informed": True}})
+            {"training": {"physics_informed": {"enable": True}}})
         with pytest.raises(SystemExit, match="every constraint weight"):
             train_script.validate_physics_settings(config)
 
@@ -311,6 +329,5 @@ class TestTheRunRefusesAnEmptyClaimBeforeTheCacheIsBuilt:
         import scripts.poraque_train as train_script
 
         config = TrainingConfig.from_dict({"training": {
-            "physics_informed": True,
-            "physics_informed_setup": {"positivity_weight": 0.2}}})
+            "physics_informed": {"enable": True, "positivity_weight": 0.2}}})
         assert train_script.validate_physics_settings(config) is None

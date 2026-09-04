@@ -22,15 +22,19 @@ that the ``asinh`` transform exists to absorb. Predicting the *residual*
     \delta\rho(\mathbf r) = \rho(\mathbf r) - \rho_{\rm sup}(\mathbf r)
 
 leaves only the bonding charge: small, smooth, sign-changing, and the part that
-actually depends on the chemistry. See ``DESIGN_PAW.md`` §3.1 for the trade-offs
-this brings with it, of which the sign change is the one that matters.
+actually depends on the chemistry. The sign change is the trade-off that
+matters: positivity and the electron count stop being statements about the
+target and become statements about :math:`\delta\rho + \rho_{\rm sup}`, which
+is why the baseline is restored before either is applied
+(:meth:`poraque.ml.training.FieldOperator.predict`).
 
 **A source of one-centre terms.** The isolated atom's own PAW augmentation
 record travels with it, which is the only thing available for an element the
 training set has never seen. It is *not* the best available source when the
 element **is** in the training set — measured on this project's platinum data, the
 free-atom record is 86.6 % RMS away from a bulk Pt site while the training-set
-average is 9.9 % away. ``DESIGN_PAW.md`` §3.2 has the numbers and the reasoning;
+average is 9.9 % away — a free atom and an atom in a metal have genuinely
+different on-site occupations, and that is what the difference costs.
 :mod:`poraque.fields.vasp.augmentation` remains the default source.
 
 How an atom is stored

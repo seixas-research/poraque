@@ -26,6 +26,55 @@ Path & Contents \\
 \end{tabular}
 \end{center}
 
+\subsection{What the report's performance table says}
+
+One row per split --- \opt{train}, \opt{validation}, \opt{all} --- and five
+columns:
+
+\begin{center}
+\begin{tabular}{@{}lp{8.4cm}@{}}
+\toprule
+Column & What it answers \\
+\midrule
+rel.\ $L^2$ & The headline error, and the one every other number in this
+manual is quoted in. \\
+rel.\ $H^1$ & Values \emph{and} gradients. A prediction can match a density
+pointwise and still be rough, and $\tauvW$ depends on $\nabla\rho$ --- so a
+small $L^2$ beside a large $H^1$ is a model whose energetics will disappoint. \\
+MAE & The typical voxel, in the field's own units, where a squared error is not
+readable as a quantity. \\
+Max.\ error & The worst voxel. Means and RMS both hide a single catastrophic
+site, and near a nucleus is exactly where one occurs. \\
+$|\Delta N|$ & Conservation. For \opt{ext2chg} this is the electron-count error
+in electrons, and it is the metric a pointwise loss controls worst. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{ptip}
+The \opt{train} and \opt{validation} rows read against each other \emph{are}
+the generalisation gap. That is the single most useful thing the table says,
+and it is why the splits are rows.
+\end{ptip}
+
+\begin{pnote}
+The rel.\ $H^1$ here is the textbook relative Sobolev norm, which has no free
+parameter --- \textbf{not} the $H^1$ objective \opt{loss: relative\_h1}
+minimises, whose value depends on \opt{sobolev\_weight} and so cannot be
+compared between two runs. Every column is computed without consulting the
+loss, for exactly that reason.
+
+For a two-channel model every number is the \textbf{density} channel; the
+magnetisation is measured separately, as \opt{magnetisation\_relative\_l2} in
+the metrics JSON, and the report says so in its caveats.
+
+The table lists \emph{splits}, not structures: it used to print one row per
+material, so a 115-material run made six pages of numbers nobody reads
+individually. The per-structure figures --- and \opt{mse}, \opt{rmse},
+\opt{r2}, \opt{nrmse\_range} and \opt{jsd}, which are not typeset --- are all
+in \file{log/<name>.json}, which is machine-readable and has no margins.
+\end{pnote}
+
 \noindent
 \opt{<name>} is \opt{task.name} from the configuration, and it is the only
 thing you set: two runs with different names cannot overwrite each other, and

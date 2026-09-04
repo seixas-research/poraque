@@ -21,13 +21,14 @@ model:
   mode_selection: fixed       # as in configs/train.yaml
   activation: kan             # the learnable family; kan_setup says which and how
   kan_setup:
-    variant: bspline          # bspline | cheby | rbf | rational
+    variant: bspline          # bspline | chebyshev | rbf | rational
     grid_size: 8              # knot intervals (the default)
     spline_order: 3           # cubic, the paper's choice (the default)
     grid_range: [-2.0, 2.0]   # inputs outside it are CLAMPED (the default)
 
 training:
-  physics_informed_setup:
+  physics_informed:
+    enable: auto                # auto: on, because a weight below is non-zero
     electron_count_weight: 0.1  # int(rho) = the known valence count
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0

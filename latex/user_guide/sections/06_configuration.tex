@@ -38,6 +38,51 @@ merged --- is written beside the results as \file{<json-stem>\_config.yaml}
 (by default \file{models/<name>/log/<name>\_config.yaml}). That is the file worth
 keeping: it records what actually ran, overrides included.
 
+\section{Optional features are blocks}
+\label{sec:enableblocks}
+
+Every feature that can be switched off is one key, with its switch
+\textbf{inside} the settings it governs:
+
+\begin{lstlisting}
+<group>:
+  <feature>:
+    enable: <switch>
+    <setting>: <value>
+\end{lstlisting}
+
+There are four: \opt{model.equivariant}, \opt{training.physics\_informed},
+\opt{symbolic.physics} and \opt{fine\_tuning}. A setting inside a block is read
+\textbf{only when \opt{enable} is on}; naming one beside a switch that is off
+warns rather than acting, and an unknown one raises, naming the block it was
+in.
+
+\begin{pnote}
+Two of these were a scalar beside a separately named \opt{<feature>\_setup}
+group until 26.9.8, and the two halves drifted in exactly the way that layout
+invites: \opt{equivariant: false} above a populated \opt{equivariant\_setup}
+reads at a glance as an equivariant run and is not one, and nothing brought the
+switch and the settings into the same field of view. The old spellings now
+raise and name their replacement --- including the bare \opt{equivariant:
+true}, which is a \emph{type} error rather than an unknown key and so carries
+its own message showing the block to write instead.
+
+\opt{symbolic.enable\_symbolic\_distillation} became \opt{symbolic.enable} in
+the same change. It restated its own section in its own name, and at 37
+characters was the longest key in the schema --- wide enough to set the width
+of the configuration table in the PDF report.
+\end{pnote}
+
+One \opt{\_setup} stays, deliberately: \opt{model.kan\_setup}. It is selected
+by \opt{model.activation}, which is a \emph{choice among five} rather than a
+switch, so there is no \opt{enable} for it to hold and no boolean it could
+contradict.
+
+Blocks are validated when the file is \textbf{read}, not when the feature is
+first used. That matters more than it sounds: the model is built after the
+field cache and the objective after that, so a one-line mistake in either block
+would otherwise take minutes of downsampling to report.
+
 \section{Every key is optional}
 \label{sec:minimal}
 
@@ -52,23 +97,34 @@ the settings worth knowing about, each with the reasoning behind it. Read it
 there and copy only what you need into your own file. This chapter is the
 exhaustive version of the same thing.
 
-Four configurations ship with the source:
+Twelve configurations ship with the source --- four at the top of
+\file{configs/} and eight controlled activation comparisons under
+\file{configs/kan/}:
 
 \begin{center}
-\begin{tabular}{@{}lp{8.4cm}@{}}
+\begin{tabular}{@{}lp{7.9cm}@{}}
 \toprule
 File & Purpose \\
 \midrule
-\file{configs/train.yaml} & The clean starting point. Copy this one. \\
-\file{configs/train\_complete\_and\_commented.yaml} & The same run, with every
-choice explained at length --- the reference to read, not to copy. \\
-\file{configs/train\_materialsproject.yaml} & Training on a Materials Project
-density download. \\
-\file{configs/train\_mixed.yaml} & One operator from several datasets
-at once. \\
+\file{train.yaml} & The clean starting point. Copy this one. \\
+\file{train\_complete\_and\_commented.yaml} & The same run, with every choice
+explained at length --- the reference to read, not to copy. \\
+\file{train\_MP.yaml} & Training on a Materials Project density
+download. \\
+\file{train\_mixed.yaml} & One operator from several datasets at once. \\
+\file{kan/compare\_kan\_*.yaml} & One per learnable activation, base-carrying
+and pure, identical in everything else --- so a difference between two of them
+is the activation. \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\begin{pnote}
+Every one of them is parsed against the current schema by the test suite, and
+checked for hyphens, camelCase, duplicate keys and retired names. That is not
+belt-and-braces: the 26.9.8 rename broke all eight \file{kan/} files and left
+the four at the top working, because those four were the ones anyone loaded.
+\end{pnote}
 
 \section{Top level}
 
@@ -274,11 +330,15 @@ Key & Default & Meaning \\
 \midrule
 \opt{width} & \opt{16} & Channel width of the Fourier layers. \\
 \opt{modes} & \opt{8} & Retained Fourier modes per axis. \\
-\opt{n\_layers} & \opt{4} & Number of Fourier layers. \\
-\opt{projection\_channels} & \opt{48} & Hidden width of the output
+\opt{n\_layers} & \opt{3} & Number of Fourier layers. \\
+\opt{projection\_channels} & \opt{64} & Hidden width of the output
 projection. \\
-\opt{activation} & \opt{gelu} & \opt{gelu}, \opt{relu}, \opt{silu} or
-\opt{tanh}. \\
+\opt{activation} & \opt{silu} & \opt{silu}, \opt{gelu}, \opt{relu}, \opt{tanh}
+or \opt{kan}. \\
+\opt{projection\_activation} & \opt{null} & Read-out nonlinearity;
+\opt{null} follows \opt{activation}. \\
+\opt{kan\_setup} & \opt{null} & The KAN variant and its hyperparameters; read
+only when \opt{activation: kan}. \\
 \opt{use\_coordinates} & \opt{true} & Append three fractional-coordinate input
 channels. \\
 \opt{cell\_conditioning} & \opt{true} & Condition every layer on lattice
@@ -288,12 +348,16 @@ descriptors (FiLM). \\
 \opt{physical} at constant $G_{\max}$. \\
 \opt{g\_max} & \opt{null} & Cutoff wavevector in \AA$^{-1}$; required by
 \opt{mode\_selection: physical}. \\
+\opt{equivariant} & \opt{\{enable: false\}} & Rotation-equivariant radial
+kernel --- one block, see below. \\
 \opt{pauli\_residual} & \opt{false} & Structural $\tau\ge\tauvW$ for
 \opt{chg2tau}. \\
 \opt{pauli\_scale} & \opt{null} & Initial Pauli scale in eV/\AA$^{3}$;
 \opt{null} fits it from the training split. \\
 \opt{learn\_pauli\_scale} & \opt{true} & Optimise that scale alongside the
 backbone. \\
+\opt{precision} & \opt{float32} & Dtype the operator computes in;
+\opt{float64} for checking a result is not a single-precision artefact. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -310,6 +374,84 @@ multiplies the spectral parameters by eight.
 to supply that many modes, fewer are used automatically, so one configuration
 serves materials whose grids differ in size.
 \end{ptip}
+
+\subsection{\opt{equivariant}}
+
+One block, following the convention of \S\ref{sec:enableblocks}:
+
+\begin{lstlisting}
+model:
+  use_coordinates: false      # required
+  equivariant:
+    enable: true
+    n_radial: 32
+\end{lstlisting}
+
+Constrains the Fourier multiplier to a \textbf{real function of $|\GG|$
+alone}, which is a convolution with a radial kernel and therefore commutes with
+every rotation. The coefficients being real also makes it commute with
+inversion, so the operator is equivariant under the full $O(3)$ rather than the
+$SE(3)$ the construction was asked for.
+
+\begin{center}
+\begin{tabular}{@{}llp{6.4cm}@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\opt{enable} & \opt{false} & Use the radial kernel in place of the dense
+one. \\
+\opt{n\_radial} & \opt{16} & Radial basis functions --- the whole capacity of
+the kernel. \\
+\opt{g\_basis} & \opt{null} & Radius in \AA$^{-1}$ the basis spans;
+\opt{null} takes \opt{g\_max}, else $8.0$. \\
+\opt{spherical\_cutoff} & \opt{true} & Mask the retained modes to the
+inscribed sphere. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{pwarn}[title={Three conditions have to hold together, and each fails
+silently}]
+The kernel being radial is the one everybody thinks of; the other two were
+found by measuring.
+
+\textbf{The retained set must be a ball, not a box} ---
+\opt{spherical\_cutoff: true}. A radial multiplier over a box of modes is
+equivariant only under the box's own symmetry group. A cubic cell with equal
+mode counts hides this completely, because the box \emph{is} invariant under
+the octahedral group; on a tetragonal cell, switching the cutoff off takes the
+error from $3\times10^{-7}$ to $5\times10^{-2}$.
+
+\textbf{\opt{use\_coordinates} must be off}, and \opt{enable: true} beside it
+raises. The three fractional coordinates are not three scalar fields --- under
+a rotation they turn into each other --- and being absolute positions they cost
+translation equivariance too.
+\end{pwarn}
+
+The cost is capacity, and it is large. The dense layer holds
+$4C_{\mathrm{in}}C_{\mathrm{out}}m_1m_2m_3$ complex numbers; this one holds
+$C_{\mathrm{in}}C_{\mathrm{out}}R$ real ones --- $4\,096$ against
+$1\,048\,576$ at \opt{width 16}, \opt{modes 8}, \opt{n\_radial 16}. Buy it back
+with \opt{n\_radial} and \opt{width}, not with \opt{modes}.
+
+Whether it pays was measured once, on a V100: 400 epochs on 115 Materials
+Project structures at $32^{3}$, \opt{width 32 / n\_radial 32} reached a
+validation relative $L^{2}$ of $0.047$ against $0.173$ for a dense model with
+$28\times$ the parameters --- $4.1\times$ better. The $4\times$ \emph{larger}
+equivariant arm (\opt{width 128, n\_radial 64}) was \textbf{worse}, at $0.059$:
+capacity is not what buys this, the constraint is. One seed, one dataset, and
+neither equivariant arm had converged at 400 epochs, so read it as a reason to
+try the flag rather than as a number.
+
+\begin{pnote}
+An equivariant model is slower per epoch despite having two orders of magnitude
+fewer parameters, and that is not a defect. The dense layer \emph{stores} one
+complex number per retained mode per channel pair and reads it; the radial
+layer stores $C^{2}R$ real numbers and must \textbf{reconstruct} the multiplier
+at every mode from them --- about $R/2$ times the arithmetic at
+\opt{n\_radial: R}. The constraint trades memory for recomputation, so
+parameters and FLOPs move in opposite directions by construction.
+\end{pnote}
 
 \subsection{\opt{use\_coordinates} and \opt{cell\_conditioning}}
 
@@ -430,8 +572,8 @@ and later. \\
 \opt{absolute\_h1} or \opt{relative\_h1}. \\
 \opt{sobolev\_weight} & \opt{0.1} & Gradient-term weight for the two
 \opt{h1} losses. \\
-\opt{physics} & all \opt{0.0} & Physics-informed loss weights; see
-below. \\
+\opt{physics\_informed} & \opt{\{enable: auto\}} & The switch and the four
+constraint weights, in one block; see below. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -760,13 +902,23 @@ naming \opt{relative\_h1} (what it did) and \opt{absolute\_h1} as its
 replacements.
 \end{pnote}
 
-\subsection{\opt{physics}}
+\subsection{\opt{physics\_informed}}
+
+One block, following the convention of \S\ref{sec:enableblocks}:
+
+\begin{lstlisting}
+training:
+  physics_informed:
+    enable: auto              # auto | true | false
+    electron_count_weight: 0.1
+\end{lstlisting}
 
 \begin{center}
 \begin{tabular}{@{}lp{8.2cm}@{}}
 \toprule
-Weight & Constraint it penalises the violation of \\
+Key & Constraint it penalises the violation of \\
 \midrule
+\opt{enable} & --- decides whether any of the below is evaluated \\
 \opt{electron\_count\_weight} & $\int\rho\,\mathrm{d}\rr = N$
 (\opt{ext2chg}) \\
 \opt{positivity\_weight} & Non-negativity of the predicted field \\
@@ -777,9 +929,27 @@ Weight & Constraint it penalises the violation of \\
 \end{tabular}
 \end{center}
 
-All four default to zero, so the objective is the plain supervised baseline
-until one is enabled deliberately. Each term is dimensionless, so a single
-weight can serve a heterogeneous dataset.
+All four weights default to zero, so the objective is the plain supervised
+baseline until one is enabled deliberately. Each term is dimensionless, so a
+single weight can serve a heterogeneous dataset.
+
+\opt{enable} has three states, and the middle one is why it exists.
+\opt{auto}, the default, answers from the weights --- the run is
+physics-informed if and only if one of them is positive, which is what every
+configuration written before the switch existed already meant. \opt{true}
+\textbf{raises} when no weight is set: a run that declares physics-informed
+training and silently optimises the supervised baseline has an entirely
+ordinary loss curve and a report that says otherwise. \opt{false} zeroes the
+weights and warns if one was live, and also skips the per-batch decode the
+constraints act on --- measured at 2.4\,\% of a step on Apple Metal and
+6.6\,\% on a V100, where the copy crosses PCIe.
+
+\begin{pwarn}
+Not \opt{off}, and not \opt{no}. Anything that is not \opt{auto}, \opt{true} or
+\opt{false} raises rather than being coerced: \opt{bool("off")} is \opt{True}
+in Python, so a config saying \opt{off} would have switched the constraints
+\textbf{on}.
+\end{pwarn}
 
 \begin{pwarn}
 Introduce them one at a time against a measured baseline, and only once the
@@ -928,12 +1098,12 @@ $p \to \infty$ in that probe. \\
 \end{center}
 
 \begin{pwarn}[title={Two blocks of physics weights, and they are not the same}]
-\opt{training.physics\_informed\_setup} constrains the \textbf{neural
+\opt{training.physics\_informed} constrains the \textbf{neural
 operator}: charge conservation, positivity of a predicted density, the
 Euler--Lagrange residual. Its terms are added to a training loss over voxels,
-and \opt{training.physics\_informed} decides whether any of them is evaluated
---- \opt{auto} answers from the weights, \opt{true} refuses to be an empty
-claim, \opt{false} also skips the per-batch decode the terms act on.
+and its own \opt{enable} decides whether any of them is evaluated ---
+\opt{auto} answers from the weights, \opt{true} refuses to be an empty claim,
+\opt{false} also skips the per-batch decode the terms act on.
 
 \opt{symbolic.physics} constrains a \textbf{candidate algebraic expression}
 for the Pauli enhancement factor. Its terms are added to a symbolic-regression
@@ -943,7 +1113,9 @@ Separate objectives, on separate objects, evaluated at different times by
 different engines. Two of the key names appear in both ---
 \opt{positivity\_weight} and \opt{von\_weizsacker\_weight} --- and mean
 different things in each, which is exactly why they live in separate blocks
-rather than sharing a prefix.
+rather than sharing a prefix. Both are now the same \emph{shape} ---
+\opt{\{enable: ..., weights\}} --- which makes the collision easier to see and
+no less real.
 \end{pwarn}
 
 \noindent

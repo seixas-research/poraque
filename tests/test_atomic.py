@@ -352,7 +352,7 @@ class TestTheShippedReferenceAtom:
     The real thing, where the synthetic fixtures cannot reach.
 
     A Gaussian is exactly spherical and exactly band-limited; a PAW platinum atom
-    in a box is neither. These are the numbers ``DESIGN_PAW.md`` quotes.
+    in a box is neither. These are the numbers the module docstrings quote.
     """
 
     def test_it_ingests_with_its_valence_charge_and_its_augmentation(self):
@@ -408,8 +408,9 @@ class TestTheShippedReferenceAtom:
 
     def test_the_free_atom_augmentation_is_offered_but_not_pretended_about(self):
         """
-        It builds a valid block — and ``DESIGN_PAW.md`` §3.2 records that it is
-        86.6 % RMS from a bulk site, which is why nothing selects it silently.
+        It builds a valid block — and it is 86.6 % RMS from a bulk site,
+        against 9.9 % for the training-set average, which is why nothing
+        selects it silently.
         """
         library = build_library([REF_AU])
         structure = Poscar(np.eye(3) * 6.0, ["Pt"], [2],

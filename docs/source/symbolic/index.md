@@ -7,8 +7,10 @@ can read, publish, and check against known physics.
 
 ```{note}
 Off by default, and an optional install. Switch it on with
-`enable_symbolic_distillation: true` in the `symbolic` block of the config, or
-with `--symbolic` on the command line.
+`enable: true` in the `symbolic` block of the config, or with `--symbolic` on
+the command line. It was `enable_symbolic_distillation` until 26.9.8, which
+restated its own section in its own name; the old spelling now raises and says
+so.
 ```
 
 ```bash
@@ -179,7 +181,7 @@ threshold. It matters for slabs, molecules and anything with real vacuum.
 
 ```yaml
 symbolic:
-  enable_symbolic_distillation: false
+  enable: false
   target: model          # model | reference
   features: gga          # gga | reduced | raw
   template: none         # none | pauli | thomas_fermi

@@ -174,6 +174,31 @@ block.
 A real calculation beside the structure always wins over the table: its records
 are \emph{that} system's, where the table is an average over others.
 
+\subsection{And without either: the isolated atom}
+
+There is a third source, and \opt{--paw-source atomic} is the only way to
+reach it. The isolated-atom database that \opt{poraque-atoms} builds carries
+each free atom's own augmentation record alongside its form factor, so an
+element the training set never contained still has \emph{something} to write.
+
+It is a last resort, and the gap is not small. Measured on this project's
+platinum data, a free Pt atom's record is \textbf{86.6\,\% RMS} away from a
+real bulk Pt site, against \textbf{9.9\,\%} for the training-set average and
+zero for a reference calculation. A free atom and an atom in a metal have
+genuinely different on-site occupations; that number is what the difference
+costs. The three sources rank the same way at every step:
+
+\begin{enumerate}
+  \item a reference calculation beside the structure --- exact, because the
+        records are that system's own;
+  \item the bundle's per-element average --- $\sim$9.9\,\% RMS, and only for
+        the elements the model was trained on;
+  \item the isolated atom --- $\sim$86.6\,\% RMS, on explicit request only.
+\end{enumerate}
+
+\opt{--paw-source auto}, the default, walks that list from the top. Nothing
+selects the isolated atom silently.
+
 \subsection{Checks}
 
 Three checks run before anything is appended, and each refuses rather than

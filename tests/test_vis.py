@@ -12,6 +12,7 @@ caught by asserting that a figure was written.
 
 import csv
 import os
+import re
 import shutil
 
 import matplotlib
@@ -255,7 +256,7 @@ class TestParitySplits:
 # ===================================================================== #
 class TestWrappableValues:
     """
-    `training.physics_informed_setup` is 116 characters of nested dict. In
+    `training.physics_informed` is 140 characters of nested dict. In
     an `l` column --
     a single unbreakable box -- it ran past the right margin of the PDF.
     """
@@ -281,7 +282,8 @@ class TestWrappableValues:
         assert r"\allowbreak{}\allowbreak{}" not in wrapped
 
     def test_physics_dict_can_wrap(self):
-        value = ("{'electron_count_weight': 0.0, 'positivity_weight': 0.0, "
+        value = ("{'enable': 'auto', 'electron_count_weight': 0.0, "
+                 "'positivity_weight': 0.0, "
                  "'von_weizsacker_weight': 0.0, 'euler_lagrange_weight': 0.0}")
         wrapped = _wrappable(value)
         # Spaces already give a p-column somewhere to break.
@@ -292,12 +294,18 @@ class TestWrappableValues:
 class TestConfigurationKeys:
     """
     The key column is fixed-width, so a long key must be *breakable*, not just
-    escaped: `symbolic.enable_symbolic_distillation` is 37 characters with no
+    escaped: `fine_tuning.pretrained_checkpoint` is 33 characters with no
     space, and one unbreakable word overruns its column and prints on top of
     the value in the next one.
+
+    The example used to be `symbolic.enable_symbolic_distillation`, which at 37
+    characters was the longest key the schema produced and what
+    `CONFIG_KEY_FRACTION` was sized against. It became `symbolic.enable` in
+    26.9.8; the column was deliberately not retightened, because a fraction
+    trimmed to today's longest key is one the next key breaks.
     """
 
-    LONG = "symbolic.enable_symbolic_distillation"
+    LONG = "fine_tuning.pretrained_checkpoint"
 
     def test_a_long_key_gains_break_points(self):
         rendered = _wrappable(self.LONG)
@@ -335,12 +343,14 @@ class TestConfigurationKeys:
 
 class TestNestedConfigValues:
     """
-    `training.physics_informed_setup` is a dict. Printed as its repr it is
-    one unreadable
-    116-character run; it belongs in the table as one setting per line.
+    `training.physics_informed` is a dict, and since 26.9.8 so are
+    `model.equivariant` and `symbolic.physics`. Printed as a repr it is one
+    unreadable 140-character run; it belongs in the table as one setting per
+    line.
     """
 
-    PHYSICS = {"electron_count_weight": 0.0, "positivity_weight": 0.0,
+    PHYSICS = {"enable": "auto", "electron_count_weight": 0.0,
+               "positivity_weight": 0.0,
                "von_weizsacker_weight": 0.0, "euler_lagrange_weight": 0.0}
 
     def test_each_entry_gets_its_own_line(self):
@@ -375,9 +385,27 @@ class TestNestedConfigValues:
     def test_a_real_config_renders(self):
         from poraque.ml.config import TrainingConfig
 
-        physics = TrainingConfig().training.physics_informed_setup
+        physics = TrainingConfig().training.physics_informed
         rendered = _format_value(physics)
         assert rendered.count(r"\newline") == len(physics) - 1
+
+    def test_every_block_in_the_schema_renders(self):
+        """
+        Three blocks now, not one, and each is a dict in the table.
+
+        `model.equivariant` is the interesting one: it carries a single key by
+        default, so it exercises the one-entry case that produces no
+        `\newline` at all.
+        """
+        from poraque.ml.config import TrainingConfig
+
+        config = TrainingConfig()
+        for block in (config.model.equivariant, config.training.physics_informed,
+                      config.symbolic.physics):
+            rendered = _format_value(block)
+            assert rendered.count(r"\newline") == len(block) - 1
+            for key in block:
+                assert _escape(key) in rendered
 
 
 class TestDescribeNesting:
@@ -387,16 +415,16 @@ class TestDescribeNesting:
         from poraque.ml.config import TrainingConfig
 
         described = TrainingConfig().describe()
-        assert "physics_informed_setup={" not in described
-        assert "  physics_informed_setup:" in described
-        for key in TrainingConfig().training.physics_informed_setup:
+        assert "physics_informed={" not in described
+        assert "  physics_informed:" in described
+        for key in TrainingConfig().training.physics_informed:
             assert any(line.strip().startswith(key)
                        for line in described.splitlines())
 
     def test_the_dict_no_longer_rides_on_the_training_line(self):
         """
         The scalar settings are still inlined -- that format is unchanged.
-        What moved off the line is the 116-character physics repr, which is
+        What moved off the line is the 140-character physics repr, which is
         what made it unreadable.
         """
         from poraque.ml.config import TrainingConfig
@@ -405,7 +433,7 @@ class TestDescribeNesting:
         training = next(line for line in config.describe().splitlines()
                         if line.startswith("training:"))
         inlined = (len(training)
-                   + len(str(config.training.physics_informed_setup)))
+                   + len(str(config.training.physics_informed)))
         assert len(training) < inlined - 100
         assert "electron_count_weight" not in training
 
@@ -665,6 +693,200 @@ class TestSymbolicParityPlot:
         assert "penalised inside" not in captured["source"]
 
 
+class TestThePerformanceTableIsBoundedBySplits:
+    """
+    The per-structure table became a per-split one, and the reason is length.
+
+    It used to print one row per structure, so its length was the size of the
+    dataset: 115 MP materials made six pages of seven-column numbers, and the
+    two things a reader wanted from it -- how many structures, and how well did
+    it do -- had to be recovered by scrolling and averaging. Both are printed
+    directly now.
+
+    The three tests this class replaces asserted that the table was a
+    ``longtable`` with a repeating header, because a ``tabular`` that outgrows
+    the page loses its overflow silently (88 of 140 structures, in the case
+    that prompted them). That requirement has not been waived -- it has stopped
+    applying, because the row count is now the number of splits plus one. A
+    ``tabular`` is the right container for a table that cannot grow, and
+    `test_the_table_no_longer_grows_with_the_dataset` is what holds that claim
+    to the reason for it rather than to the change.
+    """
+
+    #: Every metric the split table can print, plus the ones it deliberately
+    #: does not. A fixture carrying only the printed five would not notice a
+    #: column quietly appearing for one of the others.
+    METRICS = {"mse": 1e-6, "mae": 2e-4, "rmse": 1e-3, "max_abs": 9.9e-3,
+               "relative_l2": 0.01, "relative_h1": 0.02,
+               "integral_error": 0.004, "nrmse_range": 0.005, "r2": 0.999,
+               "jsd": 5e-7}
+
+    @classmethod
+    def _per_material(cls, n, held_out=lambda i: i % 5 == 0, **override):
+        metrics = {**cls.METRICS, **override}
+        return {f"mp-{i:06d}": {"split": "validation" if held_out(i) else "train",
+                                "metrics": dict(metrics)}
+                for i in range(n)}
+
+    def _table(self, per_material, unit="e/Ang^3"):
+        from poraque.vis.pdf_report import ModelReport
+
+        return ModelReport(logo=None)._metrics_table(per_material, unit)
+
+    def test_the_table_no_longer_grows_with_the_dataset(self):
+        rows = [self._table(self._per_material(n)).count(r"\\")
+                for n in (8, 120, 1200)]
+        assert len(set(rows)) == 1, (
+            f"the row count still tracks the dataset size: {rows}")
+
+    def test_no_structure_is_named(self):
+        source = self._table(self._per_material(120))
+        assert "mp-000007" not in source, (
+            "the list of materials is what made the report unreadable")
+
+    def test_it_counts_the_dataset_and_both_splits(self):
+        source = self._table(self._per_material(100))
+        # 20 held out by `i % 5 == 0`, 80 trained on, 100 in total.
+        assert "train & 80 &" in source
+        assert "validation & 20 &" in source
+        assert r"\textbf{all} & \textbf{100} &" in source
+
+    def test_a_run_with_nothing_held_out_prints_no_validation_row(self):
+        """
+        An empty split and a split that scored badly must not look alike.
+
+        A ``validation`` row of dashes reads as a measurement that came out
+        undefined; there was no measurement.
+        """
+        source = self._table(self._per_material(12, held_out=lambda i: False))
+        assert "validation" not in source
+        assert "train & 12 &" in source
+        # And no total row either: with one split it would repeat the row
+        # above it verbatim.
+        assert r"\textbf{all}" not in source
+
+    def test_the_five_columns_are_there_and_no_others(self):
+        """
+        Five metrics, and the table stops there because the page does.
+
+        ``mse``, ``rmse``, ``r2``, ``nrmse_range`` and ``jsd`` are still
+        written per structure into the metrics JSON, which is machine-readable
+        and has no margins. What they are not is typeset: a ten-column table
+        overflows the text block, and the five kept are the five that answer
+        questions the others cannot.
+        """
+        source = self._table(self._per_material(8))
+        for present in (r"rel.\ $L^2$", r"rel.\ $H^1$", "MAE",
+                        r"Max.\ error", r"$|\Delta N|$"):
+            assert present in source, present
+        for absent in ("MSE", "RMSE", "$R^2$", "JSD"):
+            assert absent not in source, absent
+        # Split, count, and exactly five metrics.
+        assert source.count("r") and r"@{}l" + "r" * 6 + r"@{}" in source
+
+    def test_the_means_are_still_there(self):
+        source = self._table(self._per_material(8))
+        assert "0.01" in source and "0.02" in source, (
+            "the means are what the per-structure rows were being read for")
+
+    def test_the_headers_are_bold(self):
+        source = self._table(self._per_material(8))
+        assert r"\textbf{Split}" in source
+        assert r"\textbf{Structures}" in source
+        assert r"\textbf{MAE}" in source
+
+    def test_the_train_and_validation_rows_show_the_generalisation_gap(self):
+        """
+        The whole reason the splits are rows: they are read against each other.
+
+        Spread over a hundred rows sorted by material id, the same comparison
+        needed the reader to average two subsets by hand.
+        """
+        per_material = self._per_material(10)
+        for name, entry in per_material.items():
+            if entry["split"] == "validation":
+                entry["metrics"]["relative_l2"] = 0.04
+        source = self._table(per_material)
+        train = next(line for line in source.splitlines()
+                     if line.startswith("train "))
+        held = next(line for line in source.splitlines()
+                    if line.startswith("validation "))
+        assert "0.01" in train and "0.04" in held
+
+    def test_a_metric_nothing_recorded_loses_its_column(self):
+        """
+        ``relative_h1`` and ``integral_error`` are ``None`` for a field whose
+        shape is not the grid's. A column of dashes claims a measurement was
+        attempted and failed; none was attempted.
+        """
+        source = self._table(self._per_material(
+            8, relative_h1=None, integral_error=None))
+        assert r"rel.\ $H^1$" not in source
+        assert r"$|\Delta N|$" not in source
+        assert r"rel.\ $L^2$" in source
+        assert r"@{}l" + "r" * 4 + r"@{}" in source
+
+    def test_nothing_at_all_says_so_rather_than_drawing_an_empty_table(self):
+        assert "No per-structure metrics" in self._table({})
+
+    def test_the_conservation_column_takes_the_integrated_unit(self):
+        """
+        ``e/Ang^3`` integrates to ``e``, ``eV/Ang^3`` to ``eV``.
+
+        The number is small either way; only its unit says whether it is small
+        enough, so a wrong one is worse than none.
+        """
+        assert "[e]" in self._table(self._per_material(4), unit="e/Ang^3")
+        assert "[eV]" in self._table(self._per_material(4), unit="eV/Ang^3")
+
+    def test_an_unrecognised_unit_is_not_guessed_at(self):
+        source = self._table(self._per_material(4), unit="furlongs")
+        assert "[furlongs]" in source, "the field's own unit is still printed"
+        assert "per cell" in source, "but its integral's is not invented"
+
+    def test_a_split_nobody_anticipated_is_printed_rather_than_dropped(self):
+        """A fold label, a third split: unrecognised is not a reason to lose it."""
+        source = self._table({
+            "a": {"split": "fold 3", "metrics": {"mse": 1.0, "mae": 1.0,
+                                                 "rmse": 1.0,
+                                                 "relative_l2": 1.0, "r2": 1.0}},
+            **self._per_material(4)})
+        assert "fold 3 & 1 &" in source
+
+    @pytest.mark.skipif(
+        not (shutil.which("pdflatex") and shutil.which("pdftotext")),
+        reason="needs a LaTeX toolchain and poppler's pdftotext")
+    def test_the_counts_reach_the_page_and_the_material_list_does_not(
+            self, tmp_path):
+        """
+        The end-to-end statement: compile the PDF and read the table back out.
+
+        Its ancestor asserted the opposite -- that all 140 structure names
+        reached the page -- and was the only check that would have caught the
+        original overflow, because the source was valid LaTeX and the build
+        reported success. The same reasoning applies to the replacement: a
+        summary that is computed correctly and then typeset off the edge of the
+        paper is indistinguishable from one that was never computed.
+        """
+        import subprocess
+
+        from poraque.vis.pdf_report import ModelReport
+
+        per_material = self._per_material(140)
+        pdf = ModelReport(str(tmp_path), logo=None).build(
+            task="chg2tau", per_material=per_material, unit="eV")
+        assert pdf.endswith(".pdf"), "the LaTeX fallback path was taken"
+
+        text = subprocess.run(["pdftotext", "-layout", pdf, "-"],
+                              capture_output=True, text=True,
+                              check=True).stdout
+        assert "mp-000007" not in text
+        # 28 held out by `i % 5 == 0`, 112 trained on, 140 in total.
+        for label, count in (("train", 112), ("validation", 28), ("all", 140)):
+            assert re.search(rf"{label}\s+{count}\b", text), (
+                f"the {label} count never reached the page")
+
+
 class TestLongTableBreaking:
     r"""
     Every table whose length is set by the data must be able to turn the page.
@@ -672,43 +894,10 @@ class TestLongTableBreaking:
     A ``tabular`` is one unbreakable box. LaTeX does not truncate it and does
     not fail: it prints as much as fits and lets the rest run off the bottom of
     the page, where it is simply not on the paper. The per-structure metrics
-    table is the one whose row count is the size of the dataset, so it is the
-    one that silently lost rows -- 88 of 140 structures, in the case that
-    prompted this -- while the report still looked complete.
+    table used to be the worst case and is no longer a case at all (see
+    :class:`TestThePerformanceTableIsBoundedBySplits`); the Pareto front of a
+    symbolic distillation still has as many rows as the search kept.
     """
-
-    @staticmethod
-    def _per_material(n):
-        return {f"mp-{i:06d}": {"split": "train" if i % 5 else "validation",
-                                "metrics": {"mse": 1e-6, "mae": 2e-4,
-                                            "rmse": 1e-3, "relative_l2": 0.01,
-                                            "r2": 0.999}}
-                for i in range(n)}
-
-    def test_metrics_table_can_break_across_pages(self):
-        from poraque.vis.pdf_report import ModelReport
-
-        source = ModelReport(logo=None)._metrics_table(
-            self._per_material(120), "eV")
-        assert r"\begin{longtable}" in source
-        assert r"\begin{tabular}" not in source, (
-            "a tabular cannot break, so its overflow leaves the page")
-
-    def test_the_header_repeats_on_continuation_pages(self):
-        from poraque.vis.pdf_report import ModelReport
-
-        source = ModelReport(logo=None)._metrics_table(
-            self._per_material(120), "eV")
-        assert r"\endfirsthead" in source and r"\endhead" in source, (
-            "columns of bare numbers are unreadable without their heading")
-        assert source.count("Structure & Split") == 2
-
-    def test_the_mean_row_survives_the_conversion(self):
-        from poraque.vis.pdf_report import ModelReport
-
-        source = ModelReport(logo=None)._metrics_table(
-            self._per_material(8), "eV")
-        assert r"\textbf{mean}" in source
 
     def test_the_pareto_front_header_repeats(self):
         from poraque.vis.pdf_report import ModelReport
@@ -724,32 +913,6 @@ class TestLongTableBreaking:
         })
         assert r"\endhead" in source
 
-    @pytest.mark.skipif(
-        not (shutil.which("pdflatex") and shutil.which("pdftotext")),
-        reason="needs a LaTeX toolchain and poppler's pdftotext")
-    def test_every_structure_reaches_the_page(self, tmp_path):
-        """
-        The end-to-end statement: compile the PDF and read the rows back out.
-
-        This is the only check that would have caught the original defect --
-        the source was valid LaTeX and the build reported success.
-        """
-        import re
-        import subprocess
-
-        from poraque.vis.pdf_report import ModelReport
-
-        per_material = self._per_material(140)
-        pdf = ModelReport(str(tmp_path), logo=None).build(
-            task="chg2tau", per_material=per_material, unit="eV")
-        assert pdf.endswith(".pdf"), "the LaTeX fallback path was taken"
-
-        text = subprocess.run(["pdftotext", pdf, "-"], capture_output=True,
-                              text=True, check=True).stdout
-        found = set(re.findall(r"mp-\d{6}", text))
-        assert found == set(per_material), (
-            f"{len(set(per_material)) - len(found)} structures never reached "
-            f"the page")
 
 
 class TestRawPlotDataIsWrittenBesideTheFigure:

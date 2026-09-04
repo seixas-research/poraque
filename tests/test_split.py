@@ -1155,3 +1155,201 @@ class TestStandardOutputTables:
         heading = next(line for line in lines if "metric" in line)
         rule = next(line for line in lines if set(line.strip()) == {"-"})
         assert len(rule) == len(heading)
+
+
+class TestTheFiveMetricsTheSplitTableReports:
+    r"""
+    Two metrics were added for the split table, and both are integrals.
+
+    ``relative_l2``, ``mae`` and ``max_abs`` are sums over voxels and need
+    nothing but the two arrays. ``relative_h1`` and ``integral_error`` are
+    integrals over the *cell* --- a spectral gradient and a volume element ---
+    so they need the grid, and return ``None`` without one rather than
+    guessing a lattice.
+
+    ``relative_h1`` is deliberately **not** the :math:`H^1` objective
+    :class:`~poraque.ml.losses.SobolevLoss` minimises. That one is two
+    separately-normalised terms combined with ``training.sobolev_weight``, so
+    its value depends on a run setting and two runs cannot be compared through
+    it. This is the textbook relative Sobolev norm, which has no free
+    parameter --- the same discipline
+    :class:`TestTheFinalEvaluationIsAlwaysARelativeL2` states for the
+    :math:`L^2`.
+    """
+
+    @staticmethod
+    def _grid(shape=(12, 12, 12), lengths=(5.0, 6.5, 7.0)):
+        import numpy as np
+
+        from poraque.fields.grid import FieldGrid
+
+        return FieldGrid(shape, np.diag(lengths))
+
+    def test_the_integral_metrics_need_a_grid_and_say_so_by_absence(self):
+        import numpy as np
+
+        values = poraque_train.metrics(np.ones((4, 4, 4)) * 1.1,
+                                       np.ones((4, 4, 4)))
+        assert "relative_h1" not in values
+        assert "integral_error" not in values
+
+    def test_a_perfect_prediction_scores_zero_on_both(self):
+        import numpy as np
+
+        grid = self._grid()
+        field = np.random.RandomState(0).rand(*grid.shape) + 1.0
+        values = poraque_train.metrics(field, field, grid=grid)
+        assert values["relative_h1"] == 0.0
+        assert values["integral_error"] == 0.0
+
+    def test_the_sobolev_error_matches_the_torch_gradient_it_mirrors(self):
+        """
+        ``metrics`` is NumPy and the loss is torch; the two spectral gradients
+        are separate implementations of one operator, and a report that
+        disagrees with the objective by a factor nobody can account for is
+        worse than one that omits the column.
+        """
+        import numpy as np
+        import torch
+
+        from poraque.ml.physics import spectral_gradient
+
+        grid = self._grid()
+        rng = np.random.RandomState(0)
+        target = rng.rand(*grid.shape) + 1.0
+        prediction = target + 0.02 * rng.rand(*grid.shape)
+
+        mine = poraque_train.sobolev_error(prediction, target, grid)
+
+        cell = torch.tensor(np.asarray(grid.cell), dtype=torch.float64)[None]
+        predicted = torch.tensor(prediction, dtype=torch.float64)[None, None]
+        reference = torch.tensor(target, dtype=torch.float64)[None, None]
+        difference = spectral_gradient(predicted - reference, cell)
+        gradient = spectral_gradient(reference, cell)
+        theirs = float(torch.sqrt(
+            (((predicted - reference) ** 2).sum() + (difference ** 2).sum())
+            / ((reference ** 2).sum() + (gradient ** 2).sum())))
+
+        assert mine == pytest.approx(theirs, rel=1e-10)
+
+    def test_a_rough_prediction_scores_worse_in_h1_than_in_l2(self):
+        """
+        The reason the column exists: a small pointwise error can hide a large
+        gradient error, and the von Weizsacker kinetic energy depends on the
+        gradient. High-frequency noise is exactly that case.
+        """
+        import numpy as np
+
+        grid = self._grid()
+        rng = np.random.RandomState(1)
+        target = np.ones(grid.shape) + 0.1 * np.sin(
+            np.linspace(0, 2 * np.pi, grid.shape[0]))[:, None, None]
+        noise = 0.01 * rng.randn(*grid.shape)          # white: all frequencies
+        values = poraque_train.metrics(target + noise, target, grid=grid)
+        assert values["relative_h1"] > 5 * values["relative_l2"]
+
+    def test_the_conservation_error_is_signed_before_it_is_absolute(self):
+        """
+        The question is whether the *totals* agree, not how large the voxel
+        errors were. A prediction 1 % high in one half of the cell and 1 % low
+        in the other conserves charge exactly, and must read zero here while
+        reading badly under ``mae``.
+        """
+        import numpy as np
+
+        grid = self._grid(shape=(12, 12, 12))
+        target = np.ones(grid.shape)
+        prediction = target.copy()
+        prediction[:6] += 0.01
+        prediction[6:] -= 0.01
+
+        values = poraque_train.metrics(prediction, target, grid=grid)
+        assert values["integral_error"] == pytest.approx(0.0, abs=1e-12)
+        assert values["mae"] == pytest.approx(0.01, rel=1e-9)
+
+    def test_the_conservation_error_is_in_electrons_not_in_voxels(self):
+        """One extra electron spread over the cell reads as one, not as 1/N."""
+        import numpy as np
+
+        grid = self._grid()
+        target = np.ones(grid.shape)
+        prediction = target + 1.0 / grid.volume_element / target.size
+        values = poraque_train.metrics(prediction, target, grid=grid)
+        assert values["integral_error"] == pytest.approx(1.0, rel=1e-9)
+
+
+class TestTheReportedMetricsAreTheDensityChannel:
+    """
+    A spin-polarised prediction is a ``(2, ...)`` stack, and the table is not.
+
+    ``operator.predict`` returns a :class:`~poraque.fields.SpinDensity`
+    whenever ``data.spin`` resolved on -- every model trained on the platinum
+    data -- and the per-structure metrics were taken over that stack, in a
+    table whose unit column says ``e/Ang^3``. A prediction *exact* in rho and
+    wrong only in the magnetisation was measured reporting ``relative_l2``
+    1.3e-3, ``mae`` 7.9e-4 and ``max_abs`` 6.1e-3: a density error that does
+    not exist. The two new integral metrics fared differently and no better --
+    a ``(2, ...)`` shape is not the grid's, so both came back ``None`` and
+    their columns would have been silently absent from every spin run.
+
+    This is the defect the six inference sites carried until 2026-09-02, found
+    in a seventh place.
+    """
+
+    @staticmethod
+    def _pair(magnetisation_factor=3.0):
+        import numpy as np
+
+        from poraque.fields import SpinDensity
+        from poraque.fields.grid import FieldGrid
+        from poraque.fields.structure import Structure
+
+        cell = np.eye(3) * 5.0
+        grid = FieldGrid((8, 8, 8), cell)
+        structure = Structure(cell, ["Pt"], [1], np.zeros((1, 3)))
+        rng = np.random.RandomState(0)
+        density = rng.rand(8, 8, 8) + 1.0
+        moment = 1e-3 * rng.randn(8, 8, 8)
+        return (SpinDensity(density, moment * magnetisation_factor, grid,
+                            structure),
+                SpinDensity(density, moment, grid, structure))
+
+    def test_a_density_predicted_exactly_scores_zero(self):
+        prediction, target = self._pair()
+        values = poraque_train.compare_fields(prediction, target)
+        for key in ("relative_l2", "mae", "max_abs", "relative_h1",
+                    "integral_error"):
+            assert values[key] == pytest.approx(0.0, abs=1e-12), key
+
+    def test_the_stack_would_have_reported_an_error_that_is_not_there(self):
+        """The counterfactual, so the fix is not mistaken for a tolerance."""
+        prediction, target = self._pair()
+        stacked = poraque_train.metrics(prediction.data, target.data,
+                                        grid=target.grid)
+        assert stacked["relative_l2"] > 1e-4
+        assert stacked["relative_h1"] is None
+        assert stacked["integral_error"] is None
+
+    def test_the_magnetisation_is_measured_rather_than_dropped(self):
+        """
+        Reducing to rho must not leave half a two-channel model unmeasured ---
+        that is the mirror of the mistake being fixed.
+        """
+        prediction, target = self._pair(magnetisation_factor=3.0)
+        values = poraque_train.compare_fields(prediction, target)
+        # predicted 3m against m: ||2m|| / ||m|| = 2.
+        assert values["magnetisation_relative_l2"] == pytest.approx(2.0)
+
+    def test_a_one_channel_field_reports_no_magnetisation_at_all(self):
+        import numpy as np
+
+        from poraque.fields import ChargeDensity
+        from poraque.fields.grid import FieldGrid
+        from poraque.fields.structure import Structure
+
+        cell = np.eye(3) * 5.0
+        grid = FieldGrid((8, 8, 8), cell)
+        structure = Structure(cell, ["Pt"], [1], np.zeros((1, 3)))
+        field = ChargeDensity(np.ones((8, 8, 8)), grid, structure)
+        values = poraque_train.compare_fields(field, field)
+        assert "magnetisation_relative_l2" not in values

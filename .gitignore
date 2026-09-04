@@ -226,7 +226,6 @@ outputs/
 # Claude Code session context (local only, not part of the repository)
 CLAUDE.md
 FUTURE.md
-DESIGN_PAW.md
 CUDA_*
 from_*
 

@@ -34,6 +34,50 @@ The *resolved* configuration — defaults, file and overrides merged — is writ
 beside the results as `<json-stem>_config.yaml`. That is the file worth
 keeping: it records what actually ran.
 
+(enable-blocks)=
+## Optional features are blocks
+
+Every feature that can be switched off is one key, with its switch **inside**
+the settings it governs:
+
+```yaml
+<group>:
+  <feature>:
+    enable: <switch>
+    <setting>: <value>
+```
+
+There are four: `model.equivariant`, `training.physics_informed`,
+`symbolic.physics` and `fine_tuning`. A setting inside a block is read **only
+when `enable` is on**; naming one beside a switch that is off warns rather than
+acting, and an unknown one raises, naming the block it was in.
+
+```{note}
+Two of these were a scalar beside a separately-named `<feature>_setup` group
+until 26.9.8, and the two halves drifted in exactly the way that layout invites:
+`equivariant: false` above a populated `equivariant_setup` reads at a glance as
+an equivariant run and is not one, and nothing brought the switch and the
+settings into the same field of view. The old spellings now raise and name
+their replacement — including the bare `equivariant: true`, which is a *type*
+error rather than an unknown key, so it carries its own message showing the
+block to write instead.
+
+`symbolic.enable_symbolic_distillation` became `symbolic.enable` in the same
+change. It restated its own section in its own name, and at 37 characters was
+the longest key in the schema — wide enough to set the width of the
+configuration table in the PDF report.
+```
+
+The one `_setup` that stays is `model.kan_setup`, and deliberately: it is
+selected by `model.activation`, which is a *choice among five* rather than a
+switch, so there is no `enable` for it to hold and no boolean it could
+contradict.
+
+Blocks are validated when the file is **read**, not when the feature is first
+used. That matters more than it sounds: the model is built after the field
+cache and the objective after that, so a one-line mistake in either block would
+otherwise take minutes of downsampling to report.
+
 (task-section)=
 ## `task` — what is trained, and what it is called
 
@@ -327,6 +371,7 @@ changing them cannot silently reuse a cache built with different settings.
 | `embedding_dim` | `32` | width of that cell embedding |
 | `mode_selection` | `fixed` | `fixed` mode index, or `physical` at constant $G_\mathrm{max}$ |
 | `g_max` | `null` | cutoff wavevector in Å⁻¹; required by `mode_selection: physical` |
+| `equivariant` | `{enable: false}` | rotation-equivariant radial kernel — one block, see below |
 | `pauli_residual` | `false` | structural $\tau\ge\tau_\mathrm{vW}$ for `chg2tau` |
 | `pauli_scale` | `null` | initial Pauli scale in eV/Å³; `null` fits it from the training split |
 | `learn_pauli_scale` | `true` | optimise that scale alongside the backbone |
@@ -353,8 +398,8 @@ that channel. Which one, and how it is parameterised, comes from `kan_setup`:
 model:
   activation: kan
   kan_setup:
-    variant: cheby            # bspline | cheby | rbf | rational
-    degree: 6                 # cheby only
+    variant: chebyshev            # bspline | chebyshev | rbf | rational
+    degree: 6                 # chebyshev only
 ```
 
 The block is read **only** when `activation: kan`; given beside a stateless
@@ -364,14 +409,14 @@ own parameterisation.
 
 Six of the seven hyperparameters are read by one variant each — `grid_size`,
 `spline_order` and `grid_range` by `bspline` (and the first and third by `rbf`,
-which reuses the same fixed-grid design), `degree` by `cheby`,
+which reuses the same fixed-grid design), `degree` by `chebyshev`,
 `rational_num_degree` and `rational_den_degree` by `rational`. The seventh,
 `use_base`, applies to all four: `true` keeps each channel's $w_c\,\mathrm{silu}(x)$
 base term, so every variant starts close to `silu` and only departs from it as
 training moves the learned coefficients; `false` gives a "pure" KAN with no
 fixed nonlinearity mixed in at all.
 
-Cost at `width: 16` on CPU, relative to a stateless activation: `cheby` 1.36×,
+Cost at `width: 16` on CPU, relative to a stateless activation: `chebyshev` 1.36×,
 `rational` 1.54×, `rbf` 2.00×, `bspline` 5.50×. Measure on your own hardware
 before committing to a long run.
 
@@ -397,6 +442,81 @@ physical band* for each material.
 retaining $\lfloor G_\mathrm{max} L_i / 2\pi \rfloor$ modes along axis $i$, so
 every material contributes the same band of physics. Prefer it when cell sizes
 vary widely. It requires `g_max`.
+
+### `equivariant`
+
+One block — see [Optional features are blocks](#enable-blocks):
+
+```yaml
+model:
+  use_coordinates: false      # required
+  equivariant:
+    enable: true
+    n_radial: 32
+```
+
+Constrains the Fourier multiplier to a **real function of $|\mathbf{G}|$
+alone**, which is a convolution with a radial kernel and therefore commutes
+with every rotation. The coefficients being real also makes it commute with
+inversion, so the operator is equivariant under the full $O(3)$ rather than
+the $SE(3)$ the construction was asked for.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enable` | `false` | use the radial kernel in place of the dense one |
+| `n_radial` | `16` | radial basis functions — the whole capacity of the kernel |
+| `g_basis` | `null` | radius in Å⁻¹ the basis spans; `null` takes `g_max`, else `8.0` |
+| `spherical_cutoff` | `true` | mask the retained modes to the inscribed sphere |
+
+**Three conditions have to hold together, and each fails silently.** The kernel
+being radial is the one everybody thinks of; the other two were found by
+measuring.
+
+*The retained set must be a ball, not a box* — `spherical_cutoff: true`. A
+radial multiplier over a box of modes is equivariant only under the box's own
+symmetry group. A cubic cell with equal mode counts hides this completely,
+because the box *is* invariant under the octahedral group; on a tetragonal cell
+switching the cutoff off takes the error from 3e-7 to 5e-2.
+
+*`use_coordinates` must be off*, and `enable: true` beside it **raises**. The
+three fractional coordinates are not three scalar fields — under a rotation
+they turn into each other — and being absolute positions they cost translation
+equivariance too.
+
+**The cost is capacity, and it is large.** The dense layer holds
+$4C_\mathrm{in}C_\mathrm{out}m_1m_2m_3$ complex numbers; this one holds
+$C_\mathrm{in}C_\mathrm{out}R$ real ones — 4 096 against 1 048 576 at
+`width 16, modes 8, n_radial 16`. Buy it back with `n_radial` and `width`, not
+with `modes`.
+
+**Whether it pays was measured once**, on a V100: 400 epochs on 115 Materials
+Project structures at 32³, `width 32 / n_radial 32` reached a validation
+relative $L^2$ of 0.047 against 0.173 for a dense model with 28× the
+parameters — 4.1× better. The 4× *larger* equivariant arm
+(`width 128, n_radial 64`) was **worse**, at 0.059: capacity is not what buys
+this, the constraint is. One seed, one dataset, and neither equivariant arm had
+converged at 400 epochs, so read it as a reason to try the flag rather than as
+a number.
+
+```{note}
+An equivariant model is slower per epoch despite having two orders of magnitude
+fewer parameters, and that is not a bug. The dense layer *stores* one complex
+number per retained mode per channel pair and reads it; the radial layer stores
+$C^2R$ real numbers and must **reconstruct** the multiplier at every mode from
+them — about $R/2$ times the arithmetic at `n_radial: R`. The constraint trades
+memory for recomputation, so parameters and FLOPs move in opposite directions
+by construction.
+```
+
+```{warning}
+NVIDIA's cuequivariance is deliberately **not** used and is not a dependency.
+It accelerates arithmetic on irreducible representations of $O(3)$, and a
+scalar-field-to-scalar-field operator carries only $\ell=0$: every tensor
+product in it is a scalar multiply, and the Fourier layer is a complex `einsum`
+diagonal in the mode index, which Clebsch–Gordan cannot express. Profiled by
+kernel class on a V100 its share is 0.0 %. Equivariance here is a constraint on
+the kernel, not a kernel library.
+```
 
 ### `pauli_residual` and its scale
 
@@ -441,8 +561,7 @@ the training log reports any reference points that violate it.
 | `tf32` | `true` | TensorFloat-32 matmul and convolution; CUDA, Ampere and later |
 | `loss` | `relative_l2` | `absolute_l2`, `relative_l2`, `absolute_h1` or `relative_h1` |
 | `sobolev_weight` | `0.1` | gradient-term weight for the two `h1` losses |
-| `physics_informed` | `auto` | whether the constraints run at all |
-| `physics_informed_setup` | all `0.0` | physics-informed loss weights |
+| `physics_informed` | `{enable: auto}` | the switch and the four constraint weights — one block, see below |
 
 (strict-device)=
 ### `device` and `strict_device`
@@ -780,18 +899,57 @@ the norm implicit, and offered no unnormalised form at all. It now raises,
 naming `relative_h1` (what it did) and `absolute_h1` as its replacements.
 ```
 
-### `physics`
+### `physics_informed`
 
-| Weight | Constraint it penalises the violation of | Shipped |
+One block — see [Optional features are blocks](#enable-blocks):
+
+```yaml
+training:
+  physics_informed:
+    enable: auto              # auto | true | false
+    electron_count_weight: 0.1
+```
+
+| Key | Constraint it penalises the violation of | Shipped |
 | --- | --- | --- |
+| `enable` | — whether any of the below is evaluated | `auto` |
 | `electron_count_weight` | $\int\rho\,d\mathbf{r} = N$ (`ext2chg`) | `0.1` |
 | `positivity_weight` | non-negativity of the predicted field | `0.0` |
 | `von_weizsacker_weight` | $\tau \ge \tau_\mathrm{vW}$ (`chg2tau`) | `0.0` |
 | `euler_lagrange_weight` | orbital-free stationarity residual (`ext2chg`) | `0.0` |
 
-All four default to zero in the code, so the objective is the plain supervised
-baseline until one is enabled deliberately. Each term is dimensionless, so a
-single weight can serve a heterogeneous dataset.
+All four weights default to zero in the code, so the objective is the plain
+supervised baseline until one is enabled deliberately. Each term is
+dimensionless, so a single weight can serve a heterogeneous dataset.
+
+`enable` has three states, and the middle one is the reason it exists:
+
+`auto`
+: the default. The run is physics-informed if and only if at least one weight
+  is positive — which is what every configuration written before the switch
+  existed already meant, so nothing changes for one.
+
+`true`
+: **raises** when no weight is set. A run that declares physics-informed
+  training and silently optimises the supervised baseline has an entirely
+  ordinary loss curve and a report that says otherwise; nothing anywhere would
+  contradict it.
+
+`false`
+: zeroes the weights and warns if one was live. Not merely a change of
+  objective: every constraint acts on *decoded* fields, so with one live the
+  loop must copy the reference field to the device on every batch, invert the
+  target transform over the prediction inside the autograd graph, invert the
+  input transform too, and in delta-density mode copy the baseline across and
+  add it back twice. Off, all of that is work whose result is discarded.
+  Measured: 2.4 % of a step on Apple Metal and **6.6 % on a V100**, where the
+  per-batch copy crosses PCIe.
+
+```{warning}
+Not `off`, and not `no`. Anything that is not `auto`, `true` or `false` raises
+rather than being coerced — `bool("off")` is `True` in Python, so a config
+saying `off` would have switched the constraints **on**.
+```
 
 #### Charge conservation
 
@@ -853,6 +1011,39 @@ Everything a run writes lives under `<root>/<name>/` — the weights, `log/`,
 [`task.name`](task-section) is the only thing that distinguishes two runs, so
 "delete this experiment" and "send me that model" are one directory each rather
 than a collection of fragments by filename.
+
+### What the report's performance table says
+
+One row per split — `train`, `validation`, `all` — and five columns:
+
+| Column | What it answers |
+| --- | --- |
+| rel. $L^2$ | The headline error, and the one every other number in this manual is quoted in. |
+| rel. $H^1$ | Values *and* gradients. A prediction can match a density pointwise and still be rough, and $\tau_\mathrm{vW}$ depends on $\nabla\rho$ — so a small $L^2$ beside a large $H^1$ is a model whose energetics will disappoint. |
+| MAE | The typical voxel, in the field's own units, where a squared error is not readable as a quantity. |
+| Max. error | The worst voxel. Means and RMS both hide a single catastrophic site, and near a nucleus is exactly where one occurs. |
+| $\lvert\Delta N\rvert$ | Conservation. For `ext2chg` this is the electron-count error in electrons, and it is the metric a pointwise loss controls worst. |
+
+The `train` and `validation` rows read against each other **are** the
+generalisation gap. That is the single most useful thing the table says, and it
+is why the splits are rows.
+
+```{note}
+The rel. $H^1$ here is the textbook relative Sobolev norm, which has no free
+parameter — **not** the $H^1$ objective `loss: relative_h1` minimises, whose
+value depends on `sobolev_weight` and so cannot be compared between two runs.
+Every column is computed without consulting the loss, for exactly that reason.
+
+For a two-channel model every number is the **density** channel; the
+magnetisation is measured separately, as `magnetisation_relative_l2` in the
+metrics JSON, and the report says so in its caveats.
+
+The table lists *splits*, not structures: it used to print one row per
+material, so a 115-material run made six pages of numbers nobody reads
+individually. The per-structure figures — and `mse`, `rmse`, `r2`,
+`nrmse_range` and `jsd`, which are not typeset — are all in
+`log/<name>.json`, which is machine-readable and has no margins.
+```
 
 ### `save_raw_plot_data`
 
@@ -919,17 +1110,17 @@ training: {enable_kfold: true, k_folds: 5}
 
 Two runs over the same data with different physics, kept side by side. The
 first is explicit rather than left to `auto`: a baseline that says
-`physics_informed: false` cannot be misread later as one whose weights happened
+`enable: false` cannot be misread later as one whose weights happened
 to be zero, and it also skips the per-batch decode the constraints need.
 
 ```yaml
 task:     {type: ext2chg, name: agaupt_baseline}
-training: {physics_informed: false}
+training: {physics_informed: {enable: false}}
 ```
 
 ```yaml
 task:     {type: ext2chg, name: agaupt_charge_conserving}
-training: {physics_informed_setup: {electron_count_weight: 0.1}}
+training: {physics_informed: {electron_count_weight: 0.1}}
 ```
 
 A fast smoke test:

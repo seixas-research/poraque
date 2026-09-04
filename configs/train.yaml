@@ -34,9 +34,9 @@ model:
   mode_selection: fixed         # Options: 'fixed' | 'physical'.
   activation: silu              # stateless; `kan` moves the hyperparameters into kan_setup
   projection_activation: null   # read-out nonlinearity; null follows `activation`
-  use_coordinates: false
-  equivariant: true
-  equivariant_setup:
+  use_coordinates: false        # required false beside equivariant.enable: true
+  equivariant:                  # one block: the switch and what it governs
+    enable: true
     n_radial: 32
     g_basis: null
     spherical_cutoff: true
@@ -58,8 +58,8 @@ training:
   seed: 42                      # the validation draw, the fold partition, the batch order
   device: auto                  # auto (CUDA, then MPS, then CPU) or an explicit backend
   strict_device: false
-  physics_informed: auto        # auto (any weight below) | true (require one) | false (skip the work)
-  physics_informed_setup:
+  physics_informed:             # one block: the switch and the weights it governs
+    enable: auto                # auto (any weight below) | true (require one) | false (skip the work)
     electron_count_weight: 0.0  # ext2chg: int(rho) must equal the known valence count
     positivity_weight:     0.0  # rho, tau >= 0 (a Log head is the better fix)
     von_weizsacker_weight: 0.0  # chg2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided

@@ -16,7 +16,7 @@ from poraque.ml.kan import (  # noqa: E402
     ACTIVATIONS,
     KAN_ACTIVATIONS,
     BSplineKANActivation,
-    ChebyKANActivation,
+    ChebyshevKANActivation,
     RationalKANActivation,
     RBFKANActivation,
     build_activation,
@@ -54,11 +54,11 @@ def _symbolic_at(activation, channel, points, decimals=None):
 
 
 # --------------------------------------------------------------------- #
-# ChebyKANActivation
+# ChebyshevKANActivation
 # --------------------------------------------------------------------- #
-class TestChebyKANActivation:
+class TestChebyshevKANActivation:
     def test_shape_and_dtype_are_preserved(self):
-        activation = ChebyKANActivation(channels=5, degree=4)
+        activation = ChebyshevKANActivation(channels=5, degree=4)
         x = torch.randn(3, 5, 6, 7, 8)
         out = activation(x)
         assert out.shape == x.shape
@@ -68,17 +68,17 @@ class TestChebyKANActivation:
         """Only axis 0 (batch) and axis 1 (channel) are assumed -- the unit
         tests exercise small 2D/3D tensors, not only the 5D (B,C,Nx,Ny,Nz)
         shape the Fourier block actually calls this with."""
-        activation = ChebyKANActivation(channels=4, degree=3)
+        activation = ChebyshevKANActivation(channels=4, degree=3)
         for shape in [(2, 4, 9), (2, 4, 3, 3)]:
             out = activation(torch.randn(*shape))
             assert out.shape == shape
 
     def test_gradients_flow_to_every_parameter(self):
-        activation = ChebyKANActivation(channels=6, degree=5)
+        activation = ChebyshevKANActivation(channels=6, degree=5)
         x = torch.randn(2, 6, 4, 4, 4)
         activation(x).pow(2).mean().backward()
         grads = _grad_map(activation)
-        assert set(grads) == {"base_weight", "cheby_coeff"}
+        assert set(grads) == {"base_weight", "chebyshev_coeff"}
         assert all(g is not None and g.abs().sum() > 0 for g in grads.values())
 
     def test_close_to_silu_at_init(self):
@@ -87,7 +87,7 @@ class TestChebyKANActivation:
         docstring. Not exact (the residual is a small random draw, not
         zero), so the tolerance is generous, not tight."""
         torch.manual_seed(0)
-        activation = ChebyKANActivation(channels=8, degree=6)
+        activation = ChebyshevKANActivation(channels=8, degree=6)
         x = torch.randn(4, 8, 5, 5, 5) * 1.5
         with torch.no_grad():
             deviation = (activation(x) - F.silu(x)).abs()
@@ -95,18 +95,18 @@ class TestChebyKANActivation:
         assert deviation.mean().item() < 0.3
 
     def test_rejects_a_channel_axis_mismatch(self):
-        activation = ChebyKANActivation(channels=4, degree=2)
+        activation = ChebyshevKANActivation(channels=4, degree=2)
         with pytest.raises(ValueError, match="4 channels"):
             activation(torch.randn(2, 3, 4, 4, 4))
 
     def test_rejects_a_negative_degree(self):
         with pytest.raises(ValueError, match="degree"):
-            ChebyKANActivation(channels=4, degree=-1)
+            ChebyshevKANActivation(channels=4, degree=-1)
 
     def test_parameter_count_matches_the_documented_formula(self):
         """channels * (degree + 2): one base weight and degree+1 coefficients."""
         channels, degree = 10, 7
-        activation = ChebyKANActivation(channels=channels, degree=degree)
+        activation = ChebyshevKANActivation(channels=channels, degree=degree)
         n_params = sum(p.numel() for p in activation.parameters())
         assert n_params == channels * (degree + 2)
 
@@ -377,8 +377,8 @@ class TestBuildActivation:
         assert bspline.grid_size == 5 and bspline.spline_order == 2
         assert bspline.grid_range == (-1.0, 1.0)
 
-        cheby = build_activation("kan_cheby", channels=4, kan_degree=9)
-        assert cheby.degree == 9
+        chebyshev = build_activation("kan_chebyshev", channels=4, kan_degree=9)
+        assert chebyshev.degree == 9
 
         rbf = build_activation("kan_rbf", channels=4, kan_grid_size=5,
                                kan_grid_range=(-1.0, 1.0))
@@ -508,15 +508,15 @@ class TestFNOWithKANActivations:
                         restored.model.state_dict().values()):
             assert torch.equal(a, b)
 
-    def test_kan_cheby_checkpoint_round_trip_preserves_hyperparameters(self, tmp_path):
+    def test_kan_chebyshev_checkpoint_round_trip_preserves_hyperparameters(self, tmp_path):
         operator = FieldOperator(
             "chg2tau", width=4, modes=2, n_layers=1, projection_channels=8,
-            activation="kan_cheby", kan_degree=9, device="cpu",
+            activation="kan_chebyshev", kan_degree=9, device="cpu",
         )
         path = save_bundle(str(tmp_path / "m.poraque"), {"chg2tau": operator})
         restored = load_bundle(path, "chg2tau", device="cpu")
 
-        assert restored.model.activation == "kan_cheby"
+        assert restored.model.activation == "kan_chebyshev"
         assert restored.model.kan_degree == 9
         for a, b in zip(operator.model.state_dict().values(),
                         restored.model.state_dict().values()):
@@ -555,12 +555,12 @@ class TestFNOWithKANActivations:
             assert torch.equal(a, b)
 
     def test_mismatched_kan_hyperparameters_fail_loudly_not_silently(self, tmp_path):
-        """Without the architecture record this would load a kan_cheby model
+        """Without the architecture record this would load a kan_chebyshev model
         with degree=6 (the constructor default) instead of the 9 it was
         trained with -- a shape-mismatched state_dict, caught at load time,
         rather than a silently wrong model."""
         operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
-                                 projection_channels=8, activation="kan_cheby",
+                                 projection_channels=8, activation="kan_chebyshev",
                                  kan_degree=9, device="cpu")
         state = operator.state()
         state["architecture"].pop("kan_degree", None)
@@ -598,12 +598,12 @@ class TestSymbolicExpression:
     POINTS = [-6.0, -3.0, -2.5, -1.0, -0.3, 0.0, 0.3, 1.0, 2.5, 3.0, 6.0]
 
     @pytest.mark.parametrize("build", [
-        lambda: ChebyKANActivation(channels=3, degree=4),
+        lambda: ChebyshevKANActivation(channels=3, degree=4),
         lambda: RBFKANActivation(channels=3, grid_size=6, grid_range=(-2.0, 2.0)),
         lambda: RationalKANActivation(channels=3, num_degree=3, den_degree=3),
         lambda: BSplineKANActivation(channels=3, grid_size=6, spline_order=3,
                                      grid_range=(-2.0, 2.0)),
-    ], ids=["kan_cheby", "kan_rbf", "kan_rational", "kan_bspline"])
+    ], ids=["kan_chebyshev", "kan_rbf", "kan_rational", "kan_bspline"])
     def test_matches_the_forward_pass_numerically(self, build):
         """The whole point of a *readout* rather than a fit: the symbolic
         expression must reproduce forward() exactly (up to float rounding),
@@ -624,7 +624,7 @@ class TestSymbolicExpression:
         residual should agree with its symbolic readout everywhere, not
         only at points that happen to have been checked by hand."""
         torch.manual_seed(1)
-        activation = ChebyKANActivation(channels=2, degree=5)
+        activation = ChebyshevKANActivation(channels=2, degree=5)
         points = np.random.default_rng(0).uniform(-4, 4, size=25).tolist()
         forward_out = _forward_at(activation, 1, points)
         symbolic_out = _symbolic_at(activation, 1, points, decimals=None)
@@ -636,14 +636,14 @@ class TestSymbolicExpression:
         assert expr.free_symbols == {sympy.Symbol("x")}
 
     def test_decimals_rounds_every_coefficient(self):
-        activation = ChebyKANActivation(channels=2, degree=3)
+        activation = ChebyshevKANActivation(channels=2, degree=3)
         expr = symbolic_expression(activation, channel=0, decimals=2)
         for atom in expr.atoms(sympy.Float):
             rounded = round(float(atom), 2)
             assert float(atom) == pytest.approx(rounded, abs=1e-9)
 
     def test_rejects_an_out_of_range_channel(self):
-        activation = ChebyKANActivation(channels=3, degree=2)
+        activation = ChebyshevKANActivation(channels=3, degree=2)
         with pytest.raises(ValueError, match="channel"):
             symbolic_expression(activation, channel=3)
 
@@ -659,7 +659,7 @@ class TestSymbolicExpression:
         loaded FieldOperator's Fourier blocks, exactly as
         operator.model.blocks[layer].activation would be used in practice."""
         operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=2,
-                                 projection_channels=8, activation="kan_cheby",
+                                 projection_channels=8, activation="kan_chebyshev",
                                  kan_degree=3, device="cpu")
         activation = operator.model.blocks[0].activation
         expr = symbolic_expression(activation, channel=0)
@@ -692,7 +692,7 @@ class TestPureKANMode:
     term alone, not an approximation."""
 
     CASES = [
-        (ChebyKANActivation, {"channels": 4, "degree": 3}, "kan_cheby"),
+        (ChebyshevKANActivation, {"channels": 4, "degree": 3}, "kan_chebyshev"),
         (BSplineKANActivation,
          {"channels": 4, "grid_size": 6, "spline_order": 3}, "kan_bspline"),
         (RBFKANActivation, {"channels": 4, "grid_size": 6}, "kan_rbf"),
@@ -736,7 +736,7 @@ class TestPureKANMode:
         assert all(g is not None and g.abs().sum() > 0 for g in grads.values())
 
     def test_build_activation_forwards_kan_use_base(self):
-        for name in ["kan_cheby", "kan_bspline", "kan_rbf", "kan_rational"]:
+        for name in ["kan_chebyshev", "kan_bspline", "kan_rbf", "kan_rational"]:
             pure = build_activation(name, channels=4, kan_use_base=False)
             assert pure.use_base is False and pure.base_weight is None
             default = build_activation(name, channels=4)
@@ -747,9 +747,9 @@ class TestPureKANMode:
         one by exactly the SiLU base term, symbolically -- not merely
         "look shorter"."""
         torch.manual_seed(0)
-        with_base = ChebyKANActivation(channels=2, degree=3, use_base=True)
+        with_base = ChebyshevKANActivation(channels=2, degree=3, use_base=True)
         torch.manual_seed(0)
-        without_base = ChebyKANActivation(channels=2, degree=3, use_base=False)
+        without_base = ChebyshevKANActivation(channels=2, degree=3, use_base=False)
 
         expr_with = symbolic_expression(with_base, channel=0, decimals=None)
         expr_without = symbolic_expression(without_base, channel=0, decimals=None)
@@ -761,7 +761,7 @@ class TestPureKANMode:
             * with_base.base_weight[0].item()
         assert np.allclose(out_with - out_without, expected_base, atol=1e-4)
         # Direct structural check, not only numeric: no exp() term from a
-        # base function survives -- ChebyKANActivation's own residual has
+        # base function survives -- ChebyshevKANActivation's own residual has
         # no exp of any kind, so this is unambiguous for this variant.
         assert expr_without.has(sympy.exp) is False
         assert expr_with.has(sympy.exp) is True   # silu = x/(1+exp(-x))
@@ -769,7 +769,7 @@ class TestPureKANMode:
     def test_pure_kan_checkpoint_round_trip_preserves_use_base(self, tmp_path):
         operator = FieldOperator(
             "ext2chg", width=4, modes=2, n_layers=1, projection_channels=8,
-            activation="kan_cheby", kan_degree=3, kan_use_base=False,
+            activation="kan_chebyshev", kan_degree=3, kan_use_base=False,
             device="cpu",
         )
         assert operator.model.blocks[0].activation.base_weight is None
@@ -821,7 +821,7 @@ class TestTheKanBlockInAConfig:
 
         return TrainingConfig.from_dict({"model": model})
 
-    @pytest.mark.parametrize("variant", ["bspline", "cheby", "rbf", "rational"])
+    @pytest.mark.parametrize("variant", ["bspline", "chebyshev", "rbf", "rational"])
     def test_the_variant_becomes_the_backbones_flat_activation_name(self, variant):
         """The grouping is a property of the file, not of the model: the
         checkpoint's `architecture` record keeps the one flat name it has
@@ -838,7 +838,7 @@ class TestTheKanBlockInAConfig:
     def test_the_settings_are_expanded_into_the_constructors_kan_keywords(self):
         kwargs = self._config(
             activation="kan",
-            kan_setup={"variant": "cheby", "degree": 9, "use_base": False},
+            kan_setup={"variant": "chebyshev", "degree": 9, "use_base": False},
         ).model_kwargs()
 
         assert kwargs["kan_degree"] == 9
@@ -869,7 +869,7 @@ class TestTheKanBlockInAConfig:
 
     def test_the_old_flat_spelling_names_its_replacement(self):
         with pytest.raises(ValueError, match="old flat spelling"):
-            self._config(activation="kan_cheby").model_kwargs()
+            self._config(activation="kan_chebyshev").model_kwargs()
 
     def test_an_unknown_variant_raises(self):
         with pytest.raises(ValueError, match="Unknown model.kan_setup.variant"):
@@ -880,7 +880,7 @@ class TestTheKanBlockInAConfig:
         """A typo here changes the architecture and nothing else says so."""
         with pytest.raises(ValueError, match=r"Unknown key\(s\) in model.kan_setup"):
             self._config(activation="kan",
-                         kan_setup={"variant": "cheby",
+                         kan_setup={"variant": "chebyshev",
                                     "kan_degree": 9}).model_kwargs()
 
     def test_a_kan_config_builds_the_model_it_describes(self):

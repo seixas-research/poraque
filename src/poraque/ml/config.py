@@ -116,8 +116,15 @@ class TaskConfig:
 #: ``code`` were two keys for one question and are now one, ``format``, whose
 #: only values are ``"vasp"`` and ``"auto"`` -- the dataset *layouts* it used
 #: to select between no longer exist.
+#: Keys that were removed or renamed, and what to write instead --- **keyed by
+#: ``(section, key)``**, because the same word is retired in one section and
+#: live in another. ``root`` is gone from ``data`` and is still how
+#: ``output.root`` names the run folder; ``physics`` is gone from ``training``
+#: and is still the symbolic search's own constraint block. Keyed by the bare
+#: word, a config saying ``model: {root: ...}`` would be told to write
+#: ``data_paths``, which is advice about a different section.
 RETIRED_KEYS = {
-    "code": "format ('vasp' or 'auto')",
+    ("data", "code"): "format ('vasp' or 'auto')",
     # Removed in 26.9.3 after being measured on a V100. Inductor does not
     # generate code for complex operators -- `SpectralConv3d`'s weights are
     # complex, so the one part of an FNO compilation was invoked to fuse is the
@@ -127,21 +134,51 @@ RETIRED_KEYS = {
     # moved reproducibly in both arms. On four ranks it did not merely lose, it
     # sat eighteen minutes in the first epoch without printing an epoch line
     # and was cancelled. See CUDA_4.md sections 7 and 8.
-    "compile": "nothing -- torch.compile was measured on the FNO backbone and "
-               "removed; Inductor declines complex codegen, which is the whole "
-               "of the model that mattered",
-    "compile_mode": "nothing -- see 'compile'",
-    "compile_dynamic": "nothing -- see 'compile'",
-    # Renamed in 26.9.5 alongside the `physics_informed` switch that governs
-    # it. The block was always read; whether any of it applied was a question
-    # you answered by reading four weights and checking none of them was zero.
-    "physics": "physics_informed_setup, with training.physics_informed "
-               "(auto | true | false) deciding whether it applies at all",
-    "train_paths": "data_paths",
-    "root": "data_paths (a list; the single-path fallback is gone)",
-    "source": "nothing -- the layout of every path is detected, and every "
-              "path now has the same layout",
+    ("training", "compile"):
+        "nothing -- torch.compile was measured on the FNO backbone and "
+        "removed; Inductor declines complex codegen, which is the whole of "
+        "the model that mattered",
+    ("training", "compile_mode"): "nothing -- see 'compile'",
+    ("training", "compile_dynamic"): "nothing -- see 'compile'",
+    # Renamed in 26.9.5, then folded into the switch that governs it in 26.9.8.
+    ("training", "physics"):
+        "the training.physics_informed block, which now carries the four "
+        "weights and the `enable` switch (auto | true | false) together",
+    # Unified in 26.9.8. A feature that can be switched off is one block --
+    # `<feature>: {enable: ..., <settings>}` -- rather than a scalar beside a
+    # separate `<feature>_setup` group. The two spellings drifted apart in
+    # practice: `equivariant: false` above a populated `equivariant_setup` is a
+    # configuration that reads as equivariant and is not, and nothing in a
+    # two-key layout puts the switch next to the settings it governs.
+    ("model", "equivariant_setup"):
+        "the model.equivariant block, which now holds the switch too: "
+        "`equivariant: {enable: true, n_radial: 32}`",
+    ("training", "physics_informed_setup"):
+        "the training.physics_informed block, which now holds the switch too: "
+        "`physics_informed: {enable: auto, electron_count_weight: 1.0}`",
+    # Renamed in 26.9.8 to match `fine_tuning.enable` and the `enable` inside
+    # every block. It restated its own section in its own name.
+    ("symbolic", "enable_symbolic_distillation"): "enable",
+    ("data", "train_paths"): "data_paths",
+    ("data", "root"): "data_paths (a list; the single-path fallback is gone)",
+    ("data", "source"):
+        "nothing -- the layout of every path is detected, and every path now "
+        "has the same layout",
 }
+
+
+def retired_replacement(section, key):
+    """
+    What to write instead of a retired key, or ``None`` if it is simply unknown.
+
+    Exact match on ``(section, key)`` and no fallback to the bare word. A
+    near-miss hint is worse than none: ``model: {root: ...}`` answered with
+    "write ``data_paths``" sends the reader to a section they were not editing,
+    and the plain "unknown key, here are the valid ones" it gets instead is
+    both true and enough.
+    """
+    return RETIRED_KEYS.get((section, key))
+
 
 #: Assumed when ``data.data_paths`` is unset: this project's own bulk cells.
 #:
@@ -402,8 +439,9 @@ class DataConfig:
         :math:`\delta\rho` is **signed**, so positivity and the electron count
         are statements about :math:`\delta\rho + \rho_{\rm sup}`; the training
         loop restores the baseline before every physics term, and inference
-        does it before clipping or normalising (order fixed in
-        ``DESIGN_PAW.md`` §3.3). And the reported relative :math:`L^2` is always
+        does it before clipping or normalising — see
+        :meth:`poraque.ml.training.FieldOperator.predict`, which fixes that
+        order. And the reported relative :math:`L^2` is always
         quoted **on the absolute density**, so a delta-mode run is directly
         comparable with an absolute-mode one.
 
@@ -412,8 +450,6 @@ class DataConfig:
         training the old target. Set ``false`` for the absolute-density
         ablation. Ignored by ``chg2tau``: there is no atomic superposition of a
         kinetic energy density.
-
-        See ``DESIGN_PAW.md`` §3.1 and §3.3.
     atomic_reference : str or None
         Where the isolated atoms come from. Three spellings are accepted,
         because three are what people actually have:
@@ -590,7 +626,7 @@ class DataConfig:
 #: The learnable activations ``model.kan_setup.variant`` chooses between. Each
 #: is one learned function *per channel*, applied elementwise; see
 #: :mod:`poraque.ml.kan` for what each parameterises that function with.
-KAN_VARIANTS = ("bspline", "cheby", "rbf", "rational")
+KAN_VARIANTS = ("bspline", "chebyshev", "rbf", "rational")
 
 #: Assumed when ``activation: kan`` is given with no ``variant``: the original
 #: KAN paper's own parameterisation, so the unqualified word means what the
@@ -611,16 +647,119 @@ KAN_SETUP_KEYS = {
     "rational_den_degree": "kan_rational_den_degree",
 }
 
-#: ``equivariant_setup`` keys, and the :class:`~poraque.ml.fno.FNO3d` keyword
-#: each becomes. Grouped for the same reason ``kan_setup`` is: all three are
-#: read by one architecture and by no other, so as flat keys they would sit
-#: beside ``width`` and ``modes``, which apply always, and read as decisions
-#: every run should be making.
+#: ``model.equivariant`` settings, and the :class:`~poraque.ml.fno.FNO3d`
+#: keyword each becomes. Grouped for the same reason the KAN settings are: all
+#: three are read by one architecture and by no other, so as flat keys they
+#: would sit beside ``width`` and ``modes``, which apply always, and read as
+#: decisions every run should be making.
 EQUIVARIANT_SETUP_KEYS = {
     "n_radial": "n_radial",
     "g_basis": "g_basis",
     "spherical_cutoff": "spherical_cutoff",
 }
+
+#: ``training.physics_informed`` settings: the weight of each constraint on the
+#: **neural operator**. Not :attr:`SymbolicConfig.physics`, which constrains a
+#: candidate algebraic expression and shares two of these names meaning
+#: something else.
+PHYSICS_INFORMED_KEYS = (
+    "electron_count_weight",
+    "positivity_weight",
+    "von_weizsacker_weight",
+    "euler_lagrange_weight",
+)
+
+#: ``symbolic.physics`` settings: the weight of each constraint on the
+#: **symbolic search**. See :attr:`SymbolicConfig.physics` for why two of these
+#: names collide with :data:`PHYSICS_INFORMED_KEYS` and must not be merged.
+SYMBOLIC_PHYSICS_KEYS = (
+    "positivity_weight",
+    "thomas_fermi_weight",
+    "von_weizsacker_weight",
+    "p_infinity",
+)
+
+
+def split_enable_block(value, label, settings, enable_values=None):
+    """
+    Split a ``{enable: ..., <settings>}`` block into its switch and its settings.
+
+    Every optional feature in this schema is one block: the switch that decides
+    whether it applies sits *inside* the settings it governs, rather than
+    beside a separately-named group. The alternative was tried and drifted --
+    ``equivariant: false`` with a populated ``equivariant_setup`` reads as an
+    equivariant run, is not one, and nothing in a two-key layout brings the
+    two halves into the same field of view.
+
+    Parameters
+    ----------
+    value : dict or None
+        The block as the file states it. ``None`` is an empty block, which is
+        the switch at its default and no settings.
+    label : str
+        Dotted config path, for the error messages. It is the whole reason
+        this is a function: ``"Unknown key: n_radal"`` does not say which of
+        four blocks it was in.
+    settings : iterable of str
+        The keys admitted beside ``enable``.
+    enable_values : iterable, optional
+        What ``enable`` may be. Defaults to ``(True, False)``; the
+        physics-informed switch adds ``"auto"``.
+
+    Returns
+    -------
+    enable : object
+        The value of ``enable``, or ``None`` when the block did not state one
+        --- which the caller resolves against its own default, since "unstated"
+        and "stated as the default" differ for :meth:`TrainingConfig.to_yaml`.
+    stated : dict
+        The settings the block actually named, in file order, with ``enable``
+        removed. **Only what was stated**: an unnamed setting is not filled in
+        with a default here, because for two of these blocks the default is
+        resolved downstream against something the config does not know
+        (``g_basis`` against ``model.g_max``, for one).
+
+    Raises
+    ------
+    ValueError
+        If the block is not a mapping --- which is what the pre-26.9.8 scalar
+        spelling looks like from here, and is by far the most likely mistake,
+        so it is named as such --- if ``enable`` is not one of
+        ``enable_values``, or on an unknown setting.
+    """
+    enable_values = tuple(enable_values if enable_values is not None
+                          else (True, False))
+    if value is None:
+        return None, {}
+    if not isinstance(value, dict):
+        # `equivariant: true` is a config written against the old schema, not
+        # a nonsense value, so the message says how to translate it rather
+        # than only that it is wrong.
+        raise ValueError(
+            f"{label} must be a block, not {value!r}. The switch and its "
+            f"settings are one key now:\n"
+            f"    {label.rsplit('.', 1)[-1]}:\n"
+            f"      enable: {_yaml_literal(value)}\n"
+            f"      # {', '.join(settings) or 'no further settings'}")
+
+    block = dict(value)
+    enable = block.pop("enable", None)
+    if enable is not None and enable not in enable_values:
+        raise ValueError(
+            f"{label}.enable is {enable!r}; expected one of "
+            f"{list(enable_values)}.")
+
+    unknown = sorted(set(block) - set(settings))
+    if unknown:
+        raise ValueError(
+            f"Unknown key(s) in {label}: {unknown}. "
+            f"Valid keys: {sorted(['enable', *settings])}.")
+    return enable, block
+
+
+def _yaml_literal(value):
+    """``True`` -> ``true``, so an error message quotes YAML and not Python."""
+    return {None: "null", True: "true", False: "false"}.get(value, repr(value))
 
 
 @dataclass
@@ -924,12 +1063,12 @@ class ModelConfig:
             model:
               activation: kan
               kan_setup:
-                variant: bspline          # bspline | cheby | rbf | rational
+                variant: bspline          # bspline | chebyshev | rbf | rational
                 use_base: true            # keep the w_c * silu(x) base term
                 grid_size: 8              # bspline, rbf
                 spline_order: 3           # bspline
                 grid_range: [-2.0, 2.0]   # bspline, rbf
-                degree: 6                 # cheby
+                degree: 6                 # chebyshev
                 rational_num_degree: 4    # rational
                 rational_den_degree: 4    # rational
 
@@ -956,7 +1095,7 @@ class ModelConfig:
         ``[low, high]`` support of that grid: a ``bspline`` input outside it
         is clamped rather than extrapolated, an ``rbf`` input outside it
         decays towards zero on its own. ``degree`` is the highest Chebyshev
-        order for ``cheby`` (``degree + 1`` coefficients per channel).
+        order for ``chebyshev`` (``degree + 1`` coefficients per channel).
         ``rational_num_degree`` and ``rational_den_degree`` are the numerator
         power and the number of even denominator powers for ``rational``; the
         denominator is guarded to stay :math:`\geq 1`, so neither can
@@ -1005,6 +1144,43 @@ class ModelConfig:
         Distinct from ``data.precision``, which is how the fields are *stored*.
     learn_pauli_scale : bool
         Optimise the scale alongside the backbone.
+    equivariant : dict
+        Constrain the Fourier multiplier to a real function of
+        :math:`|\mathbf{G}|` alone, which makes the operator commute with
+        every rotation --- with inversion too, so :math:`O(3)` rather than the
+        :math:`SE(3)` the construction was asked for. One block:
+
+        .. code-block:: yaml
+
+           model:
+             use_coordinates: false     # required, see below
+             equivariant:
+               enable: true
+               n_radial: 32
+
+        ``enable``
+            Off by default; every configuration and checkpoint written before
+            the layer existed is unaffected.
+        ``n_radial``
+            Radial basis size. This is where the capacity goes: the dense layer
+            holds :math:`4C_{\rm in}C_{\rm out}m_1m_2m_3` complex numbers and
+            this one holds :math:`C_{\rm in}C_{\rm out}R` real ones, a factor
+            of 256 at ``width 16, modes 8, n_radial 16``. Buy it back with
+            ``n_radial`` and ``width``, not with ``modes``.
+        ``g_basis``
+            Radius in Å⁻¹ the basis spans. Unstated it follows ``g_max`` when
+            ``mode_selection: physical`` has already named a band, and
+            otherwise a default --- which is why an unstated setting is left
+            unstated here rather than filled in.
+        ``spherical_cutoff``
+            Discard retained modes outside the largest sphere inscribed in the
+            retained box. On by default and effectively required: a radial
+            multiplier over a *box* of modes is equivariant only under the
+            box's own symmetry group.
+
+        ``use_coordinates`` must be false beside it, and ``enable: true``
+        without that **raises**. The three fractional coordinates are not three
+        scalar fields --- under a rotation they turn into each other.
     """
 
     width: int = 16
@@ -1019,17 +1195,32 @@ class ModelConfig:
     embedding_dim: int = 32
     mode_selection: str = "fixed"
     g_max: float = None
-    equivariant: bool = False
-    equivariant_setup: dict = None
+    equivariant: dict = field(default_factory=lambda: {"enable": False})
     pauli_residual: bool = False
     pauli_scale: float = None
     learn_pauli_scale: bool = True
     precision: str = "float32"
 
+    @property
+    def equivariant_enabled(self):
+        """
+        Whether the radial kernel is switched on --- ``model.equivariant.enable``.
+
+        A property rather than a field because the block is the field: reading
+        ``config.model.equivariant`` now yields a dict, and every consumer that
+        wanted the boolean would otherwise spell the same ``.get("enable")``
+        for itself. The dataclass default carries ``enable: False``, but a
+        user block that names only settings does not, so the ``or {}`` and the
+        ``get`` default are both load-bearing.
+        """
+        enable, _ = split_enable_block(
+            self.equivariant, "model.equivariant", EQUIVARIANT_SETUP_KEYS)
+        return bool(enable)
+
     def equivariant_kwargs(self):
         """
         The radial-kernel keywords :class:`~poraque.ml.fno.FNO3d` wants,
-        resolved from ``equivariant`` and ``equivariant_setup``.
+        resolved from the ``equivariant`` block.
 
         Returns
         -------
@@ -1043,35 +1234,33 @@ class ModelConfig:
         Raises
         ------
         ValueError
-            On an unknown key inside the block. It changes the architecture,
-            and a typo that is quietly ignored changes it back without saying
-            so.
+            On a block that is not a mapping (the pre-26.9.8
+            ``equivariant: true`` spelling, which is named as such), on an
+            unknown setting inside it — it changes the architecture, and a typo
+            quietly ignored changes it back without saying so — or on
+            ``enable: true`` beside ``use_coordinates: true``.
         """
-        setup = dict(self.equivariant_setup or {})
-        unknown = sorted(set(setup) - set(EQUIVARIANT_SETUP_KEYS))
-        if unknown:
-            raise ValueError(
-                f"Unknown key(s) in model.equivariant_setup: {unknown}. "
-                f"Valid keys: {sorted(EQUIVARIANT_SETUP_KEYS)}.")
+        enable, setup = split_enable_block(
+            self.equivariant, "model.equivariant", EQUIVARIANT_SETUP_KEYS)
 
-        if not self.equivariant:
+        if not enable:
             if setup:
                 import warnings
 
                 warnings.warn(
-                    "model.equivariant_setup was given with "
-                    "equivariant: false, so every setting in it is ignored: "
-                    "the dense spectral layer has no radial basis to size. "
-                    "Set equivariant: true, or drop the block.",
+                    "model.equivariant names "
+                    f"{sorted(setup)} with enable false, so every setting in "
+                    "the block is ignored: the dense spectral layer has no "
+                    "radial basis to size. Set enable: true, or drop them.",
                     RuntimeWarning, stacklevel=2,
                 )
             return {}
 
         if self.use_coordinates:
             raise ValueError(
-                "model.equivariant: true requires use_coordinates: false. "
-                "The three fractional-coordinate channels rotate into each "
-                "other rather than each transforming as a scalar, so a "
+                "model.equivariant.enable: true requires use_coordinates: "
+                "false. The three fractional-coordinate channels rotate into "
+                "each other rather than each transforming as a scalar, so a "
                 "network that treats every channel alike stops being "
                 "equivariant the moment they are appended -- and they are "
                 "absolute positions, which costs translation equivariance "
@@ -1085,8 +1274,8 @@ class ModelConfig:
         The activation name and KAN keywords :class:`~poraque.ml.fno.FNO3d`
         wants, resolved from ``activation`` and ``kan_setup``.
 
-        ``activation: kan`` plus ``kan_setup.variant: cheby`` becomes the
-        backbone's ``activation="kan_cheby"``, so the checkpoint's
+        ``activation: kan`` plus ``kan_setup.variant: chebyshev`` becomes the
+        backbone's ``activation="kan_chebyshev"``, so the checkpoint's
         ``architecture`` record and :func:`~poraque.ml.kan.build_activation`
         keep the one flat name they have always used. The grouping is a
         property of the *config file*, not of the model.
@@ -1366,8 +1555,34 @@ class TrainingConfig_:
         norm -- so at zero the objective and the column are both a plain
         :math:`L^2`, and the log says so rather than claiming an :math:`H^1`
         the run is not measuring.
-    physics_informed : {"auto", True, False}
-        Whether the constraints below are evaluated at all.
+    physics_informed : dict
+        The physics-informed objective: the switch and the four constraint
+        weights, in one block.
+
+        .. code-block:: yaml
+
+           training:
+             physics_informed:
+               enable: auto            # auto | true | false
+               electron_count_weight: 1.0
+               positivity_weight: 0.0
+               von_weizsacker_weight: 0.0
+               euler_lagrange_weight: 0.0
+
+        The weights are on the **neural operator**, and all default to zero,
+        so the objective is the supervised baseline until one is set
+        deliberately.
+
+        .. important::
+
+           Not ``symbolic.physics``. This block constrains the *network* over
+           voxels; that one constrains a *candidate algebraic expression* over
+           probe points. Two of the names collide
+           (``positivity_weight``, ``von_weizsacker_weight``) and mean
+           different things in each, which is why they are two blocks and not
+           one with a prefix.
+
+        ``enable`` decides whether any of it is evaluated.
 
         ``"auto"`` (the default) answers from the weights: the run is
         physics-informed iff at least one of them is positive. That is what
@@ -1390,20 +1605,7 @@ class TrainingConfig_:
         result is discarded, and ``false`` (or ``"auto"`` with no weight set)
         skips it rather than computing it.
 
-    physics_informed_setup : dict
-        Weights of the physics-informed terms for the **neural operator**. All
-        default to zero, so the objective is the supervised baseline until one
-        is enabled deliberately.
-
-        .. important::
-
-           Not ``symbolic.physics``. This block constrains the *network* over
-           voxels; that one constrains a *candidate algebraic expression* over
-           probe points. Two of the names collide — ``positivity_weight`` and
-           ``von_weizsacker_weight`` — and mean different things in each,
-           which is why they live in separate blocks rather than sharing a
-           prefix. Renaming this one is what finally makes the pair readable
-           at a glance.
+        **The weights.**
 
         **The shape of the objective.**
         :class:`~poraque.ml.losses.PhysicsInformedLoss` builds one scalar,
@@ -1426,9 +1628,10 @@ class TrainingConfig_:
         a light semiconductor and a transition-metal oxide, whose raw
         penalties differ by orders of magnitude.
 
-        The loss returns a dict rather than a scalar, which is why training
-        reports ``data`` / ``physics`` / ``total`` as separate columns: a
-        falling total says nothing about which half fell.
+        The loss returns a dict rather than a scalar, but only the ``total``
+        is reported: the components are unweighted, so they never summed to
+        the number the optimiser stepped on and were not comparable with
+        another run's.
 
         **Which term applies to which model.** They are not all available to
         both operators, and a weight set for the wrong task is silently inert:
@@ -1536,6 +1739,7 @@ class TrainingConfig_:
 
         ``0.1`` puts a constraint an order of magnitude below the data term,
         which is the intended balance: the physics guides, the data decides.
+
     """
 
     epochs: int = 500
@@ -1561,13 +1765,49 @@ class TrainingConfig_:
     tf32: bool = True
     loss: str = "relative_l2"
     sobolev_weight: float = 0.1
-    physics_informed: object = "auto"
-    physics_informed_setup: dict = field(default_factory=lambda: {
+    physics_informed: dict = field(default_factory=lambda: {
+        "enable": "auto",
         "electron_count_weight": 0.0,
         "positivity_weight": 0.0,
         "von_weizsacker_weight": 0.0,
         "euler_lagrange_weight": 0.0,
     })
+
+    @property
+    def physics_informed_enabled(self):
+        """
+        ``training.physics_informed.enable``: ``"auto"``, ``True`` or ``False``.
+
+        Unstated is ``"auto"``, which is what every configuration written
+        before the switch existed already meant. Resolving what ``"auto"``
+        comes out as is :class:`~poraque.ml.losses.PhysicsInformedLoss`'s job,
+        not this one --- it is the object that holds the weights, so it is the
+        only place the answer cannot disagree with them.
+        """
+        enable, _ = split_enable_block(
+            self.physics_informed, "training.physics_informed",
+            PHYSICS_INFORMED_KEYS, enable_values=("auto", True, False))
+        return "auto" if enable is None else enable
+
+    def physics_weights(self):
+        """
+        The four constraint weights, every one of them present.
+
+        Returns
+        -------
+        dict
+            ``electron_count_weight``, ``positivity_weight``,
+            ``von_weizsacker_weight`` and ``euler_lagrange_weight``, defaulting
+            to zero. Complete rather than as-stated, unlike
+            :meth:`ModelConfig.equivariant_kwargs`: a weight has one default
+            and it is zero, so filling it in here cannot overrule a resolution
+            that happens later.
+        """
+        _, stated = split_enable_block(
+            self.physics_informed, "training.physics_informed",
+            PHYSICS_INFORMED_KEYS, enable_values=("auto", True, False))
+        return {key: float(stated.get(key, 0.0))
+                for key in PHYSICS_INFORMED_KEYS}
 
 
 @dataclass
@@ -1679,9 +1919,16 @@ class SymbolicConfig:
 
     Attributes
     ----------
-    enable_symbolic_distillation : bool
+    enable : bool
         Run the search after training. Off by default: it is minutes to hours
         of CPU on top of the fit, and it needs an extra dependency.
+
+        Spelled ``enable`` since 26.9.8, matching ``fine_tuning.enable`` and
+        the ``enable`` inside every other optional block. It was
+        ``enable_symbolic_distillation``, which restated its own section in its
+        own name — ``symbolic.enable_symbolic_distillation`` — and was the
+        longest key in the schema, wide enough to set the configuration
+        table's column width in the PDF report.
     target : str
         ``"model"`` distils the trained operator's own predictions — what the
         network learned, faithful to it including its errors. ``"reference"``
@@ -1758,7 +2005,7 @@ class SymbolicConfig:
 
         .. important::
 
-           This is not ``training.physics_informed_setup``. That block
+           This is not ``training.physics_informed``. That block
            constrains the *neural
            operator* — charge conservation, positivity of a predicted density,
            the Euler-Lagrange residual — and its terms are added to a training
@@ -1865,7 +2112,7 @@ class SymbolicConfig:
         keep, and the engine warns about exactly that.
     """
 
-    enable_symbolic_distillation: bool = False
+    enable: bool = False
     target: str = "model"
     features: str = "gga"
     template: str = "none"
@@ -2079,8 +2326,11 @@ class TrainingConfig:
                 # replacement named. "Unknown key: root" beside a list of
                 # twenty valid ones says the config is wrong; it does not say
                 # what to write instead, and this one has a precise answer.
-                retired = [f"'{key}' -> {RETIRED_KEYS[key]}"
-                           for key in bad if key in RETIRED_KEYS]
+                retired = [f"'{key}' -> {replacement}"
+                           for key, replacement in
+                           ((key, retired_replacement(name, key))
+                            for key in bad)
+                           if replacement]
                 raise ValueError(
                     f"Unknown key(s) in section '{name}': {bad}. "
                     + (f"Replaced: {'; '.join(retired)}. " if retired else "")
@@ -2088,7 +2338,49 @@ class TrainingConfig:
                 )
             sections[name] = section_class(**values)
 
-        return cls(**sections)
+        config = cls(**sections)
+        config.validate_blocks()
+        return config
+
+    #: Every ``{enable: ..., <settings>}`` block in the schema: where it lives,
+    #: the settings it admits, and what ``enable`` may be. One table rather
+    #: than four call sites, so a new block is registered rather than
+    #: hand-validated -- and so :meth:`validate_blocks` cannot check three of
+    #: them and forget the fourth.
+    ENABLE_BLOCKS = (
+        ("model", "equivariant", EQUIVARIANT_SETUP_KEYS, (True, False)),
+        ("training", "physics_informed", PHYSICS_INFORMED_KEYS,
+         ("auto", True, False)),
+        ("symbolic", "physics", SYMBOLIC_PHYSICS_KEYS, (True, False)),
+    )
+
+    def validate_blocks(self):
+        """
+        Check the shape of every ``enable`` block, before anything runs.
+
+        :meth:`from_dict` calls this, so a configuration read from YAML is
+        refused at load rather than several minutes into a run --- which for
+        these three keys is a real difference: the equivariance block is not
+        consulted until the model is built, and the physics weights not until
+        the loss is, both of them after the field cache.
+
+        What it checks is *structural*: that each block is a mapping (a scalar
+        is the pre-26.9.8 spelling, and is named as such), that ``enable`` is
+        one of the values that block accepts, and that every other key is one
+        the block admits. What it deliberately does **not** check is anything
+        that depends on another section --- ``equivariant.enable: true``
+        against ``use_coordinates``, say --- which stays where the model is
+        built, beside the reason for it.
+
+        Raises
+        ------
+        ValueError
+            Naming the block, the key and the valid alternatives.
+        """
+        for section, key, settings, allowed in self.ENABLE_BLOCKS:
+            split_enable_block(getattr(getattr(self, section), key),
+                               f"{section}.{key}", settings,
+                               enable_values=allowed)
 
     @classmethod
     def from_yaml(cls, path):
@@ -2159,12 +2451,28 @@ class TrainingConfig:
         ----------
         overrides : dict
             ``{"section.key": value}`` or ``{"key": value}`` for the top level.
-            Bare keys are resolved against the sections, first match wins.
+            A bare key is resolved against the sections and must match exactly
+            one of them.
 
         Returns
         -------
         TrainingConfig
             ``self``, for chaining.
+
+        Raises
+        ------
+        ValueError
+            On a key no section carries, or --- since 26.9.8 --- on a bare key
+            that **several** carry. Four names are duplicated across sections
+            (``enable``, ``learning_rate``, ``precision``, ``seed``), and the
+            rule until now was "first match wins", which resolved ``precision``
+            to ``data.precision`` and ``seed`` to ``training.seed`` without
+            saying so. Those are not obviously the intended ones: ``precision``
+            is how the *fields are stored* in one section and what the
+            *operator computes in* in the other, and someone writing the bare
+            word almost certainly means one specifically. Guessing is the one
+            thing an override must not do, so an ambiguous bare key now names
+            the sections and asks for a dotted one.
         """
         for key, value in (overrides or {}).items():
             if value is None:
@@ -2180,13 +2488,16 @@ class TrainingConfig:
                 # string the key used to hold.
                 self.task.type = value
             else:
-                for section_name in self._SECTIONS:
-                    section = getattr(self, section_name)
-                    if hasattr(section, key):
-                        setattr(section, key, value)
-                        break
-                else:
+                carriers = [name for name in self._SECTIONS
+                            if hasattr(getattr(self, name), key)]
+                if not carriers:
                     raise ValueError(f"Unknown override {key!r}.")
+                if len(carriers) > 1:
+                    raise ValueError(
+                        f"Ambiguous override {key!r}: "
+                        f"{', '.join(f'{s}.{key}' for s in carriers)} all "
+                        f"exist. Name the section.")
+                setattr(getattr(self, carriers[0]), key, value)
         return self
 
     # ------------------------------------------------------------------ #
@@ -2336,8 +2647,7 @@ class TrainingConfig:
         itself.
         """
         excluded = {"pauli_residual", "pauli_scale", "learn_pauli_scale",
-                    "precision", "activation", "kan_setup",
-                    "equivariant_setup"}
+                    "precision", "activation", "kan_setup", "equivariant"}
         kwargs = {f.name: getattr(self.model, f.name)
                   for f in fields(self.model) if f.name not in excluded}
         # `activation` and `kan_setup` are one setting in the file and two in
@@ -2346,8 +2656,12 @@ class TrainingConfig:
         name, kan = self.model.activation_kwargs()
         kwargs["activation"] = name
         kwargs.update(kan)
-        # Same shape, same reason. `equivariant` itself is a plain field and
-        # rides along above; only the block has to be unpacked.
+        # Same shape, same reason -- and since 26.9.8 the switch is inside the
+        # block, so both halves are unpacked here. The constructor keeps its
+        # flat `equivariant=` / `n_radial=` keywords: the grouping is a
+        # property of the config file, and every checkpoint's `architecture`
+        # record is unchanged by it.
+        kwargs["equivariant"] = self.model.equivariant_enabled
         kwargs.update(self.model.equivariant_kwargs())
         return kwargs
 
@@ -2370,7 +2684,7 @@ class TrainingConfig:
         """
         One ``key = value`` per line, with the ``=`` signs aligned.
 
-        Recursive, because ``training.physics_informed_setup`` is itself a
+        Recursive, because ``training.physics_informed`` is itself a
         mapping and a
         nested dict rendered as a repr is exactly the unreadable run this
         avoids.
@@ -2399,7 +2713,7 @@ class TrainingConfig:
         what is switched on before committing hours of GPU to it, and a
         comma-separated section wrapped across the terminal at whatever column
         it happened to reach: the settings that mattered were wherever the
-        wrapping put them, and ``training.physics_informed_setup`` was 116
+        wrapping put them, and ``training.physics_informed`` was 116
         characters of
         ``{'electron_count_weight': 0.0, ...}`` riding on the end of one.
 

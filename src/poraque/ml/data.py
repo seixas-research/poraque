@@ -46,8 +46,7 @@ about the target. And a relative :math:`L^2` reported on :math:`\delta\rho` is
 **not comparable** with one reported on :math:`\rho`, because the denominator is
 twenty times smaller. Every sample therefore carries its ``baseline``, so the
 training loop can reconstruct the absolute density before any physics term sees
-it, and so evaluation can quote the error where it means something. See
-``DESIGN_PAW.md`` §3.1 and §3.3.
+it, and so evaluation can quote the error where it means something.
 """
 
 import os

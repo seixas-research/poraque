@@ -81,7 +81,7 @@ _LAZY = {
     "ACTIVATIONS": "poraque.ml.kan",
     "KAN_ACTIVATIONS": "poraque.ml.kan",
     "BSplineKANActivation": "poraque.ml.kan",
-    "ChebyKANActivation": "poraque.ml.kan",
+    "ChebyshevKANActivation": "poraque.ml.kan",
     "RBFKANActivation": "poraque.ml.kan",
     "RationalKANActivation": "poraque.ml.kan",
     "build_activation": "poraque.ml.kan",

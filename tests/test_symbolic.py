@@ -764,20 +764,24 @@ class TestPhysicsConstraints:
 
     def test_it_does_not_share_names_with_the_operator_block(self):
         """
-        `training.physics_informed_setup` constrains the FNO over voxels;
+        `training.physics_informed` constrains the FNO over voxels;
         `symbolic.physics`
         constrains an algebraic expression over probe points. Two key names
-        appear in both and mean different things, which is why they are nested
-        separately instead of sharing a prefix.
+        appear in both and mean different things, which is why they are two
+        blocks instead of one prefix.
+
+        Both are now the same *shape* --- `{enable: ..., <weights>}` --- which
+        makes the collision easier to see and no less real, so the assertion
+        is on the weights rather than on the whole block.
         """
         from poraque.ml.config import TrainingConfig
 
         config = TrainingConfig()
-        shared = (set(config.training.physics_informed_setup)
-                  & set(config.symbolic.physics))
+        shared = (set(config.training.physics_weights())
+                  & set(config.symbolic.physics) - {"enable"})
         assert shared == {"positivity_weight", "von_weizsacker_weight"}, (
-            "the collision is real, which is the reason for the nesting")
-        assert (config.training.physics_informed_setup
+            "the collision is real, which is the reason for two blocks")
+        assert (config.training.physics_informed
                 is not config.symbolic.physics)
 
 
@@ -909,20 +913,34 @@ class TestLatex:
 
 class TestConfig:
     def test_is_off_by_default(self):
-        assert SymbolicConfig().enable_symbolic_distillation is False
+        assert SymbolicConfig().enable is False
 
     def test_round_trips_through_the_training_config(self, tmp_path):
         from poraque.ml.config import TrainingConfig
 
         config = TrainingConfig()
-        config.symbolic.enable_symbolic_distillation = True
+        config.symbolic.enable = True
         config.symbolic.unary_operations = ["sin"]
         path = tmp_path / "config.yaml"
         config.to_yaml(str(path))
 
         restored = TrainingConfig.from_yaml(str(path))
-        assert restored.symbolic.enable_symbolic_distillation is True
+        assert restored.symbolic.enable is True
         assert restored.symbolic.unary_operations == ["sin"]
+
+    def test_the_old_name_says_what_replaced_it(self):
+        """
+        ``enable_symbolic_distillation`` restated its own section in its own
+        name --- ``symbolic.enable_symbolic_distillation`` --- and was the
+        longest key in the schema at 37 characters, wide enough to set the
+        configuration table's column width in the PDF report. It is ``enable``
+        since 26.9.8, like every other optional feature's switch.
+        """
+        from poraque.ml.config import TrainingConfig
+
+        with pytest.raises(ValueError, match="-> enable"):
+            TrainingConfig.from_dict(
+                {"symbolic": {"enable_symbolic_distillation": True}})
 
     def test_rejects_an_unknown_symbolic_key(self):
         from poraque.ml.config import TrainingConfig

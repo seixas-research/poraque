@@ -37,6 +37,7 @@ just makes the same error slower.
 
 import json
 import os
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -1452,3 +1453,106 @@ class TestASampleIsWhatGetsFetched:
         f.search(refresh=True)
         assert f._selected is None
         assert len(f.selected) == 20
+
+
+# ===================================================================== #
+# Progress reporting
+# ===================================================================== #
+class TestOneProgressBarForTheWholeDownload:
+    """
+    The download reports files, and the client's own bars are muted.
+
+    ``MPRester`` draws a ``tqdm`` per query -- "Retrieving MaterialsDoc
+    documents", then "Retrieving CoreTaskDoc documents", and another pair for
+    every id batch past the first -- so resolving a few thousand materials
+    scrolled two dozen bars past the reader, none of them measuring anything
+    anyone waits on individually. Beneath them the loop printed a line per
+    material. Between the two, the one quantity a download actually has --
+    how many of the files are done -- was the only thing not on the screen.
+    """
+
+    def test_the_client_is_opened_with_its_bars_muted(self, tmp_path,
+                                                      monkeypatch):
+        monkeypatch.setenv("MP_API_KEY", "not-a-real-key")
+        captured = {}
+
+        class FakeRester:
+            def __init__(self, key, **options):
+                captured.update(options)
+
+        monkeypatch.setitem(
+            sys.modules, "mp_api.client",
+            SimpleNamespace(MPRester=FakeRester))
+        MPDataFetcher(["Si"], outdir=str(tmp_path))._connect()
+
+        assert captured.get("mute_progress_bars") is True
+
+    def test_exactly_one_bar_is_opened_for_a_download(self, tmp_path,
+                                                      monkeypatch):
+        """One bar over the files, not one per material and not one per query."""
+        opened = []
+        monkeypatch.setattr(
+            "poraque.data.materials_project._Progress.__init__",
+            lambda self, total, description, unit="file": opened.append(
+                (total, description)) or setattr(self, "_bar", None)
+            or setattr(self, "total", total))
+
+        identifiers = [f"mp-{n}" for n in range(1, 8)]
+        f = fetcher_with(identifiers, tmp_path, monkeypatch=monkeypatch)
+        f.download(vasp_inputs=False)
+
+        assert len(opened) == 1, f"{len(opened)} bars for one download"
+        assert opened[0][0] == len(identifiers), (
+            "the bar counts the files to fetch")
+
+    def test_the_bar_counts_only_what_this_run_will_fetch(self, tmp_path,
+                                                          monkeypatch):
+        """
+        A resumed run has fewer files to do than the set has members.
+
+        Sizing the bar by the whole target list would leave it starting at
+        900/3000 and finishing there, which reads as a run that stalled.
+        """
+        identifiers = [f"mp-{n}" for n in range(1, 8)]
+        f = fetcher_with(identifiers, tmp_path, monkeypatch=monkeypatch)
+        f.download(vasp_inputs=False)
+
+        opened = []
+        monkeypatch.setattr(
+            "poraque.data.materials_project._Progress.__init__",
+            lambda self, total, description, unit="file": opened.append(total)
+            or setattr(self, "_bar", None) or setattr(self, "total", total))
+        f.download(vasp_inputs=False)
+
+        assert opened == [0], (
+            "everything was already settled, so there was nothing to fetch")
+
+    def test_a_failure_is_still_printed(self, tmp_path, monkeypatch, capsys):
+        """
+        The per-material lines went; the failures did not.
+
+        Everything the loop used to print about a success -- grid, size,
+        seconds -- the manifest records for every entry, and reading it there
+        survives the run. A failure has to be seen while it happens, so it
+        goes through the bar's own ``write``, which prints above the bar
+        rather than into the line it is redrawing.
+        """
+        identifiers = ["mp-1", "mp-2"]
+        f = fetcher_with(identifiers, tmp_path, monkeypatch=monkeypatch)
+
+        def explode(identifier):
+            if identifier == "mp-2":
+                raise ValueError("no density in the bucket")
+            return FakeChgcar()
+
+        f._rester.get_charge_density_from_material_id = explode
+        manifest = f.download(vasp_inputs=False)
+
+        out = capsys.readouterr().out
+        assert "FAILED" in out and "mp-2" in out
+        assert "no density in the bucket" in out
+        # And the success is *not* a line of its own any more.
+        assert "mp-1: 2x2x2" not in out
+        assert [r["status"] for r in sorted(manifest,
+                                            key=lambda r: r["material_id"])] \
+            == ["downloaded", "failed"]

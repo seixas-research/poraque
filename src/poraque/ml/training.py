@@ -374,8 +374,12 @@ class FieldOperator:
         # superposition goes back on *here*, before the caller can apply
         # positivity or an electron-count normalization. Both of those are
         # statements about the absolute density and neither is true of a
-        # signed residual -- see DESIGN_PAW.md 3.3 for the order of operations
-        # and why this one and no other.
+        # signed residual. Clipping delta-rho at zero deletes the bonding
+        # charge, which is negative wherever charge moved away from the free
+        # atoms -- exactly the signal the mode exists to model; and rescaling
+        # it to an electron count divides by an integral that is approximately
+        # zero. Both alternatives return something that still looks like a
+        # density.
         baseline = self.baseline_for(field)
         if baseline is not None:
             # Channel 0 only: a spin-polarised prediction is (rho, m) and the

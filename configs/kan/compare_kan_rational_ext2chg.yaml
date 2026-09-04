@@ -25,12 +25,13 @@ model:
   mode_selection: fixed       # as in configs/train.yaml
   activation: kan             # the learnable family; kan_setup says which and how
   kan_setup:
-    variant: rational         # bspline | cheby | rbf | rational
+    variant: rational         # bspline | chebyshev | rbf | rational
     rational_num_degree: 4    # numerator power (the default)
     rational_den_degree: 4    # even denominator powers; x^8 outgrows x^4 (the default)
 
 training:
-  physics_informed_setup:
+  physics_informed:
+    enable: auto                # auto: on, because a weight below is non-zero
     electron_count_weight: 0.1  # int(rho) = the known valence count
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0

@@ -447,6 +447,72 @@ def _format_bytes(count):
     return f"{count / 1e3:.0f} kB"
 
 
+class _Progress:
+    """
+    One bar for the whole download, and a way to print past it.
+
+    **The bars this replaces were the client's, not this module's.**
+    ``MPRester`` draws a ``tqdm`` for every query it makes --- "Retrieving
+    MaterialsDoc documents", then "Retrieving CoreTaskDoc documents", then
+    another pair for the next batch --- so a run that resolves keys in a dozen
+    chunks drew two dozen bars, each of them measuring a query nobody is
+    waiting on individually. Beside them the loop printed one line per
+    material. What none of it showed was the only quantity a download has: how
+    many of the *files* are done. That is what this measures, and
+    :meth:`MPDataFetcher._connect` mutes the rest.
+
+    ``tqdm`` arrives with ``mp-api``, which is a hard dependency and imports it
+    unconditionally --- so anything that can reach this class can import it.
+    The fallback is here for the other case: a bar written to a Slurm output
+    file is a single line rewritten ten thousand times, and ``tqdm`` already
+    handles that by detecting that the stream is not a terminal and printing
+    at intervals instead. :meth:`write` is what keeps a failure visible
+    regardless: it goes *above* the bar and stays on the screen, which a
+    ``print`` into the same line would not.
+    """
+
+    def __init__(self, total, description, unit="file"):
+        self.total = int(total)
+        try:
+            from tqdm.auto import tqdm
+        except ImportError:                                     # pragma: no cover
+            self._bar = None
+            print(f"{description}: {self.total} {unit}(s)")
+        else:
+            self._bar = tqdm(total=self.total, desc=description, unit=unit,
+                             dynamic_ncols=True)
+
+    def advance(self, label=None, **postfix):
+        """One file finished, however it finished."""
+        if self._bar is None:                                   # pragma: no cover
+            return
+        if label is not None:
+            # `refresh=False`: the `update` below redraws once, and setting the
+            # postfix separately would draw the bar twice per file.
+            self._bar.set_postfix_str(label, refresh=False)
+        if postfix:
+            self._bar.set_postfix(postfix, refresh=False)
+        self._bar.update(1)
+
+    def write(self, message):
+        """Print a line that must survive the bar overwriting itself."""
+        if self._bar is None:                                   # pragma: no cover
+            print(message)
+        else:
+            self._bar.write(message)
+
+    def close(self):
+        if self._bar is not None:
+            self._bar.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exception):
+        self.close()
+        return False
+
+
 @dataclass
 class Estimate:
     """
@@ -763,11 +829,21 @@ class MPDataFetcher:
         return False
 
     def _connect(self):
-        """The live :class:`~mp_api.client.MPRester`, opened on first use."""
+        """
+        The live :class:`~mp_api.client.MPRester`, opened on first use.
+
+        ``mute_progress_bars=True`` is not cosmetic. The client draws a
+        ``tqdm`` per *query* --- one for the ``MaterialsDoc`` search, one for
+        the ``CoreTaskDoc`` search, and another pair for every id batch after
+        the first --- so resolving a few thousand materials scrolled two dozen
+        bars past, none of which measured anything a caller is waiting on.
+        This module keeps exactly one bar, over the files (:class:`_Progress`),
+        and the query stages announce themselves in a line each.
+        """
         if self._rester is None:
             from mp_api.client import MPRester
 
-            self._rester = MPRester(self._api_key)
+            self._rester = MPRester(self._api_key, mute_progress_bars=True)
         return self._rester
 
     def close(self):
@@ -1464,14 +1540,21 @@ class MPDataFetcher:
                     identifier, stored, inputs.get(identifier), row)
             self._write_manifest(manifest)
 
-        for position, document in enumerate(remaining, 1):
+        # One bar over the files, and nothing else. Everything the loop used to
+        # print per material -- the grid, the size, the seconds -- is a number
+        # the manifest already records for every entry, and reading it there is
+        # both easier and possible after the run. What still goes to the
+        # screen is what the manifest cannot make good: a failure.
+        bar = _Progress(len(remaining), f"Fetching {store}")
+        fetched_bytes = 0
+
+        for document in remaining:
             identifier = str(document.material_id)
-            label = (f"[{position}/{len(remaining)}] {identifier} "
-                     f"{document.formula_pretty} ({document.nsites} sites)")
+            label = (f"{identifier} {document.formula_pretty} "
+                     f"({document.nsites} sites)")
 
             found = self._existing(identifier) if skip_existing else None
             if found is not None:
-                print(f"{label}: already present, skipping")
                 row = self._manifest_row(identifier, document, found, "cached",
                                          provenance=provenance)
                 # The density is there; the deck may not be, if it was fetched
@@ -1482,6 +1565,7 @@ class MPDataFetcher:
                         identifier, found, inputs.get(identifier), row)
                 manifest.append(row)
                 self._write_manifest(manifest)
+                bar.advance(f"{identifier} cached")
                 continue
 
             path = (self._store_path(identifier) if hdf5
@@ -1490,12 +1574,13 @@ class MPDataFetcher:
             # about to be attempted, so a filtered-out or failed entry does not
             # leave an empty `mp-124/` behind for a later scan to puzzle over.
             path.parent.mkdir(parents=True, exist_ok=True)
-            clock = time.time()
             try:
                 chgcar, attempts = with_retries(
                     lambda: rester.get_charge_density_from_material_id(identifier),
                     attempts=self.retries, base_delay=self.retry_delay,
-                    label=f"{label}: ")
+                    # Through the bar, not past it: a bare `print` here writes
+                    # into the line the bar is redrawing and both are lost.
+                    label=f"  {label}: ", log=bar.write)
                 if chgcar is None:
                     raise ValueError("the API returned no charge density")
                 grid = self._store_density(chgcar, path, hdf5, compression,
@@ -1505,7 +1590,8 @@ class MPDataFetcher:
                 # partial file goes, the reason is recorded, the batch carries
                 # on -- and the manifest says `failed` rather than staying
                 # silent about a hole in the dataset.
-                print(f"{label}: FAILED - {type(error).__name__}: {error}")
+                bar.write(f"  FAILED {label}: "
+                          f"{type(error).__name__}: {error}")
                 path.unlink(missing_ok=True)
                 # An empty `mp-124/` left by a failure would be discovered as a
                 # material with no density; `rmdir` refuses a non-empty one, so
@@ -1516,12 +1602,9 @@ class MPDataFetcher:
                     identifier, document, None, "failed",
                     f"{type(error).__name__}: {error}", provenance=provenance))
                 self._write_manifest(manifest)
+                bar.advance(f"{identifier} failed")
                 continue
 
-            print(f"{label}: {'x'.join(str(n) for n in grid)}, "
-                  f"{path.stat().st_size / 1e6:.1f} MB "
-                  f"in {time.time() - clock:.1f}s"
-                  f"{f' ({attempts} attempts)' if attempts > 1 else ''}")
             row = self._manifest_row(identifier, document, path, "downloaded",
                                      grid=grid, attempts=attempts,
                                      provenance=provenance)
@@ -1531,7 +1614,10 @@ class MPDataFetcher:
                     structure=poscar_from_pymatgen(chgcar.structure))
             manifest.append(row)
             self._write_manifest(manifest)
+            fetched_bytes += path.stat().st_size
+            bar.advance(f"{identifier} {_format_bytes(fetched_bytes)}")
 
+        bar.close()
         succeeded = sum(1 for row in manifest if _is_settled(row))
         # `.get`, because a row read back from a manifest written by an older
         # version -- or a `failed` row that never had a file -- carries only

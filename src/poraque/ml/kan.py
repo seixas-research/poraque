@@ -25,7 +25,7 @@ happens to carry parameters. A stateless wrapper's ``state_dict()`` is empty,
 so this changes nothing about what a checkpoint using any of the four
 contains.
 
-**KAN-style, learnable** (``kan_bspline``, ``kan_cheby``, ``kan_rbf``,
+**KAN-style, learnable** (``kan_bspline``, ``kan_chebyshev``, ``kan_rbf``,
 ``kan_rational``) — a Kolmogorov-Arnold Network replaces a fixed nonlinearity
 with a *learned* univariate function. Implemented here at the coarsest
 granularity that still means something inside a spectral block:
@@ -43,7 +43,7 @@ and turn each :math:`1\times1\times1` pointwise map into a KAN layer outright
 
 Four bases are offered, differing only in what :math:`\phi_c` is built from:
 ``kan_bspline`` a B-spline on a fixed knot grid (the original KAN paper),
-``kan_cheby`` a Chebyshev-polynomial expansion, ``kan_rbf`` a sum of fixed
+``kan_chebyshev`` a Chebyshev-polynomial expansion, ``kan_rbf`` a sum of fixed
 Gaussian radial basis functions (the "FastKAN" simplification, Li 2024, which
 trades the Cox-de Boor recursion for a closed-form basis), and ``kan_rational``
 a learned rational (Padé-style) function of :math:`x` with a denominator
@@ -76,7 +76,7 @@ spline/Chebyshev/RBF/rational function. This is the more minimal reading of
 deliberately, noting it helps optimisation, and it is the default here for
 the same reason. Each residual was designed to sit *on top of* an unbounded
 base, not to be the sole nonlinearity, so switching it off changes more than
-removing one term: :class:`ChebyKANActivation` and
+removing one term: :class:`ChebyshevKANActivation` and
 :class:`BSplineKANActivation` become bounded for every input, and
 :class:`RBFKANActivation` and (with the default degrees)
 :class:`RationalKANActivation` decay to zero for a large
@@ -98,7 +98,7 @@ SIMPLE_ACTIVATIONS = {
 }
 
 #: The learnable, per-channel KAN variants.
-KAN_ACTIVATIONS = frozenset({"kan_bspline", "kan_cheby", "kan_rbf", "kan_rational"})
+KAN_ACTIVATIONS = frozenset({"kan_bspline", "kan_chebyshev", "kan_rbf", "kan_rational"})
 
 #: Every valid ``activation`` name, stateless and learnable together.
 ACTIVATIONS = frozenset(SIMPLE_ACTIVATIONS) | KAN_ACTIVATIONS
@@ -144,7 +144,7 @@ def _check_channels(x, channels, cls_name):
 # ---------------------------------------------------------------------- #
 # Chebyshev-polynomial KAN activation
 # ---------------------------------------------------------------------- #
-class ChebyKANActivation(nn.Module):
+class ChebyshevKANActivation(nn.Module):
     r"""
     Channel-wise learnable activation via a Chebyshev-polynomial residual.
 
@@ -214,7 +214,7 @@ class ChebyKANActivation(nn.Module):
         coeff = torch.randn(self.channels, self.degree + 1) * (
             _RESIDUAL_INIT_SCALE / (self.degree + 1) ** 0.5
         )
-        self.cheby_coeff = nn.Parameter(coeff)
+        self.chebyshev_coeff = nn.Parameter(coeff)
 
     def forward(self, x):
         """
@@ -230,11 +230,11 @@ class ChebyKANActivation(nn.Module):
         torch.Tensor
             Same shape as ``x``.
         """
-        _check_channels(x, self.channels, "ChebyKANActivation")
+        _check_channels(x, self.channels, "ChebyshevKANActivation")
         ndim = x.dim()
 
         x_bounded = torch.tanh(x)
-        coeff = self.cheby_coeff.to(dtype=x.dtype)                # (C, K+1)
+        coeff = self.chebyshev_coeff.to(dtype=x.dtype)                # (C, K+1)
 
         t_prev2 = torch.ones_like(x_bounded)                      # T_0
         residual = t_prev2 * _channel_view(coeff[:, 0], ndim, self.channels)
@@ -612,7 +612,7 @@ class RationalKANActivation(nn.Module):
     with ``use_base=True`` (the default) the residual decays on its own for
     a wide pre-activation tail, the same "never actually saturates" outcome
     :class:`BSplineKANActivation` reaches by clamping and
-    :class:`ChebyKANActivation` by a bounding ``tanh``; with
+    :class:`ChebyshevKANActivation` by a bounding ``tanh``; with
     ``use_base=False`` there is no base term to keep responding, so
     :math:`\phi_c` itself decays to zero for a wide tail instead.
 
@@ -688,7 +688,7 @@ class RationalKANActivation(nn.Module):
         ndim = x.dim()
 
         # Incremental powers of x, not a (..., degree) stack -- same memory
-        # discipline as ChebyKANActivation.
+        # discipline as ChebyshevKANActivation.
         num_coeff = self.num_coeff.to(dtype=x.dtype)               # (C, Kp+1)
         numerator = _channel_view(num_coeff[:, 0], ndim, self.channels)
         x_power = torch.ones_like(x)
@@ -732,7 +732,7 @@ def build_activation(name, channels, *, kan_grid_size=8, kan_spline_order=3,
     ----------
     name : str
         One of :data:`ACTIVATIONS`: ``'gelu'``, ``'relu'``, ``'silu'``,
-        ``'tanh'`` (stateless), or ``'kan_bspline'`` / ``'kan_cheby'`` /
+        ``'tanh'`` (stateless), or ``'kan_bspline'`` / ``'kan_chebyshev'`` /
         ``'kan_rbf'`` / ``'kan_rational'`` (per-channel learnable).
     channels : int
         Width of the block this activation sits in. Unused by the stateless
@@ -746,7 +746,7 @@ def build_activation(name, channels, *, kan_grid_size=8, kan_spline_order=3,
         Forwarded to :class:`BSplineKANActivation`; ignored for every other
         ``name``.
     kan_degree : int, optional
-        Forwarded to :class:`ChebyKANActivation`; ignored for every other
+        Forwarded to :class:`ChebyshevKANActivation`; ignored for every other
         ``name``.
     kan_rational_num_degree, kan_rational_den_degree : int, optional
         Forwarded to :class:`RationalKANActivation`; ignored for every other
@@ -769,9 +769,9 @@ def build_activation(name, channels, *, kan_grid_size=8, kan_spline_order=3,
                                     spline_order=kan_spline_order,
                                     grid_range=kan_grid_range,
                                     use_base=kan_use_base)
-    if name == "kan_cheby":
-        return ChebyKANActivation(channels, degree=kan_degree,
-                                  use_base=kan_use_base)
+    if name == "kan_chebyshev":
+        return ChebyshevKANActivation(channels, degree=kan_degree,
+                                      use_base=kan_use_base)
     if name == "kan_rbf":
         return RBFKANActivation(channels, grid_size=kan_grid_size,
                                 grid_range=kan_grid_range,
@@ -870,7 +870,7 @@ def symbolic_expression(activation, channel, decimals=4, simplify=False):
 
     Parameters
     ----------
-    activation : ChebyKANActivation, BSplineKANActivation, RBFKANActivation, or RationalKANActivation
+    activation : ChebyshevKANActivation, BSplineKANActivation, RBFKANActivation, or RationalKANActivation
         A trained (or freshly constructed) KAN activation module -- e.g.
         ``operator.model.blocks[layer].activation`` off a loaded
         :class:`~poraque.ml.training.FieldOperator`.
@@ -900,7 +900,7 @@ def symbolic_expression(activation, channel, decimals=4, simplify=False):
     Examples
     --------
     >>> import sympy
-    >>> activation = ChebyKANActivation(channels=1, degree=2)
+    >>> activation = ChebyshevKANActivation(channels=1, degree=2)
     >>> expr = symbolic_expression(activation, channel=0)
     >>> x = sympy.Symbol("x")
     >>> callable(sympy.lambdify(x, expr))
@@ -908,7 +908,7 @@ def symbolic_expression(activation, channel, decimals=4, simplify=False):
     """
     import sympy
 
-    if not isinstance(activation, (ChebyKANActivation, BSplineKANActivation,
+    if not isinstance(activation, (ChebyshevKANActivation, BSplineKANActivation,
                                    RBFKANActivation, RationalKANActivation)):
         raise TypeError(
             f"symbolic_expression has nothing to read out of "
@@ -935,11 +935,11 @@ def symbolic_expression(activation, channel, decimals=4, simplify=False):
                 * _silu_expr(x)
             if activation.use_base else sympy.Integer(0))
 
-    if isinstance(activation, ChebyKANActivation):
+    if isinstance(activation, ChebyshevKANActivation):
         x_bounded = sympy.tanh(x)
         residual = sympy.Integer(0)
         for k in range(activation.degree + 1):
-            c = sympy.Float(_round(activation.cheby_coeff[channel, k].item()))
+            c = sympy.Float(_round(activation.chebyshev_coeff[channel, k].item()))
             residual += c * sympy.chebyshevt(k, x_bounded)
 
     elif isinstance(activation, RBFKANActivation):

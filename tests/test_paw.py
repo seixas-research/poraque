@@ -23,7 +23,8 @@ reformatted. Anything weaker and a file that VASP refuses would still pass.
 signed residual and the operator hands back an absolute density. If the baseline
 were added back in the wrong place — after positivity, or after the
 electron-count rescale — the result would still look like a density and be
-wrong. See ``DESIGN_PAW.md`` §3.3 for why this order and no other.
+wrong. :class:`TestTheOrderOfOperationsAtInference` is where that order is
+held to its reasons.
 
 **The decks say what they have to say.** ``ICHARG = 11`` and an ``ENCUT`` that
 matches the density's own grid are the two tags that decide whether VASP reads
@@ -471,8 +472,8 @@ class TestTheOrderOfOperationsAtInference:
     r"""
     The baseline goes back **before** positivity and before normalization.
 
-    ``DESIGN_PAW.md`` §3.3. Both of the alternatives produce something that
-    still looks like a density:
+    Both of the alternatives produce something that still looks like a
+    density:
 
     - clipping :math:`\delta\rho` at zero deletes the bonding charge, which is
       negative wherever charge moved away from the free atoms — i.e. exactly

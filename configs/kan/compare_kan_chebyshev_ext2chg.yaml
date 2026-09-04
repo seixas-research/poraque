@@ -1,15 +1,14 @@
-# Controlled comparison: activation: kan, variant cheby, use_base: false.
+# Controlled comparison: activation: kan, variant chebyshev.
 # a Chebyshev-polynomial expansion -- typically cheaper and smoother.
 #
-# Against its base-carrying twin (compare_kan_cheby_ext2chg.yaml) and the
-# shipped silu model, ext2chg only. One setting differs -- see FUTURE.md's
-# "Run use_base: false" follow-up.
-#
-# Without the base term phi_c is BOUNDED for a wide pre-activation tail
-# rather than tracking it.
+# Against the shipped silu model (models/pt_w16_m8_l3), ext2chg only.
+# Identical to configs/train.yaml except `task.type` -- ext2chg isolates the
+# comparison and skips symbolic distillation, which is chg2tau-only anyway --
+# and the activation. Everything else is left at the same defaults train.yaml
+# itself relies on, so this is one protocol with exactly one thing changed.
 task:
   type: ext2chg               # the density operator alone
-  name: pt_w16_m8_l3_kancheby_purekan
+  name: pt_w16_m8_l3_kanchebyshev
 
 data:
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # as in configs/train.yaml
@@ -22,12 +21,12 @@ model:
   mode_selection: fixed       # as in configs/train.yaml
   activation: kan             # the learnable family; kan_setup says which and how
   kan_setup:
-    variant: cheby            # bspline | cheby | rbf | rational
-    use_base: false           # "pure" KAN: only the learned residual
+    variant: chebyshev            # bspline | chebyshev | rbf | rational
     degree: 6                 # highest Chebyshev order; degree+1 coefficients (the default)
 
 training:
-  physics_informed_setup:
+  physics_informed:
+    enable: auto                # auto: on, because a weight below is non-zero
     electron_count_weight: 0.1  # int(rho) = the known valence count
     positivity_weight: 0.0
     von_weizsacker_weight: 0.0
