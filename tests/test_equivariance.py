@@ -864,6 +864,102 @@ class TestTheBasisRadiusFollowsTheBandTheRunNamed:
         assert model.g_basis == DEFAULT_G_BASIS
 
 
+class TestGMaxDoesNotSizeTheBasisUnderFixedModeSelection:
+    """
+    A ``g_max`` left in a ``fixed`` config silently rebuilt the architecture.
+
+    ``FNO3d``'s docstring says ``g_max`` is *required by* ``mode_selection:
+    physical``, so a reader of a ``fixed`` config concludes the key is inert.
+    It was inert for truncation and not for the radial basis: the fallback
+    ``elif self.g_max is not None`` fired under either mode selection, so
+    ``g_max: 6`` beside ``mode_selection: fixed`` gave a basis of 6.0 rather
+    than the 8.0 default, and nothing in the log, the resolved config or the
+    run record said so.
+
+    LNCC found it after a 90-run architecture study had already been run
+    through it, on Santos Dumont, 2026-09-03. The measured accuracy cost was
+    within seed spread --- ``g_basis`` 6/8/12/16 all landed inside 5 % of each
+    other at ``modes`` 8, disagreeing in sign between seeds --- so this is a
+    usability defect and not an accuracy one. That is the reason it survived
+    twenty runs.
+
+    The coupling under ``physical`` is correct and stays: there
+    ``m_i = floor(g_max*L_i/2*pi)``, so the inscribed radius
+    ``min_i 2*pi*m_i/L_i`` is at most ``g_max`` and a basis spanning ``g_max``
+    spans the retained band by construction.
+    """
+
+    def test_a_leftover_g_max_no_longer_resizes_the_basis(self):
+        from poraque.ml.fno import DEFAULT_G_BASIS
+
+        with pytest.warns(RuntimeWarning, match="does not size the radial"):
+            model = FNO3d(width=8, modes=4, n_layers=2, use_coordinates=False,
+                          equivariant=True, mode_selection="fixed", g_max=6.0)
+        assert model.g_basis == DEFAULT_G_BASIS
+
+    def test_the_rule_lives_in_one_function_and_says_the_same_thing(self):
+        """
+        The counterfactual: the pre-fix rule read ``g_max`` in both modes.
+
+        ``default_g_basis`` exists so the constructor and ``poraque-train``'s
+        startup report cannot disagree about what was built --- a diagnostic
+        that describes a different architecture is the failure being fixed,
+        not a milder version of it.
+        """
+        from poraque.ml.fno import DEFAULT_G_BASIS, default_g_basis
+
+        assert default_g_basis(6.0, "physical") == 6.0
+        assert default_g_basis(6.0, "fixed") == DEFAULT_G_BASIS
+        assert default_g_basis(None, "physical") == DEFAULT_G_BASIS
+
+        model = FNO3d(width=8, modes=4, n_layers=2, use_coordinates=False,
+                      equivariant=True, mode_selection="physical", g_max=6.0)
+        assert model.g_basis == default_g_basis(6.0, "physical")
+
+    def test_it_is_silent_when_there_is_nothing_to_say(self):
+        """
+        The warning fires on the one configuration that changed behaviour.
+
+        A dense model has no radial basis to resize, and a ``physical`` run
+        keeps the coupling, so neither is told anything. Warning on either
+        would put a notice in front of every reader of a config the change
+        does not touch.
+        """
+        import warnings
+
+        for kwargs in (dict(equivariant=True, use_coordinates=False,
+                            mode_selection="physical", g_max=6.0),
+                       dict(equivariant=True, use_coordinates=False,
+                            mode_selection="fixed", g_max=6.0, g_basis=5.0),
+                       dict(mode_selection="fixed", g_max=6.0)):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", RuntimeWarning)
+                FNO3d(width=8, modes=4, n_layers=2, **kwargs)
+
+    def test_an_existing_checkpoint_is_unaffected(self):
+        """
+        ``state()`` records the resolved ``g_basis``, so a reload is a number.
+
+        Every model trained through the defect carries ``g_basis: 6.0`` in its
+        architecture record and reloads with 6.0 --- the change moves what a
+        *new* model is built with and nothing about an old one.
+        """
+        from poraque.ml.training import FieldOperator
+
+        # `g_basis=6.0` is what the defect resolved `g_max: 6` to under
+        # `fixed`; stating it is how a model trained through it is reproduced.
+        operator = FieldOperator(
+            "ext2chg", device="cpu", width=8, modes=4, n_layers=2,
+            projection_channels=16, use_coordinates=False, equivariant=True,
+            mode_selection="fixed", g_max=6.0, g_basis=6.0)
+        state = operator.state()
+        assert state["architecture"]["g_basis"] == 6.0
+
+        reloaded = FieldOperator.from_state(state, device="cpu")
+        assert reloaded.model.g_basis == 6.0
+        assert reloaded.model.g_max == 6.0
+
+
 class TestTheRadialBasisIsBuiltOncePerForwardPass:
     r"""
     Every layer in the stack rebuilt the same tensor, and it was not cheap.
@@ -987,3 +1083,312 @@ class TestTheRadialBasisIsBuiltOncePerForwardPass:
         assert first is second
         assert _mode_counts.cache_info().hits == 1
         assert torch.equal(first, torch.tensor([4.0, 4.0, 4.0]))
+
+
+class TestTheRetainedBandIsMeasuredRatherThanAssumed:
+    r"""
+    ``g_basis`` spans ``[0, g_basis]``; the band a material retains is its own.
+
+    The two are unrelated until somebody checks, and nothing checked. Over
+    LNCC's six-metal set the retained band edge ran 1.94 to 20.96 1/Ang at
+    ``modes`` 8 --- cell lengths spanning 2.29 to 25.87 Ang --- so no constant
+    fits it, and a run said nothing about which end of the spread it had
+    landed on.
+
+    Missing is not symmetric, which is the whole point of measuring:
+
+    * too **narrow** clamps the outer modes onto one basis function, and cost
+      nothing measurable --- 71.3 % of modes clamped moved the error less than
+      the seed spread did;
+    * too **wide** leaves radial functions at radii no mode reaches, which is
+      dead capacity in a layer whose capacity *is* the radial bank, and cost
+      14 % to 43 % where it was measured (a basis of 48 against a median band
+      edge of 31.2, orphaning six of sixteen functions).
+    """
+
+    @staticmethod
+    def _cubes(lengths, n=24):
+        cells = [torch.eye(3, dtype=torch.float64) * length
+                 for length in lengths]
+        return cells, [(n, n, n)] * len(lengths)
+
+    def test_the_band_edge_is_the_inscribed_radius(self):
+        r"""
+        The largest retained ``|G|`` sits just under ``min_i 2*pi*m_i/L_i``.
+
+        Which is the quantity the spherical cutoff is stated in, so a report
+        that disagreed with it would be describing a different retained set
+        from the one the layer masks to.
+        """
+        import numpy as np
+
+        cells, shapes = self._cubes([5.0, 9.0, 14.0])
+        report = fno.retained_band(cells, shapes, 6)
+        for length, edge in zip([5.0, 9.0, 14.0], report["edges"]):
+            inscribed = 2.0 * np.pi * 6 / length
+            assert edge < inscribed
+            assert edge > 0.85 * inscribed
+
+    def test_nothing_is_clamped_by_a_basis_wider_than_every_band(self):
+        cells, shapes = self._cubes([5.0, 9.0, 14.0])
+        report = fno.retained_band(cells, shapes, 6, g_basis=100.0)
+        assert report["clamped_fraction"] == 0.0
+        assert report["inside_samples"] == report["n_samples"] == 3
+        assert report["clamped_samples"] == 0
+
+    def test_the_clamped_fraction_rises_as_the_basis_narrows(self):
+        cells, shapes = self._cubes([5.0, 9.0, 14.0])
+        fractions = [fno.retained_band(cells, shapes, 6, g_basis=g)[
+            "clamped_fraction"] for g in (12.0, 6.0, 3.0, 1.0)]
+        assert fractions == sorted(fractions)
+        assert fractions[0] < fractions[-1]
+
+    def test_the_report_counts_the_modes_the_layer_actually_keeps(self):
+        """
+        The diagnostic and the kernel read one geometry, not two.
+
+        ``retained_radii`` was extracted from ``radial_basis`` rather than
+        reimplemented beside it: two copies would be two places for the report
+        to describe a retained set the operator does not use, which is the
+        class of defect the report exists to catch.
+        """
+        cell = torch.eye(3, dtype=torch.float64).unsqueeze(0) * 7.0
+        layer = RadialSpectralConv3d(1, 1, (5, 5, 5), n_radial=4,
+                                     g_basis=8.0, spherical_cutoff=True)
+        layer.double()
+        radius, kept = fno.retained_radii(cell, (5, 5, 5))
+        basis = layer.radial_basis(cell, (5, 5, 5), cell.device,
+                                   torch.float64)
+
+        # A masked mode contributes nothing through any basis function, and an
+        # unmasked one contributes through all of them.
+        assert torch.all(basis[:, :, ~kept[0]] == 0.0)
+        assert torch.all(basis[:, :, kept[0]] > 0.0)
+        assert int(kept.sum()) == fno.retained_band(
+            [cell[0]], [(24, 24, 24)], 5)["retained"][0]
+        assert radius.shape == kept.shape
+
+    def test_the_physical_branch_needs_the_cutoff_it_truncates_at(self):
+        cells, shapes = self._cubes([5.0])
+        with pytest.raises(ValueError, match="requires g_max"):
+            fno.retained_band(cells, shapes, 6, mode_selection="physical")
+        with pytest.raises(ValueError, match="Unknown mode_selection"):
+            fno.retained_band(cells, shapes, 6, mode_selection="physcial")
+
+    def test_a_physical_truncation_keeps_the_band_inside_g_max(self):
+        """
+        The one coupling that is sound: ``m_i = floor(g_max*L_i/2*pi)`` puts
+        the inscribed radius at or below ``g_max`` for every cell, which is why
+        ``g_basis`` may follow ``g_max`` there and nowhere else.
+        """
+        cells, shapes = self._cubes([4.0, 7.0, 11.0, 19.0], n=48)
+        report = fno.retained_band(cells, shapes, 24, mode_selection="physical",
+                                   g_max=9.0, g_basis=9.0)
+        assert report["edges"].max() <= 9.0
+        assert report["clamped_fraction"] == 0.0
+
+
+class TestTheBasisCanBeSizedFromTheTrainingSplit:
+    """
+    ``g_basis: auto`` takes the median band the training materials retain.
+
+    The median is what fits the measurements rather than what sounds tidy. Of
+    the configurations LNCC ran where basis and band could be compared, the
+    four that performed well had ``g_basis`` within a few percent of the median
+    band edge, and the one that performed badly --- 14 % worse at one
+    resolution, 43 % at another --- had a basis of 48 against a median edge of
+    31.2. Half the set is then clamped, and that is the deliberate half:
+    clamping is free and orphaning is not.
+    """
+
+    def test_it_returns_the_median_band_edge(self):
+        import numpy as np
+
+        cells = [torch.eye(3, dtype=torch.float64) * length
+                 for length in (4.0, 6.0, 9.0, 13.0, 21.0)]
+        shapes = [(24, 24, 24)] * 5
+        edges = fno.retained_band(cells, shapes, 6)["edges"]
+        assert fno.resolve_g_basis(cells, shapes, 6) == float(np.median(edges))
+
+    def test_an_empty_split_falls_back_rather_than_raising(self):
+        """
+        A diagnostic must not be the thing that stops a run.
+
+        There is no band to measure over no materials, and the dataset layer
+        has a far better error for that case a moment later.
+        """
+        assert fno.resolve_g_basis([], [], 6) == fno.DEFAULT_G_BASIS
+
+    def test_the_model_refuses_the_word_and_names_who_resolves_it(self):
+        """
+        ``auto`` never reaches the constructor: a checkpoint must record a
+        radius, and a constructor has seen no cells to derive one from.
+        """
+        with pytest.raises(ValueError, match="resolve_g_basis"):
+            FNO3d(width=8, modes=4, n_layers=2, use_coordinates=False,
+                  equivariant=True, g_basis="auto")
+
+    def test_the_config_accepts_auto_and_refuses_a_typo(self):
+        from poraque.ml.config import TrainingConfig
+
+        def model(**equivariant):
+            return TrainingConfig.from_dict({"model": {
+                "use_coordinates": False,
+                "equivariant": {"enable": True, **equivariant}}}).model
+
+        assert model(g_basis="auto").equivariant_kwargs()["g_basis"] == "auto"
+        assert model(g_basis=12.5).equivariant_kwargs()["g_basis"] == 12.5
+        assert "g_basis" not in model().equivariant_kwargs()
+        for wrong in ("atuo", -3.0, 0.0, True, "8.0"):
+            with pytest.raises(ValueError, match="g_basis"):
+                model(g_basis=wrong).equivariant_kwargs()
+
+
+class TestTheRunSaysWhatBandItRetains:
+    """
+    The clamped fraction goes in the log, on run 1 rather than run 20.
+
+    LNCC's 90-run study trained every equivariant arm with a 6.0 basis instead
+    of the 8.0 default, 71.3 % of its retained modes beyond that basis, and
+    found out by reading the source. One line at startup --- what the basis
+    spans, what the data retains, how much of the data falls outside it ---
+    would have said so immediately, and it is cheap: the geometry is the cells
+    and grids the dataset already holds.
+
+    The reporter reads ``g_basis`` off the **model**, not the config: it is
+    resolved in three places (stated, ``auto``, defaulted) and only the built
+    model knows which one applied.
+    """
+
+    @staticmethod
+    def _train_script():
+        import importlib.util
+        import os
+        import sys
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(root, "scripts", "poraque_train.py")
+        spec = importlib.util.spec_from_file_location("_poraque_train_band",
+                                                      path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_poraque_train_band"] = module
+        spec.loader.exec_module(module)
+        return module
+
+    class _Dataset:
+        """Only the cells and the grid shape are read out of a sample."""
+
+        def __init__(self, lengths, n=24):
+            self.lengths, self.n = list(lengths), n
+
+        def __len__(self):
+            return len(self.lengths)
+
+        def __getitem__(self, index):
+            return {"cell": torch.eye(3) * self.lengths[index],
+                    "input": torch.zeros(1, self.n, self.n, self.n)}
+
+    @staticmethod
+    def _config(**equivariant):
+        from poraque.ml.config import TrainingConfig
+
+        return TrainingConfig.from_dict({"model": {
+            "modes": 6, "use_coordinates": False,
+            "equivariant": {"enable": True, "n_radial": 16, **equivariant}}})
+
+    def test_auto_becomes_a_number_before_the_model_is_built(self):
+        script = self._train_script()
+        data = self._Dataset([4.0, 7.0, 12.0, 20.0])
+        lines = []
+
+        resolved = script.resolve_radial_basis(
+            data, self._config(g_basis="auto"), lines.append)
+
+        expected = fno.resolve_g_basis(
+            [torch.eye(3) * length for length in data.lengths],
+            [(24, 24, 24)] * 4, 6)
+        assert resolved == {"g_basis": pytest.approx(expected)}
+        assert any("g_basis: auto ->" in line for line in lines)
+
+    def test_a_stated_basis_is_left_alone(self):
+        script = self._train_script()
+        data = self._Dataset([4.0, 7.0])
+        assert script.resolve_radial_basis(
+            data, self._config(g_basis=9.0), lambda line: None) == {}
+        assert script.resolve_radial_basis(
+            data, self._config(), lambda line: None) == {}
+
+    def test_a_dense_run_is_told_nothing(self):
+        """
+        The report is about a layer a dense backbone does not have, and the
+        gate is the *model* rather than the config --- ``build_operator`` may
+        be handed a pre-trained operator whose architecture came off disk.
+        """
+        from poraque.ml.config import TrainingConfig
+
+        script = self._train_script()
+        data = self._Dataset([4.0, 7.0])
+        config = TrainingConfig.from_dict({"model": {"modes": 6}})
+        lines = []
+        script.report_radial_basis(
+            data, FNO3d(width=8, modes=6, n_layers=1), lines.append)
+        assert lines == []
+        assert script.resolve_radial_basis(data, config, lines.append) == {}
+        assert lines == []
+
+    def test_it_names_the_clamped_fraction_and_the_band(self):
+        script = self._train_script()
+        data = self._Dataset([4.0, 7.0, 12.0, 20.0])
+        model = FNO3d(width=8, modes=6, n_layers=1, use_coordinates=False,
+                      equivariant=True, n_radial=16, g_basis=4.0)
+        lines = []
+        script.report_radial_basis(data, model, lines.append)
+        text = "\n".join(lines)
+        assert "radial basis: 16 functions over |G| < 4 1/Ang" in text
+        assert "retained band:" in text
+        assert "% of retained modes" in text
+        # A 4 1/Ang basis is narrower than the 4 Ang cell's band, so something
+        # is clamped -- the free direction, and no NOTE.
+        assert "NOTE" not in text
+
+    def test_only_the_expensive_direction_earns_a_note(self):
+        """
+        Clamping cost nothing measurable; orphaned basis functions cost 14 % to
+        43 %. A warning on the free direction would be noise on the setting
+        ``auto`` deliberately chooses.
+        """
+        script = self._train_script()
+        data = self._Dataset([4.0, 5.0, 6.0])
+        wide = FNO3d(width=8, modes=6, n_layers=1, use_coordinates=False,
+                     equivariant=True, n_radial=16, g_basis=40.0)
+        lines = []
+        script.report_radial_basis(data, wide, lines.append)
+        text = "\n".join(lines)
+        assert "NOTE" in text
+        assert "radial functions sit where no mode exists" in text
+
+        narrow = FNO3d(width=8, modes=6, n_layers=1, use_coordinates=False,
+                       equivariant=True, n_radial=16, g_basis=1.0)
+        lines = []
+        script.report_radial_basis(data, narrow, lines.append)
+        assert "NOTE" not in "\n".join(lines)
+
+    def test_the_geometry_is_read_once_however_many_reporters_ask(self):
+        """
+        Three reporters want the same cells, and without ``cache_in_memory``
+        each pass is a full decode of every field.
+        """
+        script = self._train_script()
+
+        class _Counting(self._Dataset):
+            reads = 0
+
+            def __getitem__(self, index):
+                type(self).reads += 1
+                return super().__getitem__(index)
+
+        data = _Counting([4.0, 7.0, 12.0])
+        script.training_geometry(data)
+        script.training_geometry(data)
+        script.training_geometry(data)
+        assert _Counting.reads == 3

@@ -58,6 +58,7 @@ and FiLM conditioning (:class:`CellEncoder`), so the operator can distinguish a
 dense small cell from a sparse large one.
 """
 
+import warnings
 from functools import lru_cache
 
 import numpy as np
@@ -418,8 +419,9 @@ class SpectralConv3d(nn.Module):
 #: Radius in Å⁻¹ that the radial basis spans when nothing else fixes one.
 #:
 #: A run with ``mode_selection="physical"`` has already named the band it cares
-#: about, and ``g_basis`` defaults to that ``g_max``; this value is reached only
-#: by a ``"fixed"`` run, where no physical cutoff has been stated at all. 8 Å⁻¹
+#: about, and ``g_basis`` defaults to that ``g_max``; this value is reached by
+#: every ``"fixed"`` run, **including one that states a** ``g_max``, since that
+#: key truncates nothing there and has no business resizing the basis. 8 Å⁻¹
 #: is :math:`|\mathbf{G}|` at mode 8 in a 6.3 Å cell, which covers this
 #: project's own platinum cells (7–8 Å at ``modes=8``) with the outermost node
 #: just past the corner of the retained box. It is a *scale*, not a cutoff:
@@ -463,6 +465,36 @@ DEFAULT_G_BASIS = 8.0
 #: unchanged to every digit printed: the slack removes the tie shell and
 #: touches nothing else.
 CUTOFF_SLACK = 1e-5
+
+
+def default_g_basis(g_max=None, mode_selection="fixed"):
+    r"""
+    The radial-basis radius a run gets when it states none.
+
+    One function rather than a rule written twice: :class:`FNO3d` applies it,
+    and ``poraque-train`` reports the band against it before the model exists.
+    Two copies would be two places for the diagnostic to describe an
+    architecture other than the one built --- which is the exact class of
+    defect it was added to surface.
+
+    Parameters
+    ----------
+    g_max : float or None
+        ``model.g_max``.
+    mode_selection : str
+        ``"fixed"`` or ``"physical"``.
+
+    Returns
+    -------
+    float
+        ``g_max`` under ``"physical"``, where the retained support is
+        :math:`\min_i 2\pi m_i/L_i` with :math:`m_i = \lfloor g_{\max}
+        L_i/2\pi \rfloor` and therefore fits inside ``g_max`` by
+        construction; :data:`DEFAULT_G_BASIS` otherwise.
+    """
+    if g_max is not None and mode_selection == "physical":
+        return float(g_max)
+    return float(DEFAULT_G_BASIS)
 
 
 @lru_cache(maxsize=64)
@@ -527,6 +559,81 @@ def _mode_counts(modes, device, dtype):
     return torch.tensor([float(m) for m in modes], device=device, dtype=dtype)
 
 
+def retained_radii(cell, modes, device=None, dtype=None):
+    r"""
+    :math:`|\mathbf{G}|` of every mode a spectral layer retains, and which of
+    them survive the spherical cutoff.
+
+    Written once and called twice: by
+    :meth:`RadialSpectralConv3d.radial_basis`, which turns the radius into a
+    kernel, and by :func:`retained_band`, which reports what band a dataset
+    asks for so ``g_basis`` can be sized against it. Two copies of this
+    geometry would be two places for the diagnostic to stop describing the
+    operator --- which is the whole failure the diagnostic exists to catch.
+
+    Parameters
+    ----------
+    cell : torch.Tensor or array_like
+        ``(B, 3, 3)`` lattice vectors in Å; a bare ``(3, 3)`` is read as one
+        sample.
+    modes : tuple of int
+        ``(m1, m2, m3)`` actually retained on this grid --- the output of
+        :func:`effective_modes`, not the raw capacity.
+    device : torch.device, optional
+        Defaults to the cell's.
+    dtype : torch.dtype, optional
+        Real dtype to compute in. Defaults to the cell's.
+
+    Returns
+    -------
+    radius : torch.Tensor
+        ``(B, 2m1, 2m2, m3)``, in Å⁻¹.
+    kept : torch.Tensor
+        ``(B, 2m1, 2m2, m3)`` boolean: inside the largest sphere inscribed in
+        the retained box.
+    """
+    # Local, like `CellEncoder.descriptors`: `ml.physics` imports the
+    # transforms, so a module-level import here closes a cycle.
+    from .physics import cell_reciprocal
+
+    cell = torch.as_tensor(cell)
+    if cell.dim() == 2:
+        cell = cell.unsqueeze(0)
+    device = cell.device if device is None else torch.device(device)
+    dtype = cell.dtype if dtype is None else dtype
+    modes = tuple(int(m) for m in modes)
+
+    frequencies = _mode_frequencies(modes, device, dtype)
+    reciprocal = cell_reciprocal(cell, device=device, dtype=dtype)
+    # G_alpha = sum_j n_j b_{j alpha}; the same contraction
+    # `reciprocal_vectors` performs, over the mode block rather than the whole
+    # grid.
+    vectors = torch.einsum("bja,jxyz->baxyz", reciprocal, frequencies)
+    radius = torch.linalg.vector_norm(vectors, dim=1)   # (B, 2m1, 2m2, m3)
+
+    # The plane n_i = m_i lies at 2*pi*m_i / |a_i| from the origin, so the
+    # largest sphere inside the retained parallelepiped has that radius,
+    # minimised over the three axes. Cell lengths are all it takes, for any
+    # cell -- no inverse, no per-mode geometry.
+    lengths = torch.linalg.vector_norm(cell.to(device=device, dtype=dtype),
+                                       dim=-1)                    # (B, 3)
+    counts = _mode_counts(modes, lengths.device, lengths.dtype)
+    inscribed = (2.0 * np.pi * counts / lengths).amin(dim=-1)
+    # Strictly inside, not on the sphere, and the strictness is what makes the
+    # retained set symmetric. `rfftn` gives axis i the frequencies [0, m_i) and
+    # [-m_i, 0): the mode -m_i is kept and +m_i is not, so the box is lopsided
+    # by exactly one face per axis. |G| < 2*pi*m_i/|a_i| forces |n_i| < m_i on
+    # every axis at once, which excludes that face -- and the remaining ball is
+    # then both rotation-invariant and closed under inversion, without which
+    # the equivariance is good to 2e-3 rather than to the float.
+    #
+    # `CUTOFF_SLACK` is what makes that exclusion survive round-off: the shell
+    # modes are exactly *on* the boundary, and the two sides of the comparison
+    # are computed by different routes. See the constant.
+    inscribed = inscribed * (1.0 - CUTOFF_SLACK)
+    return radius, radius < inscribed.view(-1, 1, 1, 1)
+
+
 class RadialSpectralConv3d(nn.Module):
     r"""
     Spectral convolution whose kernel depends on :math:`|\mathbf{G}|` alone.
@@ -582,9 +689,13 @@ class RadialSpectralConv3d(nn.Module):
     n_radial : int
         Number of radial basis functions. Sets the resolution of the kernel in
         :math:`|\mathbf{G}|`, and is the layer's entire angular-to-radial
-        trade: it replaces :math:`m_1m_2m_3` per channel pair.
+        trade: it replaces :math:`m_1m_2m_3` per channel pair. Also its entire
+        overfitting surface --- see :class:`FNO3d` on why raising it first is
+        the wrong reflex on a small set.
     g_basis : float
-        Radius in Å⁻¹ that the basis spans; see :data:`DEFAULT_G_BASIS`.
+        Radius in Å⁻¹ that the basis spans; see :data:`DEFAULT_G_BASIS` for the
+        constant and :func:`resolve_g_basis` for reading it off the data, which
+        is what a set of mixed cell sizes needs.
     spherical_cutoff : bool
         Discard retained modes outside the largest sphere inscribed in the
         retained box. **A radial multiplier is only half of equivariance**: the
@@ -669,53 +780,22 @@ class RadialSpectralConv3d(nn.Module):
         torch.Tensor
             ``(B, R, 2m1, 2m2, m3)`` real basis values.
         """
-        # Local, like `CellEncoder.descriptors`: `ml.physics` imports the
-        # transforms, so a module-level import here closes a cycle.
-        from .physics import cell_reciprocal
-
-        frequencies = _mode_frequencies(tuple(int(m) for m in modes),
-                                        torch.device(device), dtype)
-        reciprocal = cell_reciprocal(cell, device=device, dtype=dtype)
-        # G_alpha = sum_j n_j b_{j alpha}; the same contraction
-        # `reciprocal_vectors` performs, over the mode block rather than the
-        # whole grid.
-        vectors = torch.einsum("bja,jxyz->baxyz", reciprocal, frequencies)
-        radius = torch.linalg.vector_norm(vectors, dim=1)   # (B, 2m1, 2m2, m3)
+        radius, kept = retained_radii(cell, modes, device=device, dtype=dtype)
 
         # Clamped rather than extrapolated: beyond `g_basis` every mode shares
         # the outermost basis function, so the response goes flat. Letting the
         # Gaussians decay instead would silently zero the high modes of any
-        # cell larger than the basis was sized for.
+        # cell larger than the basis was sized for. Free in the measurements
+        # LNCC ran -- 71 % of modes clamped cost nothing -- while a `g_basis`
+        # wider than the retained band leaves basis functions where no mode
+        # exists and costs 14-43 %. See :func:`resolve_g_basis`.
         reduced = (radius / self.g_basis).clamp(max=1.0).unsqueeze(1)
         centres = self.centres.to(dtype).view(1, -1, 1, 1, 1)
         basis = torch.exp(
             -((reduced - centres) * self.inverse_width.to(dtype)) ** 2)
 
         if self.spherical_cutoff:
-            # The plane n_i = m_i lies at 2*pi*m_i / |a_i| from the origin, so
-            # the largest sphere inside the retained parallelepiped has that
-            # radius, minimised over the three axes. Cell lengths are all it
-            # takes, for any cell -- no inverse, no per-mode geometry.
-            lengths = torch.linalg.vector_norm(cell, dim=-1)         # (B, 3)
-            counts = _mode_counts(tuple(int(m) for m in modes),
-                                  lengths.device, lengths.dtype)
-            inscribed = (2.0 * np.pi * counts / lengths).amin(dim=-1)
-            # Strictly inside, not on the sphere, and the strictness is what
-            # makes the retained set symmetric. `rfftn` gives axis i the
-            # frequencies [0, m_i) and [-m_i, 0): the mode -m_i is kept and
-            # +m_i is not, so the box is lopsided by exactly one face per axis.
-            # |G| < 2*pi*m_i/|a_i| forces |n_i| < m_i on every axis at once,
-            # which excludes that face -- and the remaining ball is then both
-            # rotation-invariant and closed under inversion, without which the
-            # equivariance is good to 2e-3 rather than to the float.
-            #
-            # `CUTOFF_SLACK` is what makes that exclusion survive round-off:
-            # the shell modes are exactly *on* the boundary, and the two sides
-            # of the comparison are computed by different routes. See the
-            # constant.
-            inscribed = inscribed * (1.0 - CUTOFF_SLACK)
-            basis = basis * (radius < inscribed.view(-1, 1, 1, 1)
-                             ).unsqueeze(1).to(basis.dtype)
+            basis = basis * kept.unsqueeze(1).to(basis.dtype)
         return basis
 
     def forward(self, x, cell, max_modes=None, basis=None):
@@ -817,6 +897,143 @@ class RadialSpectralConv3d(nn.Module):
                 f"out_channels={self.out_channels}, modes={self.modes}, "
                 f"n_radial={self.n_radial}, g_basis={self.g_basis}, "
                 f"spherical_cutoff={self.spherical_cutoff}")
+
+
+# ---------------------------------------------------------------------- #
+# Sizing the radial basis against the data
+# ---------------------------------------------------------------------- #
+def retained_band(cells, shapes, modes, mode_selection="fixed", g_max=None,
+                  spherical_cutoff=True, g_basis=None):
+    r"""
+    What band of :math:`|\mathbf{G}|` an operator retains over a set of samples.
+
+    The radial basis spans ``[0, g_basis]`` while the *retained* band is a
+    property of each material's own cell, and the two are unrelated until
+    somebody checks. Over the 92 training materials of LNCC's six-metal set the
+    retained band edge ran from 1.94 to 20.96 Å⁻¹ at ``modes=8`` --- cell
+    lengths span 2.29 to 25.87 Å --- so no single constant fits the spread, and
+    the run said nothing about which end of it a config had landed on.
+
+    The two ways to miss are **not** symmetric, which is the finding this
+    function exists to make visible:
+
+    * **Too narrow.** Modes beyond ``g_basis`` are clamped onto the outermost
+      basis function and share one response. Measured cost: none. 71.3 % of
+      modes clamped moved the validation error by less than the seed spread.
+    * **Too wide.** Basis functions sit at radii no mode reaches, and are dead
+      capacity in a layer whose capacity *is* the radial bank. Measured cost:
+      14 % to 43 %, with six of sixteen functions orphaned.
+
+    Parameters
+    ----------
+    cells : sequence of array_like
+        One ``(3, 3)`` cell per sample, in Å.
+    shapes : sequence of tuple of int
+        The matching grid shapes.
+    modes : int or tuple of int
+        Mode capacity, as :class:`FNO3d` takes it.
+    mode_selection : str, optional
+        ``"fixed"`` or ``"physical"``; the latter needs ``g_max``.
+    g_max : float, optional
+        Physical cutoff in Å⁻¹.
+    spherical_cutoff : bool, optional
+        Count only the modes inside the inscribed sphere, which is what an
+        equivariant layer keeps.
+    g_basis : float, optional
+        When given, the clamped fractions are measured against it.
+
+    Returns
+    -------
+    dict
+        ``edges`` (per-sample band edge, Å⁻¹), ``retained`` (per-sample mode
+        counts), ``n_samples``, and --- when ``g_basis`` was given ---
+        ``clamped_fraction`` over all retained modes, ``clamped_samples``
+        (materials with any mode beyond the basis) and ``inside_samples``
+        (materials wholly within it).
+    """
+    if isinstance(modes, int):
+        modes = (modes, modes, modes)
+    modes = tuple(int(m) for m in modes)
+    if mode_selection not in ("fixed", "physical"):
+        raise ValueError(f"Unknown mode_selection: {mode_selection!r}.")
+    if mode_selection == "physical" and g_max is None:
+        raise ValueError("mode_selection='physical' requires g_max (1/Ang).")
+
+    edges, retained, beyond = [], [], []
+    for cell, shape in zip(cells, shapes):
+        # float64 throughout: this is a measurement of the geometry, and the
+        # cutoff comparison is the one place in this file where the last bits
+        # decide a discrete outcome (see CUTOFF_SLACK).
+        cell = torch.as_tensor(np.asarray(cell, dtype=float)).reshape(1, 3, 3)
+        max_modes = None
+        if mode_selection == "physical":
+            lengths = torch.linalg.vector_norm(cell[0], dim=-1)
+            max_modes = tuple(
+                max(1, int(np.floor(float(g_max) * float(length)
+                                    / (2.0 * np.pi))))
+                for length in lengths)
+        block = effective_modes(modes, tuple(int(n) for n in shape), max_modes)
+        radius, kept = retained_radii(cell, block, dtype=torch.float64)
+        radius = radius[kept] if spherical_cutoff else radius.reshape(-1)
+
+        retained.append(int(radius.numel()))
+        edges.append(float(radius.max()) if radius.numel() else 0.0)
+        if g_basis is not None:
+            beyond.append(int((radius > float(g_basis)).sum()))
+
+    report = {"n_samples": len(edges),
+              "edges": np.asarray(edges, dtype=float),
+              "retained": np.asarray(retained, dtype=int)}
+    if g_basis is None or not edges:
+        return report
+
+    beyond = np.asarray(beyond, dtype=int)
+    total = int(report["retained"].sum())
+    report["clamped_fraction"] = float(beyond.sum()) / total if total else 0.0
+    report["clamped_samples"] = int((beyond > 0).sum())
+    report["inside_samples"] = int((beyond == 0).sum())
+    return report
+
+
+def resolve_g_basis(cells, shapes, modes, **kwargs):
+    r"""
+    Size the radial basis from the data: the **median** retained band edge.
+
+    ``g_basis: auto`` resolves through here, before the model is built, so the
+    number a checkpoint records is a number and not a word.
+
+    The median is what fits the measurements rather than what sounds tidy. Of
+    the seven configurations LNCC ran where the basis and the band could be
+    compared, the four that performed well had ``g_basis`` within a few percent
+    of the median band edge (24 against 22.8, 32 against 30.0, 32 against 31.2,
+    and at ``modes=16`` a basis of 20 beating one of 6 in both seeds), and the
+    one that performed badly --- 14 % worse at one resolution and 43 % at
+    another --- had a basis of 48 against a median edge of 31.2, which left six
+    of its sixteen radial functions at radii no mode reaches.
+
+    Half the set is then clamped, and that is the deliberate half: clamping is
+    free and orphaning is not (see :func:`retained_band`). The maximum would
+    orphan nothing on the largest cell and everything on the smallest.
+
+    Parameters
+    ----------
+    cells, shapes, modes
+        As :func:`retained_band`.
+    **kwargs
+        ``mode_selection``, ``g_max``, ``spherical_cutoff``; forwarded.
+
+    Returns
+    -------
+    float
+        Å⁻¹. Falls back to :data:`DEFAULT_G_BASIS` for an empty set, or for one
+        whose band edges are all zero --- neither is a dataset this can be
+        asked about, and raising would stop a run over a diagnostic.
+    """
+    report = retained_band(cells, shapes, modes, g_basis=None, **kwargs)
+    edges = report["edges"]
+    if not edges.size or not float(np.median(edges)) > 0.0:
+        return float(DEFAULT_G_BASIS)
+    return float(np.median(edges))
 
 
 # ---------------------------------------------------------------------- #
@@ -1069,12 +1286,27 @@ class FNO3d(nn.Module):
         Off by default, so every existing config and checkpoint is unaffected.
     n_radial : int, optional
         Radial basis size of the equivariant layers; ignored otherwise. This is
-        the whole capacity of a kernel that has no angular freedom left, so it
-        is the knob to raise before ``modes``.
+        the whole capacity of a kernel with no angular freedom left --- and
+        ``modes`` adds none of it, the coefficient count being independent of
+        the retained band.
+
+        Which does not make it the knob to raise *first*, though this docstring
+        said so until 2026-09-04. On 92 training materials the error rose
+        monotonically with ``n_radial`` across 8, 16, 32 and 64, while raising
+        ``modes`` from 4 to 16 improved it 2.7× at *identical* parameter count
+        for 36 % more time per epoch. On a small training set the radial bank
+        is where the excess capacity accumulates and the bandwidth is free.
+        Expect the ordering to invert as the set grows; that is untested.
     g_basis : float, optional
         Radius in Å⁻¹ the radial basis spans; ignored otherwise. Defaults to
-        ``g_max`` when ``mode_selection="physical"`` has already named a band,
-        and to :data:`DEFAULT_G_BASIS` when nothing has.
+        ``g_max`` under ``mode_selection="physical"``, where the retained band
+        provably fits inside it, and to :data:`DEFAULT_G_BASIS` otherwise ---
+        including under ``"fixed"`` with a ``g_max`` stated, where that key
+        truncates nothing and must not resize the basis either.
+
+        Prefer :func:`resolve_g_basis` over a hand-picked constant: the useful
+        value tracks the band the modes actually retain, which varies by an
+        order of magnitude across a set of mixed cell sizes.
     spherical_cutoff : bool, optional
         Mask the retained modes to the sphere inscribed in the retained box.
         On by default, and it is not decoration: a radial multiplier over a
@@ -1170,12 +1402,42 @@ class FNO3d(nn.Module):
         # the bare default. Resolving it here rather than at forward time is
         # what puts the number in the architecture record, where a reader can
         # see which of the two a model was trained with.
+        #
+        # `mode_selection` is part of that condition, and it was not until
+        # 2026-09-04. Under "physical" the coupling is sound: the retained
+        # support is `min_i 2*pi*m_i/L_i` with `m_i = floor(g_max*L_i/2*pi)`,
+        # which is <= g_max by construction, so a basis spanning g_max spans
+        # the band. Under "fixed" g_max truncates nothing -- the docstring says
+        # so, and a reader concludes the key is inert -- and it was silently
+        # resizing the basis anyway. LNCC ran an entire 90-run architecture
+        # study through a leftover `g_max: 6`, so every equivariant model in it
+        # was built with a 6.0 basis rather than the 8.0 default, with nothing
+        # in the log, the resolved config or the run record saying so.
+        if isinstance(g_basis, str):
+            # "auto" is resolved from the training split before the model is
+            # built (`resolve_g_basis`), because the band a sample retains
+            # depends on its cell and a constructor has seen no samples.
+            raise ValueError(
+                f"g_basis={g_basis!r} is not a number. `g_basis: auto` is "
+                f"resolved from the training split by "
+                f"`poraque.ml.fno.resolve_g_basis` before the model is built, "
+                f"so that the number reaching the architecture record is a "
+                f"number: the band a sample retains depends on its cell, and "
+                f"a constructor has seen no cells.")
         if g_basis is not None:
             self.g_basis = float(g_basis)
-        elif self.g_max is not None:
-            self.g_basis = float(self.g_max)
         else:
-            self.g_basis = float(DEFAULT_G_BASIS)
+            self.g_basis = default_g_basis(self.g_max, self.mode_selection)
+            if self.equivariant and self.g_max is not None \
+                    and self.mode_selection != "physical":
+                warnings.warn(
+                    f"model.g_max = {self.g_max:g} does not size the radial "
+                    f"basis under mode_selection: {self.mode_selection!r}, "
+                    f"where it truncates nothing either. g_basis is "
+                    f"{self.g_basis:g} 1/Ang, the default. State "
+                    f"model.equivariant.g_basis to choose one, or 'auto' to "
+                    f"size it from the training split.",
+                    RuntimeWarning, stacklevel=2)
         # KAN hyperparameters. Recorded unconditionally, the same way g_max is
         # recorded even under mode_selection="fixed": harmless when unused,
         # and it means a checkpoint's architecture record has one shape

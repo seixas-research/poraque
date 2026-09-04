@@ -433,7 +433,7 @@ in its first lines.
   which, with the compute capability, because a request that quietly fell back
   to the CPU is the most expensive silent failure this package has.
 - **Rotational equivariance is available, and it is a constraint on the kernel
-  rather than a library.** `model.equivariant: true` makes every Fourier
+  rather than a library.** `model.equivariant.enable: true` makes every Fourier
   multiplier a function of |**G**| alone, which is exactly a convolution with a
   radial kernel and therefore commutes with every rotation: measured over the
   24 rotations of the cube, the prediction follows the input field to 2.9e-07
@@ -454,6 +454,15 @@ in its first lines.
   buys the accuracy is the symmetry, not the capacity. One seed, one dataset,
   neither equivariant arm converged at 400 epochs; a reason to try the flag,
   not yet a number to quote.
+
+  It also inverts what the knobs mean. `modes` costs **zero** parameters here —
+  the coefficient count is `width²·n_radial` whatever band is retained — so it
+  is bandwidth paid only in arithmetic, and raising it from 4 to 16 bought 2.7×
+  at identical parameter count while raising `n_radial` made things
+  monotonically worse. What does need sizing is the radius the basis spans:
+  `equivariant.g_basis: auto` reads it off the training split, because a basis
+  narrower than the band costs nothing measurable and one wider than it wastes
+  the layer's only capacity.
 
 - **It is still a grid-based operator learner, not an equivariant
   message-passing network**, which settles a question people ask: NVIDIA's

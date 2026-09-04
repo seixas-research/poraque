@@ -402,13 +402,47 @@ Key & Default & Meaning \\
 one. \\
 \opt{n\_radial} & \opt{16} & Radial basis functions --- the whole capacity of
 the kernel. \\
-\opt{g\_basis} & \opt{null} & Radius in \AA$^{-1}$ the basis spans;
-\opt{null} takes \opt{g\_max}, else $8.0$. \\
+\opt{g\_basis} & \opt{null} & Radius in \AA$^{-1}$ the basis spans:
+\opt{auto}, a number, or \opt{null}. \\
 \opt{spherical\_cutoff} & \opt{true} & Mask the retained modes to the
 inscribed sphere. \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\subsubsection*{\opt{g\_basis: auto} --- size the basis from the data}
+
+The basis spans $[0, g_{\mathrm{basis}}]$; the band a \emph{material} retains
+is $\min_i 2\pi m_i / L_i$, a property of its own cell. Over 115 Materials
+Project cells those ran from $1.94$ to $20.96$~\AA$^{-1}$, so no constant is
+right for all of them --- and the two ways to miss cost very differently.
+
+\begin{center}
+\begin{tabular}{@{}lp{5.1cm}p{4.0cm}@{}}
+\toprule
+Missing & What happens & Measured cost \\
+\midrule
+too \textbf{narrow} & Modes beyond the basis are clamped onto its outermost
+function and share one response. & None: 71\,\% of modes clamped moved the
+error less than the seed spread. \\
+too \textbf{wide} & Radial functions sit at radii no mode reaches. &
+\textbf{14\,\% to 43\,\%}, with six of sixteen functions orphaned. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\opt{auto} takes the \textbf{median} band the training split retains, resolved
+before the model is built so the number a checkpoint records is a number. Half
+the set is then clamped, deliberately: that is the free half. \opt{null} falls
+back to \opt{g\_max} under \opt{mode\_selection: physical} and to
+$8.0$~\AA$^{-1}$ otherwise --- which on this project's own platinum set is
+$2.3\times$ wider than the band, leaving about 18 of \file{configs/train.yaml}'s
+32 radial functions where no mode exists. That file therefore states
+\opt{auto}.
+
+Whichever applies, the run says so at startup: what the basis spans, the range
+and median of the band the training structures retain, and the fraction of
+retained modes lying beyond it.
 
 \begin{pwarn}[title={Three conditions have to hold together, and each fails
 silently}]
@@ -431,8 +465,18 @@ translation equivariance too.
 The cost is capacity, and it is large. The dense layer holds
 $4C_{\mathrm{in}}C_{\mathrm{out}}m_1m_2m_3$ complex numbers; this one holds
 $C_{\mathrm{in}}C_{\mathrm{out}}R$ real ones --- $4\,096$ against
-$1\,048\,576$ at \opt{width 16}, \opt{modes 8}, \opt{n\_radial 16}. Buy it back
-with \opt{n\_radial} and \opt{width}, not with \opt{modes}.
+$1\,048\,576$ at \opt{width 16}, \opt{modes 8}, \opt{n\_radial 16}.
+
+Which does not make \opt{n\_radial} the knob to raise \emph{first}, though this
+guide said so until 2026-09-04. \opt{modes} costs \emph{zero} parameters under
+equivariance --- the coefficient count is $C^{2}R$ whatever band is retained
+--- so it is a bandwidth knob paid only in arithmetic. On 92 training materials
+the error rose monotonically with \opt{n\_radial} across 8, 16, 32 and 64,
+while raising \opt{modes} from 4 to 16 improved it $2.7\times$ at
+\emph{identical} parameter count, for 36\,\% more time per epoch. On a small
+training set the radial bank is where the excess capacity accumulates and the
+bandwidth is free; expect the ordering to invert as the set grows, which is
+untested.
 
 Whether it pays was measured once, on a V100: 400 epochs on 115 Materials
 Project structures at $32^{3}$, \opt{width 32 / n\_radial 32} reached a
@@ -475,6 +519,39 @@ spacing of reciprocal-lattice points depends on the cell size, that means a
 retaining $\lfloor G_{\max} L_i / 2\pi \rfloor$ modes along axis $i$, so every
 material contributes the same band of physics. Prefer it when cell sizes vary
 widely. It requires \opt{g\_max}.
+
+Worth trying rather than only tidier. Measured on 115 Materials Project
+structures whose cells span $2.29$ to $25.87$~\AA, \opt{physical} with a
+generous \opt{g\_max} beat \opt{fixed} by 20\,\% in \emph{both} seeds, and was
+faster --- fewer modes are retained. It reproduced in a second regime sharing
+no parameter with the first. The mechanism looks like uniformity rather than
+bandwidth: under \opt{fixed}, cells spanning a factor of 11 in length retain
+physical bands spanning a factor of 11, and \opt{physical} removes that.
+
+It is not the default --- one dataset, one architecture --- and it is not a
+free switch either. \textbf{Too small is much worse than \opt{fixed}}:
+\opt{g\_max 6} starved the band and lost 55\,\%. The useful value also moves
+with the regime, so it belongs to the run rather than to the schema; read the
+lines \file{poraque-train} prints at startup rather than copying a number from
+another config.
+
+\begin{pwarn}[title={\opt{g\_max} does not size the radial basis under
+\opt{fixed}}]
+It did until 2026-09-04, and silently. \opt{g\_max} truncates nothing under
+\opt{mode\_selection: fixed}, so a reader concludes the key is inert --- but
+the fallback that gives \opt{g\_basis} its default read it under either mode
+selection. A 90-run architecture study was carried out through a leftover
+\opt{g\_max: 6}, so every equivariant model in it was built with a
+$6.0$~\AA$^{-1}$ basis rather than the $8.0$ default, and nothing in the log,
+the resolved config or the run record said so. The measured accuracy cost was
+inside the seed spread, which is why it survived twenty runs.
+
+Stating a \opt{g\_max} beside \opt{fixed} now warns and leaves the basis at its
+default. The coupling under \opt{physical} is correct and kept: there
+$m_i = \lfloor G_{\max} L_i/2\pi \rfloor$, so the inscribed radius
+$\min_i 2\pi m_i/L_i$ is at most $G_{\max}$ and a basis spanning $G_{\max}$
+spans the retained band by construction.
+\end{pwarn}
 
 \subsection{\opt{pauli\_residual} and its scale}
 

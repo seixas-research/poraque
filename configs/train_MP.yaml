@@ -30,8 +30,17 @@ model:
   projection_channels: 64       # hidden width of the read-out head
   mode_selection: physical      # this set spans cell sizes, so truncate at a fixed wavevector
                                 #   rather than a fixed index: the same physics in every material
-  g_max: 6                      # 1/Ang. Keep modes = floor(g_max * L_max / 2pi) for the LARGEST
+  g_max: 16                     # 1/Ang. Keep modes = floor(g_max * L_max / 2pi) for the LARGEST
                                 #   cell, or modes no small cell reached stay randomly initialised
+  # 16 rather than the 6 this file shipped with until 2026-09-04, and the change is
+  # measured rather than tidied. On this very dataset -- 115 MP structures,
+  # cells 2.29 to 25.87 Ang -- LNCC ran g_max through 6/9/12/16 at two seeds:
+  # 6 STARVED the band and lost 55% against mode_selection: fixed, while 16
+  # kept 7.34 modes per axis of the 8 allocated and beat `fixed` by 20% in
+  # both seeds, at the same parameter count and the same time per epoch. The
+  # useful value moves with resolution and modes (24 was better at 64^3 with
+  # modes 24), and too generous collapses the margin, so read the two lines
+  # `poraque-train` prints at startup rather than trusting this number.
   activation: silu              # stateless; `kan` moves the hyperparameters into kan_setup
 
 training:

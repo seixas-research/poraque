@@ -38,8 +38,15 @@ model:
   equivariant:                  # one block: the switch and what it governs
     enable: true
     n_radial: 32
-    g_basis: null
+    g_basis: auto               # the median band these cells retain, not a constant
     spherical_cutoff: true
+  # `auto` rather than `null` because null is 8.0 1/Ang here (g_max is unset,
+  # and under mode_selection: fixed it would not size the basis anyway) while
+  # these 86 cells retain a median band of 3.46 -- a basis 2.3x wider than the
+  # data, leaving about 18 of the 32 radial functions at radii no mode reaches.
+  # That is the layer's only capacity, and it is the expensive way to miss: a
+  # basis too WIDE cost 14-43% where LNCC measured it, one too NARROW cost
+  # nothing measurable.
   embedding_dim: 32
   precision: float32
 

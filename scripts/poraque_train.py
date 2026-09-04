@@ -990,6 +990,13 @@ def build_operator(task, train_set, config, log):
         log(f"      channels: {in_channels} in, {out_channels} out "
             f"(spin-polarised density)")
 
+    # `g_basis: auto` becomes a number here, before the model is built, so the
+    # architecture record holds a radius and not a word. `.update` rather than
+    # a second `**`: both dicts carry the key, and `f(**a, **b)` on a shared
+    # key is a TypeError.
+    model_kwargs = config.model_kwargs()
+    model_kwargs.update(resolve_radial_basis(train_set, config, log))
+
     # init_seed reaches FieldOperator, which isolates the draw from the global
     # stream; the manual_seed here keeps the ambient behaviour when it is unset.
     torch.manual_seed(config.training.seed)
@@ -1004,7 +1011,7 @@ def build_operator(task, train_set, config, log):
         # baseline has to be bit-for-bit the one the targets were built with,
         # and reading the file twice is one more chance for them to differ.
         baseline=getattr(train_set, "baseline", None),
-        **config.model_kwargs(), **head,
+        **model_kwargs, **head,
     )
     if config.model.precision != "float32":
         operator.set_precision(config.model.precision)
@@ -1015,6 +1022,7 @@ def build_operator(task, train_set, config, log):
         log(f"      precision: {config.model.precision} — roughly twice the "
             f"time and memory of the float32 default")
     report_mode_selection(train_set, config, log)
+    report_radial_basis(train_set, operator.model, log)
     return operator
 
 
@@ -1118,6 +1126,148 @@ def report_field_cache(train_set, validation, config, log):
            if str(requested).lower() == "auto" else "") + ")")
 
 
+def training_geometry(train_set):
+    """
+    ``(cells, shapes)`` for every material in a training split.
+
+    Read off the dataset's own samples rather than from a second pass over the
+    files: these are the cells and grids the model is handed at forward time,
+    and a re-read is one more chance for the diagnostic to describe geometry
+    the run does not use. With ``data.cache_in_memory`` on it also warms
+    exactly the tensors the first epoch will ask for.
+
+    Returns
+    -------
+    cells : list of ndarray
+        ``(3, 3)`` each, in Å.
+    shapes : list of tuple
+    """
+    # Memoised on the dataset because three reporters want it and, with
+    # `data.cache_in_memory` declined on a large set, each pass is a full
+    # decode of every field. The attribute is this script's, not the dataset's
+    # API: nothing in the package reads it.
+    cached = getattr(train_set, "_reported_geometry", None)
+    if cached is not None:
+        return cached
+
+    cells, shapes = [], []
+    for index in range(len(train_set)):
+        sample = train_set[index]
+        cells.append(np.asarray(sample["cell"], dtype=float))
+        shapes.append(tuple(int(n) for n in sample["input"].shape[-3:]))
+    try:
+        train_set._reported_geometry = (cells, shapes)
+    except AttributeError:                      # a __slots__ dataset, one day
+        pass
+    return cells, shapes
+
+
+def resolve_radial_basis(train_set, config, log):
+    r"""
+    Turn ``model.equivariant.g_basis: auto`` into a number, from the data.
+
+    The radial basis spans ``[0, g_basis]``; the band a *material* retains is
+    :math:`\min_i 2\pi m_i / L_i`, which depends on its own cell. Across a set
+    of mixed cell sizes those disagree by an order of magnitude — 1.94 to
+    20.96 Å⁻¹ over LNCC's six-metal set — so no constant is right for all of
+    it, and the two ways to be wrong cost differently: a basis narrower than
+    the band clamps its outer modes onto one function for no measurable price,
+    while a basis wider than the band leaves radial functions at radii no mode
+    reaches, which is dead capacity in a layer whose capacity is the radial
+    bank, and cost 14–43 % where it was measured.
+
+    Resolved here rather than inside :class:`~poraque.ml.fno.FNO3d` because the
+    constructor has seen no samples, and resolved *before* the model is built
+    so the number the checkpoint records is the number that trained.
+
+    Returns
+    -------
+    dict
+        ``{"g_basis": float}`` when the config said ``auto``, else empty.
+    """
+    if not config.model.equivariant_enabled:
+        return {}
+    if config.model.equivariant_kwargs().get("g_basis") != "auto":
+        return {}
+
+    from poraque.ml.fno import resolve_g_basis
+
+    cells, shapes = training_geometry(train_set)
+    if not cells:
+        return {}
+    resolved = resolve_g_basis(
+        cells, shapes, config.model.modes,
+        mode_selection=config.model.mode_selection, g_max=config.model.g_max)
+    log(f"      g_basis: auto -> {resolved:.3f} 1/Ang, the median band the "
+        f"{len(cells)} training structures retain")
+    return {"g_basis": resolved}
+
+
+def report_radial_basis(train_set, model, log):
+    r"""
+    Say what band the equivariant operator retains, against the basis it spans.
+
+    The two are unrelated until somebody checks, and nothing checked. LNCC ran
+    a 90-run architecture study whose configs carried a leftover ``g_max: 6``
+    under ``mode_selection: fixed`` — where ``g_max`` truncates nothing, so a
+    reader concludes it is inert. It was inert for truncation and not for the
+    architecture: every equivariant model in the study was built with a 6.0
+    basis instead of the 8.0 default, 71.3 % of its retained modes fell beyond
+    that basis, and the log, the resolved config and the run record said none
+    of it. The coupling is fixed; this is the line that would have made it
+    visible on run 1 rather than run 20.
+
+    Read off the **model**, not the config --- which is why no config reaches
+    this function at all. ``g_basis`` is resolved in three places (stated,
+    ``auto``, defaulted), and on a fine-tune ``modes``, ``mode_selection`` and
+    ``g_max`` come off the checkpoint rather than the file, so the config is
+    the authority on none of them.
+    """
+    if not getattr(model, "equivariant", False):
+        return
+
+    from poraque.ml.fno import retained_band
+
+    cells, shapes = training_geometry(train_set)
+    if not cells:
+        return
+
+    # Every argument off the model. `g_basis` is resolved in three places
+    # (stated, `auto`, defaulted) and `modes`/`mode_selection`/`g_max` come
+    # from the checkpoint rather than the config on a fine-tune, so the config
+    # is not the authority on any of them -- and a report describing an
+    # architecture other than the one built is the defect being fixed.
+    basis = float(model.g_basis)
+    report = retained_band(
+        cells, shapes, model.modes, mode_selection=model.mode_selection,
+        g_max=model.g_max, spherical_cutoff=model.spherical_cutoff,
+        g_basis=basis)
+    edges = report["edges"]
+    median = float(np.median(edges))
+
+    log(f"      radial basis: {model.n_radial} functions over "
+        f"|G| < {basis:.4g} 1/Ang")
+    log(f"      retained band: {edges.min():.2f}-{edges.max():.2f} 1/Ang "
+        f"(median {median:.2f}) across {report['n_samples']} structures")
+    log(f"      {100 * report['clamped_fraction']:.1f} % of retained modes "
+        f"lie beyond the basis and share its outermost function; "
+        f"{report['inside_samples']}/{report['n_samples']} structures lie "
+        f"wholly inside it")
+
+    # Clamping is free and orphaning is not, so only one direction earns a
+    # NOTE. 0.85 sits between the four configurations that performed well
+    # (0.94-0.98 of the basis reached by the median band) and the one that did
+    # not (0.65, which cost 14 % at one resolution and 43 % at another).
+    if median < 0.85 * basis:
+        useful = model.n_radial * median / basis
+        log(f"      NOTE: the median structure retains only {median:.2f} of "
+            f"the {basis:.4g} 1/Ang the basis spans, so about "
+            f"{model.n_radial - useful:.0f} of {model.n_radial} radial "
+            f"functions sit where no mode exists.")
+        log("      That is the layer's only capacity: measured, a basis this "
+            "wide cost 14-43 %. Set model.equivariant.g_basis: auto.")
+
+
 def report_mode_selection(train_set, config, log):
     r"""
     Say how many modes the run will actually use, per structure.
@@ -1140,8 +1290,7 @@ def report_mode_selection(train_set, config, log):
     # The cells come from the dataset's own samples rather than from a second
     # read of the files: they are already the geometry `physical_modes` will be
     # handed at forward time.
-    for index in range(len(train_set)):
-        cell = np.asarray(train_set[index]["cell"], dtype=float)
+    for cell in training_geometry(train_set)[0]:
         lengths = np.linalg.norm(cell, axis=-1)
         counts.append([min(int(ceiling),
                            max(1, int(np.floor(config.model.g_max * length

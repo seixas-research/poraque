@@ -115,6 +115,22 @@ model:
   # modes = floor(g_max * L_max / 2pi) for the LARGEST cell, or the modes no
   # small cell ever reached stay at their random initialisation and go live
   # on a large one.
+  #
+  # WORTH TRYING on such a dataset, and not only for tidiness. Measured at LNCC
+  # on 115 Materials Project structures whose cells span 2.29 to 25.87 Ang,
+  # `physical` with a GENEROUS g_max beat `fixed` by 20% in both seeds -- and
+  # was FASTER, since fewer modes are retained. Reproduced in a second regime
+  # sharing no parameter with the first (32^3/modes 8/g_max 16, and
+  # 64^3/modes 24/g_max 24, both 20%). The mechanism looks like uniformity
+  # rather than bandwidth: under `fixed`, cells spanning a factor of 11 in
+  # length retain physical bands spanning a factor of 11, and `physical`
+  # removes that.
+  #
+  # It is not the default, on one dataset and one architecture -- and the
+  # useful g_max MOVES with the regime (16 in the first study, 24 in the
+  # second, with the margin collapsing to 3% at 32). Too SMALL is much worse
+  # than `fixed`: g_max 6 starved the band and lost 55%. Both ends are
+  # reported at startup, so the run will say which one it landed on.
 
   activation: silu              # silu | gelu | relu | tanh (stateless) | kan (learned per channel)
   projection_activation: null   # read-out nonlinearity; null follows `activation`
@@ -145,8 +161,32 @@ model:
   equivariant:
     enable: false               # constrain the Fourier kernel to a function of |G| alone
     # n_radial: 16              # radial basis functions -- the whole capacity of the kernel
-    # g_basis: null             # radius in 1/Ang the basis spans; null takes g_max, else 8.0
+    # g_basis: auto             # radius in 1/Ang the basis spans; auto | a number | null
     # spherical_cutoff: true    # mask the retained modes to the inscribed sphere
+  #
+  # g_basis IS WORTH SETTING, and `auto` is the setting. The basis spans
+  # [0, g_basis]; the band a material retains is min_i 2pi*m_i/L_i, its own
+  # property. Across 115 Materials Project cells those ran 1.94 to 20.96 1/Ang,
+  # so no constant is right for all of them -- and missing is NOT symmetric:
+  #   too NARROW  clamps the outer modes onto one basis function. 71% of modes
+  #               clamped moved the error less than the seed spread did. Free.
+  #   too WIDE    leaves radial functions at radii NO mode reaches, which is
+  #               dead capacity in a layer whose capacity is the radial bank.
+  #               A basis of 48 against a median band of 31 orphaned six of
+  #               sixteen functions and cost 14% at one resolution, 43% at
+  #               another.
+  # `auto` takes the MEDIAN band the training split retains, resolved before
+  # the model is built, and the resolved number is what the checkpoint records.
+  # Half the set is then clamped -- deliberately, that being the free half.
+  # `null` falls back to g_max under mode_selection: physical, where the
+  # retained band provably fits inside it, and to 8.0 1/Ang otherwise.
+  #
+  # NOTE that g_max does NOT size the basis under mode_selection: fixed, where
+  # it truncates nothing either. It did until 2026-09-04, silently: LNCC ran a
+  # 90-run architecture study whose configs carried a leftover `g_max: 6`, so
+  # every equivariant model in it was built with a 6.0 basis rather than the
+  # 8.0 default, and nothing in the log or the run record said so. Stating a
+  # g_max beside `fixed` now warns instead.
   #
   # Rotate the input field and the prediction rotates with it, to the precision
   # of the float -- which the ordinary spectral layer does NOT do: it learns one

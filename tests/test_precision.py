@@ -805,12 +805,21 @@ class TestModeSelectionReporting:
         return config
 
     class _Set(list):
-        """Minimal stand-in for a dataset: only ``cell`` is read."""
+        """
+        Minimal stand-in for a dataset: a cell and a grid per material.
 
-        def __init__(self, lengths):
+        ``input`` is here because ``training_geometry`` reads the grid shape
+        off it --- one pass over the samples now serves the mode-selection
+        report and the radial-basis one, and without the shape the second
+        cannot say what band the run retains.
+        """
+
+        def __init__(self, lengths, n=16):
             import numpy as np
+            import torch
 
-            super().__init__({"cell": np.eye(3) * length}
+            super().__init__({"cell": np.eye(3) * length,
+                              "input": torch.zeros(1, n, n, n)}
                              for length in lengths)
 
     @staticmethod

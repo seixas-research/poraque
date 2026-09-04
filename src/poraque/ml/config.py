@@ -1168,10 +1168,20 @@ class ModelConfig:
             of 256 at ``width 16, modes 8, n_radial 16``. Buy it back with
             ``n_radial`` and ``width``, not with ``modes``.
         ``g_basis``
-            Radius in Å⁻¹ the basis spans. Unstated it follows ``g_max`` when
-            ``mode_selection: physical`` has already named a band, and
-            otherwise a default --- which is why an unstated setting is left
-            unstated here rather than filled in.
+            Radius in Å⁻¹ the basis spans, or ``auto``. Unstated it follows
+            ``g_max`` when ``mode_selection: physical`` has already named a
+            band --- and *only* then, since under ``fixed`` that key truncates
+            nothing --- and otherwise a default. Which is why an unstated
+            setting is left unstated here rather than filled in.
+
+            ``auto`` is the one worth reaching for on a set of mixed cell
+            sizes: it takes the median band the modes actually retain over the
+            training split, before the model is built, and the resolved number
+            is what the checkpoint records. A constant cannot fit a set whose
+            retained band edge spans an order of magnitude, and missing is not
+            symmetric --- a basis narrower than the band costs nothing
+            measurable, one wider than it wastes the layer's only capacity and
+            cost 14 % to 43 % where LNCC measured it.
         ``spherical_cutoff``
             Discard retained modes outside the largest sphere inscribed in the
             retained box. On by default and effectively required: a radial
@@ -1265,6 +1275,15 @@ class ModelConfig:
                 "equivariant the moment they are appended -- and they are "
                 "absolute positions, which costs translation equivariance "
                 "outright. Set model.use_coordinates: false.")
+
+        basis = setup.get("g_basis")
+        if basis is not None and basis != "auto" and not (
+                isinstance(basis, (int, float)) and not isinstance(basis, bool)
+                and basis > 0.0):
+            raise ValueError(
+                f"model.equivariant.g_basis is {basis!r}; expected a positive "
+                f"radius in 1/Ang, or 'auto' to size the basis from the "
+                f"training split.")
 
         return {EQUIVARIANT_SETUP_KEYS[key]: value
                 for key, value in setup.items()}
