@@ -50,7 +50,7 @@ def symbol_to_z(symbol):
     int
         Atomic number ``Z``.
     """
-    element = str(symbol).split("_")[0].split(".")[0].strip().rstrip("0123456789")
+    element = element_of(symbol)
     element = element.capitalize() if len(element) > 1 else element.upper()
     try:
         return _ATOMIC_NUMBERS[element]
@@ -59,7 +59,16 @@ def symbol_to_z(symbol):
 
 
 def element_of(symbol):
-    """Bare element name of a possibly decorated symbol (``Fe_pv`` -> ``Fe``)."""
+    """
+    Bare element name of a possibly decorated symbol.
+
+    ``Fe_pv`` (a VASP POTCAR variant), ``O.pbe-n-kjpaw`` (a Quantum ESPRESSO
+    pseudopotential name), ``Fe1`` (a numbered species) and ``H.5`` (VASP's
+    fractional hydrogen) all reduce to their element. This is the **one**
+    stripping rule in the package: every valence-charge lookup, POTCAR match
+    and per-element table keys on its result, so two call sites can never
+    disagree about which element a symbol names.
+    """
     return str(symbol).split("_")[0].split(".")[0].strip().rstrip("0123456789")
 
 

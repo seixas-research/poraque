@@ -102,8 +102,9 @@ class TaskConfig:
         -------
         list of str
         """
-        return (["ext2chg", "chg2tau"] if self.type == "all"
-                else [str(self.type)])
+        from .tasks import TASKS
+
+        return list(TASKS) if self.type == "all" else [str(self.type)]
 
 
 #: Keys that were removed, and what replaced them. Named in the error so a

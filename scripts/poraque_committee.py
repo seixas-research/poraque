@@ -117,7 +117,7 @@ if os.path.isdir(_SRC):
     sys.path.insert(0, _SRC)
 
 from poraque import banner  # noqa: E402
-from poraque.fields import ChargeDensity, FieldGrid  # noqa: E402
+from poraque.fields import FIELD_CLASSES, FieldGrid  # noqa: E402
 from poraque.ml import (  # noqa: E402
     BUNDLE_FILENAME,
     BUNDLE_SUFFIX,
@@ -377,11 +377,8 @@ def rank(argv=None):
 
 def _read(directory, filename, grid):
     """Read one cached field onto ``grid``."""
-    from poraque.fields import ExternalPotential, KineticEnergyDensity
-
-    classes = {"EXTCAR": ExternalPotential, "CHGCAR": ChargeDensity,
-               "TAUCAR": KineticEnergyDensity}
-    return classes[filename].read(os.path.join(directory, filename), grid=grid)
+    return FIELD_CLASSES[filename].read(os.path.join(directory, filename),
+                                        grid=grid)
 
 
 def main(argv=None):

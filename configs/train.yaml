@@ -1,7 +1,7 @@
 # =====================================================================
 # Poraque - the platinum run, stated explicitly.
 #
-#   poraque-train --config configs/train_Pt.yaml
+#   poraque-train --config configs/train.yaml
 #
 # configs/train.yaml with the delta-density settings and the schedule spelled
 # out rather than left at their defaults. See
@@ -39,15 +39,14 @@ model:
   equivariant:                  # one block: the switch and what it governs
     enable: true
     n_radial: 16
-    g_basis: 16                # the median band these cells retain, not a constant
+    g_basis: 16                # = g_max: the band `physical` retains spans up to g_max by construction
     spherical_cutoff: true
-  # `auto` rather than `null` because null is 8.0 1/Ang here (g_max is unset,
-  # and under mode_selection: fixed it would not size the basis anyway) while
-  # these 86 cells retain a median band of 3.46 -- a basis 2.3x wider than the
-  # data, leaving about 18 of the 32 radial functions at radii no mode reaches.
-  # That is the layer's only capacity, and it is the expensive way to miss: a
-  # basis too WIDE cost 14-43% where LNCC measured it, one too NARROW cost
-  # nothing measurable.
+  # The radial bank is the layer's only capacity, and the two ways to mis-size
+  # it are not symmetric: a basis too NARROW (modes beyond it clamp onto the
+  # outermost function) cost nothing measurable, one too WIDE (functions at
+  # radii no mode reaches) cost 14-43 %. `g_basis: auto` reads the median
+  # retained band off the training split instead of stating a number; the
+  # startup report prints the band and the fraction of modes beyond the basis.
   embedding_dim: 32
   precision: float32
 

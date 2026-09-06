@@ -28,7 +28,7 @@ handling the fields MP does not publish.
         print(mp.estimate())            # exact size, nothing transferred
         mp.run(max_size_mb=20)
 
-    data = MPChargeDensityDataset("data/MP/chgcar", resolution=32)
+    data = MPChargeDensityDataset("data/MP", resolution=32)
 
 Nothing here is imported by :mod:`poraque.ml` or :mod:`poraque.fields`, so the
 Materials Project client stays out of the import path of a training run that
@@ -43,7 +43,6 @@ from .mp_dataset import (
     available_tasks,
     build_mp_cache,
     discover_mp_chgcars,
-    infer_valence_charges,
 )
 from .provenance import code_version, file_hash
 from .sources import (
@@ -51,6 +50,7 @@ from .sources import (
     CalculationSource,
     MaterialSource,
     discover_records,
+    infer_valence_charges,
     resolve_source,
 )
 

@@ -255,7 +255,7 @@ class TestValenceCharges:
         download the difference is a handful of small reads against a full pass
         over hundreds of megabytes.
         """
-        from poraque.data import mp_dataset
+        from poraque.data import sources as mp_dataset
 
         opened = []
         original = mp_dataset._electron_count

@@ -60,7 +60,18 @@ from .hartree import HartreePotential
 from .spin import SpinDensity, is_spin_polarized
 from .structure import Structure, element_of, symbol_to_z
 
+#: Field filename -> the :class:`ScalarField` subclass that reads and writes
+#: it. The one registry every layer dispatches on: the dataset, the trainer's
+#: output decoding, the data sources and the committee all import this rather
+#: than restating it.
+FIELD_CLASSES = {
+    "EXTCAR": ExternalPotential,
+    "CHGCAR": ChargeDensity,
+    "TAUCAR": KineticEnergyDensity,
+}
+
 __all__ = [
+    "FIELD_CLASSES",
     "FIELD_DTYPES",
     "ChargeDensity",
     "ExternalPotential",

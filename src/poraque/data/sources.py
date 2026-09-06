@@ -7,52 +7,52 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-One interface over every layout training data arrives in.
+One reader for every directory training data arrives in.
 
-Three shapes of directory show up in practice, and they have almost nothing in
-common on disk::
+A dataset is a directory of subdirectories, one per material, and **a material
+is a directory with a density in it**. That single rule covers everything the
+pipeline ingests, because the three things that show up in practice are the
+same shape on disk::
 
-    A. a DFT calculation            B. a bulk density archive     C. a prepared cache
-    -------------------            ---------------------         -------------------
-    runs/struct_000/               data/MP/                      cache/res32/
-        POSCAR  INCAR  POTCAR          manifest.csv                  mp-124/
-        CHGCAR  TAUCAR  OUTCAR         mp-124/CHGCAR.gz                  EXTCAR  CHGCAR
-    runs/struct_001/                   mp-81/CHGCAR.gz               struct_000/
-        ...                            mp-126/fields.h5                  EXTCAR  CHGCAR  TAUCAR
+    a DFT run                    a poraque-mp download        a prepared cache
+    ---------                    --------------------         ----------------
+    runs/structure_0000/         data/MP/mp-124/              cache/res32/mp-124/
+        POSCAR INCAR POTCAR          CHGCAR.gz  mp.json           EXTCAR  CHGCAR
+        CHGCAR TAUCAR                INCAR KPOINTS POSCAR     cache/res32/structure_0000/
+    runs/structure_0001/         data/MP/mp-126/                  EXTCAR  CHGCAR  TAUCAR
+        ...                          fields.h5  ...
 
-B and C look alike on purpose — one directory per material, named by it — and
-the difference between them is the *content*, not the shape: an archive
-publishes a density and nothing else, so its external potential has to be
-built; a cache holds the fields already prepared, so nothing is computed. B
-also reads loose ``CHGCAR_mp-124.gz`` files sitting directly in the root, for
-an archive that arrives as a pile of files rather than a tree.
+What differs is the *content* of a material's directory, and content is read
+rather than declared. :class:`CalculationSource` is the one source class:
 
-What they *do* have in common is what the operator needs: for each material, a
-grid and up to three fields on it. That is the whole of this module's contract.
-A :class:`MaterialSource` recognises one layout, enumerates its materials, says
-which fields it can supply, and produces them — computing what is absent
-wherever it honestly can and declining where it cannot.
+* inputs beside the density → :math:`V_{\rm ext}` is **computed** from them,
+  exactly (POTCAR tables) or from the Gaussian pseudo-ion model when no
+  pseudopotential is available anywhere;
+* a density alone → the potential is built from the structure the density's own
+  header carries, at the geometry the density was computed at;
+* an ``EXTCAR`` already present (a cache) → read as it stands;
+* ``TAUCAR`` → read when the material has one, reported absent when it does not.
+  It is optional **per material**, which is what lets one directory tree feed
+  ``ext2chg`` in full and ``chg2tau`` from the subset that carries :math:`\tau`.
 
-The differences that remain are real physics, not plumbing:
+The density is text (``CHGCAR``, compressed or not, optionally with the
+material id appended) or a field inside an HDF5 store (``fields.h5::CHGCAR``);
+:func:`_material_density` decides, and exactly one per directory is the test.
 
-===================  =========================  ==============================
-Layout               :math:`V_{\rm ext}` from   :math:`\tau`
-===================  =========================  ==============================
-calculation          POSCAR + POTCAR tables,    read from ``TAUCAR`` when
-                     **exact**                  the run wrote one
-bulk densities       the CHGCAR's own header,   never — no archive publishes it
-                     Gaussian model
-prepared cache       read from ``EXTCAR``       read from ``TAUCAR`` if cached
-===================  =========================  ==============================
+Valence charges come from three places in a fixed order — an explicit
+``charges`` option, the ``ZVAL`` of a ``potcar_dir`` library, or
+:func:`infer_valence_charges`, which recovers them from the densities
+themselves: a pseudopotential ``CHGCAR`` integrates to its cell's valence
+electron count, one linear equation per material in the per-element charges.
 
-:func:`detect_source` picks the class; :func:`resolve_source` builds an
-instance, honouring an explicit ``format`` when the caller knows better than
-the sniffer. :class:`~poraque.data.dataset.MixedFieldDataset` is what puts
-several of them behind one PyTorch ``Dataset``.
-
-Adding a layout means writing one class and calling :func:`register_source` —
-nothing downstream changes.
+:func:`resolve_source` builds the source for one path; :func:`discover_records`
+pools several while keeping identifiers unique;
+:class:`~poraque.data.dataset.MixedFieldDataset` puts them behind one PyTorch
+``Dataset`` and :func:`~poraque.data.cache.build_field_cache` writes them out
+downsampled. Supporting another DFT code means registering a reader in
+:mod:`poraque.fields.io`; nothing here changes.
 """
+
 
 import os
 import warnings
@@ -61,23 +61,18 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 from ..fields import (
+    FIELD_CLASSES,
     ChargeDensity,
     ExternalPotential,
     FieldGrid,
-    KineticEnergyDensity,
+    element_of,
 )
 from ..ml.data import MaterialRecord
 
-#: Field name -> the :class:`~poraque.fields.ScalarField` subclass reading it.
-FIELD_CLASSES = {
-    "EXTCAR": ExternalPotential,
-    "CHGCAR": ChargeDensity,
-    "TAUCAR": KineticEnergyDensity,
-}
+#: Filename prefixes that mark a material's density, matched case-insensitively
+#: after any compression suffix is stripped.
+DENSITY_PREFIXES = ("CHGCAR",)
 
-#: Filename prefix marking a standalone density in a bulk archive, matched
-#: case-insensitively. Compression suffixes are stripped before matching.
-BULK_PREFIXES = ("CHGCAR",)
 
 #: Files whose presence marks a directory as a DFT calculation rather than an
 #: archive of outputs.
@@ -113,7 +108,7 @@ def calculation_markers():
     return tuple(names)
 
 
-def _is_density_file(entry, prefixes=BULK_PREFIXES):
+def _is_density_file(entry, prefixes=DENSITY_PREFIXES):
     """
     Whether a filename names a standalone density.
 
@@ -132,7 +127,7 @@ def _is_density_file(entry, prefixes=BULK_PREFIXES):
     return not os.path.splitext(stem)[1]
 
 
-def _material_density(directory, prefixes=BULK_PREFIXES):
+def _material_density(directory, prefixes=DENSITY_PREFIXES):
     r"""
     Path to this material's density, or ``None``.
 
@@ -214,6 +209,161 @@ def _subdirectories(root):
         return []
     return [os.path.join(root, entry) for entry in sorted(os.listdir(root))
             if os.path.isdir(os.path.join(root, entry))]
+
+
+# ---------------------------------------------------------------------- #
+# Valence charges from the densities themselves
+# ---------------------------------------------------------------------- #
+#: Residual above which :func:`infer_valence_charges` refuses to round its
+#: solution to integers, in electrons per material.
+INTEGER_TOLERANCE = 0.05
+
+
+def _composition(structure):
+    """``{element: count}`` for one structure, merging repeated species blocks."""
+    composition = {}
+    for symbol, count in zip(structure.elements, structure.counts):
+        element = element_of(symbol)
+        composition[element] = composition.get(element, 0) + int(count)
+    return composition
+
+
+def _electron_count(path):
+    r"""
+    Valence electrons in a density file, from the density it holds.
+
+    VASP stores :math:`\rho\,\Omega`, so the mean of the grid block *is* the
+    electron count and no volume or grid spacing enters — which is why this is
+    exact rather than a quadrature estimate.
+    """
+    grid = FieldGrid.from_file(path)
+    return float(ChargeDensity.read(path, grid=grid).integrate())
+
+
+def infer_valence_charges(records, overrides=None, tolerance=INTEGER_TOLERANCE,
+                          log=None):
+    r"""
+    Recover :math:`Z^{\rm val}` per element from the charge densities.
+
+    A pseudopotential ``CHGCAR`` integrates to the valence electron count of
+    its cell, so each material contributes one equation
+
+    .. math::
+
+        \sum_s n_s^{(m)}\, Z^{\rm val}_s \;=\; N^{(m)}_e ,
+
+    linear in the per-element charges, with :math:`n_s^{(m)}` read from the
+    structure header. A chemical space with more compositions than elements is
+    therefore over-determined, and least squares recovers the charges the
+    ``POTCAR`` would have stated. This is the third and last answer
+    :attr:`MaterialSource.charges` gives, reached only for materials that ship
+    no pseudopotential and match nothing in ``potcar_dir``.
+
+    Only as many materials are read as the system needs: candidates are taken
+    smallest-file-first and accepted only while they add rank, so a
+    hundred-material space costs a handful of small reads rather than a full
+    pass. The solution is rounded to integers when every residual is below
+    ``tolerance``, since :math:`Z^{\rm val}` is an integer by construction and
+    a value of 10.999998 in a log helps nobody.
+
+    Parameters
+    ----------
+    records : sequence of MaterialRecord
+        From :meth:`MaterialSource.discover`; each must carry a ``CHGCAR``.
+    overrides : dict, optional
+        ``{element: charge}`` taken as given. An element covered here is
+        removed from the system rather than fitted, so supplying one known
+        charge can make an otherwise rank-deficient set solvable.
+    tolerance : float, optional
+        Largest residual, in electrons, that still permits rounding.
+    log : callable, optional
+        Receives one-line progress messages.
+
+    Returns
+    -------
+    dict
+        ``{element: valence charge}`` covering every element in ``records``.
+
+    Raises
+    ------
+    ValueError
+        If the compositions cannot determine every charge — for instance a
+        dataset of a single binary AB, where any split of its electrons
+        between A and B fits equally well. The message names the elements that
+        remain undetermined and points at ``overrides``.
+    """
+    from ..fields.vasp.volumetric import read_structure_header
+
+    log = log or (lambda *_: None)
+    overrides = {element_of(k): float(v) for k, v in (overrides or {}).items()}
+
+    # Header-only reads: a few hundred bytes each, whatever the grid.
+    compositions = {}
+    for record in records:
+        compositions[record.identifier] = _composition(
+            read_structure_header(record.files["CHGCAR"]))
+
+    elements = sorted({element for composition in compositions.values()
+                       for element in composition})
+    unknown = [element for element in elements if element not in overrides]
+    if not unknown:
+        return {element: overrides[element] for element in elements}
+
+    # Smallest first: rank is a property of the compositions, so there is no
+    # reason to pay for a 200 MB density when a 1 MB one adds the same row.
+    order = sorted(records,
+                   key=lambda r: os.path.getsize(r.files["CHGCAR"]))
+
+    rows, targets, used = [], [], []
+    for record in order:
+        composition = compositions[record.identifier]
+        row = [composition.get(element, 0) for element in unknown]
+        if not any(row):
+            continue                    # fully covered by the overrides
+        trial = np.array(rows + [row], dtype=float)
+        if np.linalg.matrix_rank(trial) <= len(rows):
+            continue                    # adds no information
+
+        electrons = _electron_count(record.files["CHGCAR"])
+        # Whatever the overrides already account for is not for the fit to find.
+        known = sum(overrides.get(element, 0.0) * count
+                    for element, count in composition.items())
+        rows.append(row)
+        targets.append(electrons - known)
+        used.append(record.identifier)
+        log(f"      {record.identifier}: {composition} -> "
+            f"{electrons:.4f} electrons")
+        if len(rows) == len(unknown):
+            break
+
+    matrix = np.array(rows, dtype=float).reshape(len(rows), len(unknown))
+    if np.linalg.matrix_rank(matrix) < len(unknown):
+        raise ValueError(
+            f"The valence charges of {unknown} cannot be determined from these "
+            f"{len(records)} materials: their compositions span only "
+            f"{np.linalg.matrix_rank(matrix)} of {len(unknown)} independent "
+            f"directions, so infinitely many charge assignments reproduce every "
+            f"electron count equally well. Add materials of other "
+            f"stoichiometries, or pass the known charges as overrides."
+        )
+
+    solution, *_ = np.linalg.lstsq(matrix, np.array(targets, dtype=float),
+                                   rcond=None)
+    residual = np.abs(matrix @ solution - np.array(targets))
+
+    charges = dict(overrides)
+    rounded = np.rint(solution)
+    integral = np.max(np.abs(solution - rounded)) < tolerance
+    for element, value, integer in zip(unknown, solution, rounded):
+        charges[element] = float(integer if integral else value)
+
+    log(f"      valence charges from {len(used)} densities: "
+        + ", ".join(f"{e}={charges[e]:g}" for e in elements)
+        + (f"  (max residual {residual.max():.2e} e)" if residual.size else ""))
+    if not integral:
+        log("      note: the solution is not integral, which a valence charge "
+            "should be. Check that every file is a pseudopotential CHGCAR.")
+    return charges
 
 
 # ---------------------------------------------------------------------- #
@@ -405,12 +555,10 @@ class MaterialSource(ABC):
            equation per material in the per-element charges, and a set with
            more compositions than elements over-determines them.
 
-        (3) used to belong to :class:`BulkDensitySource` alone, which made the
-        same directory answerable or not depending on how it was read: a folder
-        of bare densities inferred its charges, and the identical folder with a
-        ``POSCAR`` added raised ``No valence charge for ['Si']``. Nothing about
-        the physics changed between those two, so nothing about the answer
-        should have.
+        All three answers are available to every material whatever its
+        directory holds: a folder of bare densities and the identical folder
+        with a ``POSCAR`` beside them describe the same physics, so they get
+        the same charges.
 
         Deferred rather than resolved in ``__init__``, because (2) and (3) read
         files and a caller that only wants to enumerate the source should never
@@ -424,8 +572,6 @@ class MaterialSource(ABC):
 
     def _resolve_charges(self):
         """Valence charges from the library where it has them, else inferred."""
-        from .mp_dataset import infer_valence_charges
-
         records = self.discover()
         log = self.options.get("log")
 
@@ -609,15 +755,16 @@ class MaterialSource(ABC):
 
 
 # ---------------------------------------------------------------------- #
-# A: a DFT calculation directory
+# The source
 # ---------------------------------------------------------------------- #
 class CalculationSource(MaterialSource):
     r"""
-    Classic layout: one directory per material, holding a DFT run.
+    One directory per material, each holding that material's volumetric files.
 
-    Recognised by a ``POSCAR`` (or ``CONTCAR``) — either in ``root`` itself,
-    which is then a single material, or in its subdirectories, which are then
-    the dataset.
+    Recognised by a **density** — see :func:`_material_density` — either in
+    ``root`` itself, which is then a single material, or in its
+    subdirectories, which are then the dataset. A VASP run tree, a
+    ``poraque-mp`` download and a prepared cache are all this layout.
 
     The external potential is **computed** from the inputs, never read from any
     ``EXTCAR`` the directory happens to contain. That is deliberate: the
@@ -634,8 +781,9 @@ class CalculationSource(MaterialSource):
 
     Options
     -------
-    code : str
-        DFT code name, or ``"auto"`` to detect it per directory.
+    format : str
+        DFT code name (one of :data:`DATA_FORMATS`), or ``"auto"`` to detect
+        it per directory.
     pattern : str
         Keep only subdirectories whose name starts with this. The usual reason
         is a sibling directory of isolated-atom references that must not be
@@ -648,8 +796,7 @@ class CalculationSource(MaterialSource):
     charges : dict
         ``{element: Z_val}`` overriding the pseudopotential valence charges.
         The last resort when neither the run nor a library supplies them: it
-        selects the Gaussian model. The same option means the same thing for
-        :class:`BulkDensitySource`, so one mapping covers a mixture.
+        selects the Gaussian model. One mapping covers a mixture of paths.
     sigma, gaussian_blur, blur_method
         Passed to the potential construction.
     """

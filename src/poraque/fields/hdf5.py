@@ -104,7 +104,7 @@ entire field.
 
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import numpy as np
 
@@ -542,7 +542,7 @@ def _write_header(handle, structure, path):
     if "format" not in handle.attrs:
         handle.attrs["format"] = FORMAT_TAG
         handle.attrs["format_version"] = FORMAT_VERSION
-        handle.attrs["created"] = datetime.now(timezone.utc).isoformat(
+        handle.attrs["created"] = datetime.now(UTC).isoformat(
             timespec="seconds")
         try:
             from ..version import __version__

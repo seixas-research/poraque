@@ -59,6 +59,7 @@ import warnings
 
 import numpy as np
 
+from ..structure import element_of
 from .poscar import symbol_to_z
 
 _FLOAT = r"[-+]?\d*\.?\d+(?:[EeDd][-+]?\d+)?"
@@ -180,7 +181,7 @@ class PotcarSingle:
     @property
     def element(self):
         """Bare chemical symbol, stripped of the POTCAR variant suffix."""
-        return self.symbol.split("_")[0]
+        return element_of(self.symbol)
 
     @property
     def atomic_number(self):
@@ -364,7 +365,7 @@ class Potcar(list):
         -------
         bool
         """
-        return self.elements == [s.split("_")[0] for s in poscar.symbols]
+        return self.elements == [element_of(s) for s in poscar.symbols]
 
     def __repr__(self):
         return f"Potcar({', '.join(self.symbols)})"
@@ -493,8 +494,9 @@ def _parse_local_part(text):
     -------
     numpy.ndarray or None
         Every float between the ``local part`` marker and the next
-        non-numeric line. The first entry is ``ZVAL``; the remainder is the
-        tabulated ``V_loc(q)``. ``None`` when the marker is absent.
+        non-numeric line. The first entry is ``PSGMAX``, the maximum
+        wavevector of the table (see the module docstring); the remainder is
+        the tabulated ``V_loc(q)``. ``None`` when the marker is absent.
     """
     lines = text.splitlines()
     start = None

@@ -177,8 +177,7 @@ and copy only what you need into your own file.
 | --- | --- |
 | `configs/train.yaml` | the clean starting point — copy this one |
 | `configs/train_complete_and_commented.yaml` | the same run with every choice explained; a reference to read, not to copy |
-| `configs/train_materialsproject.yaml` | training on a Materials Project download |
-| `configs/train_mixed.yaml` | one operator from several datasets at once |
+| `configs/kan/*.yaml` | the KAN-activation comparison runs, one file per variant |
 
 ### One directory per model
 

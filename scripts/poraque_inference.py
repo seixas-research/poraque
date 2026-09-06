@@ -529,7 +529,7 @@ def resolve_grid(structure, parameters, pseudopotentials, args, log):
             warnings.warn(
                 f"{args.like} has a different cell from the structure; using "
                 f"the structure's cell with the reference grid shape.",
-                RuntimeWarning,
+                RuntimeWarning, stacklevel=2,
             )
             grid = FieldGrid(grid.shape, structure.cell)
         return grid

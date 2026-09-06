@@ -24,14 +24,18 @@ Nothing in the config says which is which, because on disk they are the same
 kind of thing. What differs is the **content** of a material's directory, and
 content is read rather than declared:
 
-| A material's directory holds | Recognised by | $V_\mathrm{ext}$ from | $\tau$ |
-| --- | --- | --- | --- |
-| a full DFT run | a `POSCAR` or `CONTCAR` | its own inputs — `POTCAR` tables, **exact** | read from `TAUCAR` when the run wrote one |
-| a density and nothing else | a `CHGCAR` with no inputs | the density's own header, plus `potcar_dir` if set | absent — no archive publishes it |
-| prepared fields | an `EXTCAR` beside the density | read from `EXTCAR` | read from `TAUCAR` |
+| A material's directory holds | $V_\mathrm{ext}$ from | $\tau$ |
+| --- | --- | --- |
+| a full DFT run | its own inputs — `POTCAR` tables, **exact** | read from `TAUCAR` when the run wrote one |
+| a density and nothing else | the density's own header, plus `potcar_dir` if set | absent — no archive publishes it |
+| prepared fields | read from `EXTCAR` | read from `TAUCAR` |
 
-A path holding a **single** material's run directly — its files at the top
-level rather than one level down — is read as that one material.
+**A material is a directory with a density in it.** The `CHGCAR` — text,
+compressed, or a field inside `fields.h5` — carries the grid every other field
+is placed on and the structure they are all built at, so it is the one thing
+that qualifies a directory; inputs beside it are a bonus. A path holding a
+**single** material's run directly — its files at the top level rather than
+one level down — is read as that one material.
 
 `TAUCAR` is optional **per material, not per directory**: one run in a tree may
 have written one while its neighbour did not, and the one that did still
@@ -45,9 +49,10 @@ mattered: it asked the *config* to declare something the *directory* already
 answers. A config using any of them fails and is told what to write instead.
 ```
 
-Detection is by content, never by name, and `source: auto` is the default. Set
-`source: bulk` (or a list, one name per path) to state it explicitly; a name
-that disagrees with the directory is an error rather than an empty dataset.
+Detection is by content, never by name. The one thing a config can still
+state is `data.format` — `auto` (the default) detects the DFT code that wrote
+each directory, `vasp` names it — and a name that disagrees with the directory
+is an error rather than an empty dataset.
 
 Everything found is pooled, spectrally downsampled once into a shared cache,
 and served through one `Dataset`. Identifiers that collide between archives are
@@ -124,7 +129,7 @@ So the recipe for a broad `ext2chg` model is:
 ```bash
 poraque-mp --elements Pt Pd Ni --estimate                    # size it first
 poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
-poraque-train --config configs/train_materialsproject.yaml
+poraque-train --config my_mp_run.yaml     # data_paths: [data/MP]
 ```
 
 and to specialise it on your own chemistry afterwards, point `data_paths` at

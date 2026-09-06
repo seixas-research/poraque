@@ -220,7 +220,7 @@ latex/*/poraque_version.tex
 *.synctex.gz
 latex/article/
 
-# PySR scratch output (symbolic distillation)
+# Symbolic-distillation scratch output
 outputs/
 
 # Claude Code session context (local only, not part of the repository)

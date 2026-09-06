@@ -16,9 +16,9 @@ fields already on the grid they will be trained on::
     cache/res32/mp-124/{EXTCAR,CHGCAR}
 
 :func:`build_field_cache` produces that from anything
-:mod:`poraque.data.sources` recognises — DFT calculation directories, bulk
-density archives, several of each — so the trainer sees one layout no matter
-what it was given.
+:mod:`poraque.data.sources` recognises — DFT run trees, ``poraque-mp``
+downloads, several of each — so the trainer sees one layout no matter what it
+was given.
 
 Why cache at all
 ----------------
@@ -47,6 +47,8 @@ import time
 import numpy as np
 
 from ..fields import FieldGrid
+from ..fields.hdf5 import DEFAULT_FILENAME
+from ..fields.resample import downsampled_grid, resample_field
 from .sources import discover_records, resolve_source
 
 #: Fields written to the cache, in file order.
@@ -70,8 +72,9 @@ CACHE_SUMMARY_FILENAME = "cache_summary.json"
 CACHE_FINGERPRINT_FILENAME = "cache_fingerprint.json"
 
 
-#: Filename of a material's HDF5 field store inside a cache directory.
-HDF5_FILENAME = "fields.h5"
+#: Filename of a material's HDF5 field store inside a cache directory — the
+#: store module's own default, imported rather than restated.
+HDF5_FILENAME = DEFAULT_FILENAME
 
 
 def cached_paths(destination, fields, storage="files"):
@@ -236,7 +239,7 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
     table.header()
     try:
         for record in records:
-            entry = _build_one(record, cache, resolution, fields, spin, emit,
+            entry = _build_one(record, cache, resolution, fields, spin,
                                summary.get(record.identifier), storage,
                                compression, compression_level)
             summary[record.identifier] = entry
@@ -600,7 +603,7 @@ def _write_summary(cache, summary):
         json.dump(summary, handle, indent=1, sort_keys=True)
 
 
-def _build_one(record, cache, resolution, fields, spin, emit, remembered=None,
+def _build_one(record, cache, resolution, fields, spin, remembered=None,
                storage="files", compression=None, compression_level=4):
     """
     Downsample and write one material, unless it is already there.
@@ -623,12 +626,7 @@ def _build_one(record, cache, resolution, fields, spin, emit, remembered=None,
 
     started = time.time()
     native = source.grid(record)
-    reduced = native
-    if resolution:
-        from ..fields.resample import downsample_shape
-
-        shape = downsample_shape(native.shape, target_max=resolution)
-        reduced = FieldGrid(shape, native.cell, encut=native.encut)
+    reduced = downsampled_grid(native, resolution)
 
     os.makedirs(destination, exist_ok=True)
     ranges, warnings = {}, []
@@ -655,13 +653,8 @@ def _build_one(record, cache, resolution, fields, spin, emit, remembered=None,
     try:
         for name in wanted:
             field = source.read(record, name, native, spin=spin)
-
-            if resolution:
-                from .dataset import _resample
-
-                reduced_field = _resample(field, reduced.shape, reduced)
-            else:
-                reduced_field = field
+            reduced_field = (resample_field(field, reduced.shape, grid=reduced)
+                             if reduced is not native else field)
 
             # Registered *before* the write, not after: a writer that raises
             # partway has already created the file, and a temporary the

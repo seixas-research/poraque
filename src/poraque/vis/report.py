@@ -473,7 +473,7 @@ class TrainingReport:
         with self._context():
             figure, axes = plt.subplots(1, 3, figsize=(13.0, 4.1),
                                         constrained_layout=True)
-            common = dict(origin="lower", aspect="equal", interpolation="nearest")
+            common = {"origin": "lower", "aspect": "equal", "interpolation": "nearest"}
 
             for panel, values, panel_title in (
                 (axes[0], reference_slice, f"DFT reference {label}"),

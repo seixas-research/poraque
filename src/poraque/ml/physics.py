@@ -614,8 +614,8 @@ _DIRAC_X = -0.75 * (3.0 / np.pi) ** (1.0 / 3.0)
 
 #: Perdew-Wang 1992 correlation parameters, unpolarised branch. Identical to
 #: :data:`poraque.physics.energy._PW92`; the two must not drift apart.
-_PW92 = dict(A=0.031091, alpha1=0.21370,
-             beta1=7.5957, beta2=3.5876, beta3=1.6382, beta4=0.49294)
+_PW92 = {"A": 0.031091, "alpha1": 0.21370,
+             "beta1": 7.5957, "beta2": 3.5876, "beta3": 1.6382, "beta4": 0.49294}
 
 #: PBE parameters. None are fitted: kappa is the Lieb-Oxford bound and mu and
 #: beta follow from the linear response of the uniform gas. Mirrors

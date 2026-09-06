@@ -122,6 +122,7 @@ import numpy as np
 from .base import ScalarField
 from .constants import COULOMB_CONSTANT_EV_ANGSTROM
 from .grid import FieldGrid
+from .structure import element_of
 from .vasp.incar import Incar
 from .vasp.poscar import Poscar
 from .vasp.potcar import Potcar
@@ -339,7 +340,7 @@ class ExternalPotential(ScalarField):
         if potcar is not None and not potcar.matches(poscar):
             raise ValueError(
                 f"POTCAR species {potcar.elements} do not match POSCAR species "
-                f"{[s.split('_')[0] for s in poscar.symbols]} (order matters)."
+                f"{[element_of(s) for s in poscar.symbols]} (order matters)."
             )
 
         if grid is None:
@@ -396,15 +397,13 @@ class ExternalPotential(ScalarField):
         entries = {entry.element: entry for entry in potcar}
         g2 = grid.get_g2()
         magnitude = np.sqrt(g2)
-
-        inverse_g2 = np.zeros_like(g2)
-        nonzero = g2 > 1e-12
-        inverse_g2[nonzero] = 1.0 / g2[nonzero]
+        inverse_g2 = grid.get_inverse_g2(g2)
+        nonzero = inverse_g2 > 0
 
         v_g = np.zeros(grid.shape, dtype=complex)
 
         for symbol, atom_slice in structure.species_slices():
-            element = symbol.split("_")[0]
+            element = element_of(symbol)
             entry = entries.get(element)
             if entry is None or entry.local_potential is None:
                 raise ValueError(
@@ -476,16 +475,13 @@ class ExternalPotential(ScalarField):
 
         widths = widths or {}
         g2 = grid.get_g2()
-
         # 1 / G^2 with the G = 0 term excluded (neutralizing background).
-        inverse_g2 = np.zeros_like(g2)
-        nonzero = g2 > 1e-12
-        inverse_g2[nonzero] = 1.0 / g2[nonzero]
+        inverse_g2 = grid.get_inverse_g2(g2)
 
         v_g = np.zeros(grid.shape, dtype=complex)
 
         for symbol, atom_slice in structure.species_slices():
-            element = symbol.split("_")[0]
+            element = element_of(symbol)
             charge = float(charges[element])
             if charge == 0.0:
                 continue
@@ -638,7 +634,7 @@ def _charges_from_pseudopotentials(structure, pseudopotentials, zval):
     charges = {element: float(info.valence_charge)
                for element, info in (pseudopotentials or {}).items()}
     if zval:
-        charges.update({str(k).split("_")[0]: float(v) for k, v in zval.items()})
+        charges.update({element_of(k): float(v) for k, v in zval.items()})
 
     missing = [element for element in structure.elements if element not in charges]
     if missing:
@@ -670,7 +666,7 @@ def _widths_from_pseudopotentials(structure, core_radii, sigma, rcore_factor, mo
         )
 
     if isinstance(sigma, dict):
-        widths.update({str(k).split("_")[0]: float(v) for k, v in sigma.items()})
+        widths.update({element_of(k): float(v) for k, v in sigma.items()})
     elif sigma is not None:
         widths = {element: float(sigma) for element in elements}
 

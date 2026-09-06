@@ -75,6 +75,8 @@ import os
 import re
 import warnings
 
+from ..fields.structure import element_of
+
 # ===================================================================== #
 # Per-code energy extraction
 # ===================================================================== #
@@ -185,7 +187,7 @@ class ReferenceEnergies:
     """
 
     def __init__(self, energies=None, source=None):
-        self.energies = {_bare(symbol): float(value)
+        self.energies = {element_of(symbol): float(value)
                          for symbol, value in (energies or {}).items()}
         self.source = source
 
@@ -287,7 +289,7 @@ class ReferenceEnergies:
                 continue
 
             _warn_if_not_a_single_atom(directory, entry)
-            energies[_bare(entry)] = energy
+            energies[element_of(entry)] = energy
 
         return cls(energies, source=f"{root} [{method}]")
 
@@ -295,10 +297,10 @@ class ReferenceEnergies:
     # Lookup
     # ------------------------------------------------------------------ #
     def __getitem__(self, symbol):
-        return self.energies[_bare(symbol)]
+        return self.energies[element_of(symbol)]
 
     def __contains__(self, symbol):
-        return _bare(symbol) in self.energies
+        return element_of(symbol) in self.energies
 
     def __len__(self):
         return len(self.energies)
@@ -308,7 +310,7 @@ class ReferenceEnergies:
 
     def get(self, symbol, default=None):
         """``E_iso`` for ``symbol``, or ``default``."""
-        return self.energies.get(_bare(symbol), default)
+        return self.energies.get(element_of(symbol), default)
 
     def items(self):
         """``(element, energy)`` pairs."""
@@ -325,8 +327,8 @@ class ReferenceEnergies:
         -------
         list of str
         """
-        absent = {_bare(symbol) for symbol in structure.symbols
-                  if _bare(symbol) not in self.energies}
+        absent = {element_of(symbol) for symbol in structure.symbols
+                  if element_of(symbol) not in self.energies}
         return sorted(absent)
 
     def covers(self, structure):
@@ -365,7 +367,7 @@ class ReferenceEnergies:
         total = 0.0
         for symbol, atom_slice in structure.species_slices():
             count = atom_slice.stop - atom_slice.start
-            total += count * self.energies[_bare(symbol)]
+            total += count * self.energies[element_of(symbol)]
         return float(total)
 
     def __repr__(self):
@@ -378,11 +380,6 @@ class ReferenceEnergies:
 # ===================================================================== #
 # Helpers
 # ===================================================================== #
-def _bare(symbol):
-    """``Pt_pv`` -> ``Pt``; matches :func:`poraque.fields.element_of`."""
-    return str(symbol).split("_")[0].split(".")[0].strip().rstrip("0123456789")
-
-
 def _poraque_atom_energy(directory, functional):
     r"""
     Evaluate an isolated atom through Poraquê's own energy expression.

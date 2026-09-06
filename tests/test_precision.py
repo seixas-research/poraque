@@ -537,10 +537,18 @@ class TestOneDataSchemaForEveryOrigin:
         for key in ("train_paths", "source", "root"):
             assert not re.search(rf"^\s{{2}}{key}\s*:", data, re.M)
 
-    def test_the_mixed_config_pools_both_origins_under_one_key(self):
+    def test_a_mixed_config_pools_both_origins_under_one_key(self, tmp_path):
         """The example the unification exists for: local runs and a download,
         in one list, with nothing distinguishing them."""
-        paths = self._load("train_mixed").data.paths()
+        from poraque.ml.config import TrainingConfig
+
+        written = tmp_path / "train_mixed.yaml"
+        written.write_text(
+            "data:\n"
+            "  data_paths:\n"
+            "    - ./data/vasp/structures\n"
+            "    - ./data/MP\n")
+        paths = TrainingConfig.from_yaml(str(written)).data.paths()
 
         assert len(paths) == 2
         assert any("vasp" in path for path in paths)
@@ -645,14 +653,14 @@ class TestShippedConfigs:
     #: ``train_complete_and_commented`` lists **every** key at its default. It
     #:     is the map a short config is copied from, not a description of an
     #:     experiment.
-    #: ``train`` and ``train_Pt`` spell out the runs they describe, so each
-    #:     file records what was in force rather than what happened to differ
-    #:     from a default that may since have moved. That is the same argument
-    #:     the archived per-run config rests on, applied to a committed one.
+    #: ``train`` spells out the run it describes, so the file records what was
+    #:     in force rather than what happened to differ from a default that may
+    #:     since have moved. That is the same argument the archived per-run
+    #:     config rests on, applied to a committed one.
     #:
     #: What is left under the rule is the comparison configs, where restating
     #: a default really would bury the one line that differs.
-    EXPLICIT = {"train_complete_and_commented", "train", "train_Pt"}
+    EXPLICIT = {"train_complete_and_commented", "train"}
 
     @pytest.mark.parametrize("name", _shipped_configs())
     def test_it_states_only_what_it_changes(self, name):

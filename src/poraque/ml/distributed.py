@@ -105,14 +105,6 @@ SLURM_VARIABLES = (
 #: same node.
 PORT_RANGE = (20000, 29999)
 
-#: Environment variables ``torch.distributed`` reads. Set from the Slurm
-#: topology rather than expected to be exported by the submission script: a
-#: variable the user has to remember is a variable that is wrong on the run
-#: that matters.
-RENDEZVOUS_VARIABLES = ("MASTER_ADDR", "MASTER_PORT", "RANK", "LOCAL_RANK",
-                        "WORLD_SIZE")
-
-
 def _int(name, default=None):
     """One environment variable as an ``int``, or ``default`` if unusable."""
     value = os.environ.get(name)

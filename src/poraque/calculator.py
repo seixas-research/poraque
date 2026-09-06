@@ -71,7 +71,7 @@ except ImportError as error:                              # pragma: no cover
     Calculator, all_changes = object, None
     _ASE_ERROR = error
 
-from .fields import ExternalPotential, FieldGrid, field_integral
+from .fields import ExternalPotential, FieldGrid, element_of, field_integral
 from .fields.structure import Structure
 from .ml import BUNDLE_FILENAME, resolve_bundle_path
 from .physics import EnergyCalculator
@@ -443,7 +443,7 @@ class Poraque(Calculator):
 
         total = 0.0
         for symbol, atom_slice in structure.species_slices():
-            element = symbol.split("_")[0].split(".")[0]
+            element = element_of(symbol)
             if element not in charges:
                 return None
             count = atom_slice.stop - atom_slice.start

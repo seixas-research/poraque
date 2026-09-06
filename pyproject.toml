@@ -43,14 +43,10 @@ classifiers = [
 # One package, and it is only for *reporting*: the search itself is
 # `poraque.ml.gp`, genetic programming in NumPy with SciPy fitting the
 # constants, and both of those are hard dependencies above. SymPy renders a
-# result as LaTeX and checks its asymptotic limits.
-#
-# PySR was here until 2026-09-03 and the reason it went was operational rather
-# than scientific: it installs a Julia toolchain on first use, which on a
-# supercomputer is a network fetch from a compute node, a writable depot on a
-# filesystem that may be read-only or purged between jobs, a precompilation
-# pass per architecture, and a second language runtime inside an MPI job --
-# for minutes of work at the end of a run that already took hours.
+# result as LaTeX and checks its asymptotic limits. The engine is native on
+# purpose: a second language runtime (Julia) is a network fetch, a writable
+# depot and a precompilation pass on a compute node, for minutes of work at
+# the end of a run that already took hours.
 symbolic = [
     'sympy',
 ]

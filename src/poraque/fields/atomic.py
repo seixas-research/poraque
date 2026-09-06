@@ -87,6 +87,8 @@ from dataclasses import dataclass, field as dataclass_field
 
 import numpy as np
 
+from .structure import element_of
+
 #: Default filename of the database.
 LIBRARY_FILENAME = "atomic_reference.json"
 
@@ -100,17 +102,10 @@ SCHEMA_VERSION = 1
 DEFAULT_BINS = 512
 
 
-def base_element(symbol):
-    """
-    ``"Pt_pv"``, ``"Pt.pbe"``, ``"Pt1"`` all to ``"Pt"``.
-
-    One more copy of an idiom this tree already spells five ways; ``FUTURE.md``
-    tracks unifying them. Kept local rather than importing one of the five,
-    because picking a winner is a change to every call site of the other four.
-    """
-    text = str(symbol).split("_")[0].split(".")[0]
-    return "".join(character for character in text
-                   if character.isalpha()) or text
+#: ``"Pt_pv"``, ``"Pt.pbe"``, ``"Pt1"`` all to ``"Pt"`` — the package's one
+#: symbol-stripping rule, :func:`poraque.fields.structure.element_of`, under
+#: the name this module has always exported.
+base_element = element_of
 
 
 @dataclass

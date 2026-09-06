@@ -72,6 +72,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..fields.structure import element_of
+
 #: Partitioning schemes accepted by :func:`partial_charges`.
 PARTITION_METHODS = ("voronoi", "hirshfeld", "bader")
 
@@ -393,11 +395,11 @@ def _valence_array(structure, valence):
         return np.zeros(natoms, dtype=float)
 
     if isinstance(valence, dict):
-        lookup = {str(k).split("_")[0].split(".")[0]: float(v)
+        lookup = {element_of(k): float(v)
                   for k, v in valence.items()}
         out = np.empty(natoms, dtype=float)
         for symbol, atom_slice in structure.species_slices():
-            element = symbol.split("_")[0].split(".")[0]
+            element = element_of(symbol)
             if element not in lookup:
                 raise KeyError(
                     f"No valence charge for {element!r}; pass valence="
@@ -688,11 +690,11 @@ def hirshfeld_charges(density, structure=None, grid=None, valence=None,
 
     valence_array = _valence_array(structure, valence)
     symbols = _atom_symbols(structure)
-    elements = sorted({s.split("_")[0].split(".")[0] for s in symbols})
+    elements = sorted({element_of(s) for s in symbols})
 
     def valence_of(element):
         for index, symbol in enumerate(symbols):
-            if symbol.split("_")[0].split(".")[0] == element:
+            if element_of(symbol) == element:
                 return valence_array[index] or 1.0
         return 1.0
 
@@ -702,7 +704,7 @@ def hirshfeld_charges(density, structure=None, grid=None, valence=None,
     natoms = structure.natoms
     proatom = np.empty((natoms,) + tuple(grid.shape), dtype=float)
     for index, symbol in enumerate(symbols):
-        element = symbol.split("_")[0].split(".")[0]
+        element = element_of(symbol)
         distance = _distance_to_atom(scaled, structure.scaled_positions[index],
                                      cell, orthogonal)
         proatom[index] = profiles[element](distance)

@@ -128,12 +128,15 @@ def resample_grid(grid, shape):
 
 def resample_field(field, shape, grid=None):
     """
-    Resample a :class:`~poraque.fields.base.ScalarField` onto a new grid.
+    Resample a field onto a new grid, spin pair included.
 
     Parameters
     ----------
-    field : ScalarField
-        Field to resample.
+    field : ScalarField or SpinDensity
+        Field to resample. A :class:`~poraque.fields.SpinDensity` has its two
+        channels truncated independently: each is band-limited in its own
+        right, so this is the same operation spelled for the two-argument
+        constructor.
     shape : tuple of int
         Target grid shape.
     grid : FieldGrid, optional
@@ -142,7 +145,7 @@ def resample_field(field, shape, grid=None):
 
     Returns
     -------
-    ScalarField
+    ScalarField or SpinDensity
         A new instance of the same class.
     """
     target = grid if grid is not None else resample_grid(field.grid, shape)
@@ -154,8 +157,39 @@ def resample_field(field, shape, grid=None):
     metadata = dict(field.metadata)
     metadata["resampled_from"] = tuple(field.grid.shape)
 
+    from .spin import SpinDensity
+
+    if isinstance(field, SpinDensity):
+        return SpinDensity(spectral_resample(field.total, shape),
+                           spectral_resample(field.magnetization, shape),
+                           target, field.structure, metadata=metadata)
     return type(field)(spectral_resample(field.data, shape), target,
                        field.structure, metadata=metadata)
+
+
+def downsampled_grid(grid, resolution):
+    """
+    The grid a material is cached and trained on, given its native one.
+
+    Parameters
+    ----------
+    grid : FieldGrid
+        The native grid.
+    resolution : int or None
+        Longest axis after downsampling, as :func:`downsample_shape` reads
+        ``target_max``. ``None`` or ``0`` keeps the native grid, so a caller
+        can pass the setting straight through.
+
+    Returns
+    -------
+    FieldGrid
+        ``grid`` itself when nothing is to be done, else a new grid on the same
+        cell — one object, to be shared by every field of the material.
+    """
+    if not resolution:
+        return grid
+    return resample_grid(grid, downsample_shape(grid.shape,
+                                               target_max=int(resolution)))
 
 
 def downsample_shape(shape, factor=None, target_max=None):

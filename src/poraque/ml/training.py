@@ -23,7 +23,7 @@ import warnings
 import numpy as np
 import torch
 
-from ..fields import ChargeDensity, ExternalPotential, KineticEnergyDensity
+from ..fields import FIELD_CLASSES
 from .config import BUNDLE_SUFFIX
 from .data import make_dataloader
 from .device import describe_device, resolve_device, synchronize
@@ -32,14 +32,6 @@ from .fno import FNO3d
 from .losses import PhysicsInformedLoss, data_error
 from .tasks import resolve_task
 from .transforms import FieldTransform, Identity
-
-#: Output field class produced by each task.
-_OUTPUT_CLASSES = {
-    "EXTCAR": ExternalPotential,
-    "CHGCAR": ChargeDensity,
-    "TAUCAR": KineticEnergyDensity,
-}
-
 
 def clip_gradients(parameters, max_norm):
     r"""
@@ -390,7 +382,7 @@ class FieldOperator:
             metadata["baseline"] = "atomic_superposition"
 
         if channels.shape[0] == 1:
-            return _OUTPUT_CLASSES[self.task.target_field](
+            return FIELD_CLASSES[self.task.target_field](
                 channels[0], field.grid, field.structure, metadata=metadata)
 
         if channels.shape[0] == 2 and self.task.target_field == "CHGCAR":
@@ -1539,8 +1531,10 @@ def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0):
             prediction = prediction + baseline
             physical_target = physical_target + baseline
 
+        # Kept on the device: `.cpu()` per batch is a synchronisation per
+        # batch, for a number that is only read once the loader is exhausted.
         errors.append(data_error(prediction, physical_target, cell,
                                  loss=loss,
-                                 sobolev_weight=sobolev_weight).cpu())
+                                 sobolev_weight=sobolev_weight))
 
     return float(torch.cat(errors).mean()) if errors else float("nan")

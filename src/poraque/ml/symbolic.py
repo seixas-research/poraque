@@ -70,31 +70,22 @@ Engine
 ------
 :func:`poraque.ml.gp.native_engine` is the backend: genetic programming over
 expression trees, in NumPy, with SciPy fitting the constants of the final
-front. Both are already hard dependencies, so distillation now needs nothing
-that training does not.
+front. Both are already hard dependencies, so distillation needs nothing that
+training does not — deliberately. A second language runtime (a Julia-based
+searcher, say) is faster, and on a supercomputer it is also a network fetch
+from a compute node, a writable depot on a filesystem that may be purged
+between jobs, a precompilation pass per architecture and a second runtime
+inside an MPI job, for minutes of work at the end of a run that took hours.
 
-It replaced `PySR <https://github.com/MilesCranmer/PySR>`_ on 2026-09-03, and
-the reason was operational rather than scientific. PySR is excellent and its
-Julia backend is faster than this one; it also installs a Julia toolchain on
-first use, which on a supercomputer means a network fetch from a compute node,
-a writable depot on a filesystem that may be read-only or purged between jobs,
-a precompilation pass per architecture, and a second language runtime inside an
-MPI job. Distillation is minutes of work at the end of a run that already took
-hours. Carrying a second toolchain for it was the wrong trade.
+**The physics is enforced as fitness, not as a filter applied afterwards**:
+every candidate is scored on the data term plus the constraint penalties, over
+the same probe points with the same weights and the same penalty ceiling, so a
+constrained ``loss`` is comparable between runs. Expressions come back in
+Python spelling, with ``**`` for exponentiation, so a distilled functional is
+something a reader can paste into Python unchanged.
 
-**The objective is unchanged, term for term** — the physics is enforced as
-fitness rather than as a filter applied afterwards, over the same probe points
-with the same weights and the same penalty ceiling — so a constrained ``loss``
-from this engine is comparable with one from the old. What did change is
-notation: expressions come back in Python spelling, with ``**`` for
-exponentiation rather than Julia's ``^``. That is a change of spelling and not
-a correction — :func:`sympy.sympify` defaults to ``convert_xor=True`` and read
-the old spelling as a power perfectly well — but it makes a distilled
-functional something a reader can paste into Python unchanged.
-
-The engine is still *injected* rather than imported by
-:class:`SymbolicDistiller`, so a different backend — PySR included, for anyone
-who wants it and has the toolchain — remains a parameter and not a rewrite.
+The engine is *injected* rather than imported by :class:`SymbolicDistiller`,
+so a different backend remains a parameter and not a rewrite.
 """
 
 from dataclasses import dataclass, field
@@ -764,10 +755,9 @@ def physics_constraints(feature_names, template, weights=None,
     target)`` pairs and can never evaluate a candidate anywhere the data does
     not already sit.
 
-    This used to be rendered as Julia source for PySR's ``loss_function``.
-    Returning it as a plain mapping instead is what lets
-    :mod:`poraque.ml.gp` evaluate the identical expression without importing
-    anything from this module — the two would otherwise be a cycle.
+    Returned as a plain mapping rather than as code for the engine, which is
+    what lets :mod:`poraque.ml.gp` evaluate the identical expression without
+    importing anything from this module — the two would otherwise be a cycle.
 
     Parameters
     ----------
@@ -1143,18 +1133,16 @@ def check_asymptotic_limits(expression, feature_names, scheme,
 
     p, q = symbols["p"], symbols["q"]
     thomas_fermi = _limit_to(
-        enhancement, "thomas_fermi", expected=1.0, tolerance=tolerance,
+        "thomas_fermi", expected=1.0, tolerance=tolerance,
         analytic=lambda: sympy.limit(sympy.limit(enhancement, p, 0), q, 0),
-        numeric=lambda scale: _evaluate(enhancement, symbols,
-                                        {p: scale, q: scale}),
+        numeric=lambda scale: _evaluate(enhancement, {p: scale, q: scale}),
         probes=(1e-3, 1e-5, 1e-7),
         target="F(0,0) = 1")
 
     von_weizsacker = _limit_to(
-        enhancement, "von_weizsacker", expected=0.0, tolerance=tolerance,
+        "von_weizsacker", expected=0.0, tolerance=tolerance,
         analytic=lambda: sympy.limit(enhancement, p, sympy.oo),
-        numeric=lambda scale: _evaluate(enhancement, symbols,
-                                        {p: scale, q: 0.0}),
+        numeric=lambda scale: _evaluate(enhancement, {p: scale, q: 0.0}),
         probes=(1e3, 1e4, 1e5),
         target="F -> 0 as p -> infinity")
 
@@ -1165,8 +1153,7 @@ def check_asymptotic_limits(expression, feature_names, scheme,
                                 bounded_at_infinity=bool(bounded), score=score)
 
 
-def _limit_to(target_expression, name, expected, tolerance, analytic, numeric,
-              probes, target):
+def _limit_to(name, expected, tolerance, analytic, numeric, probes, target):
     """
     Resolve one limit, analytically if possible and numerically if not.
 
@@ -1209,7 +1196,7 @@ def _limit_to(target_expression, name, expected, tolerance, analytic, numeric,
                       f"{target}: found {value:.4g} ({verdict}, {method})")
 
 
-def _evaluate(expression, symbols, substitutions):
+def _evaluate(expression, substitutions):
     """Numeric value of ``expression`` at a point, or ``None``."""
     import sympy
 
@@ -1249,8 +1236,7 @@ class SymbolicDistiller:
         ``(features, target, feature_names, parameters) -> front``. Defaults to
         :func:`~poraque.ml.gp.native_engine`. Injected rather than imported
         so the pipeline can be exercised against a stub, and so a different
-        backend -- PySR included, for anyone who wants it and has the Julia
-        toolchain -- stays a parameter rather than a rewrite.
+        backend stays a parameter rather than a rewrite.
 
     Examples
     --------

@@ -31,7 +31,9 @@ its own name, became ``symbolic.enable``.
 **The audit is here rather than in a script**, because it is the kind of check
 that is run once by hand and then quietly stops being true. Eight configs under
 ``configs/kan/`` were broken by the 26.9.8 rename and none of the four the
-change was made against would have noticed: nothing loaded them.
+change was made against would have noticed: nothing loaded them. The count
+asserted below is a floor, not the current number: it exists so an empty glob
+cannot pass as a clean audit.
 """
 
 import glob
@@ -64,12 +66,12 @@ class TestEveryCommittedConfigLoads:
 
     The 26.9.8 rename broke the eight ``configs/kan/`` comparison files and left
     the four named in the change request working, which is exactly the split a
-    hand audit produces. There are twelve, and this parametrisation is what
-    makes the number stop mattering.
+    hand audit produces. This parametrisation is what makes the number stop
+    mattering.
     """
 
     def test_there_are_configs_to_check(self):
-        assert len(CONFIGS) >= 12, (
+        assert len(CONFIGS) >= 10, (
             f"only {len(CONFIGS)} configs found; the glob is probably wrong")
 
     @pytest.mark.parametrize("path", CONFIGS, ids=label)

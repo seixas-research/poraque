@@ -56,15 +56,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, Sampler
 
-from ..fields import ChargeDensity, ExternalPotential, FieldGrid, KineticEnergyDensity
+from ..fields import FIELD_CLASSES, FieldGrid
 from .transforms import DEFAULT_TRANSFORMS, Identity
-
-#: Field name -> the :class:`~poraque.fields.ScalarField` subclass handling it.
-FIELD_CLASSES = {
-    "EXTCAR": ExternalPotential,
-    "CHGCAR": ChargeDensity,
-    "TAUCAR": KineticEnergyDensity,
-}
 
 #: Above this estimated decoded size, ``cache="auto"`` declines to keep the
 #: dataset in RAM.
@@ -669,8 +662,7 @@ class FieldPairDataset(Dataset):
                                  dtype=self.dtype).unsqueeze(0)
         if channels > 1:
             values = torch.cat(
-                [values, torch.zeros_like(values).expand(
-                    channels - 1, -1, -1, -1)])
+                [values, values.new_zeros((channels - 1, *values.shape[1:]))])
         if self.cache:
             self._baseline_tensors[key] = values
         return values

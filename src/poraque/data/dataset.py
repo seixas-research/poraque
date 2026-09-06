@@ -16,14 +16,14 @@ field pairs across all of them::
     from poraque.data import MixedFieldDataset
 
     data = MixedFieldDataset(
-        ["data/vasp", "data/MP/chgcar"],   # a run archive and a bulk archive
+        ["data/vasp/structures", "data/MP"],   # VASP runs and a download
         task="ext2chg",
         resolution=32,
     )
 
-Each path is detected independently, so the mixture can be any combination of
-DFT calculation directories, bulk density archives and prepared caches. Nothing
-in the training stack below this class knows which material came from where.
+Each path is read independently, so the mixture can be any combination of DFT
+run trees, Materials Project downloads and prepared caches. Nothing in the
+training stack below this class knows which material came from where.
 
 Three things this has to get right, and does
 --------------------------------------------
@@ -32,13 +32,13 @@ Three things this has to get right, and does
 dataset and corrupt every per-material report. Duplicates are prefixed with
 their directory (``MP:mp-124``), and the run is told.
 
-**Not every source has every field.** A bulk archive publishes no
+**Not every source has every field.** A public archive publishes no
 :math:`\tau`; a calculation directory may or may not have written one. The
 dataset reports what it can actually serve (:meth:`available_tasks`) and
 refuses a task nothing supports, rather than failing on the first batch.
 
 **Not every source defines** :math:`V_{\rm ext}` **the same way.** A calculation
-with a ``POTCAR`` gives the tabulated local pseudopotential; a bulk archive
+with a ``POTCAR`` gives the tabulated local pseudopotential; a download
 without one gives the Gaussian pseudo-ion model, which differs from it by
 around 0.1 relative :math:`L_2`. Training across both means the input field is
 *two different quantities* wearing one name, and the operator will spend
@@ -46,7 +46,7 @@ capacity reconciling them. That is sometimes what you want — it is a far large
 and more diverse dataset — and it is never what you want by accident, so the
 dataset emits a warning naming both conventions when a mixture is built.
 
-The clean fix is ``potcar_dir``: give the bulk archive the pseudopotentials its
+The clean fix is ``potcar_dir``: give the download the pseudopotentials its
 densities were computed with and both sources use the *same* tabulated
 construction, at which point the mixture is one quantity again and the warning
 does not fire.
@@ -57,7 +57,6 @@ import warnings
 
 import numpy as np
 
-from ..fields import FieldGrid
 from ..ml.data import FieldPairDataset
 from .sources import discover_records, resolve_source
 
@@ -91,8 +90,8 @@ class MixedFieldDataset(FieldPairDataset):
     potcar_dir : str, optional
         A ``POTCAR`` library, used wherever the data itself ships none. With it
         the external potential is VASP's exact tabulated one; without it, the
-        Gaussian pseudo-ion model. This is what decides whether a bulk archive
-        and a calculation archive define :math:`V_{\rm ext}` the same way — see
+        Gaussian pseudo-ion model. This is what decides whether a download
+        and a run tree define :math:`V_{\rm ext}` the same way — see
         the warning below.
     sigma : float or dict, optional
         Gaussian pseudo-ion width in Å, where a model potential is used.
@@ -101,11 +100,8 @@ class MixedFieldDataset(FieldPairDataset):
     blur_method : {"spectral", "ndimage"}, optional
         How that blur is applied.
     pattern : str, optional
-        Subdirectory prefix filter for calculation archives — the usual reason
-        is a sibling directory of isolated-atom references that must not be
-        trained on.
-    code : str, optional
-        DFT code name for calculation archives, or ``"auto"``.
+        Subdirectory prefix filter — the usual reason is a sibling directory of
+        isolated-atom references that must not be trained on.
     cache : bool, optional
         Keep decoded fields in memory. Worth enabling with ``resolution`` set:
         the potential is otherwise recomputed every epoch.
@@ -127,7 +123,7 @@ class MixedFieldDataset(FieldPairDataset):
 
     Examples
     --------
-    >>> data = MixedFieldDataset(["data/vasp", "data/MP/chgcar"],  # doctest: +SKIP
+    >>> data = MixedFieldDataset(["data/vasp/structures", "data/MP"],  # doctest: +SKIP
     ...                          task="ext2chg", resolution=32)
     >>> data.available_tasks()                                     # doctest: +SKIP
     ['ext2chg']
@@ -136,7 +132,7 @@ class MixedFieldDataset(FieldPairDataset):
     def __init__(self, paths, task="ext2chg", resolution=None, format="auto",
                  spin=False, charges=None, potcar_dir=None, sigma=None,
                  gaussian_blur=None, blur_method="spectral", pattern=None,
-                 code="auto", cache=False, materials=None, log=None,
+                 cache=False, materials=None, log=None,
                  warn_mixed_potentials=True, **kwargs):
         from ..ml.tasks import resolve_task
 
@@ -151,7 +147,7 @@ class MixedFieldDataset(FieldPairDataset):
         self._source_options = {
             "charges": charges, "potcar_dir": potcar_dir, "sigma": sigma,
             "gaussian_blur": gaussian_blur, "blur_method": blur_method,
-            "pattern": pattern, "code": code, "log": self._log,
+            "pattern": pattern, "log": self._log,
         }
         self.sources = self._build_sources(format)
 
@@ -197,7 +193,7 @@ class MixedFieldDataset(FieldPairDataset):
         Warn when the mixture spans two definitions of the external potential.
 
         The test is on the *construction* each source uses, not on its layout.
-        A calculation archive and a bulk archive that both build the tabulated
+        A run tree and a download that both build the tabulated
         potential — because ``potcar_dir`` supplies the pseudopotentials the
         latter lacks — are one quantity and warrant no warning; two archives of
         the same layout that disagree do.
@@ -240,7 +236,7 @@ class MixedFieldDataset(FieldPairDataset):
         Returns
         -------
         list of str
-            In the registry's order. A dataset of bulk densities returns
+            In the registry's order. A dataset of lone densities returns
             ``["ext2chg"]``; a complete VASP archive returns both.
         """
         from ..ml.tasks import TASKS
@@ -262,7 +258,7 @@ class MixedFieldDataset(FieldPairDataset):
             ``{path: count}``, for the run header — a mixed dataset whose
             second archive silently matched nothing is otherwise invisible.
         """
-        counts = {path: 0 for path in self.paths}
+        counts = dict.fromkeys(self.paths, 0)
         for record in self.materials:
             counts[record.source.root] = counts.get(record.source.root, 0) + 1
         return counts
@@ -348,11 +344,11 @@ class MixedFieldDataset(FieldPairDataset):
 
     def _downsample(self, fields, native):
         """Fourier-truncate every field onto one reduced grid."""
-        from ..fields.resample import downsample_shape
+        from ..fields.resample import downsampled_grid, resample_field
 
-        shape = downsample_shape(native.shape, target_max=self.resolution)
-        reduced = FieldGrid(shape, native.cell, encut=native.encut)
-        return tuple(_resample(field, shape, reduced) for field in fields)
+        reduced = downsampled_grid(native, self.resolution)
+        return tuple(resample_field(field, reduced.shape, grid=reduced)
+                     for field in fields)
 
     def shapes(self):
         """
@@ -414,26 +410,3 @@ class MixedFieldDataset(FieldPairDataset):
 
         return subset(order[:cut]), subset(order[cut:])
 
-
-def _resample(field, shape, grid):
-    """
-    Resample a field, spin pair included.
-
-    :func:`~poraque.fields.resample.resample_field` rebuilds a field by calling
-    its own class with ``(data, grid, structure)``, which a
-    :class:`~poraque.fields.SpinDensity` does not accept — it takes its two
-    channels separately. Each channel is band-limited in its own right, so
-    truncating them independently is the same operation, spelled for the
-    two-argument constructor.
-    """
-    from ..fields.resample import resample_field, spectral_resample
-    from ..fields.spin import SpinDensity
-
-    if not isinstance(field, SpinDensity):
-        return resample_field(field, shape, grid=grid)
-
-    metadata = dict(field.metadata)
-    metadata["resampled_from"] = tuple(field.grid.shape)
-    return SpinDensity(spectral_resample(field.total, shape),
-                       spectral_resample(field.magnetization, shape),
-                       grid, field.structure, metadata=metadata)

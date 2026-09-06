@@ -1453,15 +1453,15 @@ class FNO3d(nn.Module):
         self.cell_encoder = CellEncoder(embedding_dim) if cell_conditioning else None
         conditioning = embedding_dim if cell_conditioning else 0
 
-        activation_kwargs = dict(
-            kan_grid_size=self.kan_grid_size,
-            kan_spline_order=self.kan_spline_order,
-            kan_grid_range=self.kan_grid_range,
-            kan_degree=self.kan_degree,
-            kan_rational_num_degree=self.kan_rational_num_degree,
-            kan_rational_den_degree=self.kan_rational_den_degree,
-            kan_use_base=self.kan_use_base,
-        )
+        activation_kwargs = {
+            "kan_grid_size": self.kan_grid_size,
+            "kan_spline_order": self.kan_spline_order,
+            "kan_grid_range": self.kan_grid_range,
+            "kan_degree": self.kan_degree,
+            "kan_rational_num_degree": self.kan_rational_num_degree,
+            "kan_rational_den_degree": self.kan_rational_den_degree,
+            "kan_use_base": self.kan_use_base,
+        }
         lifting_channels = self.in_channels + (3 if use_coordinates else 0)
         self.lift = nn.Conv3d(lifting_channels, self.width, kernel_size=1)
         radial_kwargs = {"n_radial": self.n_radial, "g_basis": self.g_basis,

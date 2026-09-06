@@ -55,6 +55,7 @@ density, matching :mod:`poraque.physics.energy`.
 import numpy as np
 
 from ..fields.constants import COULOMB_CONSTANT_EV_ANGSTROM
+from ..fields.structure import element_of
 from .energy import _erfc, _lattice_points, _per_atom_charges, _shell_counts
 
 
@@ -109,10 +110,8 @@ def local_potential_forces(density, structure, grid, potcar):
     g2 = grid.get_g2()
     magnitude = np.sqrt(g2)
     gx, gy, gz = grid.get_g_vectors()
-
-    nonzero = g2 > 1e-12
-    inverse_g2 = np.zeros_like(g2)
-    inverse_g2[nonzero] = 1.0 / g2[nonzero]
+    inverse_g2 = grid.get_inverse_g2(g2)
+    nonzero = inverse_g2 > 0
 
     # rho(G) with the same normalisation the potential uses: V(r) is built as
     # ifftn(v_G) * npoints, so v_G are coefficients of exp(+i G.r) and the
@@ -123,7 +122,7 @@ def local_potential_forces(density, structure, grid, potcar):
     prefactor = grid.volume / grid.npoints / grid.volume    # = 1 / npoints
 
     for symbol, atom_slice in structure.species_slices():
-        element = symbol.split("_")[0].split(".")[0]
+        element = element_of(symbol)
         entry = entries.get(element)
         if entry is None or entry.local_potential is None:
             raise ValueError(

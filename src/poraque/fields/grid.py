@@ -354,6 +354,34 @@ class FieldGrid:
         gx, gy, gz = self.get_g_vectors()
         return gx * gx + gy * gy + gz * gz
 
+    def get_inverse_g2(self, g2=None):
+        r"""
+        The Coulomb kernel ``1/|G|^2`` with the ``G = 0`` term set to zero.
+
+        Every periodic electrostatic term in the package — the Hartree
+        potential, the local pseudopotential, the Hellmann–Feynman force —
+        divides by :math:`|G|^2` and drops the :math:`G = 0` component, which
+        is the neutralising background of a charged periodic system. One
+        helper, so the threshold below which a mode counts as :math:`G = 0` is
+        decided once.
+
+        Parameters
+        ----------
+        g2 : numpy.ndarray, optional
+            :meth:`get_g2` already in hand, to avoid recomputing it.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape :attr:`shape`, Å², zero where :math:`|G|^2 \le 10^{-12}`.
+        """
+        if g2 is None:
+            g2 = self.get_g2()
+        inverse = np.zeros_like(g2)
+        nonzero = g2 > 1e-12
+        inverse[nonzero] = 1.0 / g2[nonzero]
+        return inverse
+
     def scaled_coordinates(self):
         """
         Fractional coordinates of every grid point.

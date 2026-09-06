@@ -171,11 +171,12 @@ them. None of the three is training data: the loader records the density and
 nothing else, and ``V_ext`` stays computed.
 
 That is the shape of a VASP run, and it is the shape
-:class:`~poraque.data.sources.BulkDensitySource` reads — so a download drops
+:class:`~poraque.data.sources.CalculationSource` reads — so a download drops
 straight into a training config with no rearranging::
 
     data:
-      root: data/MP
+      data_paths:
+        - data/MP
 
 The cost of putting the id in the *filename* instead — one flat directory of
 ``CHGCAR_mp-124.gz`` — was not tidiness: nothing could be placed *beside* a
@@ -234,7 +235,7 @@ import sys
 import time
 
 import numpy as np
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from .. import banner
 from concurrent.futures import ThreadPoolExecutor
@@ -330,8 +331,8 @@ STORE_FILENAME = "fields.h5"
 
 #: VASP input files reconstructed beside each density, so a downloaded material
 #: is a directory VASP itself can be pointed at. None of them is training data:
-#: :class:`~poraque.data.sources.BulkDensitySource` records only the density,
-#: and the external potential stays *computed* -- see :data:`ENTRY_MARKER`.
+#: the reader records only the density, and the external potential stays
+#: *computed* -- see :data:`ENTRY_MARKER`.
 INPUT_FILENAMES = ("INCAR", "KPOINTS", "POSCAR")
 
 #: Written into every material directory, and load-bearing rather than
@@ -373,7 +374,7 @@ def retrieval_provenance():
             return None
 
     return {
-        "retrieved": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "retrieved": datetime.now(UTC).isoformat(timespec="seconds"),
         "mp_api_version": _version("mp-api"),
         "emmet_core_version": _version("emmet-core"),
         "pymatgen_version": _version("pymatgen"),
@@ -1398,7 +1399,7 @@ class MPDataFetcher:
             data/MP/mp-126/fields.h5        # --hdf5
 
         which is the shape of a VASP run and the shape
-        :class:`~poraque.data.sources.BulkDensitySource` reads.
+        :class:`~poraque.data.sources.CalculationSource` reads.
 
         **Resume** is by manifest first and by file second. ``manifest.json``
         at the top of ``outdir`` records every entry already accounted for, so
@@ -1446,9 +1447,8 @@ class MPDataFetcher:
             Reconstruct ``INCAR``, ``KPOINTS`` and ``POSCAR`` beside each
             density (default), so a material's directory is one VASP can be
             pointed at. Costs one batched query for the whole batch, never one
-            per material. Nothing in training reads them --
-            :class:`~poraque.data.sources.BulkDensitySource` records only the
-            density, and the external potential stays computed.
+            per material. Nothing in training reads them -- the reader records
+            only the density, and the external potential stays computed.
 
         Returns
         -------

@@ -93,14 +93,6 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 if os.path.isdir(_SRC):
     sys.path.insert(0, _SRC)
 
-
-# There used to be a `_preimport_symbolic_engine(sys.argv[1:])` here, which
-# read the config before `import torch` so that PySR's Julia runtime could be
-# loaded first: importing `juliacall` after `torch` can segfault the process,
-# which juliacall warns about itself citing pytorch#78829, and the crash
-# arrived *after* training had finished and took the run with it. The engine is
-# `poraque.ml.gp` now -- NumPy and SciPy -- so there is no second runtime, no
-# load order to respect, and nothing for this to do.
 import torch  # noqa: E402
 
 from poraque import banner  # noqa: E402
@@ -1956,12 +1948,8 @@ def validate_symbolic_settings(settings):
                 f"symbolic.physics.{key}={physics[key]!r} must not be "
                 f"negative: a negative penalty rewards the violation it is "
                 f"meant to forbid.")
-    # The floor was 10 while PySR was the engine, because its tournament
-    # selection draws 10 individuals by default and refuses to run when the
-    # population cannot supply them. `poraque.ml.gp` draws three, so the real
-    # requirement is now that a tournament can choose between anything at all.
-    # Relaxing it rather than leaving it is the point: a limit kept after the
-    # dependency that justified it has gone is a limit nobody can explain.
+    # `poraque.ml.gp` selects by tournaments of three, so the one hard
+    # requirement is that a tournament can choose between anything at all.
     if settings.population_size < 4:
         raise SystemExit(
             f"symbolic.population_size={settings.population_size} is too "
@@ -2357,9 +2345,7 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
     # over expressions -- minutes to hours, on data the fit has already
     # produced -- and losing a finished fit to a post-hoc analysis is not a
     # trade worth making, so a single-task copy goes to disk first and the
-    # unified bundle supersedes it. (The sharper version of this argument was
-    # PySR's Julia runtime, which could take the whole process down after
-    # training had finished. That engine is gone; the ordering is still right.)
+    # unified bundle supersedes it.
     save_task_checkpoint(task, operator, config, log)
 
     # ---------------- symbolic distillation ---------------- #

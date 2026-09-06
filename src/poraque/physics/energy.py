@@ -77,6 +77,7 @@ from ..fields.constants import (
     COULOMB_CONSTANT_EV_ANGSTROM,
     HARTREE_TO_EV,
 )
+from ..fields.structure import element_of
 
 #: eV per Hartree, per Å³ per Bohr³ — converts an atomic-unit energy *density*.
 _HA_PER_BOHR3_TO_EV_PER_ANG3 = HARTREE_TO_EV / BOHR_TO_ANGSTROM ** 3
@@ -85,8 +86,8 @@ _HA_PER_BOHR3_TO_EV_PER_ANG3 = HARTREE_TO_EV / BOHR_TO_ANGSTROM ** 3
 _DIRAC_X = -0.75 * (3.0 / np.pi) ** (1.0 / 3.0)
 
 # Perdew-Wang 1992 correlation, unpolarized branch (PRB 45, 13244).
-_PW92 = dict(A=0.031091, alpha1=0.21370,
-             beta1=7.5957, beta2=3.5876, beta3=1.6382, beta4=0.49294)
+_PW92 = {"A": 0.031091, "alpha1": 0.21370,
+             "beta1": 7.5957, "beta2": 3.5876, "beta3": 1.6382, "beta4": 0.49294}
 
 # PBE (PRL 77, 3865). kappa is fixed by the Lieb-Oxford bound, mu and beta by
 # the linear response of the uniform gas; mu = beta * pi^2 / 3.
@@ -147,10 +148,7 @@ def hartree_potential(density, grid):
     grid = _as_grid(grid, values.shape)
     _check_shape(values, grid, "density")
 
-    g2 = grid.get_g2()
-    kernel = np.zeros_like(g2)
-    nonzero = g2 > 1e-12
-    kernel[nonzero] = 1.0 / g2[nonzero]
+    kernel = grid.get_inverse_g2()
 
     transformed = np.fft.fftn(values)
     return np.real(np.fft.ifftn(
@@ -599,7 +597,7 @@ def alpha_z_energy(structure, pscore, n_electrons):
     volume = float(abs(np.linalg.det(np.asarray(structure.cell, dtype=float))))
     total = 0.0
     for symbol, atom_slice in structure.species_slices():
-        element = symbol.split("_")[0].split(".")[0]
+        element = element_of(symbol)
         if element not in pscore:
             raise KeyError(
                 f"No PSCORE for {element!r}. Read the POTCAR with "
@@ -1158,11 +1156,11 @@ def _reduced_gradient_squared(density_bohr, gradient_squared):
 def _per_atom_charges(structure, charges):
     """``(natoms,)`` charge array from a per-element map or a per-atom list."""
     if isinstance(charges, dict):
-        lookup = {str(k).split("_")[0].split(".")[0]: float(v)
+        lookup = {element_of(k): float(v)
                   for k, v in charges.items()}
         out = np.empty(structure.natoms, dtype=float)
         for symbol, atom_slice in structure.species_slices():
-            element = symbol.split("_")[0].split(".")[0]
+            element = element_of(symbol)
             if element not in lookup:
                 raise KeyError(f"No charge given for species {element!r}.")
             out[atom_slice] = lookup[element]

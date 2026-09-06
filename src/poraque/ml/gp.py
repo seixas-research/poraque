@@ -7,23 +7,21 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-Genetic programming over expression trees, in NumPy. No Julia.
+Genetic programming over expression trees, in NumPy.
 
-This is the search engine behind :mod:`poraque.ml.symbolic`. It replaced PySR
-on 2026-09-03, and the reason was operational rather than scientific: PySR is
-excellent, and it installs a Julia toolchain on first use. On a supercomputer
-that is a network fetch from a compute node, a writable depot on a filesystem
-that may be read-only or purged between jobs, a precompilation pass that has to
-happen once per architecture, and a second language runtime inside an MPI job.
-Distillation is minutes of work at the end of a run that already took hours;
-carrying a second toolchain for it was the wrong trade.
+This is the search engine behind :mod:`poraque.ml.symbolic`, and it is native
+on purpose: NumPy and SciPy are already hard dependencies, so distillation adds
+no toolchain to a training run. A second language runtime would be faster and
+would also be, on a supercomputer, a network fetch from a compute node, a
+writable depot on a filesystem that may be purged between jobs, a
+precompilation pass per architecture and a second runtime inside an MPI job —
+for minutes of work at the end of a run that took hours.
 
-What was kept, exactly
-----------------------
-**The objective, term for term.** The physics is enforced *as fitness*, never
-as a filter applied afterwards — filtering candidates after a search only
-reports how few of them were physical — and the expression is the same one
-:mod:`poraque.ml.symbolic` used to emit as Julia source:
+The objective
+-------------
+**The physics is enforced as fitness**, never as a filter applied afterwards —
+filtering candidates after a search only reports how few of them were
+physical. Every candidate is scored by
 
 .. math::
 
@@ -44,26 +42,20 @@ front``, a list of ``{"complexity", "loss", "expression"}``. Injected into
 :class:`~poraque.ml.symbolic.SymbolicDistiller` rather than imported by it, so
 a different backend stays a parameter and not a rewrite.
 
-What changed, and is worth knowing
-----------------------------------
-**Expressions come out in Python notation**, with ``**`` for exponentiation
-rather than PySR's Julia ``^``. This is a change of spelling and **not** a bug
-fix, which is worth stating because it was very nearly written up as one:
-:func:`sympy.sympify` takes ``convert_xor=True`` by default, so it reads ``^``
-as a power too and the old spelling parsed correctly downstream. What ``**``
-buys is that the string is valid Python, which is what every reader of a
-distilled functional will paste it into.
+Three properties worth knowing
+------------------------------
+**Expressions come out in Python notation**, with ``**`` for exponentiation:
+the string is valid Python, which is what every reader of a distilled
+functional will paste it into. (:func:`sympy.sympify` reads ``^`` as a power
+too, so a config's ``"^"`` operator is the same operation under another name.)
 
 **The search is deterministic by construction**, and ``deterministic`` is
-therefore accepted and ignored rather than being a trade. PySR needed serial
-evaluation to honour a seed and warned when given one it could not keep a
-promise about; this runs in one process, so the same seed gives the same front
-whatever else is true.
+therefore accepted and ignored rather than being a trade: the search runs in
+one process, so the same seed gives the same front whatever else is true.
 
-**The operator alphabet is checked rather than forwarded.** PySR was the
-authority on which names it accepted, so an unknown one could be passed
-through; here an operator that is not implemented raises and names what is.
-Silently dropping an operator changes the search space the user asked for.
+**The operator alphabet is checked rather than forwarded.** An operator that
+is not implemented raises and names the ones that are; silently dropping one
+would change the search space the user asked for.
 
 Design notes
 ------------
@@ -162,10 +154,8 @@ def resolve_operations(unary, binary):
     ------
     ValueError
         On an operator this engine does not implement, naming the ones it
-        does. PySR was the authority on its own operator names and could be
-        handed one this package had never heard of; a native engine has to
-        answer for the alphabet itself, and dropping an unknown operator
-        silently would shrink the search space the user asked for.
+        does. Dropping an unknown operator silently would shrink the search
+        space the user asked for.
     """
     resolved = []
     for names, table, arity in ((unary, UNARY_OPERATIONS, "unary"),
@@ -491,10 +481,10 @@ class ConstrainedObjective:
     r"""
     The fitness a candidate is scored by: data plus the physics penalties.
 
-    Numerically the same objective the Julia backend evaluated, and
-    deliberately so — the constrained ``loss`` reported on a front is not
-    comparable with an unconstrained run's, so it had better at least be
-    comparable with the previous engine's.
+    The constrained ``loss`` reported on a front is not comparable with an
+    unconstrained run's, so every term here is clamped and weighted exactly as
+    :func:`~poraque.ml.symbolic.physics_constraints` states, and two runs
+    with the same settings are comparable with each other.
 
     Parameters
     ----------
@@ -704,9 +694,7 @@ def native_engine(features, target, feature_names, parameters):
     Notes
     -----
     ``deterministic`` is accepted and ignored: the search runs in one process,
-    so the same ``seed`` gives the same front regardless. PySR needed serial
-    evaluation to honour a seed and warned when handed one it could not keep a
-    promise about, which is the trade this no longer has to make.
+    so the same ``seed`` gives the same front regardless.
     """
     features = np.asarray(features, dtype=float)
     target = np.asarray(target, dtype=float).ravel()

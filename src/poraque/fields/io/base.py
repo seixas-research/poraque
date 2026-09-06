@@ -47,6 +47,8 @@ import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field as dataclass_field
 
+from ..structure import element_of
+
 #: Neutral names for the three scalar fields, mapped to filenames by each reader.
 FIELD_KINDS = ("external", "density", "kinetic")
 
@@ -303,7 +305,7 @@ class CalculationReader(ABC):
         charges = {element: info.valence_charge
                    for element, info in self.read_pseudopotentials(directory).items()}
         if overrides:
-            charges.update({str(k).split("_")[0]: float(v)
+            charges.update({element_of(k): float(v)
                             for k, v in overrides.items()})
         return charges
 
