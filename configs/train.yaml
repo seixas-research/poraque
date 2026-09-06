@@ -9,8 +9,8 @@
 # =====================================================================
 
 task:
-  type: all                     # all | ext2chg | chg2tau; only `all` reaches a total energy
-  name: platinum_W32_equiv_nr32 # names models/<name>/ and everything inside it
+  type: all                         # all | ext2chg | chg2tau; only `all` reaches a total energy
+  name: platinum_w16_m8_L4_r16_g16  # names models/<name>/ and everything inside it
 
 data:
   data_paths:                                            # one entry per dataset root; each holds
@@ -20,7 +20,7 @@ data:
   spin: false                                            # Spin polarization for charge density
   paw_source: atomic                                     # the free atom's own record, per element and transferable
   delta_density: true                                    # ext2chg learns rho - rho_sup; predict() still returns the full rho
-  resolution: 32                                         # longest grid axis after spectral downsampling
+  resolution: 48                                         # longest grid axis after spectral downsampling
   cache_in_memory: true                                  # auto | true | false
   storage: files                                         # files (a CHGCAR-format text file per field) | hdf5 (one fields.h5)
   compression: null                                      # null | gzip | lzf; hdf5 only, and raises on a text cache
@@ -29,16 +29,17 @@ data:
 model:
   width: 16                     # channels carried through the Fourier layers
   modes: 8                      # retained Fourier modes per axis
-  n_layers: 3                   # Fourier layers
+  n_layers: 4                   # Fourier layers
   projection_channels: 64       # hidden width of the read-out head
-  mode_selection: fixed         # Options: 'fixed' | 'physical'.
+  mode_selection: physical      # Options: 'fixed' | 'physical'.
+  g_max: 16
   activation: silu              # stateless; `kan` moves the hyperparameters into kan_setup
   projection_activation: null   # read-out nonlinearity; null follows `activation`
   use_coordinates: false        # required false beside equivariant.enable: true
   equivariant:                  # one block: the switch and what it governs
     enable: true
-    n_radial: 32
-    g_basis: auto               # the median band these cells retain, not a constant
+    n_radial: 16
+    g_basis: 16                # the median band these cells retain, not a constant
     spherical_cutoff: true
   # `auto` rather than `null` because null is 8.0 1/Ang here (g_max is unset,
   # and under mode_selection: fixed it would not size the basis anyway) while
