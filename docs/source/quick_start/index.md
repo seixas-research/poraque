@@ -82,7 +82,11 @@ factor of 2 so the density grid is wrap-around free. Two flags expose it:
 # the Accurate rule at the default cutoff: 42³ instead of 32³
 poraque-inference struct/ --prec-accurate
 
-# take ENCUT and PREC from a real INCAR: 450 eV, Accurate -> 64³
+# the same rule at a stated cutoff: 450 eV, Accurate -> 64³
+poraque-inference struct/ --encut 450 --prec-accurate
+
+# write for VASP, from its own INCAR: ENCUT and PREC from the file, VASP's
+# grid rule and the PAW records
 poraque-inference struct/ --from-incar struct/INCAR
 ```
 
@@ -93,10 +97,27 @@ log. A run described by an input file should reproduce that file's grid; a flag
 quietly modifying it would make the two disagree while appearing to agree.
 ```
 
+```{important}
+**`--from-incar` also switches on `--to-vasp` and `--add-paw`**, whether or not
+they were typed, and the log names the ones it enabled:
+
+    --from-incar: enabled --to-vasp and --add-paw automatically -- VASP's own
+    grid rule and the PAW augmentation records are both needed for VASP to read
+    the CHGCAR back (ICHARG=1).
+
+An INCAR is handed over for one reason — the density is going back into VASP
+under that file — and each of the two flags, forgotten, fails late and
+somewhere else: without `--to-vasp` VASP refuses the grid on a restart, without
+`--add-paw` it restarts from the plane-wave part alone. A `--resolution` beside
+`--from-incar` is therefore superseded, and the log says so. To size a grid
+from a cutoff *without* writing for VASP, use `--encut` and `--prec-accurate`.
+```
+
 ### `--to-vasp`: the grid VASP itself would build
 
 ```bash
-poraque-inference struct/ --to-vasp --from-incar struct/INCAR --add-paw
+poraque-inference struct/ --from-incar struct/INCAR     # implies --to-vasp --add-paw
+poraque-inference struct/ --to-vasp --encut 450         # VASP's grid, no INCAR
 ```
 
 The sizing above is how a plane-wave code *should* choose a grid. It is not
@@ -159,11 +180,12 @@ occupancies are still a good approximation.
 
 **Without a reference calculation**, the model falls back to a per-element
 table it carries. Training reads the augmentation records off the training
-`CHGCAR`s, averages them per element, and stores them in the `.poraque` bundle:
+`CHGCAR`s, averages them per element, and stores them in the checkpoint's
+`paw_profiles`, beside the element's core density:
 
 ```text
   PAW reference: Pt  138 values, averaged over 494 atoms in 17 structure(s)
-  PAW reference   -> stored in the bundle (Pt)
+  PAW profile     -> Pt (Z=78): core density + augmentation
 ```
 
 At inference the table is used when the directory has no reference of its own:

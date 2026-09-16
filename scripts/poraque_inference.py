@@ -176,7 +176,7 @@ def load_operator(bundle, task, device):
     except (KeyError, ValueError) as error:
         raise SystemExit(f"{bundle}: {error}") from error
 
-    state = read_bundle(bundle)[task]
+    state = read_bundle(bundle)["model_state_dict"][task]
     info = {
         "path": str(bundle),
         "task": task,
@@ -257,7 +257,7 @@ def collect_augmentation(directory, structure, shape, log):
 
 def augmentation_from_bundle(bundle, structure, log):
     r"""
-    Fall back to the per-element table the model carries.
+    Fall back to the per-element table the checkpoint's ``paw_profiles`` carry.
 
     Averaged over the training calculations at training time, so a structure
     with no reference of its own can still be written as an ``ICHARG=1``
@@ -268,13 +268,16 @@ def augmentation_from_bundle(bundle, structure, log):
     -------
     list of str or None
     """
-    from poraque.fields.vasp.augmentation import records_for_structure
+    from poraque.fields.vasp.augmentation import (
+        records_for_structure,
+        reference_from_profiles,
+    )
 
     try:
-        metadata = read_bundle(bundle).get("metadata") or {}
+        profiles = read_bundle(bundle)["paw_profiles"]
     except (OSError, KeyError, ValueError):
         return None
-    reference = metadata.get("paw_reference") or {}
+    reference = reference_from_profiles(profiles)
     if not reference:
         return None
 
@@ -514,6 +517,13 @@ def resolve_grid(structure, parameters, pseudopotentials, args, log):
         # a grid VASP will accept, and anything that reshapes it defeats that.
         # --grid and --like stay in front, since both name a shape outright.
         if not (args.grid or args.like):
+            if getattr(args, "resolution", None):
+                # Reachable without typing --to-vasp now that --from-incar
+                # implies it, so a --resolution beside it must not vanish
+                # without a word.
+                log(f"  note: --resolution {args.resolution} is ignored; "
+                    f"--to-vasp sizes the grid with VASP's own rule, which is "
+                    f"what an ICHARG=1 restart requires.")
             return vasp_native_grid(structure, args, log)
         log("  note: --to-vasp is ignored; --grid/--like set the shape "
             "explicitly.")
@@ -572,6 +582,52 @@ def warn_on_resolution_shift(grid, info, log):
 # ===================================================================== #
 # Pipeline
 # ===================================================================== #
+#: Flags ``--from-incar`` switches on, as ``(flag, attribute)``.
+INCAR_IMPLIES = (("--to-vasp", "to_vasp"), ("--add-paw", "add_paw"))
+
+
+def apply_incar_implications(args, log):
+    r"""
+    ``--from-incar`` implies ``--to-vasp`` and ``--add-paw``.
+
+    An INCAR is handed over for one reason: the output is going back into VASP
+    under that file. Both flags are then required for that to work, and
+    forgetting either one fails late and somewhere else:
+
+    * without ``--to-vasp`` the grid follows the generic plane-wave rule
+      rather than VASP's own two-stage one, and VASP refuses the ``CHGCAR`` on
+      an ``ICHARG=1`` restart — off by a factor of two on a 27-atom platinum
+      cell at 450 eV;
+    * without ``--add-paw`` the file carries no one-centre records, and VASP
+      restarts from the plane-wave part alone.
+
+    So they are switched on here, whatever was typed, and the log names the
+    ones that were not typed. Applied at the top of :func:`run` rather than in
+    the parser: :func:`run` is the path every caller shares, including a test
+    that builds its own namespace.
+
+    Returns
+    -------
+    tuple of str
+        The flags this switched on, in :data:`INCAR_IMPLIES` order. Empty when
+        ``--from-incar`` was not given or both were already set. Also recorded
+        on ``args.implied_by_incar``, so a later failure can say that the flag
+        it is complaining about was not the user's.
+    """
+    implied = ()
+    if getattr(args, "from_incar", None):
+        implied = tuple(flag for flag, attribute in INCAR_IMPLIES
+                        if not getattr(args, attribute, False))
+        for _, attribute in INCAR_IMPLIES:
+            setattr(args, attribute, True)
+    args.implied_by_incar = implied
+    if implied:
+        log(f"  --from-incar: enabled {' and '.join(implied)} automatically "
+            f"-- VASP's own grid rule and the PAW augmentation records are "
+            f"both needed for VASP to read the CHGCAR back (ICHARG=1).")
+    return implied
+
+
 def run(args, log):
     """Execute the geometry -> EXTCAR -> CHGCAR -> TAUCAR pipeline."""
     device = resolve_device(args.device)
@@ -580,6 +636,7 @@ def run(args, log):
     log("=" * 78)
     log(f"  torch {torch.__version__}   device: {describe_device(device)}")
     log(f"  structure directory: {args.directory}")
+    apply_incar_implications(args, log)
     # Only on CPU, because that is the only place it is consulted. Printed
     # because a silent optimisation is one nobody can tell is missing: a run
     # that falls back to PyTorch is 2-3x slower at cache resolutions and looks
@@ -742,10 +799,22 @@ def run(args, log):
 
     augmentation = None
     if getattr(args, "add_paw", False):
-        augmentation = resolve_augmentation(
-            args.directory, args.models, structure, grid.shape, log,
-            source=getattr(args, "paw_source", "auto"),
-            atomic_reference=getattr(args, "atomic_reference", None))
+        try:
+            augmentation = resolve_augmentation(
+                args.directory, args.models, structure, grid.shape, log,
+                source=getattr(args, "paw_source", "auto"),
+                atomic_reference=getattr(args, "atomic_reference", None))
+        except SystemExit as error:
+            # The user who typed --from-incar and not --add-paw would otherwise
+            # read advice to "drop --add-paw" about a flag they never gave.
+            if "--add-paw" not in getattr(args, "implied_by_incar", ()):
+                raise
+            raise SystemExit(
+                f"{error}\n\n--add-paw was switched on by --from-incar, "
+                f"since a CHGCAR written for a VASP input file needs its PAW "
+                f"records. To write the density without them, drop "
+                f"--from-incar and pass --to-vasp with --encut and, if "
+                f"needed, --prec-accurate.") from None
         results["paw_augmentation"] = {
             "records": len(augmentation) if augmentation else 0,
             "source": getattr(args, "paw_source", "auto"),
@@ -962,18 +1031,18 @@ def build_parser():
                              "PREC=Normal 3/2 rule. IGNORED when --from-incar "
                              "is given")
     parser.add_argument("--from-incar", metavar="INCAR", default=None,
-                        help="take ENCUT and PREC from this INCAR. TAKES "
-                             "PRECEDENCE over --encut and --prec-accurate, "
-                             "which are then ignored and reported as "
-                             "overridden")
+                        help="take ENCUT and PREC from this INCAR, and write "
+                             "for VASP: IMPLIES --to-vasp and --add-paw. "
+                             "TAKES PRECEDENCE over --encut and "
+                             "--prec-accurate, which are then ignored and "
+                             "reported as overridden")
     parser.add_argument("--to-vasp", action="store_true",
                         help="size the grid with VASP's own rule rather than "
                              "the generic plane-wave one, so the CHGCAR "
                              "matches the NGXF/NGYF/NGZF a VASP run would "
-                             "build and can seed ICHARG=1. Combine with "
-                             "--from-incar to follow a specific input file; "
-                             "overridden by --grid and --like, and it "
-                             "supersedes --resolution")
+                             "build and can seed ICHARG=1. Switched on by "
+                             "--from-incar; overridden by --grid and --like, "
+                             "and it supersedes --resolution")
     parser.add_argument("--grid", nargs=3, type=int, metavar=("NX", "NY", "NZ"),
                         help="explicit grid shape (overrides --encut)")
     parser.add_argument("--like", metavar="FILE",
@@ -1020,10 +1089,10 @@ def build_parser():
                              "relative, so the rescaling is on by default; "
                              "turn it off to inspect the raw prediction")
     parser.add_argument("--add-paw", action="store_true",
-                        help="append the PAW augmentation records from a "
-                             "reference CHGCAR in the input directory, which "
-                             "VASP requires to restart from the predicted "
-                             "density with ICHARG=1")
+                        help="append the PAW augmentation records (see "
+                             "--paw-source), which VASP requires to restart "
+                             "from the predicted density with ICHARG=1. "
+                             "Switched on by --from-incar")
     parser.add_argument("--compare", action="store_true",
                         help="compare against reference files in the input directory")
     parser.add_argument("--functional", default="pbe",

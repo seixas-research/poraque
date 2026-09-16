@@ -161,7 +161,7 @@ _LAZY = {
     "backend_describe": "poraque.ml.backend",
     # unified checkpoint
     "BUNDLE_FILENAME": "poraque.ml.training",
-    "BUNDLE_FORMAT": "poraque.ml.training",
+    "CHECKPOINT_KEYS": "poraque.ml.training",
     "bundle_tasks": "poraque.ml.training",
     "infer_backbone_kwargs": "poraque.ml.training",
     "load_bundle": "poraque.ml.training",

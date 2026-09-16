@@ -163,9 +163,9 @@ carries a caveat at the top:
 > scores describe the material family it was specialised on, and say nothing
 > about the broader set the base model was trained across.
 
-The bundle's metadata records `fine_tuned_from`, the learning rate and whether
-the lifting layers were frozen, so a checkpoint can always be traced back to
-its parent.
+The checkpoint's `config` records `fine_tuning.pretrained_checkpoint`, the
+learning rate and whether the lifting layers were frozen, so a checkpoint can
+always be traced back to its parent.
 
 ## The `.poraque` format
 
@@ -177,15 +177,44 @@ after the architecture inside it:
 | `models/poraque_models.poraque` | the universal model: both operators in one file |
 | `models/poraque_finetuned.poraque` | a fine-tune, specialised to one family |
 
-The container is a `torch.save` payload keyed by task (`ext2chg`, `chg2tau`)
-with a format tag and metadata; the extension is a label, not a different
-serialisation. Nothing inspects it when loading, so a bundle under any name
-loads fine.
+The container is a `torch.save` dictionary of exactly three entries:
+
+```python
+checkpoint = {
+    "model_state_dict": {"ext2chg": ..., "chg2tau": ...},
+    "config": {...},                       # the resolved training config
+    "paw_profiles": {78: {...}, ...},      # PAW data per atomic number
+}
+```
+
+| Key | Holds |
+| --- | --- |
+| `model_state_dict` | per task, everything that rebuilds the operator: the weights, the architecture record, both normalisations and the δ-density baseline. Weights alone would decode to a field in the wrong units |
+| `config` | the resolved configuration as a plain `dict` — the resolution, the epochs and the fine-tuning provenance live here |
+| `paw_profiles` | per element, keyed by *Z*: the radial core charge density (`r` in Å, `core_density` and `pseudo_core_density` in e/Å³, `core_electrons`), read from the POTCAR that built V_ext, and the `augmentation` occupancies `--add-paw` writes |
+
+The core density is read off the POTCAR's `PAW radial sets` block, which
+stores $r^2\rho_{00}(r)$ on a mesh in Å — neither is written in the file, and
+both were pinned by measurement: $\sqrt{4\pi}\int$ of the table is exactly
+$Z - Z_\mathrm{val}$ for every dataset checked (68.0000 for Pt), and the
+pseudized core rejoins the all-electron one at `RPACOR` converted to Å.
+
+```{warning}
+The core density is derived from the POTCAR, which is licensed with VASP. A
+checkpoint carrying it carries pseudopotential data: mind that before sharing
+one outside a group that holds the licence.
+```
+
+The extension is a label, not a different serialisation. Nothing inspects it
+when loading, so a checkpoint under any name loads fine.
 
 ```{note}
 The extension has been changed twice: `.pth` first became `.pfno`, and `.pfno`
-became `.poraque` on 2 September 2026. Neither change touched the container, so
-every older file still loads. If the `.poraque` file is absent and a `.pfno`,
+became `.poraque` on 2 September 2026. Neither change touched the container.
+The container itself changed on 16 September 2026, from a `poraque-bundle-1`
+payload with one top-level entry per task and a `metadata` block to the three
+keys above, and **a file in the old layout is not read**: it raises, names the
+layout, and asks for a retrain. If the `.poraque` file is absent and a `.pfno`,
 `.pth` or `.pt` of the same stem is present, that one is used and the
 substitution is announced — an existing trained model should not become
 invisible because a default filename changed. The search runs the other way

@@ -48,7 +48,11 @@ wrap-around free. Two flags expose it.
 # the Accurate rule at the default cutoff: 42^3 instead of 32^3
 poraque-inference struct/ --prec-accurate
 
-# take ENCUT and PREC from a real INCAR: 450 eV, Accurate -> 64^3
+# the same rule at a stated cutoff: 450 eV, Accurate -> 64^3
+poraque-inference struct/ --encut 450 --prec-accurate
+
+# write for VASP, from its own INCAR: ENCUT and PREC from the file,
+# VASP's grid rule and the PAW records
 poraque-inference struct/ --from-incar struct/INCAR
 \end{lstlisting}
 
@@ -60,10 +64,23 @@ file's grid; a flag quietly modifying it would make the two disagree while
 appearing to agree.
 \end{pwarn}
 
+\begin{pwarn}[title={\opt{--from-incar} implies \opt{--to-vasp} and
+\opt{--add-paw}}]
+Both are switched on whether or not they were typed, and the log names the ones
+it enabled. An INCAR is handed over for one reason --- the density is going
+back into VASP under that file --- and each flag, forgotten, fails late and
+somewhere else: without \opt{--to-vasp} VASP refuses the grid on a restart,
+without \opt{--add-paw} it restarts from the plane-wave part alone. A
+\opt{--resolution} beside \opt{--from-incar} is therefore superseded, and the
+log says so. To size a grid from a cutoff \emph{without} writing for VASP, use
+\opt{--encut} and \opt{--prec-accurate}.
+\end{pwarn}
+
 \subsection{\opt{--to-vasp}: the grid VASP itself would build}
 
 \begin{lstlisting}
-poraque-inference struct/ --to-vasp --from-incar struct/INCAR --add-paw
+poraque-inference struct/ --from-incar struct/INCAR   # implies both flags
+poraque-inference struct/ --to-vasp --encut 450       # VASP's grid, no INCAR
 \end{lstlisting}
 
 The sizing above is how a plane-wave code \emph{should} choose a grid. It is
@@ -151,11 +168,11 @@ the interstitial density is what you want the model to supply.
 
 The model carries a fallback. During training the augmentation records are read
 off the training \file{CHGCAR}s, averaged per chemical element, and stored in
-the \opt{.poraque} bundle:
+the checkpoint's \opt{paw\_profiles}, beside that element's core density:
 
 \begin{lstlisting}
   PAW reference: Pt  138 values, averaged over 494 atoms in 17 structure(s)
-  PAW reference   -> stored in the bundle (Pt)
+  PAW profile     -> Pt (Z=78): core density + augmentation
 \end{lstlisting}
 
 At inference that table is used whenever the directory has no reference of its

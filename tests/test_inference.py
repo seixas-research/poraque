@@ -366,3 +366,131 @@ class TestOneHelperDecidesTheChannelQuestion:
             text = open(os.path.join(_ROOT, name)).read()
             assert "field_integral" in text
             assert 'hasattr(field, "integrate")' not in text
+
+
+# ===================================================================== #
+# --from-incar means "write this for VASP"
+# ===================================================================== #
+class TestAnIncarImpliesAVaspReadyOutput:
+    """
+    ``--from-incar`` switches on ``--to-vasp`` and ``--add-paw``.
+
+    An INCAR is handed over for one reason: the density is going back into
+    VASP under that file. Both flags are required for that, and each one
+    forgotten fails late and somewhere else — without ``--to-vasp`` the grid
+    follows the generic plane-wave rule and VASP refuses the ``CHGCAR`` on an
+    ``ICHARG=1`` restart (a factor of two on a 27-atom platinum cell at
+    450 eV); without ``--add-paw`` the file has no one-centre records and VASP
+    restarts from the plane-wave part alone. Neither failure shows up in
+    ``poraque-inference``'s own output.
+    """
+
+    @staticmethod
+    def _args(*argv):
+        return poraque_inference.build_parser().parse_args(["Pt2", *argv])
+
+    @staticmethod
+    def _apply(args):
+        lines = []
+        implied = poraque_inference.apply_incar_implications(args, lines.append)
+        return implied, "\n".join(lines)
+
+    def test_both_are_switched_on_and_the_log_names_them(self):
+        args = self._args("--from-incar", "INCAR")
+        implied, log = self._apply(args)
+        assert args.to_vasp is True and args.add_paw is True
+        assert implied == ("--to-vasp", "--add-paw")
+        assert "--to-vasp and --add-paw" in log
+        assert "automatically" in log
+
+    def test_only_the_flag_that_was_not_typed_is_named(self):
+        args = self._args("--from-incar", "INCAR", "--add-paw")
+        implied, log = self._apply(args)
+        assert args.to_vasp is True and args.add_paw is True
+        assert implied == ("--to-vasp",)
+        assert "--to-vasp" in log and "--add-paw" not in log
+
+    def test_nothing_is_said_when_nothing_was_automated(self):
+        args = self._args("--from-incar", "INCAR", "--to-vasp", "--add-paw")
+        implied, log = self._apply(args)
+        assert implied == () and log == ""
+        assert args.to_vasp is True and args.add_paw is True
+
+    def test_without_an_incar_neither_flag_moves(self):
+        """The flags keep their meaning for a run that is not VASP-bound."""
+        args = self._args()
+        implied, log = self._apply(args)
+        assert args.to_vasp is False and args.add_paw is False
+        assert implied == () and log == ""
+
+    def test_the_help_says_so(self):
+        text = poraque_inference.build_parser().format_help()
+        assert "IMPLIES --to-vasp and --add-paw" in " ".join(text.split())
+
+    @staticmethod
+    def _incar(tmp_path):
+        path = tmp_path / "INCAR"
+        path.write_text("ENCUT = 100\nPREC = Normal\n")
+        return str(path)
+
+    def test_the_whole_run_writes_the_paw_records(self, structure_directory,
+                                                  tmp_path):
+        """
+        End to end, through ``predict()``: a bundle carrying the per-element
+        table is enough, with no reference calculation beside the structure
+        and ``--add-paw`` never typed.
+        """
+        bundle = _bundle(tmp_path, 1)
+        payload = torch.load(bundle, map_location="cpu", weights_only=False)
+        payload["paw_profiles"] = {78: {
+            "element": "Pt", "atomic_number": 78,
+            "augmentation": {"values": [0.25, 0.5, 0.75, 1.0], "atoms": 2,
+                             "structures": 1}}}
+        torch.save(payload, bundle)
+
+        results = _run(structure_directory, bundle, tmp_path,
+                       "--from-incar", self._incar(tmp_path))
+
+        assert results["paw_augmentation"]["records"] > 0
+        log = open(tmp_path / "predictions" / "inference.log").read()
+        assert "enabled --to-vasp and --add-paw automatically" in log
+        assert "augmentation" in open(results["outputs"]["CHGCAR"]).read()
+
+    def test_a_missing_paw_source_says_the_flag_was_not_the_users(
+            self, structure_directory, tmp_path):
+        """
+        The generic failure ends by advising to *drop --add-paw* — a flag a
+        user who typed only ``--from-incar`` never gave. The message has to
+        say where it came from and what to do instead.
+        """
+        with pytest.raises(SystemExit) as caught:
+            _run(structure_directory, _bundle(tmp_path, 1), tmp_path,
+                 "--from-incar", self._incar(tmp_path))
+        message = str(caught.value)
+        assert "found no PAW augmentation records" in message
+        assert "switched on by --from-incar" in message
+
+    def test_an_explicit_add_paw_keeps_the_plain_message(
+            self, structure_directory, tmp_path):
+        with pytest.raises(SystemExit) as caught:
+            _run(structure_directory, _bundle(tmp_path, 1), tmp_path,
+                 "--add-paw")
+        assert "switched on by --from-incar" not in str(caught.value)
+
+    def test_a_resolution_it_supersedes_is_named(self, structure_directory,
+                                                 tmp_path):
+        """
+        ``--to-vasp`` has always superseded ``--resolution``, silently. That
+        was defensible while ``--to-vasp`` had to be typed; now that an INCAR
+        implies it, a ``--resolution`` beside ``--from-incar`` would vanish
+        without a word.
+        """
+        lines = []
+        args = self._args("--from-incar", self._incar(tmp_path),
+                          "--resolution", "12")
+        poraque_inference.apply_incar_implications(args, lines.append)
+        grid = poraque_inference.resolve_grid(
+            _structure(), None, {}, args, lines.append)
+        log = "\n".join(lines)
+        assert "--resolution 12 is ignored" in log
+        assert max(grid.shape) != 12

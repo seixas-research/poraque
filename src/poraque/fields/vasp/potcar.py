@@ -50,6 +50,30 @@ in units of eV·Å³. The values are the short-ranged remainder
 :math:`-4\pi Z_{\rm val}e^2/q^2` Coulomb tail already subtracted; VASP adds
 that tail back analytically in ``POTION``. See
 :class:`poraque.fields.ExternalPotential` for the reconstruction.
+
+The ``PAW radial sets`` block
+-----------------------------
+Further down, a PAW dataset tabulates its one-centre quantities on a
+logarithmic radial mesh: ``grid``, then ``aepotential``, then ``core
+charge-density``, and later ``core charge-density (pseudized)``. Two
+conventions in it are not written anywhere in the file, and both were pinned
+by measurement rather than taken on trust:
+
+* **the mesh is in Å.** The pseudized core is the all-electron core outside the
+  partial-core radius ``RPACOR``, which the header states in atomic units, and
+  the two tables join at ``RPACOR`` converted to Å --- within one mesh point
+  for Pt, Ag, Ni, Pd and Si --- and not at ``RPACOR`` read as Å;
+* **the values are** :math:`r^2\rho_{00}(r)`, the :math:`\ell = 0` component
+  of the density times :math:`r^2`, with :math:`\rho = \rho_{00}Y_{00}` and
+  :math:`Y_{00} = 1/\sqrt{4\pi}`. So
+  :math:`N_{\rm core} = \sqrt{4\pi}\int r^2\rho_{00}\,dr`, and that
+  integral returns exactly :math:`Z - Z_{\rm val}` --- 68.0000 for Pt, 36.0000
+  for Ag and Pd, 18.0000 for Ni and Cu, 12.0000 for ``Fe_pv``, 2.0000 for O.
+  Neither :math:`\int` of the raw values nor :math:`4\pi\int r^2` of them
+  gives an integer for any of them.
+
+:attr:`PotcarSingle.core_profile` applies both and returns the density itself,
+in e/Å³.
 """
 
 import gzip
@@ -91,13 +115,17 @@ class PotcarSingle:
         Raw floats of the ``local part`` block: ``PSGMAX`` followed by the
         ``NPSPTS`` table values. Prefer :attr:`psgmax` and
         :attr:`local_potential`.
+    radial_sets : dict or None
+        Raw ``PAW radial sets`` tables, ``{"grid", "core charge-density",
+        "core charge-density (pseudized)"}``, as the file stores them. Prefer
+        :attr:`core_profile`.
     """
 
     #: Number of tabulated points, ``NPSPTS`` in ``pseudo_struct.F``.
     NPSPTS = 1000
 
     def __init__(self, symbol, zval, enmax=None, rcore=None, functional=None,
-                 titel=None, local_part=None):
+                 titel=None, local_part=None, radial_sets=None):
         self.symbol = str(symbol)
         self.zval = float(zval)
         self.enmax = None if enmax is None else float(enmax)
@@ -105,6 +133,7 @@ class PotcarSingle:
         self.functional = functional
         self.titel = titel
         self.local_part = local_part
+        self.radial_sets = radial_sets
 
     @property
     def psgmax(self):
@@ -179,6 +208,64 @@ class PotcarSingle:
         return None if values is None else float(values[0])
 
     @property
+    def core_profile(self):
+        r"""
+        The dataset's radial PAW core charge density, as a plain record.
+
+        Both tables the dataset carries, on its own logarithmic mesh:
+        ``core_density`` is the all-electron frozen core and
+        ``pseudo_core_density`` the smooth partial core that replaces it inside
+        ``RPACOR`` (and equals it outside). Converted from the file's
+        :math:`r^2\rho_{00}(r)` to :math:`\rho(r)` in e/Å³ --- see the module
+        docstring for how the convention and the unit were established.
+
+        ``core_electrons`` is :math:`4\pi\int r^2\rho\,dr` by Simpson's rule
+        on that mesh, and ``expected_core_electrons`` is
+        :math:`Z - Z_{\rm val}`. They agree to 1e-4 on every dataset this was
+        checked against, so a disagreement means a misread table, not physics.
+
+        Returns
+        -------
+        dict or None
+            ``element``, ``atomic_number``, ``symbol``, ``titel``, ``zval``,
+            ``r`` (Å), ``core_density`` and ``pseudo_core_density`` (e/Å³,
+            lists of float, the second ``None`` when the dataset has none),
+            ``core_electrons`` and ``expected_core_electrons``. ``None`` unless
+            the POTCAR was read with ``parse_tables=True`` and is a PAW dataset
+            with both a mesh and an all-electron core on it.
+        """
+        tables = self.radial_sets or {}
+        r = tables.get("grid")
+        raw = tables.get("core charge-density")
+        if r is None or raw is None or len(r) != len(raw) or len(r) < 3:
+            return None
+
+        from scipy.integrate import simpson
+
+        r = np.asarray(r, dtype=float)
+        norm = np.sqrt(4.0 * np.pi)
+
+        def density(values):
+            return np.asarray(values, dtype=float) / (norm * r ** 2)
+
+        pseudo = tables.get("core charge-density (pseudized)")
+        if pseudo is not None and len(pseudo) != len(r):
+            pseudo = None
+        return {
+            "element": self.element,
+            "atomic_number": int(self.atomic_number),
+            "symbol": self.symbol,
+            "titel": self.titel,
+            "zval": self.zval,
+            "r": r.tolist(),
+            "core_density": density(raw).tolist(),
+            "pseudo_core_density": (None if pseudo is None
+                                    else density(pseudo).tolist()),
+            "core_electrons": float(norm * simpson(np.asarray(raw), x=r)),
+            "expected_core_electrons": float(self.atomic_number - self.zval),
+        }
+
+    @property
     def element(self):
         """Bare chemical symbol, stripped of the POTCAR variant suffix."""
         return element_of(self.symbol)
@@ -205,7 +292,8 @@ class PotcarSingle:
         text : str
             Text of a single species dataset.
         parse_tables : bool, optional
-            Also extract the raw ``local part`` float table.
+            Also extract the raw ``local part`` float table and the core
+            densities of the ``PAW radial sets`` block.
 
         Returns
         -------
@@ -240,6 +328,7 @@ class PotcarSingle:
             functional=lexch_match.group(1) if lexch_match else None,
             titel=titel,
             local_part=_parse_local_part(text) if parse_tables else None,
+            radial_sets=_parse_radial_sets(text) if parse_tables else None,
         )
 
     def __repr__(self):
@@ -513,3 +602,47 @@ def _parse_local_part(text):
             break
         values.extend(_to_float(token) for token in line.split())
     return np.asarray(values, dtype=float) if values else None
+
+
+#: ``PAW radial sets`` tables :attr:`PotcarSingle.core_profile` reads.
+RADIAL_TABLES = ("grid", "core charge-density",
+                 "core charge-density (pseudized)")
+
+
+def _parse_radial_sets(text):
+    """
+    Extract the core-density tables of the ``PAW radial sets`` block.
+
+    Each table is a title line followed by numeric lines up to the next
+    non-numeric one, exactly as ``local part`` is. Titles are matched **whole**,
+    not by prefix: ``core charge-density`` is a prefix of ``core charge-density
+    (pseudized)``, and the reciprocal-space ``core charge-density (partial)``
+    table earlier in the file is a different quantity on a different mesh ---
+    which is also why the search starts at the block marker.
+
+    Returns
+    -------
+    dict or None
+        ``{title: numpy.ndarray}`` for the :data:`RADIAL_TABLES` present, or
+        ``None`` for a dataset with no ``PAW radial sets`` block (an ultrasoft
+        or norm-conserving potential).
+    """
+    lines = text.splitlines()
+    start = next((index for index, line in enumerate(lines)
+                  if line.strip().lower() == "paw radial sets"), None)
+    if start is None:
+        return None
+
+    tables = {}
+    for index in range(start + 1, len(lines)):
+        title = lines[index].strip()
+        if title not in RADIAL_TABLES or title in tables:
+            continue
+        values = []
+        for line in lines[index + 1:]:
+            if not _NUMERIC_LINE_RE.match(line):
+                break
+            values.extend(_to_float(token) for token in line.split())
+        if values:
+            tables[title] = np.asarray(values, dtype=float)
+    return tables or None

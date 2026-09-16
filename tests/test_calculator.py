@@ -183,7 +183,7 @@ class TestGuardRails:
         path = str(tmp_path / "ext2chg.poraque")
         FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
                       device="cpu").save(path)
-        with pytest.raises(ValueError, match="not a Poraque model bundle"):
+        with pytest.raises(ValueError, match="not a Poraque checkpoint"):
             Poraque(path, charges={"Pt": 11.0}, device="cpu")
 
     def test_rejects_a_live_operator_for_the_wrong_task(self, operators):

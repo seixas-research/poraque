@@ -641,9 +641,10 @@ class FieldOperator:
         return cls.from_state(state, model=model, device=device, **model_kwargs)
 
 
-#: Identifies a bundle payload, so a stray tensor file fails with a clear
-#: message instead of a ``KeyError`` three frames deep.
-BUNDLE_FORMAT = "poraque-bundle-1"
+#: The three keys a checkpoint holds, and nothing else. Also what identifies
+#: one, so a stray tensor file fails with a clear message instead of a
+#: ``KeyError`` three frames deep.
+CHECKPOINT_KEYS = ("model_state_dict", "config", "paw_profiles")
 
 #: Conventional filename for the unified checkpoint. The extension itself is
 #: :data:`poraque.ml.config.BUNDLE_SUFFIX`, re-exported here so that everything
@@ -784,9 +785,28 @@ def infer_backbone_kwargs(model_state):
     return kwargs
 
 
-def save_bundle(path, operators, metadata=None):
-    """
-    Save several operators into one unified checkpoint.
+def save_bundle(path, operators, config=None, paw_profiles=None):
+    r"""
+    Save a training run's operators as one self-sufficient checkpoint.
+
+    The file is a dictionary of exactly three entries::
+
+        checkpoint = {
+            "model_state_dict": {task_name: operator.state(), ...},
+            "config": config.to_dict(),
+            "paw_profiles": {atomic_number: {...}, ...},
+        }
+
+    ``model_state_dict`` holds, per task, everything that rebuilds that
+    operator --- the network's weights *and* the architecture record, the two
+    normalisations and the δ-density baseline --- because weights without the
+    transforms they were trained behind decode to a field in the wrong units.
+    ``paw_profiles`` is the PAW data a prediction needs and no grid model
+    predicts, per element: the radial core charge density read from the POTCAR
+    that built :math:`V_{\rm ext}`, and the augmentation occupancies
+    ``poraque-inference --add-paw`` writes. With both in the file, inference
+    needs neither the POTCARs nor a reference calculation to write a
+    ``CHGCAR`` VASP will read.
 
     The whole pipeline is a chain, so its artefact is a chain: one file holding
     every stage means the two halves cannot drift apart, be copied
@@ -795,11 +815,16 @@ def save_bundle(path, operators, metadata=None):
     Parameters
     ----------
     path : str
-        Destination, conventionally ``models/poraque_models.poraque``.
+        Destination, conventionally ``models/<name>/<name>.poraque``.
     operators : dict
         ``{task_name: FieldOperator}``.
-    metadata : dict, optional
-        Extra provenance stored alongside, e.g. the dataset size.
+    config : TrainingConfig or dict, optional
+        The resolved configuration the run trained with; stored as a plain
+        ``dict``, so reading a checkpoint never depends on the config classes
+        of the version that reads it.
+    paw_profiles : dict, optional
+        ``{atomic_number: {...}}`` as
+        :func:`~poraque.data.cache.load_paw_profiles` returns it.
 
     Returns
     -------
@@ -808,30 +833,30 @@ def save_bundle(path, operators, metadata=None):
 
     Examples
     --------
-    >>> save_bundle("models/poraque_models.poraque",
-    ...             {"ext2chg": first, "chg2tau": second})   # doctest: +SKIP
+    >>> save_bundle("models/run/run.poraque",
+    ...             {"ext2chg": first, "chg2tau": second},
+    ...             config=config, paw_profiles=profiles)   # doctest: +SKIP
     """
-    from ..version import __version__
-
-    payload = {
-        "format": BUNDLE_FORMAT,
-        "poraque_version": __version__,
-        "tasks": sorted(operators),
-        "metadata": dict(metadata or {}),
+    if config is not None and hasattr(config, "to_dict"):
+        config = config.to_dict()
+    checkpoint = {
+        "model_state_dict": {name: operator.state()
+                             for name, operator in operators.items()},
+        "config": dict(config or {}),
+        "paw_profiles": {int(number): dict(profile) for number, profile
+                         in (paw_profiles or {}).items()},
     }
-    for name, operator in operators.items():
-        payload[name] = operator.state()
 
     directory = os.path.dirname(str(path))
     if directory:
         os.makedirs(directory, exist_ok=True)
-    torch.save(payload, path)
+    torch.save(checkpoint, path)
     return str(path)
 
 
 def read_bundle(path):
     """
-    Read a bundle's raw payload, validating that it *is* one.
+    Read a checkpoint's raw payload, validating that it *is* one.
 
     Parameters
     ----------
@@ -840,30 +865,39 @@ def read_bundle(path):
     Returns
     -------
     dict
+        ``{"model_state_dict", "config", "paw_profiles"}``.
 
     Raises
     ------
     ValueError
-        If the file is not a Poraquê bundle. A single-operator checkpoint is
-        named explicitly in the message, since that is the likely mistake.
+        If the file is not a Poraquê checkpoint. Two likely mistakes are named
+        explicitly: a single-operator file, and a checkpoint written in the
+        ``poraque-bundle-1`` layout this one replaced, which is not read ---
+        retrain it.
     """
     payload = torch.load(path, map_location="cpu", weights_only=False)
-    if not isinstance(payload, dict) or payload.get("format") != BUNDLE_FORMAT:
-        detail = ""
-        if isinstance(payload, dict) and "model_state" in payload:
-            detail = (f" It looks like a single-operator checkpoint for task "
-                      f"{payload.get('task')!r}; load it with "
-                      f"FieldOperator.load instead.")
-        raise ValueError(
-            f"{path} is not a Poraque model bundle (expected "
-            f"format={BUNDLE_FORMAT!r}).{detail}"
-        )
-    return payload
+    if isinstance(payload, dict) and set(CHECKPOINT_KEYS) <= set(payload):
+        return payload
+
+    detail = ""
+    if isinstance(payload, dict) and payload.get("format") == "poraque-bundle-1":
+        detail = (" It is a checkpoint in the retired poraque-bundle-1 layout "
+                  "(tasks, metadata and one entry per task at the top level), "
+                  "which is no longer read; retrain to write it as "
+                  "{model_state_dict, config, paw_profiles}.")
+    elif isinstance(payload, dict) and "model_state" in payload:
+        detail = (f" It looks like a single-operator checkpoint for task "
+                  f"{payload.get('task')!r}; load it with "
+                  f"FieldOperator.load instead.")
+    raise ValueError(
+        f"{path} is not a Poraque checkpoint (expected the keys "
+        f"{list(CHECKPOINT_KEYS)}).{detail}"
+    )
 
 
 def bundle_tasks(path):
-    """Task names stored in the bundle at ``path``."""
-    return list(read_bundle(path).get("tasks", []))
+    """Task names stored in the checkpoint at ``path``."""
+    return sorted(read_bundle(path)["model_state_dict"])
 
 
 def load_bundle(path, task, model=None, device=None, **model_kwargs):
@@ -890,13 +924,12 @@ def load_bundle(path, task, model=None, device=None, **model_kwargs):
     KeyError
         If the bundle holds no such task, listing what it does hold.
     """
-    payload = read_bundle(path)
-    if task not in payload:
+    states = read_bundle(path)["model_state_dict"]
+    if task not in states:
         raise KeyError(
-            f"{path} holds no {task!r} model; it contains "
-            f"{sorted(payload.get('tasks', []))}."
+            f"{path} holds no {task!r} model; it contains {sorted(states)}."
         )
-    return FieldOperator.from_state(payload[task], model=model, device=device,
+    return FieldOperator.from_state(states[task], model=model, device=device,
                                     **model_kwargs)
 
 

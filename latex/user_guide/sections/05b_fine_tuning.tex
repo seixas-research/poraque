@@ -169,9 +169,40 @@ family. \\
 \end{tabular}
 \end{center}
 
-The container is a \opt{torch.save} payload keyed by task, with a format tag
-and metadata; the extension is a label, not a different serialisation. Nothing
-inspects it when loading, so a bundle under any name loads fine.
+The container is a \opt{torch.save} dictionary of exactly three entries:
+
+\begin{lstlisting}[language=Python]
+checkpoint = {
+    "model_state_dict": {"ext2chg": ..., "chg2tau": ...},
+    "config": {...},                   # the resolved training config
+    "paw_profiles": {78: {...}, ...},  # PAW data per atomic number
+}
+\end{lstlisting}
+
+\opt{model\_state\_dict} holds, per task, everything that rebuilds the
+operator: the weights, the architecture record, both normalisations and the
+$\delta$-density baseline --- weights alone would decode to a field in the
+wrong units. \opt{config} is the resolved configuration as a plain dictionary.
+\opt{paw\_profiles} holds, per element and keyed by $Z$, the radial core charge
+density read from the POTCAR that built $\vext$ (\opt{r} in \AA,
+\opt{core\_density} and \opt{pseudo\_core\_density} in e/\AA$^3$,
+\opt{core\_electrons}) and the \opt{augmentation} occupancies that
+\opt{--add-paw} writes.
+
+The POTCAR stores the core as $r^{2}\rho_{00}(r)$ on a mesh in \AA, and states
+neither. Both were pinned by measurement: $\sqrt{4\pi}\int$ of the table is
+exactly $Z - Z_{\mathrm{val}}$ for every dataset checked --- 68.0000 for Pt ---
+and the pseudized core rejoins the all-electron one at \opt{RPACOR} converted
+to \AA.
+
+\begin{pwarn}
+The core density is derived from the POTCAR, which is licensed with VASP. A
+checkpoint carrying it carries pseudopotential data; mind that before sharing
+one outside a group that holds the licence.
+\end{pwarn}
+
+The extension is a label, not a different serialisation. Nothing inspects it
+when loading, so a checkpoint under any name loads fine.
 
 A fine-tune is \textbf{never} written over the base model. The two coexist in
 the same directory, and a run that would genuinely overwrite its own base is
@@ -179,14 +210,19 @@ refused --- before training starts, not after.
 
 The PDF report leads its Configuration section with the fine-tuning facts and
 carries a caveat at the top, so a reader cannot mistake a specialised model's
-scores for a general one's. The bundle metadata records
-\opt{fine\_tuned\_from}, the learning rate and whether the lifting layers were
-frozen, so a checkpoint can always be traced back to its parent.
+scores for a general one's. The checkpoint's \opt{config} records
+\opt{fine\_tuning.pretrained\_checkpoint}, the learning rate and whether the
+lifting layers were frozen, so a checkpoint can always be traced back to its
+parent.
 
 \begin{pnote}
 The extension has been changed twice: \opt{.pth} first became \opt{.pfno}, and
 \opt{.pfno} became \opt{.poraque} on 2 September 2026. Neither change touched
-the container, so every older file still loads. If the \opt{.poraque} file is
+the container. The container itself changed on 16 September 2026, from a
+\opt{poraque-bundle-1} payload with one top-level entry per task and a metadata
+block to the three keys above, and \textbf{a file in the old layout is not
+read}: it raises, names the layout, and asks for a retrain. If the
+\opt{.poraque} file is
 absent and a \opt{.pfno}, \opt{.pth} or \opt{.pt} of the same stem is present,
 that one is used and the substitution is announced --- an existing trained model
 should not become invisible because a default filename changed. The search runs

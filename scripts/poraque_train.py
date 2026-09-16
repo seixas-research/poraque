@@ -347,7 +347,7 @@ def build_cache(config, log):
         :class:`~poraque.ml.data.FieldPairDataset` reads it unchanged.
     """
     from poraque.data import build_field_cache, discover_records, resolve_source
-    from poraque.data.cache import build_paw_reference
+    from poraque.data.cache import build_paw_profiles, build_paw_reference
 
     data = config.data
     paths = data.paths()
@@ -400,8 +400,13 @@ def build_cache(config, log):
                                       log=log)
         except (FileNotFoundError, ValueError) as error:
             log(f"  PAW reference: {error}")
-    build_paw_reference(discover_records(sources, required=("CHGCAR",)),
-                        target, log, library=library, source=data.paw_source)
+    records = discover_records(sources, required=("CHGCAR",))
+    build_paw_reference(records, target, log, library=library,
+                        source=data.paw_source)
+    # The radial core density of each element, from the POTCAR that built
+    # V_ext -- the material's own, else potcar_dir -- so the checkpoint carries
+    # it and inference needs no POTCAR to know it.
+    build_paw_profiles(records, target, log)
     return target
 
 
@@ -494,9 +499,9 @@ def report_cache_only(config, cache, log):
     log("")
 
 
-def load_paw_reference(cache):
-    """The cached per-element PAW table, or an empty dict."""
-    from poraque.data.cache import load_paw_reference as _load
+def load_paw_profiles(cache):
+    """The cached per-element PAW data, keyed by atomic number, or ``{}``."""
+    from poraque.data.cache import load_paw_profiles as _load
 
     return _load(cache)
 
@@ -2061,10 +2066,10 @@ def save_task_checkpoint(task, operator, config, log):
 
     path = os.path.join(run,
                         f"{model_name(config)}_{task.name}_trained{BUNDLE_SUFFIX}")
-    save_bundle(path, {task.name: operator},
-                metadata={"note": "single-task safety copy, written before "
-                                  "the optional post-training analyses; "
-                                  "superseded by the unified bundle"})
+    # Weights and config only: the PAW profiles belong to the unified
+    # checkpoint that supersedes this copy, and reading them here would put a
+    # cache lookup between a finished fit and its only copy on disk.
+    save_bundle(path, {task.name: operator}, config=config)
     log(f"  weights secured -> {path}")
     return path
 
@@ -3190,31 +3195,19 @@ def run(argv=None):
                     f"checkpoint at {bundle}. Point output.root "
                     f"somewhere else.")
 
-            metadata = {
-                "structures": sorted({name for r in results
-                                      for name in r.get("train_structures", [])}),
-                "resolution": config.data.resolution,
-                "epochs": config.training.epochs,
-            }
-            # Travels with the weights so a prediction can be written as an
-            # ICHARG=1 restart without a reference calculation beside it.
-            paw = load_paw_reference(cache)
-            if paw:
-                from poraque.data.cache import _reference_origin
-
-                metadata["paw_reference"] = paw
-                metadata["paw_source"] = _reference_origin(paw)
-                log(f"  PAW reference   -> stored in the bundle "
-                    f"({', '.join(sorted(paw))}) "
-                    f"[{metadata['paw_source']}]")
-            if config.fine_tuning.enable:
-                metadata["fine_tuned_from"] = \
-                    config.fine_tuning.pretrained_checkpoint
-                metadata["fine_tuning_learning_rate"] = \
-                    config.fine_tuning.learning_rate
-                metadata["froze_lifting_layers"] = \
-                    config.fine_tuning.freeze_lifting_layers
-            save_bundle(bundle, operators, metadata=metadata)
+            # Travels with the weights so inference needs neither the POTCARs
+            # nor a reference calculation: the core densities, and the
+            # augmentation occupancies an ICHARG=1 restart is written with.
+            # The fine-tuning provenance, the resolution and the epochs are
+            # all in `config`, which is stored whole.
+            paw = load_paw_profiles(cache)
+            for number, entry in sorted(paw.items()):
+                held = [name for name, key in (("core density", "core_density"),
+                                               ("augmentation", "augmentation"))
+                        if key in entry]
+                log(f"  PAW profile     -> {entry['element']} (Z={number}): "
+                    f"{' + '.join(held)}")
+            save_bundle(bundle, operators, config=config, paw_profiles=paw)
             for result in results:
                 result["checkpoint"] = bundle
             log(f"\n  models -> {bundle}  ({', '.join(sorted(operators))})")

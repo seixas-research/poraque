@@ -627,14 +627,65 @@ class TestBundle:
         path = save_bundle(str(tmp_path / "nested" / "dir" / "m.poraque"), pair)
         assert os.path.exists(path)
 
-    def test_carries_provenance(self, pair, tmp_path):
-        from poraque.ml import read_bundle, save_bundle
+    def test_it_is_exactly_the_three_keys(self, pair, tmp_path):
+        """
+        ``{model_state_dict, config, paw_profiles}`` and nothing beside them.
 
+        What used to sit at the top level has a home inside one of the three:
+        the task list is the keys of ``model_state_dict``, the resolution, the
+        epochs and the fine-tuning provenance are ``config``, and the
+        augmentation table is part of each element's ``paw_profiles`` entry.
+        """
+        from poraque.ml import CHECKPOINT_KEYS, save_bundle
+        from poraque.ml.config import TrainingConfig
+
+        config = TrainingConfig.from_dict({"training": {"epochs": 7}})
+        profiles = {78: {"element": "Pt", "atomic_number": 78,
+                         "r": [0.1, 0.2], "core_density": [3.0, 1.0]}}
         path = save_bundle(str(tmp_path / "poraque_models.poraque"), pair,
-                           metadata={"structures": ["a", "b"]})
-        payload = read_bundle(path)
-        assert payload["metadata"]["structures"] == ["a", "b"]
-        assert payload["poraque_version"]
+                           config=config, paw_profiles=profiles)
+
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        assert tuple(sorted(payload)) == tuple(sorted(CHECKPOINT_KEYS))
+        assert sorted(payload["model_state_dict"]) == ["chg2tau", "ext2chg"]
+        assert payload["config"]["training"]["epochs"] == 7
+        assert isinstance(payload["config"], dict)
+        assert payload["paw_profiles"][78]["core_density"] == [3.0, 1.0]
+
+    def test_each_task_entry_rebuilds_its_operator_on_its_own(self, pair,
+                                                             tmp_path):
+        """
+        A ``state_dict`` alone would load weights that decode to the wrong
+        units: the normalisations and the architecture record travel beside
+        them under the same task key.
+        """
+        from poraque.ml import load_bundle, save_bundle
+
+        path = save_bundle(str(tmp_path / "m.poraque"), pair)
+        state = torch.load(path, map_location="cpu",
+                           weights_only=False)["model_state_dict"]["ext2chg"]
+        for key in ("model_state", "architecture", "input_transform",
+                    "target_transform"):
+            assert key in state
+        restored = load_bundle(path, "ext2chg", device="cpu")
+        field = torch.randn(1, 1, 8, 8, 8)
+        cell = torch.eye(3).unsqueeze(0) * 4.0
+        with torch.no_grad():
+            assert torch.equal(pair["ext2chg"].model(field, cell),
+                               restored.model(field, cell))
+
+    def test_the_retired_layout_is_named_and_not_read(self, pair, tmp_path):
+        """
+        No compatibility layer: a ``poraque-bundle-1`` file raises, and says
+        what it is and what to do, rather than failing on a missing key.
+        """
+        from poraque.ml import read_bundle
+
+        path = str(tmp_path / "old.poraque")
+        torch.save({"format": "poraque-bundle-1", "tasks": ["ext2chg"],
+                    "metadata": {}, "ext2chg": pair["ext2chg"].state()}, path)
+        with pytest.raises(ValueError, match="retired poraque-bundle-1"):
+            read_bundle(path)
 
 
 class TestBackboneInference:

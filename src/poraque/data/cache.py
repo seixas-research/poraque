@@ -60,6 +60,10 @@ FIELD_UNITS = {"EXTCAR": "eV", "CHGCAR": "e/Ang^3", "TAUCAR": "eV/Ang^3"}
 #: Per-element PAW augmentation table, written beside the downsampled fields.
 PAW_REFERENCE_FILENAME = "paw_reference.json"
 
+#: Per-element radial PAW core densities, read from the POTCARs that built
+#: V_ext and written beside the augmentation table.
+PAW_PROFILES_FILENAME = "paw_profiles.json"
+
 #: What was written, per material: the two grid shapes and each field's value
 #: range. Read back on a resumed build so the table below can be printed in
 #: full without re-reading a single field.
@@ -904,3 +908,159 @@ def load_paw_reference(cache):
         return {}
     with open(path) as handle:
         return json.load(handle)
+
+
+def build_paw_profiles(records, cache, log=None):
+    r"""
+    The radial PAW core charge density of every element in the training set.
+
+    Read from **the POTCAR that built** :math:`V_{\rm ext}`, in the precedence
+    :meth:`~poraque.data.sources.CalculationSource._external_potential` uses:
+    a ``POTCAR`` in the material's own directory first, and the source's
+    ``potcar_dir`` library when there is none. A profile from any other file
+    would describe a pseudopotential the model was not trained against.
+
+    One POTCAR is read per element, not per material --- the first material
+    that contains it decides --- so a set mixing two variants of one element
+    (``Fe`` beside ``Fe_pv``) records only the first. The profile's ``titel``
+    names which one.
+
+    Cached beside the fields as ``paw_profiles.json`` and reused when present,
+    as :func:`build_paw_reference` is. That is not only a saving: on a cluster
+    the cache is built in a CPU job and training runs in a GPU job that may
+    see a different filesystem, and a GPU node without the POTCAR library
+    mounted must not overwrite the profiles the cache job read with nothing.
+
+    Parameters
+    ----------
+    records : sequence of MaterialRecord
+        The training materials; each carries the source it came from.
+    cache : str
+        Where to write ``paw_profiles.json``.
+    log : callable, optional
+
+    Returns
+    -------
+    dict
+        ``{atomic_number: profile}`` as
+        :attr:`~poraque.fields.vasp.potcar.PotcarSingle.core_profile` returns
+        it. Empty when no material had a POTCAR to read --- a Gaussian-potential
+        dataset has no core density to record.
+    """
+    from ..fields.vasp.potcar import Potcar, read_potcar_text
+    from ..fields.vasp.volumetric import read_structure_header
+
+    emit = log or (lambda *_: None)
+    path = os.path.join(cache, PAW_PROFILES_FILENAME)
+    if os.path.exists(path):
+        profiles = _read_profiles(path)
+        if profiles:
+            emit(f"  PAW core profiles: cached, "
+                 f"{sorted(entry['element'] for entry in profiles.values())}")
+            return profiles
+
+    profiles, unserved = {}, set()
+    for record in records:
+        density = record.files.get("CHGCAR")
+        if not density:
+            continue
+        try:
+            elements = read_structure_header(
+                density.split("::", 1)[0]).elements
+        except (OSError, ValueError):
+            continue
+        wanted = [element for element in dict.fromkeys(elements)
+                  if element not in {entry["element"]
+                                     for entry in profiles.values()}]
+        if not wanted:
+            continue
+
+        entries = []
+        own = os.path.join(record.directory, "POTCAR")
+        if os.path.exists(own):
+            try:
+                entries = list(Potcar.from_string(read_potcar_text(own),
+                                                  parse_tables=True))
+            except (OSError, ValueError) as error:
+                emit(f"  PAW core profiles: {own} unreadable ({error})")
+        elif getattr(record, "source", None) is not None \
+                and record.source.options.get("potcar_dir"):
+            entries = [record.source._library_entry(element)
+                       for element in wanted]
+
+        for entry in entries:
+            if entry is None or entry.element not in wanted:
+                continue
+            profile = entry.core_profile
+            if profile is None:
+                unserved.add(entry.element)
+                continue
+            profiles[profile["atomic_number"]] = profile
+        unserved.update(element for element in wanted
+                        if element not in {entry["element"]
+                                           for entry in profiles.values()})
+
+    unserved -= {entry["element"] for entry in profiles.values()}
+    if not profiles:
+        emit("  PAW core profiles: none -- no material had a PAW POTCAR to "
+             "read, so the checkpoint carries no core densities")
+        return {}
+
+    for number, profile in sorted(profiles.items()):
+        error = abs(profile["core_electrons"]
+                    - profile["expected_core_electrons"])
+        # sqrt(4 pi) times the integral is Z - ZVAL to 1e-4 on every dataset
+        # this was measured against, so a gap means a misread table.
+        flag = ("" if error < 1e-3 * max(1.0, profile[
+            "expected_core_electrons"]) else "   !! does not match Z - ZVAL")
+        emit(f"  PAW core profile: {profile['element']} (Z={number}, "
+             f"{profile['titel']}) {profile['core_electrons']:.4f} core "
+             f"electrons on {len(profile['r'])} radial points{flag}")
+    if unserved:
+        emit(f"  PAW core profiles: no PAW POTCAR for {sorted(unserved)}")
+
+    os.makedirs(cache, exist_ok=True)
+    with open(path, "w") as handle:
+        json.dump({str(number): profile
+                   for number, profile in profiles.items()}, handle)
+    return profiles
+
+
+def _read_profiles(path):
+    """``paw_profiles.json`` with its keys back as atomic numbers."""
+    with open(path) as handle:
+        return {int(number): profile
+                for number, profile in json.load(handle).items()}
+
+
+def load_paw_profiles(cache):
+    r"""
+    Everything PAW the checkpoint stores, per element, keyed by atomic number.
+
+    Two tables, merged because they answer one question --- what a VASP
+    ``CHGCAR`` of this element needs that no grid model predicts:
+
+    * the **core density** from :func:`build_paw_profiles` (``r``,
+      ``core_density``, ``pseudo_core_density``, ...);
+    * the **augmentation occupancies** from :func:`build_paw_reference`, under
+      ``"augmentation"`` --- the one-centre records ``--add-paw`` writes.
+
+    An element may carry either or both: a Gaussian-potential dataset has
+    augmentation records from its CHGCARs and no POTCAR to take a core from.
+
+    Returns
+    -------
+    dict
+        ``{atomic_number: {"element": ..., ...}}``, empty when the cache holds
+        neither table.
+    """
+    from ..fields.vasp.poscar import symbol_to_z
+
+    path = os.path.join(cache, PAW_PROFILES_FILENAME)
+    profiles = _read_profiles(path) if os.path.exists(path) else {}
+    for element, entry in load_paw_reference(cache).items():
+        number = int(symbol_to_z(element))
+        profiles.setdefault(number, {"element": element,
+                                     "atomic_number": number})
+        profiles[number]["augmentation"] = entry
+    return profiles

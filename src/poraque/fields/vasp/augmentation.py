@@ -217,6 +217,30 @@ def build_reference(sources, filename="CHGCAR", log=None):
     return reference
 
 
+def reference_from_profiles(paw_profiles):
+    """
+    The per-element augmentation table inside a checkpoint's ``paw_profiles``.
+
+    A checkpoint keys its PAW data by atomic number and keeps the augmentation
+    occupancies under each element's ``"augmentation"``;
+    :func:`records_for_structure` wants them keyed by symbol. This is the
+    one translation between the two.
+
+    Parameters
+    ----------
+    paw_profiles : dict
+        ``{atomic_number: {"element": ..., "augmentation": {...}, ...}}``.
+
+    Returns
+    -------
+    dict
+        ``{element: augmentation entry}``, only for elements that carry one.
+    """
+    return {entry["element"]: entry["augmentation"]
+            for entry in (paw_profiles or {}).values()
+            if isinstance(entry, dict) and entry.get("augmentation")}
+
+
 def records_for_structure(structure, reference):
     """
     Build the augmentation block for a structure from a stored reference.
