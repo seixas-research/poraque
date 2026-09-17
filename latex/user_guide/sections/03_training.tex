@@ -83,6 +83,25 @@ file --- it is weights, the numbers that say how good they are, the figures
 behind those numbers, and the configuration that produced them --- so they
 arrive and leave together.
 
+\subsection{What the parity figure shows}
+
+The parity plot is drawn over \textbf{every structure} of each split, training
+and validation side by side, each panel titled with how many structures and
+voxels it holds and labelled with its relative $L^2$, $R^2$, MAE and RMSE. A
+held-out density visibly wider about the identity line is the generalisation
+gap, read off the figure instead of inferred from two numbers. Under
+\opt{--kfold} the one panel is every structure as its own fold held it out.
+
+Every structure cannot mean every voxel: a 97-cell set at $48^3$ is eleven
+million pairs. Each structure contributes a random sample of 10\,000 voxels
+(all of them when its grid is smaller), folded into a sparse, fine histogram the
+moment it is drawn and then discarded, so memory follows the spread of the
+values rather than the number of structures. The draw is seeded from
+\opt{training.seed}, so a rerun draws the same voxels. The four numbers on each
+panel come from running sums over the sampled voxels, so they are exact for
+that sample --- but they pool the split into one set, and are not the table's
+mean of per-structure errors.
+
 \section{One model, all structures}
 
 A single set of weights is fitted across every training structure at once, and

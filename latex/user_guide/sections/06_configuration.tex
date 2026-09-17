@@ -165,6 +165,8 @@ computed potential. \\
 \opt{blur\_method} & \opt{spectral} & \opt{spectral} or \opt{ndimage}. \\
 \opt{cache\_in\_memory} & \opt{auto} & Keep decoded fields in RAM between
 epochs --- see below. \\
+\opt{spin} & \opt{auto} & Train on the magnetisation as a second channel
+(Section~\ref{sec:spin}). \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -319,6 +321,70 @@ The cache directory name encodes these choices, for example
 \file{res32\_blur0.15spec}, so changing them cannot silently reuse a cache
 built with different settings.
 \end{ptip}
+
+\subsection{\opt{spin}}
+\label{sec:spin}
+
+\begin{center}
+\begin{tabular}{@{}lp{10.4cm}@{}}
+\toprule
+Value & What happens \\
+\midrule
+\opt{auto} & Ask the sources whether their \file{CHGCAR}s carry a second grid
+block, and settle the channel count for the whole dataset before the cache is
+written. \\
+\opt{true} & Demand one: a dataset with no magnetisation \textbf{raises}. \\
+\opt{false} & Drop it deliberately, and say so in the log. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This is the switch for spin-polarised training, and there is no other. A
+\file{CHGCAR} from an \mbox{\opt{ISPIN = 2}} run stores two grids, the total density
+$\rho$ and the magnetisation $m = \rho_\uparrow - \rho_\downarrow$; with
+\opt{spin} resolved on, both reach the cache, \opt{ext2chg} predicts them as
+channels 0 and 1 of one output, and \opt{chg2tau} reads both. How many channels
+there are is a property of the data, not of the architecture, which is why the
+key lives in \opt{data} and why \opt{model} has no second one: two switches
+could disagree, and one of them would then be quietly ignored. An unpolarised
+member of a spin set carries $m \equiv 0$, so a mixed archive trains one
+two-channel operator rather than two datasets. The cache tag says which it
+holds (\file{res48\_potcar\_spin}).
+
+The objective is still one number over $(\rho, m)$ together. The training log
+says how it divides:
+
+\begin{lstlisting}
+          epoch     train loss     charge        mag     val rel L2
+    ---------------------------------------------------------------
+            3/6        1.23195    0.78913    0.94600        1.17954  *
+            6/6        1.16123    0.73227    0.90121        1.11899  *
+\end{lstlisting}
+
+\opt{charge} is the data term with the prediction substituted into the density
+channel alone, the magnetisation left at its reference; \opt{mag} is the same
+the other way round. Both keep the objective's norm and \textbf{its
+denominator}, the norm of the whole $(\rho, m)$ target. That choice is forced
+rather than convenient: a relative error of $m$ on its own divides by $m$,
+which is identically zero on every non-magnetic cell, so it would be undefined
+on precisely the materials most datasets are made of. With a shared denominator
+the parts of an $L^2$ objective add in quadrature,
+$\mathrm{data} = \sqrt{\mathrm{charge}^2 + \mathrm{mag}^2}$ per sample, and the
+columns say where the error lives. An $H^1$ objective adds its gradient term
+rather than combining in quadrature, so there the columns rank the channels
+without summing to anything; the log's legend states which case applies.
+\opt{train loss} remains the total the optimiser stepped on, physics terms
+included.
+
+\begin{pnote}
+Both parts are in the metrics JSON's \opt{history}, as
+\opt{train\_loss\_charge} and \opt{train\_loss\_magnetisation}, and exist only
+for a two-channel \opt{ext2chg} target --- a one-channel run prints neither
+column. The magnetisation gets its own parity figure,
+\file{<task>\_parity\_magnetisation}, on linear axes because $m$ changes sign,
+and its own held-out number, \opt{magnetisation\_relative\_l2}; the report's
+performance table stays on the density channel.
+\end{pnote}
 
 \section{\opt{model} --- the operator's shape}
 
@@ -837,7 +903,8 @@ to the batch up to 16 and was flat thereafter.
 \opt{peak\_vram\_bytes} and \opt{seconds\_per\_epoch} in the metrics JSON are
 what a sweep over this should be read from; before they were recorded there,
 the only route to either was sampling \opt{nvidia-smi} from outside the
-process.
+process. The whole run's cost, stage by stage, closes the log
+(Section~\ref{sec:resource-profile}).
 
 \subsection{\opt{strict\_device}}
 
@@ -1141,6 +1208,66 @@ figure beside it, so a plot can be redrawn without re-running the model. \\
 \end{tabular}
 \end{center}
 
+\subsection{The resource profile}
+\label{sec:resource-profile}
+
+The last thing \opt{poraque-train} prints is what the run cost:
+
+\begin{lstlisting}
+RESOURCE PROFILING SUMMARY
+==========================================================
+  stage                               wall time     peak RSS
+  ----------------------------------------------------------
+  cache                                   0.0 s    222.6 MiB
+  ext2chg: setup                          0.0 s    228.4 MiB
+  ext2chg: training                       0.4 s    319.7 MiB
+  ext2chg: evaluation and figures         1.6 s    500.5 MiB
+  ext2chg: PDF report                     0.0 s    500.5 MiB
+  chg2tau: setup                          0.0 s    501.3 MiB
+  chg2tau: training                       0.0 s    502.9 MiB
+  chg2tau: evaluation and figures         0.9 s    552.8 MiB
+  chg2tau: PDF report                     0.0 s    552.8 MiB
+  checkpoint                              0.0 s    552.8 MiB
+  ----------------------------------------------------------
+  total (wall clock)                      3.1 s    552.8 MiB
+  device: cpu   outside the stages above: 0.1 s
+\end{lstlisting}
+
+\noindent
+That is a synthetic smoke run; the shape is what matters. Each stage is timed
+after a device synchronisation, so a GPU stage is charged for its compute rather
+than for the kernels it queued. The memory columns answer the question an
+allocation is sized from:
+
+\begin{description}
+  \item[peak RSS] is the process's high-water resident set, read from the
+    operating system rather than sampled, so a spike between two samples cannot
+    be missed. It is a running maximum and never falls; the stage where it
+    jumps is the one that needed the memory. DataLoader workers are separate
+    processes and are reported on a line of their own.
+  \item[peak VRAM], on CUDA, is \opt{torch.cuda.max\_memory\_allocated}
+    \emph{within} each stage --- the peak statistics are reset at every
+    boundary, so the column does fall. The summary adds the most the caching
+    allocator reserved, which is the number \opt{nvidia-smi} shows and the one
+    an out-of-memory error is about.
+  \item[MPS at end] is what the Metal driver held when the stage ended. MPS
+    exposes no peak, so on a Mac this column is a floor, not a maximum.
+\end{description}
+
+\begin{pwarn}
+The summary prints from a \opt{finally}, so a run that raises --- an
+out-of-memory error, a bad file, a Ctrl-C --- still reports every stage it
+finished and marks the one it died in \opt{(interrupted)}: the run whose cost
+most needs explaining is the one that did not finish. A job killed by a signal
+is not so lucky. Slurm ends a job at its time limit with \opt{SIGTERM}, which
+Python does not turn into an exception, so that run leaves no summary; the
+metrics JSON of a finished run is the record to size the next allocation from.
+\end{pwarn}
+
+\opt{--cache-only} prints the summary too, with the cache as its only stage.
+The same record is in the metrics JSON under \opt{resources}; \opt{--kfold}
+times the whole cross-validation of each task as one stage.
+
 \subsection{\opt{save\_raw\_plot\_data}}
 
 A figure is an argument someone will later want to make differently --- in a
@@ -1174,7 +1301,11 @@ neither smaller nor easier to read back.
     because that pivots straight back into a \opt{pcolormesh}; occupied bins
     only, because a 200-bin grid is 40\,000 cells of which a few thousand carry
     anything. The bin edges go in their own file, since a log axis makes them
-    unrecoverable from the centres.
+    unrecoverable from the centres. \opt{count} is what the figure drew, so on
+    log axes it leaves out every sampled voxel at which reference or prediction
+    is not positive; the panel titles give the sample itself. A spin-polarised
+    run writes the same pair again for $m$, as
+    \file{<task>\_parity\_magnetisation}.
   \item[The slice figure] stores the three panels as arrays --- \opt{reference},
     \opt{prediction} and \opt{error} --- together with the colour limits the
     figure used. The error is \emph{stored}, not left to be recomputed: a reader

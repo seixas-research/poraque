@@ -656,14 +656,22 @@ class TrainingReport:
             return self._write_csv(name, ["split", "reference", "prediction"],
                                    rows)
 
+        return self._write_parity_histogram(
+            name, [series_name for series_name, _, _, _ in drawn],
+            [int(x.size) for _, x, _, _ in drawn], edges, histograms)
+
+    def _write_parity_histogram(self, name, labels, totals, edges, histograms):
+        """
+        The histogram form of :meth:`_write_parity_data`, for any source of
+        counts: one row per occupied bin of each split, and the edges beside.
+        """
         centres = 0.5 * (edges[:-1] + edges[1:])
         rows = []
-        for (series_name, x, _, _), shares in zip(drawn, histograms):
+        for series_name, voxels, shares in zip(labels, totals, histograms):
             # `histograms` holds the normalised share, which is what the figure
             # colours by. The voxel count is that share times the split's own
             # point total -- written out rather than left as arithmetic for
             # whoever reads the file.
-            voxels = int(x.size)
             for i, j in np.argwhere(shares > 0):
                 share = float(shares[i, j])
                 rows.append([series_name,
@@ -737,7 +745,6 @@ class TrainingReport:
         str
             Path written.
         """
-        import matplotlib.pyplot as plt
         from matplotlib.colors import LogNorm
 
         sets = [(split_labels[0], _as_array(reference).ravel(),
@@ -783,9 +790,6 @@ class TrainingReport:
                   _metrics(sy[mask], sx[mask]))
                  for (series_name, sx, sy), mask in zip(sets, valid)
                  if mask.any()]
-        suffix = f" [{unit}]" if unit else ""
-        comparing = len(drawn) > 1
-
         # Shared across panels: one range, one set of bin edges. A bin has to
         # mean the same thing on both sides or the comparison is decorative.
         lower = float(min(min(x.min(), y.min()) for _, x, y, _ in drawn))
@@ -815,6 +819,105 @@ class TrainingReport:
             self._write_parity_data(name, drawn, edges, histograms,
                                     scatter=scatter, max_points=max_points)
 
+        return self._draw_parity(
+            name, drawn, edges, histograms, lower, upper, log=log,
+            norm=None if scatter else norm, scatter=scatter,
+            max_points=max_points, label=label, unit=unit, title=title,
+            prediction_label=prediction_label,
+            colorbar_label="share of the structure's voxels per bin")
+
+    def global_parity(self, training, validation=None, name="parity",
+                      label="field", unit="", title=None, bins=200, log=False,
+                      split_labels=("training set", "validation set"),
+                      prediction_label="FNO prediction"):
+        """
+        Parity over **every structure** of a split, from accumulated statistics.
+
+        The same figure :meth:`parity` draws, fed by
+        :class:`~poraque.vis.parity.ParityAccumulator` rather than by arrays: a
+        fixed random sample of each structure's voxels, binned as it was taken,
+        so the split can be any size. The panels share edges and one colour
+        scale, and each is normalised to its own sampled voxels.
+
+        Parameters
+        ----------
+        training : ParityAccumulator
+        validation : ParityAccumulator, optional
+            Drawn beside ``training`` when it holds anything.
+        log : bool, optional
+            Log axes, for a positive field. Falls back to linear when fewer than
+            1 % of the sampled voxels are positive in both reference and
+            prediction, as :meth:`parity` does --- an undertrained operator is
+            exactly when the plot must still draw.
+        split_labels : tuple of str, optional
+
+        Returns
+        -------
+        str
+            Path written.
+        """
+        from matplotlib.colors import LogNorm
+
+        sets = [(split_labels[0], training)]
+        if validation is not None and validation.count:
+            sets.append((split_labels[1], validation))
+        sets = [(series, accumulator) for series, accumulator in sets
+                if accumulator.count]
+        if not sets:
+            raise ValueError("No sampled voxels to plot.")
+
+        if log and sum(a.count - a.nonpositive for _, a in sets) \
+                < 0.01 * sum(a.count for _, a in sets):
+            log = False
+
+        extents = [a.extent(log) for _, a in sets]
+        extents = [e for e in extents if e is not None]
+        lower = min(e[0] for e in extents)
+        upper = max(e[1] for e in extents)
+        edges = (np.logspace(np.log10(lower), np.log10(upper), bins + 1)
+                 if log else np.linspace(lower, upper, bins + 1))
+
+        histograms, totals = [], []
+        for _, accumulator in sets:
+            counts = accumulator.histogram(edges, log)
+            totals.append(int(counts.sum()))
+            histograms.append(counts / max(counts.sum(), 1))
+        positive = [h[h > 0] for h in histograms]
+        norm = LogNorm(vmin=float(min(p.min() for p in positive if p.size)),
+                       vmax=float(max(h.max() for h in histograms)))
+
+        if self.save_data:
+            self._write_parity_histogram(name, [s for s, _ in sets], totals,
+                                         edges, histograms)
+
+        drawn = [(series, None, None, accumulator.metrics())
+                 for series, accumulator in sets]
+        panel_titles = [
+            f"{series} — {accumulator.structures} structures, "
+            f"{accumulator.count:,} voxels sampled"
+            for series, accumulator in sets]
+        return self._draw_parity(
+            name, drawn, edges, histograms, lower, upper, log=log, norm=norm,
+            scatter=False, max_points=0, label=label, unit=unit,
+            title=title or f"Parity over every structure: {label}",
+            prediction_label=prediction_label,
+            colorbar_label="share of the split's sampled voxels per bin",
+            panel_titles=panel_titles)
+
+    def _draw_parity(self, name, drawn, edges, histograms, lower, upper, log,
+                     norm, scatter, max_points, label, unit, title,
+                     prediction_label, colorbar_label, panel_titles=None):
+        """
+        Draw parity panels; shared by :meth:`parity` and :meth:`global_parity`
+        so the two figures cannot drift apart in anything but their data.
+
+        ``drawn`` is ``[(series name, x, y, metrics)]``; ``x`` and ``y`` are
+        read only when ``scatter`` is set.
+        """
+        import matplotlib.pyplot as plt
+
+        suffix = f" [{unit}]" if unit else ""
+        comparing = len(drawn) > 1
         with self._context():
             if comparing:
                 figure, axes = plt.subplots(
@@ -853,7 +956,10 @@ class TrainingReport:
                 panel.set_ylabel(f"{prediction_label} {label}{suffix}")
                 panel.legend(loc="upper left", fontsize=8 if comparing else None)
 
-                if comparing:
+                if panel_titles is not None:
+                    panel.set_title(panel_titles[index], fontsize=10,
+                                    color=self.ink["primary"])
+                elif comparing:
                     panel.set_title(
                         f"{series_name} — rel $L^2$ "
                         f"{series_metrics['relative_l2']:.4f}",
@@ -880,7 +986,7 @@ class TrainingReport:
                 # autoscale and two different densities could then wear the
                 # same colour, which is the specific lie this plot must not tell.
                 bar = figure.colorbar(mesh, ax=panels, fraction=0.046, pad=0.02)
-                bar.set_label("share of the structure's voxels per bin")
+                bar.set_label(colorbar_label)
                 bar.outline.set_visible(False)
 
             figure.suptitle(title or f"Parity: {label}", x=0.01, ha="left",

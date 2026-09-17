@@ -30,6 +30,7 @@ of the package never depends on it::
 """
 
 _LAZY = {
+    "ParityAccumulator": "poraque.vis.parity",
     "TrainingReport": "poraque.vis.report",
     "ModelReport": "poraque.vis.pdf_report",
     "CATEGORICAL": "poraque.vis.style",

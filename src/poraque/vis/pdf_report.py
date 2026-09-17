@@ -359,8 +359,9 @@ class ModelReport:
 
         Nothing measured is lost. The per-structure numbers -- and the four
         metrics not typeset here -- stay in the run's metrics JSON, and the
-        parity figure plots every voxel of every structure, so the *spread* the
-        old table carried is still on the page, drawn rather than enumerated.
+        parity figure draws every structure of each split (a fixed random sample
+        of each one's voxels), so the *spread* the old table carried is still on
+        the page, drawn rather than enumerated.
 
         The rows are ``train``, ``validation`` and ``all``. A run with nothing
         held out prints ``train`` alone: a ``validation`` row of dashes reads
@@ -858,10 +859,15 @@ class ModelReport:
             "loss_curves": "Training objective and validation error against epoch.",
             "field_slice": "Cross-section: DFT reference, prediction, and their "
                            "difference on a shared colour scale.",
-            "parity": "Predicted against true voxel values, with the identity "
-                      "line. Where a validation structure was held out it is "
-                      "drawn beside the training one in its own colour: a "
-                      "wider cloud about the line is the generalisation gap.",
+            "parity_magnetisation": "Predicted against true magnetisation "
+                                    "density, over every structure of each "
+                                    "split, on linear axes: m is signed.",
+            "parity": "Predicted against true voxel values over every "
+                      "structure of each split, from a random sample of 10 000 "
+                      "voxels per structure, with the identity line. The "
+                      "validation set is drawn beside the training set on the "
+                      "same bins and colour scale: a wider cloud about the line "
+                      "is the generalisation gap.",
         }
         if figures:
             body.append(r"\section*{Comparison with DFT}" "\n")

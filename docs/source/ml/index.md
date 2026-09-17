@@ -138,13 +138,34 @@ assembles them with the metrics into a typeset PDF under `reports/`. The
 report is built in a temporary directory and only the PDF is moved out, so no
 `.tex` or auxiliary files are left behind.
 
-When a validation split exists, the parity plot becomes two panels — a training
-structure and a held-out one, side by side, each labelled with its relative
-$L^2$, $R^2$, MAE and RMSE. A held-out density visibly wider about the identity
-line is the generalisation gap: the same story the aggregate table tells, read
-off the figure instead of inferred from two numbers.
+The parity plot is drawn over **every structure** of each split, training and
+validation side by side, each panel titled with how many structures and voxels
+it holds and labelled with its relative $L^2$, $R^2$, MAE and RMSE. A held-out
+density visibly wider about the identity line is the generalisation gap: the
+same story the aggregate table tells, read off the figure instead of inferred
+from two numbers. Under `--kfold` the one panel is every structure as its own
+fold held it out, which no single fold can show.
+
+Every structure cannot mean every voxel. A 97-cell set at $48^3$ is eleven
+million pairs and a Materials Project set is orders of magnitude past that, so
+the figure never holds them. Each structure contributes a random sample of
+10 000 voxels, all of them when its grid is smaller, and the sample is folded
+into a histogram the moment it is drawn and then discarded. The histogram is
+sparse and fine — 0.005 decades a bin on log axes — and only its occupied bins
+are stored, so memory follows the spread of the values rather than the number
+of structures; the 200 bins of the figure are summed from it at the end. The
+draw is seeded from `training.seed` and the structure's position, so a rerun
+draws the same voxels.
+
+The four numbers on each panel are computed from running sums over the sampled
+voxels, not read back off the bins, so they are exact for that sample. They pool
+the split's voxels into one set, which weights a structure by its share of the
+sample — equally, for every grid larger than it — and is therefore not the
+table's mean of per-structure errors; read the two together rather than
+expecting them to agree.
 
 The panels share their axis limits, their bin edges and one colour scale, and
-each is normalised to the share of *its own* voxels. That last point matters
-because grid shapes differ between materials — comparing raw counts would paint
-the finer-grid structure denser for no physical reason.
+each is normalised to the share of *its own* sampled voxels, because the
+training split is several times the validation one and raw counts would paint it
+denser for no physical reason. A spin-polarised run draws a second figure for
+the magnetisation, on linear axes since $m$ changes sign.

@@ -134,6 +134,7 @@ task: ext2chg          # identical to {type: ext2chg}, with the default name
 | `gaussian_blur` | `null` | Gaussian blur width in Å applied to the computed potential |
 | `blur_method` | `spectral` | `spectral` or `ndimage` |
 | `cache_in_memory` | `auto` | keep decoded fields in RAM between epochs — see below |
+| `spin` | `auto` | train on the magnetisation as a second channel — [see below](spin-key) |
 
 (cache-in-memory)=
 ### `cache_in_memory`
@@ -355,6 +356,58 @@ the field. Leave it off unless working at higher resolution.
 
 The cache directory name encodes these choices (`res32_blur0.15spec`), so
 changing them cannot silently reuse a cache built with different settings.
+
+(spin-key)=
+### `spin`
+
+| Value | What happens |
+| --- | --- |
+| `auto` | ask the sources whether their `CHGCAR`s carry a second grid block, and settle the channel count for the whole dataset before the cache is written |
+| `true` | demand one: a dataset with no magnetisation **raises** |
+| `false` | drop it deliberately, and say so in the log |
+
+This is the switch for spin-polarised training, and there is no other. A
+`CHGCAR` from an `ISPIN = 2` run stores two grids, the total density $\rho$ and
+the magnetisation $m = \rho_\uparrow - \rho_\downarrow$; with `spin` resolved
+on, both reach the cache, `ext2chg` predicts them as channels 0 and 1 of one
+output, and `chg2tau` reads both. How many channels there are is a property of
+the data, not of the architecture, which is why the key lives in `data` and why
+`model` has no second one: two switches could disagree, and one of them would
+then be quietly ignored. An unpolarised member of a spin set carries
+$m \equiv 0$, so a mixed archive trains one two-channel operator rather than
+two datasets. The cache tag says which it holds (`res48_potcar_spin`).
+
+The objective is still one number over $(\rho, m)$ together. The training log
+says how it divides:
+
+```text
+          epoch     train loss     charge        mag     val rel L2
+    ---------------------------------------------------------------
+            3/6        1.23195    0.78913    0.94600        1.17954  *
+            6/6        1.16123    0.73227    0.90121        1.11899  *
+```
+
+`charge` is the data term with the prediction substituted into the density
+channel alone, the magnetisation left at its reference; `mag` is the same the
+other way round. Both keep the objective's norm and **its denominator**, the
+norm of the whole $(\rho, m)$ target. That choice is forced rather than
+convenient: a relative error of $m$ on its own divides by $m$, which is
+identically zero on every non-magnetic cell, so it would be undefined on
+precisely the materials most datasets are made of. With a shared denominator
+the parts of an $L^2$ objective add in quadrature,
+$\text{data} = \sqrt{\text{charge}^2 + \text{mag}^2}$ per sample, and the
+columns say where the error lives. An $H^1$ objective adds its gradient term
+rather than combining in quadrature, so there the columns rank the channels
+without summing to anything; the log's legend states which case applies.
+`train loss` remains the total the optimiser stepped on, physics terms
+included.
+
+Both parts are in the metrics JSON's `history`, as `train_loss_charge` and
+`train_loss_magnetisation`, and exist only for a two-channel `ext2chg` target —
+a one-channel run prints neither column. The magnetisation gets its own parity
+figure, `<task>_parity_magnetisation`, on linear axes because $m$ changes sign,
+and its own held-out number, `magnetisation_relative_l2`; the report's
+performance table stays on the density channel.
 
 ## `model` — the operator's shape
 
@@ -1020,7 +1073,8 @@ to 16 and was flat thereafter.
 
 `peak_vram_bytes` and `seconds_per_epoch` in the metrics JSON are what a sweep
 over this should be read from; before they were recorded there, the only route
-to either was sampling `nvidia-smi` from outside the process.
+to either was sampling `nvidia-smi` from outside the process. The whole run's
+cost, stage by stage, closes the log ([the resource profile](resource-profile)).
 
 ### `loss` and `sobolev_weight`
 
@@ -1218,6 +1272,59 @@ individually. The per-structure figures — and `mse`, `rmse`, `r2`,
 `log/<name>.json`, which is machine-readable and has no margins.
 ```
 
+(resource-profile)=
+### The resource profile
+
+The last thing `poraque-train` prints is what the run cost:
+
+```text
+RESOURCE PROFILING SUMMARY
+==============================================================================
+  stage                               wall time     peak RSS
+  ----------------------------------------------------------
+  cache                                   0.0 s    222.6 MiB
+  ext2chg: setup                          0.0 s    228.4 MiB
+  ext2chg: training                       0.4 s    319.7 MiB
+  ext2chg: evaluation and figures         1.6 s    500.5 MiB
+  ext2chg: PDF report                     0.0 s    500.5 MiB
+  chg2tau: setup                          0.0 s    501.3 MiB
+  chg2tau: training                       0.0 s    502.9 MiB
+  chg2tau: evaluation and figures         0.9 s    552.8 MiB
+  chg2tau: PDF report                     0.0 s    552.8 MiB
+  checkpoint                              0.0 s    552.8 MiB
+  ----------------------------------------------------------
+  total (wall clock)                      3.1 s    552.8 MiB
+  device: cpu   outside the stages above: 0.1 s
+  peak RSS: the process's high-water resident set so far (getrusage), so it never falls between rows
+```
+
+(That is a synthetic smoke run; the shape is what matters.) Each stage is timed
+after a device synchronisation, so a GPU stage is charged for its compute
+rather than for the kernels it queued. The memory columns answer the question an
+allocation is sized from:
+
+- **peak RSS** is the process's high-water resident set, read from the
+  operating system rather than sampled, so a spike between two samples cannot
+  be missed. It is a running maximum and never falls; the stage where it jumps
+  is the one that needed the memory. DataLoader workers are separate processes
+  and are reported on a line of their own.
+- **peak VRAM**, on CUDA, is `torch.cuda.max_memory_allocated` *within* each
+  stage — the peak statistics are reset at every boundary, so the column does
+  fall. The summary adds the most the caching allocator reserved, which is the
+  number `nvidia-smi` shows and the one an out-of-memory error is about.
+- **MPS at end** is what the Metal driver held when the stage ended. MPS
+  exposes no peak, so on a Mac this column is a floor, not a maximum.
+
+The summary prints from a `finally`, so a run that raises — an out-of-memory
+error, a bad file, a Ctrl-C — still reports every stage it finished and marks
+the one it died in `(interrupted)`: the run whose cost most needs explaining is
+the one that did not finish. A job killed by a signal is not so lucky. Slurm
+ends a job at its time limit with `SIGTERM`, which Python does not turn into an
+exception, so that run leaves no summary; the metrics JSON of a finished run is
+the record to size the next allocation from. `--cache-only` prints it too, with the cache as its only stage. The
+same record is in the metrics JSON under `resources`; `--kfold` times the whole
+cross-validation of each task as one stage.
+
 ### `save_raw_plot_data`
 
 A figure is an argument someone will later want to make differently — in a
@@ -1250,6 +1357,10 @@ read back.
   back into a `pcolormesh`; occupied bins only, because a 200-bin grid is
   40 000 cells of which a few thousand carry anything. The bin edges go in
   their own file, since a log axis makes them unrecoverable from the centres.
+  `count` is what the figure drew, so on log axes it leaves out every sampled
+  voxel at which reference or prediction is not positive; the panel titles give
+  the sample itself. A spin-polarised run writes the same pair again for $m$,
+  as `<task>_parity_magnetisation`.
 - **The slice figure** stores the three panels as arrays — `reference`,
   `prediction`, `error` — with the colour limits the figure used. The error is
   *stored*, not left to be recomputed: a reader who reconstructs it and gets

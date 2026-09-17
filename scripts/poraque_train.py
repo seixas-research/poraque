@@ -1820,6 +1820,21 @@ def format_shapes(buckets, indent="                        "):
     return [lines[0]] + [indent + line for line in lines[1:]] if lines else []
 
 
+def accumulate_parity(density, magnetisation, target, prediction):
+    """
+    Fold one structure into the parity accumulators.
+
+    The density channel always --- it is what the parity figure is about, and
+    :func:`plot_channel` is the one place that decides what that channel is ---
+    and the magnetisation too when both fields carry one.
+    """
+    density.add(plot_channel(target), plot_channel(prediction))
+    reference = getattr(target, "magnetization", None)
+    predicted = getattr(prediction, "magnetization", None)
+    if reference is not None and predicted is not None:
+        magnetisation.add(reference, predicted)
+
+
 def plot_channel(field):
     """
     The single channel a cross-section or parity figure should draw.
@@ -2362,7 +2377,8 @@ def run_symbolic_distillation(task, dataset, operator, config, log,
     return result
 
 
-def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
+def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
+             profile=None):
     r"""
     Train one model for ``task_name`` on a train/validation split.
 
@@ -2392,11 +2408,17 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
         replicas four different normalisations.
     """
     task = resolve_task(task_name)
+    if profile is None:
+        from poraque.ml.profiling import ResourceProfile
+
+        profile = ResourceProfile(config.training.device
+                                  if config.training.device != "auto" else None)
     log(f"\n{'=' * 78}")
     log(f"TASK  {task.name}:  {task.input_field} -> {task.target_field}")
     log(f"      {task.description}")
     log("=" * 78)
 
+    profile.begin(f"{task.name}: setup")
     baseline = resolve_baseline(task, config, cache, log)
     dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
                                dtype=compute_dtype(config), baseline=baseline,
@@ -2473,6 +2495,7 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
         patience = 0
 
     log(f"\n  progress (every {config.training.eval_epoch} epochs):")
+    profile.begin(f"{task.name}: training")
     start = time.time()
     history = train(
         operator, train_set, validation=validation,
@@ -2497,8 +2520,19 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
         f"loss {history['train_loss'][0]:.4f} -> {history['train_loss'][-1]:.4f}")
 
     # ---------------- per-material evaluation ---------------- #
+    profile.begin(f"{task.name}: evaluation and figures")
     label_text, unit = FIELD_LABELS[task.target_field]
     per_material, figures = {}, []
+    # Every structure of each split feeds the parity plot, through a fixed
+    # sample of its voxels; no split is ever held as voxels. A magnetisation
+    # gets its own pair, on linear axes: it is signed.
+    from poraque.vis.parity import ParityAccumulator
+
+    parity = {"train": ParityAccumulator(seed=config.training.seed),
+              "validation": ParityAccumulator(seed=config.training.seed)}
+    magnetisation_parity = {
+        "train": ParityAccumulator(seed=config.training.seed),
+        "validation": ParityAccumulator(seed=config.training.seed)}
     report = None
     showcase = None
     figure_dir = plot_directory(config)
@@ -2535,6 +2569,8 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
         per_material[name] = {"split": "train", "metrics": values,
                               "predicted_integral": field_integral(prediction),
                               "reference_integral": field_integral(target)}
+        accumulate_parity(parity["train"], magnetisation_parity["train"],
+                          target, prediction)
         if report is not None and index == 0:
             report.prefix = f"{task.name}_{name}"
             showcase = (plot_channel(target), plot_channel(prediction))
@@ -2543,7 +2579,6 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
                 log=(task.target_field in ("CHGCAR", "TAUCAR")),
                 title=f"{task.name} · {name}"))
 
-    held_out = None
     if validation is not None:
         for index in range(len(validation)):
             name = test_records[index].identifier
@@ -2553,18 +2588,26 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
             per_material[name] = {"split": "validation", "metrics": values,
                                   "predicted_integral": field_integral(prediction),
                                   "reference_integral": field_integral(target)}
-            if index == 0:
-                held_out = (plot_channel(target), plot_channel(prediction))
+            accumulate_parity(parity["validation"],
+                              magnetisation_parity["validation"],
+                              target, prediction)
 
     # The parity plot is drawn after both loops so it can carry the held-out
-    # structure beside the training one. Two clouds on shared axes show the
+    # split beside the training one. Two clouds on shared axes show the
     # generalisation gap directly -- a validation cloud visibly wider about the
     # identity line is the same story the aggregate numbers tell, but visible
-    # rather than inferred.
-    if report is not None and showcase is not None:
-        figures.append(report.parity(
-            *showcase, validation=held_out, label=label_text, unit=unit,
-            log=(task.target_field in ("CHGCAR", "TAUCAR"))))
+    # rather than inferred. Every structure of both splits is in it.
+    if report is not None:
+        report.prefix = f"{task.name}"
+        figures.append(report.global_parity(
+            parity["train"], parity["validation"], label=label_text,
+            unit=unit, log=(task.target_field in ("CHGCAR", "TAUCAR"))))
+        if magnetisation_parity["train"].count:
+            figures.append(report.global_parity(
+                magnetisation_parity["train"],
+                magnetisation_parity["validation"],
+                name="parity_magnetisation", label=r"$m$", unit=unit,
+                log=False, title=r"Parity over every structure: $m$"))
 
     if task.site_target is not None:
         report_occupancies(operator, train_set, train_records, validation,
@@ -2611,10 +2654,13 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
     save_task_checkpoint(task, operator, config, log)
 
     # ---------------- symbolic distillation ---------------- #
+    if config.symbolic.enable:
+        profile.begin(f"{task.name}: symbolic distillation")
     symbolic = run_symbolic_distillation(task, train_set, operator, config, log,
                                          validation=validation, report=report)
 
     # ---------------- PDF report ---------------- #
+    profile.begin(f"{task.name}: PDF report")
     pdf = None
     if config.report_dir():
         from poraque.vis import ModelReport
@@ -2679,6 +2725,7 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
         )
         log(f"  PDF report      -> {pdf}")
 
+    profile.end()
     curves, stopping = split_history(history)
     return {
         "task": task.name,
@@ -2743,7 +2790,8 @@ def structure_level_folds(names, k, seed=0):
             for group in np.array_split(order, k) if len(group)]
 
 
-def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None):
+def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None,
+                   profile=None):
     r"""
     K-fold cross-validation over structures.
 
@@ -2765,6 +2813,16 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None):
         against a single-device k-fold line for line.
     """
     task = resolve_task(task_name)
+    if profile is not None:
+        profile.begin(f"{task.name}: {config.training.k_folds}-fold "
+                      f"cross-validation")
+    from poraque.vis.parity import ParityAccumulator
+
+    # One accumulator across every fold: each structure is predicted exactly
+    # once, by the one model that never saw it, which makes this the purest
+    # held-out parity plot the project draws.
+    held_out = ParityAccumulator(seed=config.training.seed)
+    held_out_magnetisation = ParityAccumulator(seed=config.training.seed)
     baseline = resolve_baseline(task, config, cache, log)
     dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
                                dtype=compute_dtype(config), baseline=baseline,
@@ -2860,6 +2918,8 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None):
                             "split": f"fold {index}", "metrics": values,
                             "predicted_integral": field_integral(prediction),
                             "reference_integral": field_integral(target)})
+            accumulate_parity(held_out, held_out_magnetisation, target,
+                              prediction)
             if plot_directory(config) and position == 0:
                 from poraque.vis import TrainingReport
 
@@ -2897,6 +2957,26 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None):
     log("\n      These ARE generalisation numbers: every score above comes from")
     log("      a model that never saw that structure. The spread across folds")
     log("      matters as much as the mean with a dataset this small.")
+
+    if plot_directory(config) and held_out.count:
+        from poraque.vis import TrainingReport
+
+        report = TrainingReport(
+            plot_directory(config), dpi=config.output.dpi,
+            fmt=config.output.plot_format, prefix=f"{task.name}_kfold",
+            save_data=config.output.save_raw_plot_data)
+        figures.append(report.global_parity(
+            held_out, label=label_text, unit=unit,
+            log=(task.target_field in ("CHGCAR", "TAUCAR")),
+            split_labels=("held out across folds", ""),
+            title=f"Parity over every structure, each predicted by the fold "
+                  f"that held it out: {label_text}"))
+        if held_out_magnetisation.count:
+            figures.append(report.global_parity(
+                held_out_magnetisation, name="parity_magnetisation",
+                label=r"$m$", unit=unit, log=False,
+                split_labels=("held out across folds", ""),
+                title=r"Parity over every structure, held out: $m$"))
 
     # ---------------- consolidated report ---------------- #
     pdf = None
@@ -2943,6 +3023,8 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None):
         )
         log(f"\n  consolidated report -> {pdf}")
 
+    if profile is not None:
+        profile.end()
     return {"task": task.name, "mode": "kfold", "n_folds": len(folds),
             "folds": [{"fold": i, "validate_on": g}
                       for i, g in enumerate(folds, 1)],
@@ -3224,6 +3306,12 @@ def run(argv=None):
         config.output.save_raw_plot_data = False
 
     log = Tee(config.log_path(), silent=not context.is_main)
+    # Started before anything is timed, so "total" is the whole run; printed in
+    # the `finally` below, so a run that fails or exits early still reports
+    # what it had spent -- the stage it died in is the row most worth reading.
+    from poraque.ml.profiling import ResourceProfile
+
+    profile = ResourceProfile()
     try:
         # Through the Tee, so the environment that produced a run is recorded
         # in its log rather than only shown once on a terminal that is long
@@ -3234,6 +3322,7 @@ def run(argv=None):
         # before the cache is built rather than applied to fields afterwards.
         set_default_dtype(config.data.precision)
         device = resolve_strict_device(config, log)
+        profile.device = device
         log("=" * 78)
         log("Poraque - Fourier Neural Operator training")
         log("=" * 78)
@@ -3310,11 +3399,13 @@ def run(argv=None):
         # of the wrong shape. The barrier is the whole of the fix, and it is
         # why `distributed_timeout` defaults to half an hour: this is where the
         # non-writing ranks spend a cold read of the source data.
+        profile.begin("cache")
         if context.is_main:
             cache = build_cache(config, log)
         barrier(context)
         if not context.is_main:
             cache = build_cache(config, log)
+        profile.end()
 
         if args.cache_only:
             # Everything a training job needs from the CPU is now on disk.
@@ -3339,7 +3430,7 @@ def run(argv=None):
                     "runs only on a deployable single-split model.")
         results = [result for result in
                    (driver(name, cache, config, log, n_tasks=len(names),
-                           distributed=context)
+                           distributed=context, profile=profile)
                     for name in names)
                    if result is not None]
 
@@ -3369,6 +3460,7 @@ def run(argv=None):
             # augmentation occupancies an ICHARG=1 restart is written with.
             # The fine-tuning provenance, the resolution and the epochs are
             # all in `config`, which is stored whole.
+            profile.begin("checkpoint")
             paw = load_paw_profiles(cache)
             for number, entry in sorted(paw.items()):
                 held = [name for name, key in (("core density", "core_density"),
@@ -3377,6 +3469,7 @@ def run(argv=None):
                 log(f"  PAW profile     -> {entry['element']} (Z={number}): "
                     f"{' + '.join(held)}")
             save_bundle(bundle, operators, config=config, paw_profiles=paw)
+            profile.end()
             for result in results:
                 result["checkpoint"] = bundle
             log(f"\n  models -> {bundle}  ({', '.join(sorted(operators))})")
@@ -3453,6 +3546,7 @@ def run(argv=None):
 
             with open(metrics_path, "w") as handle:
                 json.dump({"config": config.to_dict(), "device": str(device),
+                           "resources": profile.as_dict(),
                            "results": results}, handle, indent=2, default=float)
             log(f"\n  log             -> {config.log_path()}")
             log(f"  metrics         -> {metrics_path}")
@@ -3464,6 +3558,11 @@ def run(argv=None):
             log(f"  figures         -> {plot_directory(config)}")
         return results
     finally:
+        # The profiling summary goes last, through the Tee so it lands in the
+        # log as well, and on rank 0 alone like every other line of it.
+        log("")
+        for line in profile.summary():
+            log(line)
         # In a `finally` because a rank that exits without destroying its group
         # leaves the others inside a collective until the step's wall clock
         # ends -- one process's exception becomes an hour of billed silence.

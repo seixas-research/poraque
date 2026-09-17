@@ -1393,6 +1393,19 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
     history = {"train_loss": [], "val_error": [], "val_epoch": [],
                "seconds_per_epoch": []}
+    # A spin-polarised density target is (rho, m), and one objective over the
+    # stacked pair says nothing about which channel it is spending on. Each
+    # channel's share is reported beside it, in the objective's own norm and
+    # against its own denominator -- the norm of the whole target, not of the
+    # channel alone, since a relative error of m would divide by m = 0 on every
+    # non-magnetic cell. For the L2 objectives the two combine in quadrature to
+    # the data term, per sample.
+    channel_parts = (operator.out_channels == 2
+                     and operator.task.target_field == "CHGCAR")
+    if channel_parts:
+        history["train_loss_charge"] = []
+        history["train_loss_magnetisation"] = []
+
     # An operator with an occupancy head trains its per-atom term beside the
     # field objective, in the one loop, and is validated on both.
     sites_task = (operator.task.site_target is not None
@@ -1456,6 +1469,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     # data plus every weighted constraint -- and that total is the only
     # quantity a reader can compare against another run's.
     header = f"    {'epoch':>11s}  {'train loss':>13s}"
+    if channel_parts:
+        header += f"  {'charge':>9s}  {'mag':>9s}"
     if validating:
         header += f"  {f'val {val_metric}':>13s}"
         if sites_task:
@@ -1479,6 +1494,13 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
                            f"per-structure table below reports plain rel L2")
         else:
             legend += "   |   no validation split: this is a TRAINING FIT"
+        if channel_parts:
+            quadrature = ("; for this L2 objective data = sqrt(charge^2 + "
+                          "mag^2) per sample" if sobolev_weight <= 0.0 else "")
+            legend += (f"\n    charge, mag: the data term's error in the "
+                       f"density and magnetisation channels, same norm and "
+                       f"denominator as the objective{quadrature}; train "
+                       f"loss is the total, with any physics terms")
         emit(legend)
         if validating and (checkpoint or early_stopping):
             emit("    * marks an epoch that improved on the best score so far")
@@ -1499,6 +1521,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         # run pays the latency once per step to record a number it does not
         # read until the epoch ends. One `.item()` below is enough.
         running = torch.zeros((), device=operator.device)
+        running_channels = torch.zeros(2, device=operator.device)
         batches = 0
         for batch in loader:
             # non_blocking only does anything with pin_memory, and is harmless
@@ -1563,6 +1586,18 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
             terms = criterion(prediction, targets, cell=cell, **physical)
             total = terms["total"]
+            if channel_parts:
+                with torch.no_grad():
+                    for channel in range(2):
+                        # The objective's own error, with the prediction put
+                        # into this one channel and the reference kept in the
+                        # other: what the data term would be if only this
+                        # channel were wrong.
+                        alone = targets.clone()
+                        alone[:, channel] = prediction[:, channel]
+                        running_channels[channel] += data_error(
+                            alone, targets, cell=cell, loss=data_loss_name,
+                            sobolev_weight=sobolev_weight).mean()
             if sites_task:
                 transform = operator.site_transform
                 wanted = transform.normalize(
@@ -1598,6 +1633,10 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         # above exists to reduce the count of.
         mean_loss = float(running)
         history["train_loss"].append(mean_loss)
+        if channel_parts:
+            parts = all_reduce_mean(running_channels / divisor, context)
+            history["train_loss_charge"].append(float(parts[0]))
+            history["train_loss_magnetisation"].append(float(parts[1]))
         # After the sync `.item()` forced, so this is compute rather than
         # queueing -- an unsynchronised clock on an asynchronous backend
         # measures how fast work was *submitted*.
@@ -1613,6 +1652,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
         # Columns line up under `header` above; widths are shared with it.
         message = f"    {f'{epoch + 1}/{epochs}':>11s}  {mean_loss:>13.5f}"
+        if channel_parts:
+            message += (f"  {history['train_loss_charge'][-1]:>9.5f}"
+                        f"  {history['train_loss_magnetisation'][-1]:>9.5f}")
         exhausted = False
         if validating:
             error = evaluate(operator, validation_loader,
