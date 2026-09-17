@@ -27,6 +27,18 @@ chain rather than an arbitrary pair:
 
 The two share one architecture and one dataset layout; only the endpoints of
 the map differ.
+
+A third task sits beside the chain rather than in it:
+
+``ext2paw`` — :math:`V_{\rm ext} \mapsto (\tilde\rho, \rho^a_{ij})`
+    The pseudo-density *and* the PAW augmentation occupancies of every atom,
+    which together are what an all-electron density is reconstructed from.
+    The occupancies are on-site quantities with no representation on the
+    plane-wave grid --- they are why no grid model has so far predicted them
+    --- so this task's target is a field plus a per-atom array, and its
+    operator (``model.paw``) is not the field-to-field one: an FNO for the
+    grid, and a readout at each atom over one band of :math:`|\mathbf G|`
+    feeding an equivariant head per element --- :mod:`poraque.ml.paw`.
 """
 
 from dataclasses import dataclass
@@ -47,6 +59,10 @@ class TaskSpec:
         Human-readable summary.
     input_unit, target_unit : str
         Physical units of the two fields.
+    site_target : str or None
+        A per-atom target carried beside the field target, read from the same
+        file. ``"augmentation"`` is the PAW occupancies of ``CHGCAR``; ``None``
+        for a pure field-to-field task.
     """
 
     name: str
@@ -55,6 +71,7 @@ class TaskSpec:
     description: str
     input_unit: str = ""
     target_unit: str = ""
+    site_target: str = None
 
     @property
     def required_files(self):
@@ -85,8 +102,27 @@ CHG_TO_TAU = TaskSpec(
     target_unit="eV/Ang^3",
 )
 
-#: Registry of the available tasks.
-TASKS = {task.name: task for task in (EXT_TO_CHG, CHG_TO_TAU)}
+#: External potential to pseudo-density plus PAW augmentation occupancies.
+EXT_TO_PAW = TaskSpec(
+    name="ext2paw",
+    input_field="EXTCAR",
+    target_field="CHGCAR",
+    description="Local external potential -> pseudo-density and PAW "
+                "augmentation occupancies.",
+    input_unit="eV",
+    target_unit="e/Ang^3",
+    site_target="augmentation",
+)
+
+#: Registry of every task a name can resolve to.
+TASKS = {task.name: task for task in (EXT_TO_CHG, CHG_TO_TAU, EXT_TO_PAW)}
+
+#: The orbital-free chain, in order: what ``task.type: all`` trains, what a
+#: bundle must hold to reach a total energy, and what a dataset is asked it can
+#: serve. ``ext2paw`` is not a link of it --- it replaces the first link's
+#: target rather than feeding the second --- so it joins an ``all`` run only
+#: when ``model.paw.enable`` asks.
+CHAIN = ("ext2chg", "chg2tau")
 
 
 def resolve_task(task):
@@ -96,7 +132,8 @@ def resolve_task(task):
     Parameters
     ----------
     task : str or TaskSpec
-        Task name (``"ext2chg"``, ``"chg2tau"``) or an explicit spec.
+        Task name (``"ext2chg"``, ``"chg2tau"``, ``"ext2paw"``) or an explicit
+        spec.
 
     Returns
     -------

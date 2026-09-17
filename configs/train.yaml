@@ -9,7 +9,7 @@
 # =====================================================================
 
 task:
-  type: all                         # all | ext2chg | chg2tau; only `all` reaches a total energy
+  type: all                         # all | ext2chg | chg2tau | ext2paw; only `all` reaches a total energy
   name: platinum_w16_m8_L4_r16_g16  # names models/<name>/ and everything inside it
 
 data:
@@ -49,6 +49,8 @@ model:
   # startup report prints the band and the fraction of modes beyond the basis.
   embedding_dim: 32
   precision: float32
+  paw:                         # the ext2paw operator; on only for task.type: ext2paw
+    enable: false
 
 training:
   epochs: 500

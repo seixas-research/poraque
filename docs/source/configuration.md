@@ -83,7 +83,7 @@ otherwise take minutes of downsampling to report.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `type` | `all` | which map to train: `ext2chg`, `chg2tau`, or `all` for both in sequence |
+| `type` | `all` | which map to train: `ext2chg`, `chg2tau`, `all` for both in sequence, or `ext2paw` — see [`paw`](#paw) |
 | `name` | `poraque_models` | stem of every file the run writes |
 
 ```yaml
@@ -372,6 +372,7 @@ changing them cannot silently reuse a cache built with different settings.
 | `mode_selection` | `fixed` | `fixed` mode index, or `physical` at constant $G_\mathrm{max}$ |
 | `g_max` | `null` | cutoff wavevector in Å⁻¹; required by `mode_selection: physical` |
 | `equivariant` | `{enable: false}` | rotation-equivariant radial kernel — one block, see below |
+| `paw` | `{enable: false}` | the `ext2paw` operator: pseudo-density plus PAW occupancies — one block, see below |
 | `pauli_residual` | `false` | structural $\tau\ge\tau_\mathrm{vW}$ for `chg2tau` |
 | `pauli_scale` | `null` | initial Pauli scale in eV/Å³; `null` fits it from the training split |
 | `learn_pauli_scale` | `true` | optimise that scale alongside the backbone |
@@ -588,6 +589,106 @@ product in it is a scalar multiply, and the Fourier layer is a complex `einsum`
 diagonal in the mode index, which Clebsch–Gordan cannot express. Profiled by
 kernel class on a V100 its share is 0.0 %. Equivariance here is a constraint on
 the kernel, not a kernel library.
+```
+
+(paw)=
+### `paw`
+
+One block, the operator of the `ext2paw` task:
+
+```yaml
+task:
+  type: all          # the chain, and ext2paw beside it
+model:
+  use_coordinates: false
+  equivariant:
+    enable: true     # makes the whole operator rotation-equivariant
+  paw:
+    enable: true
+    width: 64
+    modes: 16
+    n_layers: 4
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enable` | `false` | train `ext2paw`: required by `task.type: ext2paw`, and adds it to an `all` run |
+| `width` | `64` | the FNO backbone's channels, as `model.width` |
+| `modes` | `16` | its retained Fourier modes per axis, as `model.modes` |
+| `n_layers` | `4` | its Fourier layers, as `model.n_layers` |
+| `readout_g_max` | `auto` | the band in Å⁻¹ read at each atom; `auto` is 95 % of the coarsest training grid's Nyquist frequency |
+| `occupancy_weight` | `1.0` | the per-atom term against the field objective, and in the validation score |
+
+`ext2paw` maps $V_\mathrm{ext}$ to two things at once: the pseudo-density on the
+grid, as `ext2chg` does, and every atom's **augmentation occupancies**
+$\rho(\ell\ell'LM)$ — the one-centre PAW terms VASP writes after the grid, which
+together with the pseudo-density are what an all-electron density is
+reconstructed from. They are not a field. There are 138 per atom for
+`PAW_PBE Pt` — projector channels d, d, s, s, p, p, in the POTCAR's order —
+and one set per density channel, so a spin-polarised dataset keeps the
+magnetisation's set as well.
+
+`ext2paw` is not a link of the chain — `all` still means `ext2chg` followed by
+`chg2tau` — and the two switches are checked against each other rather than
+left to disagree: `task.type: ext2paw` with `enable: false` **raises**, and so
+does `enable: true` beside `ext2chg` or `chg2tau`, which would never read it.
+
+#### The operator
+
+Built as `experiments/paw_occupancies` measured it should be
+({mod}`poraque.ml.paw`):
+
+**An FNO for the grid**, sized by `width`, `modes` and `n_layers`. Every other
+`model` setting — activation, equivariance, mode selection — applies to it
+unchanged.
+
+**A readout at each atom**, of the latent field and the predicted density,
+onto solid-harmonic Gaussians $r^L Y_{LM}(\hat r)\,e^{-r^2/2s_n^2}$. It is the
+decoder half of a graph neural operator, with one constraint that was not
+optional. The fields are first restricted to one band
+$|\mathbf G| \le$ `readout_g_max` and resampled to a common spacing, so every
+cell is integrated with the same quadrature. A readout of the DFT density
+integrated on each grid as it came scored 3 % on nanoparticles it had seen and
+184 % on held-out ones, whose grid spacing differs; over one band, 4.9 %. A grid
+too coarse to supply the band **raises**, at training and at inference.
+
+**An equivariant head per element.** Each L block of the record is one map
+shared across M, gated by an MLP over the invariants, with a linear path beside
+it. With `model.equivariant` on and `use_coordinates: false`, the whole operator
+rotates its predicted occupancies with the crystal, measured to 7e-15 in double
+precision. The layout of each element's record comes from the POTCAR's
+`Non local Part`, so a dataset without POTCARs cannot train it.
+
+**An invertible target.** The records train with L = 0 centred and every
+(set, L, pair) block scaled to unit RMS — both fitted on the training split,
+stored in the checkpoint and inverted at prediction — and every L block weighs
+the same in the loss. On raw records the loss would be 99 % the L = 0 block.
+
+The training log gains a `val occ` column (relative RMS of the held-out
+occupancies, physical units), and the best epoch is chosen on
+`val rel L2 + occupancy_weight × val occ`. After training, each structure's
+`occupancy_relative_rms` is written to the metrics JSON beside a baseline: the
+training-mean L = 0 record with every L > 0 block zero.
+
+A bundle holding an `ext2paw` operator gives `poraque-inference --add-paw` a
+fourth PAW source, `model`. `auto` prefers it to the averaged table.
+
+The cache carries the records; a cache built before 16 September 2026 dropped
+them, so delete it and let it rebuild. A dataset built for `ext2paw` yields,
+beside the usual `input` and `target`:
+
+| Key | Shape | |
+| --- | --- | --- |
+| `paw` | `(B, A, S, L)` | occupancies: batch, atoms, record sets, values |
+| `paw_mask` | `(B, A, L)` | a real value of a real atom's record |
+| `atom_mask` | `(B, A)` | a real atom |
+| `species` | `(B, A)` | atomic numbers, 0 for padding |
+| `positions` | `(B, A, 3)` | fractional coordinates |
+
+```{warning}
+Not yet supported, and refused before the cache: `--kfold` (the transform is
+fitted per split, not per fold), fine-tuning (a pretrained bundle has no
+occupancy head to adapt), and an f-channel element, whose records reach L = 6.
 ```
 
 ### `pauli_residual` and its scale

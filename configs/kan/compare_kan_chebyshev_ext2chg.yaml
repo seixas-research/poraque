@@ -23,6 +23,8 @@ model:
   kan_setup:
     variant: chebyshev            # bspline | chebyshev | rbf | rational
     degree: 6                 # highest Chebyshev order; degree+1 coefficients (the default)
+  paw:                         # the ext2paw operator; on only for task.type: ext2paw
+    enable: false
 
 training:
   physics_informed:

@@ -53,6 +53,8 @@ _LAZY = {
     # tasks
     "TaskSpec": "poraque.ml.tasks",
     "TASKS": "poraque.ml.tasks",
+    "CHAIN": "poraque.ml.tasks",
+    "EXT_TO_PAW": "poraque.ml.tasks",
     "resolve_task": "poraque.ml.tasks",
     "EXT_TO_CHG": "poraque.ml.tasks",
     "CHG_TO_TAU": "poraque.ml.tasks",

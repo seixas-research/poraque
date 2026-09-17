@@ -1521,7 +1521,30 @@ class FNO3d(nn.Module):
 
     def forward(self, x, cell=None):
         """
-        Map an input field to an output field.
+        Map an input field to an output field: :meth:`encode`, then the
+        read-out head.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            ``(B, C_in, Nx, Ny, Nz)``.
+        cell : torch.Tensor, optional
+            ``(B, 3, 3)`` lattice vectors in Å.
+
+        Returns
+        -------
+        torch.Tensor
+            ``(B, C_out, Nx, Ny, Nz)``.
+        """
+        return self.project(self.encode(x, cell))
+
+    def encode(self, x, cell=None):
+        """
+        The latent field the read-out head projects: everything but the head.
+
+        Split out so a second head can read the same latent --- the ``ext2paw``
+        operator samples it at the atoms --- without running the Fourier stack
+        twice. :meth:`forward` is ``project(encode(x))`` and nothing else.
 
         Parameters
         ----------
@@ -1534,7 +1557,7 @@ class FNO3d(nn.Module):
         Returns
         -------
         torch.Tensor
-            ``(B, C_out, Nx, Ny, Nz)``.
+            ``(B, width, Nx, Ny, Nz)``.
         """
         if x.dim() != 5:
             raise ValueError(f"Expected a 5D (B,C,Nx,Ny,Nz) tensor, got {tuple(x.shape)}.")
@@ -1586,7 +1609,7 @@ class FNO3d(nn.Module):
         for block in self.blocks:
             v = block(v, embedding=embedding, max_modes=max_modes, cell=cell,
                       basis=basis)
-        return self.project(v)
+        return v
 
     def n_parameters(self):
         """Total number of trainable parameters (complex weights count twice)."""

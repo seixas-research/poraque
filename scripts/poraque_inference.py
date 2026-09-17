@@ -121,6 +121,7 @@ from poraque.fields.io import resolve_reader  # noqa: E402
 from poraque.fields.resample import downsample_shape  # noqa: E402
 from poraque.ml import (  # noqa: E402
     BUNDLE_FILENAME,
+    bundle_tasks,
     resolve_bundle_path,
     infer_backbone_kwargs,
     load_bundle,
@@ -346,39 +347,94 @@ def augmentation_from_atoms(reference, structure, log):
     return lines
 
 
+def augmentation_from_model(bundle, potential, channels, device, log,
+                            required=False):
+    r"""
+    The occupancies an ``ext2paw`` operator in the bundle predicts.
+
+    Every atom's own records, from the structure in front of it, rather than an
+    average over other structures. Measured on the platinum data, a linear
+    readout of the DFT pseudo-density predicts them to 2.1 % relative RMS
+    against 28 % for the per-element average. What a trained operator reaches
+    is in its training log.
+
+    Returns
+    -------
+    list of list of str or None
+        One block per record set, as many as the density written has channels;
+        ``None`` when the bundle has no ``ext2paw`` operator, or when the grid
+        cannot supply the band its readout was trained on --- which raises
+        instead when this source was asked for by name.
+    """
+    from poraque.fields.vasp.augmentation import format_augmentation
+
+    if "ext2paw" not in bundle_tasks(bundle):
+        if required:
+            raise SystemExit(f"--paw-source model: {bundle} holds no ext2paw "
+                             f"operator.")
+        return None
+    operator, _ = load_operator(bundle, "ext2paw", device)
+    try:
+        records = operator.predict_occupancies(potential)
+    except ValueError as error:
+        if required:
+            raise SystemExit(f"--paw-source model: {error}") from error
+        log(f"        ext2paw operator not used: {error}")
+        return None
+    blocks = [format_augmentation(per_set) for per_set in records[:channels]]
+    log(f"        using the ext2paw operator's predicted occupancies: "
+        f"{len(records[0])} atoms, {len(blocks)} record set(s)")
+    return blocks if len(blocks) > 1 else blocks[0]
+
+
 def resolve_augmentation(directory, bundle, structure, shape, log,
-                         source="auto", atomic_reference=None):
+                         source="auto", atomic_reference=None,
+                         potential=None, channels=1, device=None):
     """
     Where to take the one-centre terms from, best first.
 
     The order is a ranking by how close each source is to *this* structure's
-    own occupancies, and it is not arbitrary — the gaps between the three were
-    measured on this project's platinum data:
+    own occupancies, and it is not arbitrary --- the gaps were measured on this
+    project's platinum data:
 
     1. **A reference calculation beside the structure.** Exact: these are that
        system's own records.
-    2. **The bundle's per-element average**, over the training calculations.
-       ~9.9 % RMS from a bulk site on the platinum data.
-    3. **The isolated-atom database.** ~86.6 % RMS. Explicit request only, for
-       an element nothing else covers.
+    2. **An ext2paw operator in the bundle.** This structure's records,
+       predicted from its own potential; 2.1 % relative RMS for a linear
+       readout of the DFT pseudo-density.
+    3. **The bundle's per-element average**, over the training calculations.
+       28 % relative RMS on the platinum set of bulk, slabs and nanoparticles.
+    4. **The isolated-atom database.** ~86.6 % RMS from a bulk site. Explicit
+       request only, for an element nothing else covers.
 
     Parameters
     ----------
-    source : {"auto", "reference", "bundle", "atomic"}, optional
+    source : {"auto", "reference", "model", "bundle", "atomic"}, optional
         ``"auto"`` walks the list above. Anything else pins one source and
-        fails rather than quietly falling through to a worse one — which is
+        fails rather than quietly falling through to a worse one --- which is
         the point of naming it.
     atomic_reference : str, optional
         Isolated-atom database for ``"atomic"``.
+    potential : ExternalPotential, optional
+        What the ``"model"`` source predicts from.
+    channels : int, optional
+        Density channels of the file being written: the record sets it takes.
+    device : torch.device, optional
     """
-    order = {"auto": ("reference", "bundle"),
+    order = {"auto": ("reference", "model", "bundle"),
              "reference": ("reference",),
+             "model": ("model",),
              "bundle": ("bundle",),
              "atomic": ("atomic",)}[source]
 
     for choice in order:
         if choice == "reference":
             block = collect_augmentation(directory, structure, shape, log)
+        elif choice == "model":
+            block = (augmentation_from_model(bundle, potential, channels,
+                                             device, log,
+                                             required=source == "model")
+                     if potential is not None else None)
         elif choice == "bundle":
             block = augmentation_from_bundle(bundle, structure, log)
         else:
@@ -396,9 +452,11 @@ def resolve_augmentation(directory, bundle, structure, shape, log,
         f"and {bundle} has no stored per-element reference either.\n"
         f"The records are the one-centre part of the density, inside the PAW "
         f"spheres; they are not representable on the plane-wave grid, so no "
-        f"model predicts them. Either run VASP once on this geometry "
-        f"(LCHARG=.TRUE.) and point at that directory, or retrain so the "
-        f"bundle carries a reference, or build an isolated-atom database with "
+        f"field model predicts them. Either run VASP once on this geometry "
+        f"(LCHARG=.TRUE.) and point at that directory, or train an ext2paw "
+        f"operator into the bundle (model.paw.enable: true beside task.type: "
+        f"all), or retrain so the bundle carries a reference, or build an "
+        f"isolated-atom database with "
         f"`poraque-atoms` and pass --paw-source atomic (a much rougher "
         f"approximation: ~86 % RMS from a real site, against ~9 % for the "
         f"bundle's average), or drop --add-paw and use the "
@@ -803,7 +861,9 @@ def run(args, log):
             augmentation = resolve_augmentation(
                 args.directory, args.models, structure, grid.shape, log,
                 source=getattr(args, "paw_source", "auto"),
-                atomic_reference=getattr(args, "atomic_reference", None))
+                atomic_reference=getattr(args, "atomic_reference", None),
+                potential=potential,
+                channels=1 if charge is density else 2, device=device)
         except SystemExit as error:
             # The user who typed --from-incar and not --add-paw would otherwise
             # read advice to "drop --add-paw" about a flag they never gave.
@@ -815,8 +875,16 @@ def run(args, log):
                 f"records. To write the density without them, drop "
                 f"--from-incar and pass --to-vasp with --encut and, if "
                 f"needed, --prec-accurate.") from None
+        from poraque.fields.hdf5 import augmentation_blocks
+        from poraque.fields.vasp.volumetric import count_augmentation_records
+
+        # Records, not lines and not sets: `augmentation` is a flat block of
+        # lines for one set and a list of blocks for two, and `len` of either
+        # counted something else.
         results["paw_augmentation"] = {
-            "records": len(augmentation) if augmentation else 0,
+            "records": sum(count_augmentation_records(block) for block
+                           in augmentation_blocks(augmentation)),
+            "sets": len(augmentation_blocks(augmentation)),
             "source": getattr(args, "paw_source", "auto"),
         }
 
@@ -1058,11 +1126,14 @@ def build_parser():
 
     parser.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
     parser.add_argument("--paw-source", default="auto",
-                        choices=("auto", "reference", "bundle", "atomic"),
+                        choices=("auto", "reference", "model", "bundle",
+                                 "atomic"),
                         help="where --add-paw takes the one-centre terms "
                              "from. 'auto' prefers a reference calculation "
-                             "beside the structure, then the bundle's "
-                             "per-element average. 'atomic' uses the "
+                             "beside the structure, then the occupancies an "
+                             "ext2paw operator in the bundle predicts, then "
+                             "the bundle's per-element average. 'atomic' uses "
+                             "the "
                              "isolated-atom database, which is a much rougher "
                              "approximation (~86%% vs ~9%% RMS on this "
                              "project's platinum data) and exists for elements "

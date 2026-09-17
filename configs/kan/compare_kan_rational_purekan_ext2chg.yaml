@@ -27,6 +27,8 @@ model:
     use_base: false           # "pure" KAN: only the learned residual
     rational_num_degree: 4    # numerator power (the default)
     rational_den_degree: 4    # even denominator powers; x^8 outgrows x^4 (the default)
+  paw:                         # the ext2paw operator; on only for task.type: ext2paw
+    enable: false
 
 training:
   physics_informed:

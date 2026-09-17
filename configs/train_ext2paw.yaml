@@ -1,0 +1,42 @@
+# =====================================================================
+# Poraque - ext2paw on the platinum set: V_ext -> pseudo-density AND the
+# PAW augmentation occupancies of every atom.
+#
+#   poraque-train --config configs/train_ext2paw.yaml
+#
+# An FNO for the grid, a readout at each atom over one band of |G|, and an
+# equivariant head per element. To predict records beside the orbital-free
+# chain, use task.type: all with this model.paw block instead. See
+# configs/train_complete_and_commented.yaml, model.paw, for the whole story.
+# =====================================================================
+
+task:
+  type: ext2paw                     # requires model.paw.enable: true
+  name: platinum_ext2paw            # names models/<name>/ and everything inside it
+
+data:
+  data_paths:                                            # one entry per dataset root; each holds
+    - ./data/vasp/structures                             #   one subdirectory per material
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # without a library V_ext is the Gaussian model
+  atomic_reference: ./data/vasp/isolated_atoms           # the Pt atom: the baseline and the PAW records
+  # spin stays at its default, auto: both record sets, since the nanoparticles
+  #   carry 17 % of their records in the magnetisation's
+  paw_source: atomic                                     # the free atom's own record, per element and transferable
+  delta_density: true                                    # the grid target is rho - rho_sup, as for ext2chg
+  resolution: 48                                         # longest grid axis; the records do not depend on it
+  cache_in_memory: true                                  # auto | true | false
+  storage: files                                         # files | hdf5; both carry the records
+
+model:
+  width: 16                     # the field operator's settings still name the cache and
+  modes: 8                      #   the grid target's normalisation; model.paw is the
+  n_layers: 4                   #   operator this task trains
+  paw:                          # one block: the switch and the operator it governs
+    enable: true
+    width: 64                   # channels
+    modes: 16                   # retained Fourier modes per axis
+    n_layers: 4                 # Fourier layers
+
+training:
+  epochs: 500
+  batch_size: 16                # samples per batch within one grid-shape bucket

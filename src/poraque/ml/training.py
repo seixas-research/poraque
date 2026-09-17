@@ -174,6 +174,17 @@ class FieldOperator:
         anything: the residual it learned was defined against one particular
         superposition. Storing the table with the weights makes that
         impossible to get wrong.
+    site_layouts : dict, optional
+        ``{atomic number: projector channels}``, for a task with a per-atom
+        target (``ext2paw``): the backbone is then wrapped in a
+        :class:`~poraque.ml.paw.PAWOperatorModel` with one occupancy head per
+        element. Required for such a task, ignored otherwise.
+    readout_g_max : float, optional
+        The band in Å⁻¹ the occupancy head reads the fields over; required with
+        ``site_layouts``.
+    site_transform : OccupancyTransform, optional
+        The occupancies' training form, fitted on the training split. Stored
+        in the checkpoint, and what :meth:`predict_occupancies` inverts.
     **model_kwargs
         Forwarded to :class:`~poraque.ml.fno.FNO3d`.
     """
@@ -182,7 +193,8 @@ class FieldOperator:
                  target_transform=None, device=None, pauli_residual=False,
                  pauli_scale=1.0, learn_pauli_scale=True,
                  training_resolution=None, init_seed=None, baseline=None,
-                 strict_device=False, **model_kwargs):
+                 strict_device=False, site_layouts=None, readout_g_max=None,
+                 site_transform=None, **model_kwargs):
         self.task = resolve_task(task)
         self.device = resolve_device(device, strict=strict_device)
         self.input_transform = input_transform or Identity()
@@ -214,20 +226,36 @@ class FieldOperator:
                                             self.out_channels))
             self.use_coordinates = bool(getattr(model, "use_coordinates",
                                                 self.use_coordinates))
-        elif self.init_seed is None:
-            backbone = FNO3d(**model_kwargs)
         else:
-            # Seed the draw, then hand the global stream back untouched. A bare
-            # manual_seed would also re-align every later consumer of the RNG,
-            # so two committee members would differ in their batch order as
-            # well as their weights -- and the disagreement would no longer
-            # isolate the effect it is meant to measure.
-            state = torch.random.get_rng_state()
-            try:
-                torch.manual_seed(self.init_seed)
-                backbone = FNO3d(**model_kwargs)
-            finally:
-                torch.random.set_rng_state(state)
+            def build():
+                network = FNO3d(**model_kwargs)
+                if self.task.site_target is None:
+                    return network
+                if not site_layouts or readout_g_max is None:
+                    raise ValueError(
+                        f"task {self.task.name!r} predicts a per-atom target "
+                        f"and needs site_layouts (the projector channels of "
+                        f"each element) and readout_g_max (the band its head "
+                        f"reads, 1/Ang).")
+                from .paw import PAWOperatorModel
+
+                return PAWOperatorModel(network, site_layouts, readout_g_max)
+
+            if self.init_seed is None:
+                backbone = build()
+            else:
+                # Seed the draw, then hand the global stream back untouched. A
+                # bare manual_seed would also re-align every later consumer of
+                # the RNG, so two committee members would differ in their batch
+                # order as well as their weights -- and the disagreement would
+                # no longer isolate the effect it is meant to measure.
+                state = torch.random.get_rng_state()
+                try:
+                    torch.manual_seed(self.init_seed)
+                    backbone = build()
+                finally:
+                    torch.random.set_rng_state(state)
+        self.site_transform = site_transform
 
         if self.pauli_residual:
             if self.task.name != "chg2tau":
@@ -400,6 +428,70 @@ class FieldOperator:
             f"(rho, m) density."
         )
 
+    @torch.no_grad()
+    def predict_occupancies(self, field):
+        """
+        The PAW augmentation occupancies of every atom, in physical units.
+
+        Only for an operator with an occupancy head (``ext2paw``). The input is
+        the same field :meth:`predict` takes; its structure supplies the atoms,
+        in file order, which is the order VASP writes the records in.
+
+        Parameters
+        ----------
+        field : ScalarField
+            The external potential, on a grid fine enough for the readout band
+            (a coarser one raises and says so).
+
+        Returns
+        -------
+        list of list of numpy.ndarray
+            ``[set][atom]`` record arrays, each its element's record length.
+            Hand each set to
+            :func:`~poraque.fields.vasp.augmentation.format_augmentation` for
+            the ``CHGCAR`` lines.
+        """
+        if self.site_transform is None or not hasattr(self.model,
+                                                      "occupancies"):
+            raise ValueError(
+                f"this {self.task.name} operator has no occupancy head; "
+                f"occupancies come from an ext2paw operator.")
+        from ..fields import element_of
+        from ..fields.vasp.augmentation import record_layout
+        from ..fields.vasp.poscar import symbol_to_z
+
+        self.model.eval()
+        compute = self.compute_dtype()
+        values = torch.as_tensor(np.ascontiguousarray(field.data),
+                                 dtype=compute, device=self.device)
+        cell = torch.as_tensor(field.grid.cell, dtype=compute,
+                               device=self.device).unsqueeze(0)
+        normalized = self.input_transform(values)
+        if normalized.ndim == 3:
+            normalized = normalized.unsqueeze(0)
+        normalized = normalized.unsqueeze(0)
+
+        structure = field.structure
+        numbers = [symbol_to_z(element_of(symbol))
+                   for symbol, count in zip(structure.symbols, structure.counts)
+                   for _ in range(int(count))]
+        species = torch.as_tensor([numbers], dtype=torch.long,
+                                  device=self.device)
+        sites = {"species": species,
+                 "positions": torch.as_tensor(
+                     np.asarray(structure.scaled_positions)[None],
+                     dtype=compute, device=self.device),
+                 "atom_mask": torch.ones_like(species, dtype=torch.bool)}
+        _, normalised = self.model(normalized, cell, sites=sites)
+        physical = self.site_transform.inverse(normalised, species)[0]
+        physical = physical.to("cpu", torch.float64).numpy()
+
+        lengths = [len(record_layout(self.model.layouts[number]))
+                   for number in numbers]
+        return [[physical[atom, s, :lengths[atom]]
+                 for atom in range(len(numbers))]
+                for s in range(physical.shape[1])]
+
     @property
     def device_description(self):
         """Human-readable description of the active device."""
@@ -480,6 +572,16 @@ class FieldOperator:
                                "fingerprint": self.baseline.fingerprint,
                                "entries": {k: v.to_dict() for k, v
                                            in self.baseline.entries.items()}}),
+            # The occupancy head's layout, band and target form: none of it
+            # is in a tensor shape, and all of it changes what the weights
+            # mean. `None` for a field-to-field operator.
+            "site": (None if not hasattr(self.model, "layouts") else {
+                "layouts": {str(z): list(channels) for z, channels
+                            in self.model.layouts.items()},
+                "readout_g_max": self.model.g_max,
+                "transform": (None if self.site_transform is None
+                              else self.site_transform.state_dict()),
+            }),
         }
 
     @classmethod
@@ -542,6 +644,17 @@ class FieldOperator:
         inferred.update(model_kwargs)
         if model is not None:
             inferred = model_kwargs
+
+        site = state.get("site") or {}
+        if site:
+            from .paw import OccupancyTransform
+
+            inferred["site_layouts"] = {int(z): channels for z, channels
+                                        in site["layouts"].items()}
+            inferred["readout_g_max"] = site["readout_g_max"]
+            if site.get("transform"):
+                inferred["site_transform"] = OccupancyTransform.from_state_dict(
+                    site["transform"])
 
         operator = cls(
             state["task"], model=model, device=device,
@@ -1083,7 +1196,10 @@ def _distributed_forward(operator, context, emit, verbose):
         # The Fourier layers are complex-valued and every parameter takes a
         # gradient every step, so there is no unused branch for DDP to hunt
         # for -- and the search costs a full graph traversal per iteration.
-        find_unused_parameters=False,
+        # The one exception is an occupancy head per element: a batch without
+        # an element leaves its head without a gradient.
+        find_unused_parameters=len(getattr(operator.model, "layouts",
+                                           None) or ()) > 1,
     )
     if verbose:
         emit(f"    distributed: {context.describe()}")
@@ -1094,7 +1210,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
           weight_decay=1e-4, validation=None, loss=None, scheduler="cosine",
           grad_clip=1.0, eval_every=1, early_stopping=0, checkpoint=None,
           seed=0, verbose=True, log=None, optimizer="adamw",
-          num_workers=0, pin_memory="auto", distributed=None):
+          num_workers=0, pin_memory="auto", distributed=None,
+          occupancy_weight=1.0):
     """
     Train a :class:`FieldOperator`.
 
@@ -1184,6 +1301,11 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         :func:`~poraque.ml.distributed.initialize`. ``None`` and a disabled
         context are the same thing, so a caller passes it unconditionally and
         the single-device path is what runs when there is no group.
+    occupancy_weight : float, optional
+        For an operator with an occupancy head (``ext2paw``): the weight of the
+        per-atom term, the equally-weighted L blocks of the normalised records,
+        against the field objective. Also the weight their relative error
+        carries in the validation score the best epoch is chosen on.
 
     Returns
     -------
@@ -1271,6 +1393,17 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
     history = {"train_loss": [], "val_error": [], "val_epoch": [],
                "seconds_per_epoch": []}
+    # An operator with an occupancy head trains its per-atom term beside the
+    # field objective, in the one loop, and is validated on both.
+    sites_task = (operator.task.site_target is not None
+                  and hasattr(operator.model, "occupancies"))
+    if sites_task:
+        if operator.site_transform is None:
+            raise ValueError(
+                "an ext2paw operator needs its site_transform, fitted on the "
+                "training split (OccupancyTransform.fit), before training.")
+        history["val_occupancy_error"] = []
+        history["val_field_error"] = []
     if operator.device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(operator.device)
     best_error = float("inf")
@@ -1325,11 +1458,18 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     header = f"    {'epoch':>11s}  {'train loss':>13s}"
     if validating:
         header += f"  {f'val {val_metric}':>13s}"
+        if sites_task:
+            header += f"  {'val occ':>9s}  {'score':>9s}"
     if verbose:
         legend = f"    train loss: mean {type(criterion).__name__} per batch"
         if validating:
             legend += (f"   |   val {val_metric}: held-out error, "
                        f"physical units")
+            if sites_task:
+                legend += (f"\n    val occ: relative RMS of the held-out "
+                           f"augmentation occupancies   |   score = val "
+                           f"{val_metric} + {occupancy_weight:g} x val occ, "
+                           f"which the best epoch is chosen on")
             if sobolev_weight > 0.0:
                 norm = "relative" if val_metric.startswith("rel") else "absolute"
                 base = val_metric.replace("H1", "L2")
@@ -1368,7 +1508,13 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             cell = batch["cell"].to(operator.device, non_blocking=pin_memory)
 
             optimizer.zero_grad(set_to_none=True)
-            prediction = forward(inputs, cell)
+            if sites_task:
+                sites = {key: batch[key].to(operator.device,
+                                            non_blocking=pin_memory)
+                         for key in ("species", "positions", "atom_mask")}
+                prediction, occupancy = forward(inputs, cell, sites=sites)
+            else:
+                prediction = forward(inputs, cell)
 
             # Everything in this block exists for the constraints and for
             # nothing else, so with them off it is work whose result is
@@ -1416,7 +1562,16 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
                 }
 
             terms = criterion(prediction, targets, cell=cell, **physical)
-            terms["total"].backward()
+            total = terms["total"]
+            if sites_task:
+                transform = operator.site_transform
+                wanted = transform.normalize(
+                    batch["paw"].to(operator.device, non_blocking=pin_memory),
+                    sites["species"])
+                total = total + occupancy_weight * transform.loss(
+                    occupancy, wanted, sites["species"],
+                    sites["atom_mask"].to(occupancy.dtype))
+            total.backward()
 
             if grad_clip:
                 clip_gradients(operator.model.parameters(), grad_clip)
@@ -1426,7 +1581,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             # differentiated and only `total` is recorded: it is the objective
             # the optimiser stepped on, and the parts are reported *unweighted*
             # so they do not sum to it.
-            running += terms["total"].detach()
+            running += total.detach()
             batches += 1
 
         if lr_schedule is not None:
@@ -1463,9 +1618,16 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             error = evaluate(operator, validation_loader,
                              loss=data_loss_name,
                              sobolev_weight=sobolev_weight)
+            message += f"  {error:>13.5f}"
+            if sites_task:
+                occupancy_error = evaluate_occupancies(operator,
+                                                       validation_loader)
+                history["val_field_error"].append(error)
+                history["val_occupancy_error"].append(occupancy_error)
+                error = error + occupancy_weight * occupancy_error
+                message += f"  {occupancy_error:>9.5f}  {error:>9.5f}"
             history["val_error"].append(error)
             history["val_epoch"].append(epoch + 1)
-            message += f"  {error:>13.5f}"
 
             if error < best_error:
                 best_error, best_epoch = error, epoch + 1
@@ -1494,8 +1656,10 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     if early_stopping and best_state is not None:
         operator.model.load_state_dict(best_state)
         if verbose and not stopped_early and best_epoch != len(history["train_loss"]):
+            scored = (f"val {val_metric}" if not sites_task else
+                      f"score {val_metric} + {occupancy_weight:g} x occ")
             emit(f"    restored the best weights, from epoch {best_epoch} "
-                 f"(val {val_metric} {best_error:.5f})")
+                 f"({scored} {best_error:.5f})")
 
     if validating:
         history["best_epoch"] = best_epoch
@@ -1503,7 +1667,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         history["stopped_early"] = stopped_early
         # Which norm `val_error` is in, so a figure or a report cannot label a
         # stored series by assuming it.
-        history["val_metric"] = val_metric
+        history["val_metric"] = (val_metric if not sites_task else
+                                 f"{val_metric} + {occupancy_weight:g} x occ")
 
     # Reported in the run's own JSON rather than sampled from outside it with
     # `nvidia-smi`, which is how every number in the CUDA work list had to be
@@ -1518,6 +1683,44 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     # into the next task and start reading a file that is still being written.
     barrier(context)
     return history
+
+
+@torch.no_grad()
+def evaluate_occupancies(operator, loader):
+    """
+    Relative RMS of the predicted augmentation occupancies, in physical units.
+
+    Pooled over every atom, set and value of every batch before the ratio is
+    taken, so a large cell counts for its atoms rather than as one sample.
+
+    Parameters
+    ----------
+    operator : FieldOperator
+        With an occupancy head and its ``site_transform``.
+    loader : DataLoader
+        Over a dataset whose task has ``site_target == "augmentation"``.
+
+    Returns
+    -------
+    float
+    """
+    from .paw import occupancy_error
+
+    operator.model.eval()
+    error = torch.zeros((), device=operator.device, dtype=torch.float64)
+    norm = torch.zeros((), device=operator.device, dtype=torch.float64)
+    for batch in loader:
+        device = operator.device
+        sites = {key: batch[key].to(device)
+                 for key in ("species", "positions", "atom_mask")}
+        _, occupancy = operator.model(batch["input"].to(device),
+                                      batch["cell"].to(device), sites=sites)
+        predicted = operator.site_transform.inverse(occupancy, sites["species"])
+        squared, total = occupancy_error(predicted, batch["paw"].to(device),
+                                         batch["paw_mask"].to(device))
+        error += squared.double()
+        norm += total.double()
+    return float(torch.sqrt(error / norm.clamp(min=1e-300)))
 
 
 @torch.no_grad()

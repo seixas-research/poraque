@@ -311,6 +311,7 @@ class FieldPairDataset(Dataset):
         # subtraction still ran on every access of every epoch.
         self._tensors = {}
         self._baseline_tensors = {}
+        self._site_targets = {}
         self.spin = self._resolve_spin(spin)
         # After spin, which decides the channel count the estimate is over.
         self._cache_bytes = None
@@ -619,7 +620,86 @@ class FieldPairDataset(Dataset):
         values = self.baseline_tensor(index, target_values.shape[0])
         if values is not None:
             sample["baseline"] = values
+
+        if self.task.site_target == "augmentation":
+            sites = self.site_targets(index)
+            sample["paw"] = torch.as_tensor(sites["occupancies"],
+                                            dtype=self.dtype)
+            sample["paw_lengths"] = torch.as_tensor(sites["lengths"],
+                                                    dtype=torch.long)
+            sample["species"] = torch.as_tensor(sites["species"],
+                                                dtype=torch.long)
+            sample["positions"] = torch.as_tensor(sites["positions"],
+                                                  dtype=self.dtype)
         return sample
+
+    def site_targets(self, index):
+        r"""
+        The per-atom PAW targets of material ``index``, read from its density.
+
+        What a model of the one-centre terms needs besides the grid: every
+        atom's augmentation occupancies, the length of each record (it depends
+        on the element), the atomic number, and the fractional position the
+        operator's field would be read out at. In the atom order of the file,
+        which is the order VASP writes the records in.
+
+        Memoised unconditionally, as :meth:`baseline_for` is: they are a few
+        hundred numbers per atom, they never change, and reading them walks the
+        whole grid block of a text file to reach its tail.
+
+        Returns
+        -------
+        dict
+            ``occupancies`` ``(atoms, sets, max_length)`` with one set per
+            density channel of this dataset (see
+            :func:`~poraque.fields.vasp.augmentation.occupancy_arrays` for why
+            an unpolarised member of a spin set gets zeros), ``lengths``
+            ``(atoms,)``, ``species`` ``(atoms,)`` atomic numbers, and
+            ``positions`` ``(atoms, 3)`` fractional.
+
+        Raises
+        ------
+        ValueError
+            When the material's density carries no records, or a record count
+            that disagrees with its atoms.
+        """
+        if index in self._site_targets:
+            return self._site_targets[index]
+
+        from ..fields import element_of
+        from ..fields.vasp.augmentation import occupancy_arrays
+        from ..fields.vasp.poscar import symbol_to_z
+        from ..fields.vasp.volumetric import read_augmentation_blocks
+
+        path = self.materials[index].files[self.task.target_field]
+        _, blocks = read_augmentation_blocks(path)
+        if not blocks:
+            raise ValueError(
+                f"{path} carries no PAW augmentation occupancies, which the "
+                f"{self.task.name} target is read from. Either the "
+                f"calculation wrote none (a norm-conserving run), or the "
+                f"cache predates keeping them: a cache built before 2026-09-16 "
+                f"dropped them when downsampling. Delete the cache directory "
+                f"and let poraque-train rebuild it.")
+
+        occupancies, lengths = occupancy_arrays(blocks,
+                                                channels=self.channels[1])
+        structure = self.load_fields(index)[1].structure
+        species = [symbol_to_z(element_of(symbol))
+                   for symbol, count in zip(structure.symbols, structure.counts)
+                   for _ in range(int(count))]
+        if len(species) != len(lengths):
+            raise ValueError(
+                f"{path} has {len(lengths)} augmentation records for "
+                f"{len(species)} atoms; the records are one per atom, so the "
+                f"file and its structure do not describe the same system.")
+
+        sites = {"occupancies": occupancies, "lengths": lengths,
+                 "species": np.asarray(species, dtype=int),
+                 "positions": np.asarray(structure.scaled_positions,
+                                         dtype=float)}
+        self._site_targets[index] = sites
+        return sites
 
     def baseline_tensor(self, index, channels):
         r"""
@@ -1002,7 +1082,55 @@ def collate_fields(samples):
     # invariant already forbids.
     if "baseline" in samples[0]:
         batch["baseline"] = torch.stack([s["baseline"] for s in samples])
+    if "paw" in samples[0]:
+        batch.update(_collate_sites(samples))
     return batch
+
+
+def _collate_sites(samples):
+    r"""
+    Pad per-atom PAW targets to one ``(batch, atoms, sets, values)`` block.
+
+    Two materials sharing a grid shape need not share an atom count --- a
+    32-atom slab and a 48-atom one can land on the same mesh --- and two
+    elements do not share a record length. Both axes are padded with zeros, and
+    the two masks are what tell padding apart from an occupancy that is zero:
+
+    ``atom_mask`` ``(B, A)``
+        A real atom.
+    ``paw_mask`` ``(B, A, L)``
+        A real value of a real atom's record. False everywhere on a padded
+        atom.
+
+    ``species`` pads with 0, which is no element.
+    """
+    atoms = max(sample["paw"].shape[0] for sample in samples)
+    sets = samples[0]["paw"].shape[1]
+    values = max(sample["paw"].shape[2] for sample in samples)
+    count = len(samples)
+    dtype = samples[0]["paw"].dtype
+
+    paw = torch.zeros(count, atoms, sets, values, dtype=dtype)
+    paw_mask = torch.zeros(count, atoms, values, dtype=torch.bool)
+    atom_mask = torch.zeros(count, atoms, dtype=torch.bool)
+    species = torch.zeros(count, atoms, dtype=torch.long)
+    positions = torch.zeros(count, atoms, 3, dtype=samples[0]["positions"].dtype)
+    for row, sample in enumerate(samples):
+        if sample["paw"].shape[1] != sets:
+            raise ValueError(
+                f"Cannot batch PAW targets with {sample['paw'].shape[1]} and "
+                f"{sets} record sets; the set count is the dataset's density "
+                f"channel count and is the same for every sample.")
+        n, _, length = sample["paw"].shape
+        paw[row, :n, :, :length] = sample["paw"]
+        lengths = sample["paw_lengths"]
+        paw_mask[row, :n] = (torch.arange(values).unsqueeze(0)
+                             < lengths.unsqueeze(1))
+        atom_mask[row, :n] = True
+        species[row, :n] = sample["species"]
+        positions[row, :n] = sample["positions"]
+    return {"paw": paw, "paw_mask": paw_mask, "atom_mask": atom_mask,
+            "species": species, "positions": positions}
 
 
 def make_dataloader(dataset, batch_size=1, shuffle=True, num_workers=0, seed=0,

@@ -83,6 +83,7 @@ than what remains to be learned.
 import hashlib
 import json
 import os
+import warnings
 from dataclasses import dataclass, field as dataclass_field
 
 import numpy as np
@@ -94,7 +95,14 @@ LIBRARY_FILENAME = "atomic_reference.json"
 
 #: Schema version, so a database written by an older Poraquê is recognised
 #: rather than silently misread.
-SCHEMA_VERSION = 1
+#:
+#: 2 is the first whose augmentation records were read to the length their
+#: header declares. Version 1 read to the next header, and the free atoms are
+#: spin-polarised runs whose single record is followed by a ``MAGMOM`` line, so
+#: every version-1 record carries one value too many --- 139 for ``PAW_PBE
+#: Pt``. A version-1 database is still read for its form factors, which the
+#: parser never touched; its augmentation records are not.
+SCHEMA_VERSION = 2
 
 #: Radial bins used when reducing f(G) to a table. 512 over the available range
 #: is far finer than the physics — f is smooth on the scale of 1/R_core — and
@@ -256,8 +264,9 @@ class AtomicReferenceLibrary:
         ``{key: AtomicReference}``.
     """
 
-    def __init__(self, entries=None):
+    def __init__(self, entries=None, schema_version=SCHEMA_VERSION):
         self.entries = dict(entries or {})
+        self.schema_version = int(schema_version)
 
     # ------------------------------------------------------------------ #
     def __len__(self):
@@ -386,8 +395,24 @@ class AtomicReferenceLibrary:
                 f"understands up to {SCHEMA_VERSION}. Reading it would "
                 f"silently drop whatever the newer version added.")
 
-        return cls({key: AtomicReference.from_dict(value)
-                    for key, value in (payload.get("entries") or {}).items()})
+        entries = {key: AtomicReference.from_dict(value)
+                   for key, value in (payload.get("entries") or {}).items()}
+        stale = sorted(entry.element for entry in entries.values()
+                       if version < 2 and entry.augmentation)
+        if stale:
+            # Dropped, not trimmed: the extra value is the last one for a
+            # free atom, but "the last one" is an inference about a file
+            # nobody is re-reading, and a record is either right or absent.
+            warnings.warn(
+                f"{path} is a version-{version} database: its augmentation "
+                f"records for {stale} were read past their declared length "
+                f"and carry the MAGMOM line of a spin-polarised run. They are "
+                f"dropped; the form factors are unaffected. Rebuild it with "
+                f"`poraque-atoms` to have the records back.",
+                RuntimeWarning, stacklevel=2)
+            for entry in entries.values():
+                entry.augmentation = None
+        return cls(entries, schema_version=version)
 
 
 # ---------------------------------------------------------------------- #
@@ -691,10 +716,17 @@ def resolve_library(reference, cache=None, log=None):
                  f"{library.elements()} from {direct}")
             return library
 
-    # A memoised ingest from an earlier run of this same cache.
+    # A memoised ingest from an earlier run of this same cache. One written
+    # under an older schema is re-ingested rather than loaded: the source
+    # calculations are right here, and loading it would drop the augmentation
+    # records a rebuild recovers.
     if cache:
         memo = os.path.join(cache, LIBRARY_FILENAME)
-        if os.path.exists(memo):
+        if os.path.exists(memo) and _schema_version(memo) < SCHEMA_VERSION:
+            emit(f"      atomic reference: {memo} is schema version "
+                 f"{_schema_version(memo)}, older than {SCHEMA_VERSION} -- "
+                 f"re-ingesting")
+        elif os.path.exists(memo):
             library = AtomicReferenceLibrary.load(memo)
             if len(library):
                 emit(f"      atomic reference: {len(library)} atom(s) "
@@ -715,6 +747,15 @@ def resolve_library(reference, cache=None, log=None):
         written = library.save(os.path.join(cache, LIBRARY_FILENAME))
         emit(f"      atomic reference: memoised to {written}")
     return library
+
+
+def _schema_version(path):
+    """The ``version`` a database file declares, without building its entries."""
+    try:
+        with open(path) as handle:
+            return int(json.load(handle).get("version", 0))
+    except (OSError, ValueError, AttributeError):
+        return 0
 
 
 def augmentation_reference(library):
@@ -741,6 +782,8 @@ def augmentation_reference(library):
     dict
         ``{element: {...}}``, empty when no stored atom carried a record.
     """
+    from .vasp.augmentation import RECORD_SCHEMA
+
     reference = {}
     for entry in library.entries.values():
         if not entry.augmentation:
@@ -757,6 +800,7 @@ def augmentation_reference(library):
             "structures": 1,
             "source": "isolated_atom",
             "potcar_title": entry.potcar_title,
+            "schema": RECORD_SCHEMA,
         }
     return reference
 

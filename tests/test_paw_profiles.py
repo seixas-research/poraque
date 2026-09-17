@@ -104,6 +104,9 @@ def potcar_text(radial=True, decoy=True):
         "   30.0000000000000",
         _table(-np.linspace(1.0, 0.0, 1000)),
     ]
+    # One p projector: a record of 6 values, (p,p) at L = 0 and L = 2 --- the
+    # length `test_ext2paw` writes its synthetic records at.
+    parts += [" Non local Part", "           1           1   1.50000000000000"]
     if decoy:
         parts += [" core charge-density (partial)",
                   "   8.00000000000000",

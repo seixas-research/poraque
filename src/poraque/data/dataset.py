@@ -239,14 +239,17 @@ class MixedFieldDataset(FieldPairDataset):
             In the registry's order. A dataset of lone densities returns
             ``["ext2chg"]``; a complete VASP archive returns both.
         """
-        from ..ml.tasks import TASKS
+        from ..ml.tasks import CHAIN, TASKS
 
         fields = set()
         for source in self.sources:
             for record in source.discover():
                 fields.update(source.provides(record))
-        return [name for name, task in TASKS.items()
-                if set(task.required_files) <= fields]
+        # The chain only: `ext2paw` needs the records inside a CHGCAR, which
+        # no file listing can see, and naming it for every density would
+        # promise a target the data may not carry.
+        return [name for name in CHAIN
+                if set(TASKS[name].required_files) <= fields]
 
     def contributions(self):
         """

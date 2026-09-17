@@ -97,7 +97,7 @@ the settings worth knowing about, each with the reasoning behind it. Read it
 there and copy only what you need into your own file. This chapter is the
 exhaustive version of the same thing.
 
-Twelve configurations ship with the source --- four at the top of
+Eleven configurations ship with the source --- three at the top of
 \file{configs/} and eight controlled activation comparisons under
 \file{configs/kan/}:
 
@@ -109,9 +109,8 @@ File & Purpose \\
 \file{train.yaml} & The clean starting point. Copy this one. \\
 \file{train\_complete\_and\_commented.yaml} & The same run, with every choice
 explained at length --- the reference to read, not to copy. \\
-\file{train\_MP.yaml} & Training on a Materials Project density
-download. \\
-\file{train\_mixed.yaml} & One operator from several datasets at once. \\
+\file{train\_ext2paw.yaml} & The \opt{ext2paw} task on the same data: the
+pseudo-density and every atom's PAW occupancies. \\
 \file{kan/compare\_kan\_*.yaml} & One per learnable activation, base-carrying
 and pure, identical in everything else --- so a difference between two of them
 is the activation. \\
@@ -123,7 +122,7 @@ is the activation. \\
 Every one of them is parsed against the current schema by the test suite, and
 checked for hyphens, camelCase, duplicate keys and retired names. That is not
 belt-and-braces: the 26.9.8 rename broke all eight \file{kan/} files and left
-the four at the top working, because those four were the ones anyone loaded.
+the ones at the top working, because those were the ones anyone loaded.
 \end{pnote}
 
 \section{Top level}
@@ -133,8 +132,8 @@ the four at the top working, because those four were the ones anyone loaded.
 \toprule
 Key & Default & Meaning \\
 \midrule
-\opt{task} & \opt{all} & Which map to train: \opt{ext2chg}, \opt{chg2tau}, or
-\opt{all} for both in sequence. \\
+\opt{task} & \opt{all} & Which map to train: \opt{ext2chg}, \opt{chg2tau},
+\opt{all} for both in sequence, or \opt{ext2paw} (\S\ref{sec:paw}). \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -350,6 +349,8 @@ descriptors (FiLM). \\
 \opt{mode\_selection: physical}. \\
 \opt{equivariant} & \opt{\{enable: false\}} & Rotation-equivariant radial
 kernel --- one block, see below. \\
+\opt{paw} & \opt{\{enable: false\}} & The \opt{ext2paw} operator ---
+one block, see below. \\
 \opt{pauli\_residual} & \opt{false} & Structural $\tau\ge\tauvW$ for
 \opt{chg2tau}. \\
 \opt{pauli\_scale} & \opt{null} & Initial Pauli scale in eV/\AA$^{3}$;
@@ -496,6 +497,82 @@ at every mode from them --- about $R/2$ times the arithmetic at
 \opt{n\_radial: R}. The constraint trades memory for recomputation, so
 parameters and FLOPs move in opposite directions by construction.
 \end{pnote}
+
+\subsection{\opt{paw}}
+\label{sec:paw}
+
+\begin{lstlisting}
+task:
+  type: all          # the chain, and ext2paw beside it
+model:
+  use_coordinates: false
+  equivariant:
+    enable: true     # the whole operator becomes equivariant
+  paw:
+    enable: true
+    width: 64
+    modes: 16
+    n_layers: 4
+\end{lstlisting}
+
+\opt{ext2paw} maps $\vext$ to two things at once: the pseudo-density on the
+grid, as \opt{ext2chg} does, and every atom's \textbf{augmentation occupancies}
+$\rho(\ell\ell'LM)$ --- the one-centre PAW terms VASP writes after the grid,
+which with the pseudo-density are what an all-electron density is rebuilt from.
+They are not a field. There are 138 per atom for \opt{PAW\_PBE Pt}, whose
+projector channels are d, d, s, s, p, p in the POTCAR's order, and one set per
+density channel, so a spin-polarised dataset keeps the magnetisation's set too.
+
+\begin{center}
+\begin{tabular}{@{}llp{7.0cm}@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\opt{enable} & \opt{false} & Train \opt{ext2paw}: required by
+\opt{task.type: ext2paw}, and adds it to an \opt{all} run. \\
+\opt{width} & \opt{64} & The FNO backbone's channels. \\
+\opt{modes} & \opt{16} & Its retained Fourier modes per axis. \\
+\opt{n\_layers} & \opt{4} & Its Fourier layers. \\
+\opt{readout\_g\_max} & \opt{auto} & The band in \AA$^{-1}$ read at each atom;
+\opt{auto} is 95\,\% of the coarsest training grid's Nyquist frequency. \\
+\opt{occupancy\_weight} & \opt{1.0} & The per-atom term against the field
+objective, and in the validation score. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\opt{ext2paw} is not a link of the chain --- \opt{all} still means
+\opt{ext2chg} then \opt{chg2tau} --- and the two switches are checked against
+each other: \opt{task.type: ext2paw} with \opt{enable: false} raises, and so
+does \opt{enable: true} beside \opt{ext2chg} or \opt{chg2tau}.
+
+The operator is built as \file{experiments/paw\_occupancies} measured it should
+be. \textbf{An FNO for the grid}, sized by the block; every other \opt{model}
+setting applies to it unchanged. \textbf{A readout at each atom} of the latent
+field and the predicted density, onto solid-harmonic Gaussians
+$r^{L}Y_{LM}(\hat r)\,e^{-r^{2}/2s_n^{2}}$ --- the decoder half of a graph neural
+operator --- over one band $|\GG| \le$ \opt{readout\_g\_max}, resampled to a
+common spacing so every cell is integrated alike. \textbf{An equivariant head per
+element}: one map per L shared across M, gated by invariants. With
+\opt{model.equivariant} on, the whole operator rotates its predicted occupancies
+with the crystal, to $7\times10^{-15}$ in double precision.
+
+\begin{pwarn}[title={The band is not optional}]
+A readout of the DFT density integrated on each grid as it came scored 3\,\% on
+nanoparticles it had seen and 184\,\% on held-out ones, whose grid spacing
+differs; over one band it scored 4.9\,\%. A grid too coarse to supply the band
+therefore raises, at training and at inference.
+\end{pwarn}
+
+The records train with L = 0 centred and every (set, L, pair) block scaled to
+unit RMS, fitted on the training split and inverted from the checkpoint, and
+every L block weighs the same in the loss. The log gains a \opt{val occ}
+column, and the best epoch is chosen on \opt{val rel L2 + occupancy\_weight
+$\times$ val occ}. Each element's record layout comes from the POTCAR's
+\opt{Non local Part}, so a dataset without POTCARs cannot train it; nor, yet,
+can \opt{--kfold}, fine-tuning or an f-channel element, all refused before the
+cache. A cache built before 16 September 2026 dropped the records; delete it and
+let it rebuild.
 
 \subsection{\opt{use\_coordinates} and \opt{cell\_conditioning}}
 

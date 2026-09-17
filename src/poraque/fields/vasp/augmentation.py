@@ -40,6 +40,7 @@ no reference of its own.
 """
 
 import os
+import re
 
 import numpy as np
 
@@ -52,10 +53,31 @@ _PER_LINE = 5
 _WIDTH = 15
 _DECIMALS = 7
 
+#: Version of the per-element tables built from parsed records, stamped into
+#: every entry as ``"schema"``. 2 is the first built from records read to their
+#: **declared** length; a cached table without the stamp was built by a parser
+#: that let a spin-polarised file's MAGMOM line into the last record of the
+#: first set (139 values for a free Pt atom, 170 for the last atom of a 32-atom
+#: cell) and is rebuilt rather than reused.
+RECORD_SCHEMA = 2
+
 
 def parse_augmentation(block):
     """
     Split an extracted augmentation block into per-atom value arrays.
+
+    Each record is read to the length its own header declares ---
+    ``augmentation occupancies   1 138`` is atom 1, 138 values --- and not to
+    the next header. The difference is not cosmetic. A spin-polarised
+    ``CHGCAR`` writes a line of per-ion ``MAGMOM`` values after the last
+    record of the first set (``NIONS`` numbers in a wider ``E20.12`` field), and
+    reading to the next header folded them into that record: the last atom of
+    every ``ISPIN = 2`` file came out ``NIONS`` values too long. The per-element
+    average then refused the file for an inconsistent channel count and
+    returned nothing for all 97 platinum cells, and the isolated atom's single
+    record gained its one ``MAGMOM`` value --- 139 numbers for a 138-value
+    ``PAW_PBE Pt`` record, stored in every cache and written back out by
+    ``--add-paw``.
 
     Parameters
     ----------
@@ -65,16 +87,39 @@ def parse_augmentation(block):
     Returns
     -------
     list of numpy.ndarray
-        One array per atom, in file order.
+        One array per atom, in file order. A header whose length cannot be read
+        (the ``2I4`` field overflows past 9999 atoms) falls back to reading up
+        to the next header.
     """
-    records, current = [], None
+    records, current, declared = [], None, None
     for line in block:
         if _HEADER in line:
             current = []
             records.append(current)
+            declared = _declared_length(line)
         elif current is not None:
-            current.extend(float(token) for token in line.split())
+            values = [float(token) for token in line.split()]
+            if declared is not None:
+                values = values[:max(0, declared - len(current))]
+            current.extend(values)
     return [np.asarray(values, dtype=float) for values in records]
+
+
+def _declared_length(header):
+    """
+    The value count a record header states, or ``None``.
+
+    VASP writes ``("augmentation occupancies",2I4)``: the atom index and the
+    count, four columns each. Two tokens are the normal case; one token of
+    eight digits is the two fields run together once the index reaches 1000.
+    """
+    tail = header.split(_HEADER, 1)[1].strip()
+    tokens = tail.split()
+    if len(tokens) == 2 and tokens[1].isdigit():
+        return int(tokens[1])
+    if len(tokens) == 1 and re.fullmatch(r"\d{8}", tokens[0]):
+        return int(tokens[0][4:])
+    return None
 
 
 def format_augmentation(records):
@@ -111,6 +156,145 @@ def species_of_each_atom(structure):
     for symbol, count in zip(structure.symbols, structure.counts):
         symbols.extend([str(symbol)] * int(count))
     return symbols
+
+
+def record_layout(channels):
+    r"""
+    What each value of one atom's augmentation record is: ``[(a, b, L, M)]``.
+
+    VASP's ``TRANS_RHOLM`` writes the one-centre occupancies of every projector
+    channel pair ``a <= b`` in the POTCAR's channel order, for every ``L`` from
+    ``|l_a - l_b|`` to ``l_a + l_b`` **in steps of two** (the Gaunt parity rule:
+    no other L contributes to a density), and every ``M`` of that ``L`` as a
+    real spherical harmonic, ``m = -L..L``. Both halves of that were pinned on
+    this project's platinum data rather than assumed: with the order
+    ``(2, 2, 0, 0, 1, 1)`` a bulk site's non-zero values sit exactly at L = 0
+    and L = 4, as cubic symmetry requires, and its L = 4 block is
+    :math:`Y_{40} + \sqrt{5/7}\,Y_{44}` to seven digits.
+
+    Parameters
+    ----------
+    channels : sequence of int
+        The l of each projector channel, as
+        :attr:`~poraque.fields.vasp.potcar.PotcarSingle.projector_channels`.
+
+    Returns
+    -------
+    list of tuple
+        One ``(a, b, L, M)`` per value, in file order; its length is the
+        record length (138 for ``PAW_PBE Pt``).
+    """
+    channels = [int(degree) for degree in channels]
+    rows = []
+    for a in range(len(channels)):
+        for b in range(a, len(channels)):
+            low, high = abs(channels[a] - channels[b]), channels[a] + channels[b]
+            for L in range(low, high + 1, 2):
+                for M in range(2 * L + 1):
+                    rows.append((a, b, L, M))
+    return rows
+
+
+def irreps_blocks(channels):
+    """
+    The record grouped by ``L``: ``{L: (pairs, 2L+1) int array}`` of positions.
+
+    A permutation of the record, and exactly invertible: every value belongs to
+    one ``(pair, M)`` slot of one ``L``. Within a block the pairs are in record
+    order and ``M`` runs ``-L..L``, so a map acting on the pair index alone and
+    shared across ``M`` is rotation-equivariant.
+    """
+    import numpy as np
+
+    rows = record_layout(channels)
+    position = {row: index for index, row in enumerate(rows)}
+    blocks = {}
+    for L in sorted({row[2] for row in rows}):
+        pairs = sorted({(a, b) for a, b, degree, _ in rows if degree == L})
+        blocks[L] = np.array([[position[(a, b, L, M)]
+                               for M in range(2 * L + 1)]
+                              for a, b in pairs], dtype=int)
+    return blocks
+
+
+def occupancy_arrays(blocks, channels=None):
+    r"""
+    Per-atom occupancy records as one padded array: ``(atoms, sets, values)``.
+
+    The shape a regression target needs, where the file has a flat list of
+    records per set. Three things about the records decide it:
+
+    * **one set per density channel.** A spin-polarised ``CHGCAR`` carries a
+      second set after the magnetisation block, and a target that kept only
+      the first would teach a model to write files VASP reads back wrongly
+      (see :func:`~poraque.fields.vasp.volumetric.read_augmentation_blocks`);
+    * **the length is a property of the element**, not of the file: it counts
+      :math:`\rho(ll'LM)` over that species' projector channels --- 138 for
+      ``PAW_PBE Pt``, whose six channels (s, s, p, p, d, d) give 138 by
+      counting --- so a structure with two elements has two lengths and the
+      shorter records are padded with zeros, which ``lengths`` tells apart
+      from a zero occupancy;
+    * **the sets agree atom by atom.** The magnetisation record of atom *i* is
+      the same :math:`(ll'LM)` list as its total record, so a length that
+      differs between sets means the file is not what it claims.
+
+    Parameters
+    ----------
+    blocks : sequence of sequence of str
+        Record lines per set, as
+        :func:`~poraque.fields.vasp.volumetric.read_augmentation_blocks`
+        returns them.
+    channels : int, optional
+        Sets the caller wants. Extra sets are dropped --- a density read as one
+        channel from a spin-polarised file keeps the total's records --- and
+        missing ones are **zeros**: an unpolarised member of a spin-polarised
+        dataset carries :math:`m \equiv 0` on the grid, and its magnetisation
+        occupancies vanish identically for the same reason. Defaults to the
+        number of sets present.
+
+    Returns
+    -------
+    values : numpy.ndarray
+        ``(atoms, sets, max_length)``, float64, zero-padded.
+    lengths : numpy.ndarray
+        ``(atoms,)`` int, each atom's record length.
+
+    Raises
+    ------
+    ValueError
+        When there are no records, when the sets disagree in their atom count
+        or in any atom's record length, or when ``channels`` is below one.
+    """
+    sets = [parse_augmentation(block) for block in blocks]
+    sets = [records for records in sets if records]
+    if not sets:
+        raise ValueError("No augmentation occupancies to arrange.")
+
+    atoms = len(sets[0])
+    lengths = np.asarray([record.size for record in sets[0]], dtype=int)
+    for number, records in enumerate(sets[1:], start=2):
+        if len(records) != atoms:
+            raise ValueError(
+                f"Record set {number} has {len(records)} atoms where set 1 "
+                f"has {atoms}; the sets of one file describe the same atoms.")
+        mismatched = [index for index, record in enumerate(records)
+                      if record.size != lengths[index]]
+        if mismatched:
+            raise ValueError(
+                f"Record set {number} gives atom {mismatched[0] + 1} "
+                f"{records[mismatched[0]].size} values where set 1 gives "
+                f"{lengths[mismatched[0]]}; an atom's (ll'LM) list does not "
+                f"change between spin channels.")
+
+    channels = len(sets) if channels is None else int(channels)
+    if channels < 1:
+        raise ValueError(f"channels must be at least 1, got {channels}.")
+
+    values = np.zeros((atoms, channels, int(lengths.max())), dtype=float)
+    for set_index, records in enumerate(sets[:channels]):
+        for atom, record in enumerate(records):
+            values[atom, set_index, :record.size] = record
+    return values, lengths
 
 
 def reference_from_calculation(source, filename="CHGCAR"):
@@ -209,6 +393,7 @@ def build_reference(sources, filename="CHGCAR", log=None):
                 "values": (entry["sum"] / entry["count"]).tolist(),
                 "atoms": int(entry["count"]),
                 "structures": int(structures.get(element, 0)),
+                "schema": RECORD_SCHEMA,
             }
             emit(f"      PAW reference: {element}  "
                  f"{len(reference[element]['values'])} values, averaged over "

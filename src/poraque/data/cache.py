@@ -659,6 +659,8 @@ def _build_one(record, cache, resolution, fields, spin, remembered=None,
             field = source.read(record, name, native, spin=spin)
             reduced_field = (resample_field(field, reduced.shape, grid=reduced)
                              if reduced is not native else field)
+            records = (_augmentation_for(record, reduced_field)
+                       if name == "CHGCAR" else None)
 
             # Registered *before* the write, not after: a writer that raises
             # partway has already created the file, and a temporary the
@@ -672,11 +674,13 @@ def _build_one(record, cache, resolution, fields, spin, remembered=None,
                 temporary = _partial(store, marker)
                 pending[temporary] = store
                 write_fields(temporary, {name: reduced_field},
-                             compression=compression, level=compression_level)
+                             compression=compression, level=compression_level,
+                             augmentation=({name: records} if records
+                                           else None))
             else:
                 temporary = _partial(targets[name], marker)
                 pending[temporary] = targets[name]
-                reduced_field.write(temporary)
+                reduced_field.write(temporary, augmentation=records or None)
 
             data = reduced_field.data
             ranges[name] = [float(data.min()), float(data.max())]
@@ -707,6 +711,43 @@ def _build_one(record, cache, resolution, fields, spin, remembered=None,
     return {"native": list(native.shape), "shape": list(reduced.shape),
             "ranges": ranges, "warnings": warnings,
             "seconds": time.time() - started}
+
+
+def _augmentation_for(record, density):
+    r"""
+    The PAW augmentation records to write beside a cached density.
+
+    Copied verbatim from the native file. The records are **on-site**
+    quantities --- occupancies of the projector channels inside each
+    augmentation sphere --- so downsampling the grid neither changes them nor
+    has anything to say about them, and a cache that dropped them dropped the
+    only per-atom target the data carries.
+
+    One set per density channel, because that is how the cached file is laid
+    out: a spin-polarised density is written as two grid blocks with a set
+    after each, a density read as one channel from a spin-polarised run keeps
+    the total's set alone. The first set keeps the ``MAGMOM`` line VASP writes
+    after it, which a reader skips by the declared record lengths and a VASP
+    restart expects to find.
+
+    Returns
+    -------
+    list of list of str
+        Empty when the calculation wrote none --- a norm-conserving run, or a
+        density stored without them.
+    """
+    from ..fields.spin import SpinDensity
+    from ..fields.vasp.volumetric import read_augmentation_blocks
+
+    path = record.files.get("CHGCAR")
+    if not path:
+        return []
+    try:
+        _, blocks = read_augmentation_blocks(path)
+    except (OSError, ValueError):
+        return []
+    channels = 2 if isinstance(density, SpinDensity) else 1
+    return [list(block) for block in blocks[:channels]]
 
 
 def _partial(path, marker):
@@ -838,7 +879,7 @@ def build_paw_reference(records, cache, log=None, library=None,
         ``{element: {...}}``, empty when nothing carried any records.
     """
     from ..fields.atomic import augmentation_reference
-    from ..fields.vasp.augmentation import build_reference
+    from ..fields.vasp.augmentation import RECORD_SCHEMA, build_reference
 
     emit = log or (lambda *_: None)
     path = os.path.join(cache, PAW_REFERENCE_FILENAME)
@@ -851,11 +892,21 @@ def build_paw_reference(records, cache, log=None, library=None,
         # `cache_tag` exists to prevent one level up -- so the requested source
         # wins and the file is rebuilt.
         wanted = "isolated atoms" if source == "atomic" else "training-set average"
-        if origin == wanted or not reference:
+        # And a table built before records were read to their declared length
+        # is not reused at all: on spin-polarised data its records carry the
+        # MAGMOM line, so it is the wrong length whichever source built it.
+        current = all(isinstance(entry, dict)
+                      and entry.get("schema", 0) >= RECORD_SCHEMA
+                      for entry in reference.values())
+        if not current:
+            emit("  PAW reference: cached table predates reading records to "
+                 "their declared length — rebuilding")
+        elif origin == wanted or not reference:
             emit(f"  PAW reference: cached, {sorted(reference)} [{origin}]")
             return reference
-        emit(f"  PAW reference: cached table is the {origin}, but "
-             f"paw_source={source!r} asks for the {wanted} — rebuilding")
+        else:
+            emit(f"  PAW reference: cached table is the {origin}, but "
+                 f"paw_source={source!r} asks for the {wanted} — rebuilding")
 
     reference = {}
     if source == "atomic":
@@ -954,10 +1005,16 @@ def build_paw_profiles(records, cache, log=None):
     path = os.path.join(cache, PAW_PROFILES_FILENAME)
     if os.path.exists(path):
         profiles = _read_profiles(path)
-        if profiles:
+        # A table written before the projector channels were recorded cannot
+        # lay out an occupancy record, which ext2paw needs; it is rebuilt.
+        if profiles and all(entry.get("projector_channels")
+                            for entry in profiles.values()):
             emit(f"  PAW core profiles: cached, "
                  f"{sorted(entry['element'] for entry in profiles.values())}")
             return profiles
+        if profiles:
+            emit("  PAW core profiles: cached table predates the projector "
+                 "channels — rebuilding")
 
     profiles, unserved = {}, set()
     for record in records:

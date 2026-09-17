@@ -205,6 +205,19 @@ on-site density — and it covers only the elements the model was trained on.
 A real calculation beside the structure always wins over the table: its records
 are *that* system's, where the table is an average over others.
 
+**With an `ext2paw` operator in the bundle** — trained with `model.paw.enable`
+beside `task.type: all` — the records are predicted for *this* structure from
+its own potential, and `--paw-source auto` takes them ahead of the table:
+
+```text
+        using the ext2paw operator's predicted occupancies: 32 atoms, 2 record set(s)
+```
+
+The ranking is: a reference beside the structure, then `model`, then `bundle`,
+then `atomic` on request. `--paw-source model` names the operator and fails,
+rather than falling through, when the bundle has none or the inference grid is
+too coarse for the band its readout was trained on.
+
 Three checks run first, each refusing rather than writing a file VASP would
 reject: a record count that disagrees with the atom count, a grid that differs
 from the reference (a warning — the records are grid-independent, but

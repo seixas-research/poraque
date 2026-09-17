@@ -13,7 +13,10 @@
 # =====================================================================
 
 task:
-  type: all                     # all | ext2chg | chg2tau; only `all` reaches a total energy
+  type: all                     # all | ext2chg | chg2tau | ext2paw; only `all` reaches a total energy
+  # `ext2paw` predicts the pseudo-density AND every atom's PAW augmentation
+  # occupancies, from V_ext. It is not a link of the chain -- `all` means
+  # ext2chg + chg2tau -- and `all` adds it only when model.paw.enable is true.
   name: pt_w16_m8_l3            # names models/<name>/ and everything inside it
 
 data:
@@ -235,6 +238,50 @@ model:
   pauli_residual: false         # chg2tau: predict tau = tau_vW + s*softplus(f), bound by construction
   pauli_scale: null             # initial Pauli scale in eV/Ang^3; null fits it from the training split
   learn_pauli_scale: true       # optimise that scale alongside the backbone
+
+  # ONE BLOCK, the convention equivariant follows: the operator of the ext2paw
+  # task, with the switch inside it.
+  paw:
+    enable: false               # true for task.type: ext2paw, or beside `all` to add ext2paw
+    # width: 64                 # the FNO backbone's channels, as model.width
+    # modes: 16                 # its retained Fourier modes per axis, as model.modes
+    # n_layers: 4               # its Fourier layers, as model.n_layers
+    # readout_g_max: auto       # 1/Ang band read at each atom; auto = 95 % of the coarsest grid's Nyquist
+    # occupancy_weight: 1.0     # per-atom term against the field objective, and in the val score
+  #
+  # task.type: ext2paw with enable false RAISES, and so does enable true beside
+  # ext2chg or chg2tau: two switches for one decision are checked against each
+  # other rather than left to disagree.
+  #
+  # The target is two things. The pseudo-density on the grid, as for ext2chg,
+  # and each atom's augmentation occupancies rho(ll'LM) -- the one-centre PAW
+  # terms inside the augmentation spheres, which VASP writes after the grid and
+  # no grid model can see. 138 numbers per atom for PAW_PBE Pt (projector
+  # channels d,d,s,s,p,p, in the POTCAR's order), one set per density channel:
+  # a spin-polarised dataset keeps the magnetisation's set as well. The cache
+  # carries them verbatim; a cache built before 2026-09-16 dropped them, so
+  # delete it and let it rebuild.
+  #
+  # The operator, as experiments/paw_occupancies measured it should be:
+  #   - an FNO for the grid, sized by width/modes/n_layers above; every other
+  #     model setting (activation, equivariant, ...) applies to it;
+  #   - a readout at each atom of the latent field and the predicted density,
+  #     over ONE band |G| <= readout_g_max for every cell. A readout that
+  #     integrated on each grid as it came scored 184 % on held-out
+  #     nanoparticles, whose spacing differs; over one band, 4.9 %;
+  #   - an equivariant head per element: one map per L shared across M, gated
+  #     by invariants, so the prediction rotates with the atom. With
+  #     model.equivariant on, the whole operator is rotation-equivariant.
+  # The records train in an invertible form (L = 0 centred, each block scaled),
+  # fitted on the training split and stored in the checkpoint. The log gains a
+  # `val occ` column, and the best epoch is chosen on val rel L2 +
+  # occupancy_weight x val occ. The element projector channels come from the
+  # POTCAR, so a Gaussian-potential dataset cannot train it. Not yet under
+  # --kfold or fine-tuning, both refused before the cache; an f-channel element
+  # (L = 6) is refused too.
+  #
+  # With an ext2paw operator in the bundle, poraque-inference --add-paw writes
+  # its predicted records (--paw-source model), ahead of the averaged table.
 
 training:
   epochs: 500                   # passes over the training set

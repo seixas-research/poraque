@@ -119,13 +119,21 @@ class PotcarSingle:
         Raw ``PAW radial sets`` tables, ``{"grid", "core charge-density",
         "core charge-density (pseudized)"}``, as the file stores them. Prefer
         :attr:`core_profile`.
+    projector_channels : tuple of int or None
+        The angular momentum of every projector channel, in file order --- the
+        order VASP writes a ``CHGCAR``'s augmentation occupancies in. Read from
+        the ``Non local Part`` headers, each ``l  n_projectors  r_max``, so
+        ``PAW_PBE Pt`` is ``(2, 2, 0, 0, 1, 1)`` and ``PAW_PBE Fe_pv`` is
+        ``(1, 1, 2, 2, 0, 0)``. Not from the Description block, whose last
+        line is the local potential (``ICORE``) and not a projector.
     """
 
     #: Number of tabulated points, ``NPSPTS`` in ``pseudo_struct.F``.
     NPSPTS = 1000
 
     def __init__(self, symbol, zval, enmax=None, rcore=None, functional=None,
-                 titel=None, local_part=None, radial_sets=None):
+                 titel=None, local_part=None, radial_sets=None,
+                 projector_channels=None):
         self.symbol = str(symbol)
         self.zval = float(zval)
         self.enmax = None if enmax is None else float(enmax)
@@ -134,6 +142,9 @@ class PotcarSingle:
         self.titel = titel
         self.local_part = local_part
         self.radial_sets = radial_sets
+        self.projector_channels = (None if projector_channels is None
+                                   else tuple(int(degree) for degree in
+                                              projector_channels))
 
     @property
     def psgmax(self):
@@ -257,6 +268,8 @@ class PotcarSingle:
             "symbol": self.symbol,
             "titel": self.titel,
             "zval": self.zval,
+            "projector_channels": (None if self.projector_channels is None
+                                   else list(self.projector_channels)),
             "r": r.tolist(),
             "core_density": density(raw).tolist(),
             "pseudo_core_density": (None if pseudo is None
@@ -329,6 +342,8 @@ class PotcarSingle:
             titel=titel,
             local_part=_parse_local_part(text) if parse_tables else None,
             radial_sets=_parse_radial_sets(text) if parse_tables else None,
+            projector_channels=(_parse_projector_channels(text)
+                                if parse_tables else None),
         )
 
     def __repr__(self):
@@ -646,3 +661,33 @@ def _parse_radial_sets(text):
         if values:
             tables[title] = np.asarray(values, dtype=float)
     return tables or None
+
+
+def _parse_projector_channels(text):
+    """
+    The l of every projector channel, from the ``Non local Part`` headers.
+
+    Each header is followed by one line, ``l  n_projectors  r_max``: the
+    angular momentum and how many projectors share it. The channels are those
+    l repeated per projector, in the order the blocks appear --- which is the
+    order VASP loops over them when it writes the one-centre occupancies.
+
+    Returns
+    -------
+    tuple of int or None
+        ``None`` for a dataset without a non-local part.
+    """
+    lines = text.splitlines()
+    channels = []
+    for index, line in enumerate(lines[:-1]):
+        if line.strip().lower() != "non local part":
+            continue
+        tokens = lines[index + 1].split()
+        if len(tokens) < 2:
+            continue
+        try:
+            angular, count = int(float(tokens[0])), int(float(tokens[1]))
+        except ValueError:
+            continue
+        channels.extend([angular] * count)
+    return tuple(channels) or None

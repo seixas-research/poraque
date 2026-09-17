@@ -134,7 +134,7 @@ from poraque.ml.symbolic import (  # noqa: E402
     result_to_dict,
     symbolic_physics,
 )
-from poraque.ml.tasks import TASKS, resolve_task  # noqa: E402
+from poraque.ml.tasks import CHAIN, resolve_task  # noqa: E402
 
 #: Display label and unit per field, for figures.
 FIELD_LABELS = {
@@ -446,7 +446,7 @@ def report_cache_only(config, cache, log):
     materials = discover_materials(cache, ("CHGCAR",))
     per_task = {name: len(discover_materials(
         cache, resolve_task(name).required_files))
-        for name in config.task.names()}
+        for name in config.task_names()}
 
     buckets = {}
     decoded = 0
@@ -1083,6 +1083,10 @@ def build_operator(task, train_set, config, log):
     model_kwargs = config.model_kwargs()
     model_kwargs.update(resolve_radial_basis(train_set, config, log))
 
+    if task.site_target is not None:
+        model_kwargs.update(resolve_occupancy_head(train_set, config, log,
+                                                   out_channels))
+
     # init_seed reaches FieldOperator, which isolates the draw from the global
     # stream; the manual_seed here keeps the ambient behaviour when it is unset.
     torch.manual_seed(config.training.seed)
@@ -1101,14 +1105,17 @@ def build_operator(task, train_set, config, log):
     )
     if config.model.precision != "float32":
         operator.set_precision(config.model.precision)
-    log(f"      model: {type(operator.model).__name__} width={config.model.width} "
-        f"modes={config.model.modes} layers={config.model.n_layers}  "
+    # Off the built backbone, not the config: an ext2paw operator's size is
+    # model.paw's, and the log must describe what was built.
+    backbone = getattr(operator.model, "backbone", operator.model)
+    log(f"      model: {type(operator.model).__name__} width={backbone.width} "
+        f"modes={max(backbone.modes)} layers={len(backbone.blocks)}  "
         f"({operator.model.n_parameters():,} parameters)")
     if config.model.precision != "float32":
         log(f"      precision: {config.model.precision} — roughly twice the "
             f"time and memory of the float32 default")
     report_mode_selection(train_set, config, log)
-    report_radial_basis(train_set, operator.model, log)
+    report_radial_basis(train_set, backbone, log)
     return operator
 
 
@@ -1246,6 +1253,125 @@ def training_geometry(train_set):
     except AttributeError:                      # a __slots__ dataset, one day
         pass
     return cells, shapes
+
+
+def resolve_occupancy_head(train_set, config, log, sets):
+    r"""
+    Everything the ``ext2paw`` occupancy head needs, resolved from the data.
+
+    * **The backbone's size** from ``model.paw`` (``width``, ``modes``,
+      ``n_layers``); every other ``model`` setting applies as it stands.
+    * **The record layout of each element**: its projector channels, from the
+      POTCAR that built :math:`V_{\rm ext}`, as the cache recorded them in
+      ``paw_profiles.json``. Without a POTCAR a record cannot be laid out, so
+      a Gaussian-potential dataset stops here.
+    * **The readout band**: ``auto`` is 95 % of the coarsest training grid's
+      Nyquist frequency, the widest band every structure supplies; a stated one
+      above that stops here, rather than inside the first batch.
+    * **The occupancy transform**, fitted on the training split.
+
+    Returns
+    -------
+    dict
+        Keywords for :class:`~poraque.ml.FieldOperator`.
+    """
+    from poraque.data.cache import load_paw_profiles
+    from poraque.fields.vasp.augmentation import record_layout
+    from poraque.ml.paw import OccupancyTransform
+
+    settings = config.model.paw_settings()
+    profiles = load_paw_profiles(train_set.root)
+    layouts = {int(number): tuple(entry["projector_channels"])
+               for number, entry in profiles.items()
+               if entry.get("projector_channels")}
+    if not layouts:
+        raise SystemExit(
+            f"ext2paw needs each element's projector channels, which come from "
+            f"the POTCAR its potential was built with, and {train_set.root} "
+            f"records none. Give the data a POTCAR (data.potcar_dir) and "
+            f"rebuild the cache.")
+    for number, channels in sorted(layouts.items()):
+        log(f"      occupancy layout: Z={number}  channels "
+            f"{''.join('spdf'[degree] for degree in channels)}  "
+            f"-> {len(record_layout(channels))} values per record")
+
+    cells, shapes = training_geometry(train_set)
+    nyquist = min(float(np.min(np.pi * np.asarray(shape)
+                               / np.linalg.norm(cell, axis=1)))
+                  for cell, shape in zip(cells, shapes))
+    band = settings["readout_g_max"]
+    if band == "auto":
+        band = 0.95 * nyquist
+        log(f"      readout band: auto -> |G| <= {band:.3f} 1/Ang (95 % of the "
+            f"coarsest training grid's {nyquist:.3f})")
+    elif float(band) > nyquist:
+        raise SystemExit(
+            f"model.paw.readout_g_max = {band:g} 1/Ang, and the coarsest "
+            f"training grid resolves {nyquist:.3f}. Every structure has to "
+            f"supply the band, or the readout would use a narrower one on "
+            f"some. Lower it, set it to auto, or raise data.resolution.")
+    else:
+        log(f"      readout band: |G| <= {float(band):g} 1/Ang (coarsest "
+            f"training grid resolves {nyquist:.3f})")
+
+    transform = OccupancyTransform.fit(train_set, layouts, sets=sets)
+    log(f"      occupancy transform: fitted on {len(train_set)} structures, "
+        f"{sets} record set(s) per atom")
+
+    return {"width": settings["width"], "modes": settings["modes"],
+            "n_layers": settings["n_layers"], "site_layouts": layouts,
+            "readout_g_max": float(band), "site_transform": transform}
+
+
+def report_occupancies(operator, train_set, train_records, validation,
+                       test_records, per_material, log):
+    """
+    Per-structure relative RMS of the predicted augmentation occupancies.
+
+    Written into each structure's metrics as ``occupancy_relative_rms`` --- the
+    metrics JSON and the report read it from there --- and pooled per split
+    into one line, beside a baseline those numbers have to beat: each
+    element's training-mean L = 0 record with every L > 0 block zero, the best
+    a prediction can do that knows nothing about the atom's surroundings and
+    does not depend on the frame it is written in.
+    """
+    from poraque.ml.data import collate_fields
+    from poraque.ml.paw import occupancy_error
+
+    def one(dataset, index):
+        batch = collate_fields([dataset[index]])
+        device = operator.device
+        sites = {key: batch[key].to(device)
+                 for key in ("species", "positions", "atom_mask")}
+        with torch.no_grad():
+            operator.model.eval()
+            _, normalised = operator.model(batch["input"].to(device),
+                                           batch["cell"].to(device),
+                                           sites=sites)
+        predicted = operator.site_transform.inverse(normalised,
+                                                    sites["species"])
+        target = batch["paw"].to(device)
+        mean = operator.site_transform.inverse(torch.zeros_like(target),
+                                               sites["species"])
+        mask = batch["paw_mask"].to(device)
+        return occupancy_error(predicted, target, mask), \
+            occupancy_error(mean, target, mask)[0]
+
+    log("\n  augmentation occupancies (relative RMS, physical units):")
+    for label, dataset, records in (("train", train_set, train_records),
+                                    ("validation", validation, test_records)):
+        if dataset is None:
+            continue
+        pooled = np.zeros(3)
+        for index in range(len(dataset)):
+            (squared, norm), baseline = one(dataset, index)
+            squared, norm, baseline = float(squared), float(norm), float(baseline)
+            pooled += (squared, norm, baseline)
+            per_material[records[index].identifier]["metrics"][
+                "occupancy_relative_rms"] = float(np.sqrt(squared / norm))
+        log(f"      {label:<11s} {np.sqrt(pooled[0] / pooled[1]):.5f}   "
+            f"(training-mean L = 0 record: "
+            f"{np.sqrt(pooled[2] / pooled[1]):.5f})")
 
 
 def resolve_radial_basis(train_set, config, log):
@@ -1967,6 +2093,43 @@ def validate_equivariance_settings(config):
         raise SystemExit(str(error))
 
 
+def validate_paw_settings(config, training=True):
+    """
+    Resolve ``model.paw`` against ``task.type`` before anything runs.
+
+    The block's shape and values, and that ``task.type`` and
+    ``model.paw.enable`` agree, are checked here rather than after the cache.
+    Two paths the operator does not support yet are refused as well, since
+    each would otherwise fail inside a fold or a checkpoint load:
+    cross-validation, which fits the occupancy transform per fold, and
+    fine-tuning, whose pretrained bundle has no occupancy head to adapt.
+
+    Parameters
+    ----------
+    config : TrainingConfig
+    training : bool, optional
+        ``False`` for ``--cache-only``, which trains nothing and so is not
+        refused anything.
+    """
+    try:
+        config.model.paw_settings()
+        names = config.task_names()
+    except ValueError as error:
+        raise SystemExit(str(error))
+
+    if not training or "ext2paw" not in names:
+        return
+    if config.training.enable_kfold:
+        raise SystemExit(
+            "ext2paw does not run under --kfold yet: its occupancy transform "
+            "is fitted on the training split, and the fold loop does not fit "
+            "one per fold. Use training.valid_fraction instead.")
+    if config.fine_tuning.enable:
+        raise SystemExit(
+            "ext2paw cannot be fine-tuned yet: a pretrained bundle carries no "
+            "occupancy head to adapt. Train it from scratch.")
+
+
 def validate_physics_settings(config):
     """
     Resolve ``training.physics_informed`` before anything runs.
@@ -2321,6 +2484,7 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
         loss=build_loss(config, task.name), seed=config.training.seed,
         eval_every=config.training.eval_epoch, early_stopping=patience,
         log=log, verbose=True,
+        occupancy_weight=config.model.paw_settings()["occupancy_weight"],
         **loader_settings(config, distributed),
     )
     elapsed = time.time() - start
@@ -2401,6 +2565,10 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None):
         figures.append(report.parity(
             *showcase, validation=held_out, label=label_text, unit=unit,
             log=(task.target_field in ("CHGCAR", "TAUCAR"))))
+
+    if task.site_target is not None:
+        report_occupancies(operator, train_set, train_records, validation,
+                           test_records, per_material, log)
 
     # ---------------- aggregate ---------------- #
     train_metrics = [v["metrics"] for v in per_material.values()
@@ -3012,6 +3180,7 @@ def run(argv=None):
     validate_activation_settings(config)
     validate_equivariance_settings(config)
     validate_physics_settings(config)
+    validate_paw_settings(config, training=not args.cache_only)
 
     if args.cache_only:
         # The cache is NumPy work -- parsing, spectral downsampling, writing --
@@ -3155,7 +3324,7 @@ def run(argv=None):
             report_cache_only(config, cache, log)
             sys.exit(0)
 
-        names = trainable_tasks(config.task.names(), cache, log)
+        names = trainable_tasks(config.task_names(), cache, log)
         # One protocol, one variation: K-fold cross-validation.
         driver = run_task_kfold if config.training.enable_kfold else run_task
         if config.training.enable_kfold:
@@ -3225,7 +3394,7 @@ def run(argv=None):
                 # Two different situations, and telling a user to "run with
                 # task: all" when they just did -- and the data had no TAUCAR
                 # -- sends them round a loop that cannot terminate.
-                missing = sorted(set(TASKS) - set(operators))
+                missing = sorted(set(CHAIN) - set(operators))
                 log(f"  NOTE: the bundle holds one task, {sorted(operators)}. "
                     f"It predicts that field and")
                 log("  nothing further; the ASE calculator needs both halves "

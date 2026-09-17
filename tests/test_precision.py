@@ -640,12 +640,17 @@ class TestShippedConfigs:
     #:                    read at all, so it is written even when it is `silu`
     #: ``training.epochs`` written wherever `early_stopping` is, since a
     #:                    patience means nothing without the budget it runs in
+    #: ``model.paw``      `{enable: false}` in every field-task config: ext2paw
+    #:                    reads the same EXTCAR and targets the same CHGCAR as
+    #:                    ext2chg, so a reader of an ext2chg run should see
+    #:                    that the per-atom operator beside it is off rather
+    #:                    than wonder whether it was considered
     DELIBERATE = {"task.type", "model.width", "model.modes",
                   "model.n_layers", "model.projection_channels",
                   "model.mode_selection", "model.activation",
                   "symbolic.physics", "data.delta_density", "data.paw_source",
                   "data.storage", "data.compression", "data.compression_level",
-                  "training.epochs"}
+                  "training.epochs", "model.paw"}
 
     #: Configs whose stated purpose is to be explicit, and which the rule
     #: below would therefore delete rather than tidy:

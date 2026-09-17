@@ -28,6 +28,8 @@ model:
     grid_size: 8              # knot intervals (the default)
     spline_order: 3           # cubic, the paper's choice (the default)
     grid_range: [-2.0, 2.0]   # inputs outside it are CLAMPED (the default)
+  paw:                         # the ext2paw operator; on only for task.type: ext2paw
+    enable: false
 
 training:
   physics_informed:

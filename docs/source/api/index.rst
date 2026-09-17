@@ -106,6 +106,9 @@ Neural operators
 .. automodule:: poraque.ml.heads
    :members:
 
+.. automodule:: poraque.ml.paw
+   :members:
+
 .. automodule:: poraque.ml.tasks
    :members:
 

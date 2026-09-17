@@ -58,6 +58,18 @@ Everything found is pooled, spectrally downsampled once into a shared cache,
 and served through one `Dataset`. Identifiers that collide between archives are
 prefixed with their directory, so two `struct_000`s never silently become one.
 
+A cached density keeps its **PAW augmentation occupancies**, copied verbatim
+from the calculation — one set per density channel, in text and HDF5 caches
+alike. They are on-site terms with no representation on the grid, so
+downsampling neither changes them nor has anything to say about them, and they
+are the per-atom target of `ext2paw` (see the configuration page's `paw`
+block). Each record is read to the length its header declares: a
+spin-polarised `CHGCAR` writes a line of per-ion `MAGMOM` values after its
+first set, and reading to the next header folded them into the last atom's
+record — 139 values for a free Pt atom whose record holds 138. The per-element
+PAW tables a cache stores are stamped with the reading that built them, and one
+built the old way is rebuilt on the next run rather than reused.
+
 ```{seealso}
 {mod}`poraque.data.sources` for the source classes and how to add a layout;
 {class}`poraque.data.dataset.MixedFieldDataset` for the `Dataset` itself.

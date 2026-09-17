@@ -102,9 +102,9 @@ class TaskConfig:
         -------
         list of str
         """
-        from .tasks import TASKS
+        from .tasks import CHAIN
 
-        return list(TASKS) if self.type == "all" else [str(self.type)]
+        return list(CHAIN) if self.type == "all" else [str(self.type)]
 
 
 #: Keys that were removed, and what replaced them. Named in the error so a
@@ -659,6 +659,14 @@ EQUIVARIANT_SETUP_KEYS = {
     "spherical_cutoff": "spherical_cutoff",
 }
 
+#: ``model.paw`` settings --- the operator of the ``ext2paw`` task --- and their
+#: defaults. ``width``, ``modes`` and ``n_layers`` are the field operator's own
+#: names for the same three decisions, so they mean one thing everywhere in this
+#: schema; the other two belong to the occupancy head alone.
+PAW_DEFAULTS = {"width": 64, "modes": 16, "n_layers": 4,
+                "readout_g_max": "auto", "occupancy_weight": 1.0}
+PAW_SETUP_KEYS = tuple(PAW_DEFAULTS)
+
 #: ``training.physics_informed`` settings: the weight of each constraint on the
 #: **neural operator**. Not :attr:`SymbolicConfig.physics`, which constrains a
 #: candidate algebraic expression and shares two of these names meaning
@@ -1192,6 +1200,44 @@ class ModelConfig:
         ``use_coordinates`` must be false beside it, and ``enable: true``
         without that **raises**. The three fractional coordinates are not three
         scalar fields --- under a rotation they turn into each other.
+    paw : dict
+        The operator of the ``ext2paw`` task, which predicts the pseudo-density
+        *and* each atom's PAW augmentation occupancies. One block:
+
+        .. code-block:: yaml
+
+           task:
+             type: ext2paw
+           model:
+             paw:
+               enable: true
+               width: 64
+               modes: 16
+               n_layers: 4
+
+        ``enable``
+            Off by default. ``task.type: ext2paw`` requires it, and
+            ``task.type: all`` trains ``ext2paw`` beside the chain when it is
+            on; beside ``ext2chg`` or ``chg2tau`` it **raises**, since nothing
+            would read it.
+        ``width``, ``modes``, ``n_layers``
+            The FNO backbone's size, as for the field operator, and defaulting
+            to 64, 16 and 4. Every other ``model`` setting --- activation,
+            equivariance, mode selection --- applies to it unchanged.
+        ``readout_g_max``
+            The band in Å⁻¹ the occupancy head reads the fields over at each
+            atom, identical for every cell so the readout cannot depend on a
+            grid's spacing. ``auto`` (the default) takes 95 % of the coarsest
+            training grid's Nyquist frequency --- the widest band every
+            structure supplies. A number above that raises before training.
+        ``occupancy_weight``
+            The weight of the per-atom term against the field objective, and
+            of the occupancy error in the validation score the best epoch is
+            chosen on. 1.0 by default.
+
+        See :mod:`poraque.ml.paw` for the operator, and
+        ``experiments/paw_occupancies`` for the measurements it was designed
+        from.
     """
 
     width: int = 16
@@ -1207,6 +1253,7 @@ class ModelConfig:
     mode_selection: str = "fixed"
     g_max: float = None
     equivariant: dict = field(default_factory=lambda: {"enable": False})
+    paw: dict = field(default_factory=lambda: {"enable": False})
     pauli_residual: bool = False
     pauli_scale: float = None
     learn_pauli_scale: bool = True
@@ -1288,6 +1335,62 @@ class ModelConfig:
 
         return {EQUIVARIANT_SETUP_KEYS[key]: value
                 for key, value in setup.items()}
+
+    @property
+    def paw_enabled(self):
+        """Whether the ``ext2paw`` operator is switched on --- ``model.paw.enable``."""
+        enable, _ = split_enable_block(self.paw, "model.paw", PAW_SETUP_KEYS)
+        return bool(enable)
+
+    def paw_settings(self):
+        """
+        The ``ext2paw`` operator's settings, defaults filled in.
+
+        Returns
+        -------
+        dict
+            ``width``, ``modes`` and ``n_layers``.
+
+        Raises
+        ------
+        ValueError
+            On a block that is not a mapping, an unknown key, or a setting that
+            is not a positive integer. A block that names settings with
+            ``enable`` off warns instead, as ``model.equivariant`` does: it
+            reads as a configured operator and is not one.
+        """
+        enable, stated = split_enable_block(self.paw, "model.paw",
+                                            PAW_SETUP_KEYS)
+        if not enable and stated:
+            import warnings
+
+            warnings.warn(
+                f"model.paw names {sorted(stated)} with enable false, so every "
+                f"setting in the block is ignored. Set enable: true, or drop "
+                f"them.", RuntimeWarning, stacklevel=2)
+
+        settings = dict(PAW_DEFAULTS, **stated)
+        for key in ("width", "modes", "n_layers"):
+            value = settings[key]
+            if isinstance(value, bool) or not isinstance(value, int) \
+                    or value < 1:
+                raise ValueError(
+                    f"model.paw.{key} is {value!r}; expected a positive "
+                    f"integer.")
+        band = settings["readout_g_max"]
+        if band != "auto" and (isinstance(band, bool)
+                               or not isinstance(band, (int, float))
+                               or not band > 0):
+            raise ValueError(
+                f"model.paw.readout_g_max is {band!r}; expected 'auto' or a "
+                f"positive band in 1/Ang.")
+        weight = settings["occupancy_weight"]
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)) \
+                or weight < 0:
+            raise ValueError(
+                f"model.paw.occupancy_weight is {weight!r}; expected a "
+                f"non-negative number.")
+        return settings
 
     def activation_kwargs(self):
         """
@@ -2369,10 +2472,46 @@ class TrainingConfig:
     #: them and forget the fourth.
     ENABLE_BLOCKS = (
         ("model", "equivariant", EQUIVARIANT_SETUP_KEYS, (True, False)),
+        ("model", "paw", PAW_SETUP_KEYS, (True, False)),
         ("training", "physics_informed", PHYSICS_INFORMED_KEYS,
          ("auto", True, False)),
         ("symbolic", "physics", SYMBOLIC_PHYSICS_KEYS, (True, False)),
     )
+
+    def task_names(self):
+        """
+        The tasks this run trains, with ``model.paw`` taken into account.
+
+        ``task.type`` alone answers for the chain; ``model.paw.enable`` is the
+        switch for ``ext2paw``, and the two are checked against each other
+        here rather than left to drift. ``all`` with the block on trains the
+        chain and ``ext2paw``.
+
+        Returns
+        -------
+        list of str
+
+        Raises
+        ------
+        ValueError
+            On ``task.type: ext2paw`` with the block off, or on the block on
+            beside a single chain task that would never read it.
+        """
+        names = self.task.names()
+        enabled = self.model.paw_enabled
+        kind = str(self.task.type)
+        if kind == "ext2paw" and not enabled:
+            raise ValueError(
+                "task.type: ext2paw trains the operator model.paw describes, "
+                "and model.paw.enable is false. Set model.paw.enable: true.")
+        if enabled and kind not in ("ext2paw", "all"):
+            raise ValueError(
+                f"model.paw.enable is true beside task.type: {kind}, which "
+                f"never reads it. Use task.type: ext2paw, or all to train it "
+                f"beside the chain, or set enable: false.")
+        if enabled and kind == "all":
+            names.append("ext2paw")
+        return names
 
     def validate_blocks(self):
         """
@@ -2667,7 +2806,8 @@ class TrainingConfig:
         itself.
         """
         excluded = {"pauli_residual", "pauli_scale", "learn_pauli_scale",
-                    "precision", "activation", "kan_setup", "equivariant"}
+                    "precision", "activation", "kan_setup", "equivariant",
+                    "paw"}
         kwargs = {f.name: getattr(self.model, f.name)
                   for f in fields(self.model) if f.name not in excluded}
         # `activation` and `kan_setup` are one setting in the file and two in
