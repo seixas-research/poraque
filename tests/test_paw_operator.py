@@ -619,3 +619,80 @@ class TestTheScriptsDriveIt:
                 str(tmp_path / "o"), "--grid", "16", "16", "16", "--add-paw",
                 "--paw-source", "model", "--functional", "skip",
                 "--device", "cpu"])
+
+
+def accelerator():
+    """The device this machine actually has, or ``None``."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return None
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(accelerator() is None, reason="requires MPS or CUDA")
+class TestItEvaluatesOnWhateverAcceleratorIsHere:
+    """
+    A real run died on MPS at its first evaluation, ten good epochs in.
+
+    ``evaluate_occupancies`` pooled its sums into a float64 accumulator built
+    on the *operator's* device, and Metal has no float64 at all --- so the
+    call raised ``TypeError`` rather than returning a number. Every earlier
+    exercise of the operator had pinned ``device: cpu`` (both probes and the
+    60-epoch platinum run), which is exactly why a whole-path defect survived
+    26 tests. The two scalars are now summed on the CPU, which is also where
+    float64 belongs: the ratio runs over every atom of every structure.
+    """
+
+    @pytest.fixture
+    def dataset(self, tmp_path):
+        from poraque.data import build_field_cache
+        from poraque.ml.data import FieldPairDataset
+
+        runs = _synthetic_runs(str(tmp_path))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            build_field_cache([runs], str(tmp_path / "cache"), resolution=16,
+                              spin=True, charges={"Si": 4.0},
+                              log=lambda *_: None)
+        return FieldPairDataset(str(tmp_path / "cache"), "ext2paw")
+
+    def test_training_with_validation_survives_its_first_evaluation(self,
+                                                                    dataset):
+        from poraque.ml import FieldOperator, train
+
+        layouts = {14: (1,)}
+        operator = FieldOperator(
+            "ext2paw", width=6, modes=4, n_layers=1, projection_channels=8,
+            device=str(accelerator()), in_channels=1, out_channels=2,
+            site_layouts=layouts, readout_g_max=3.0,
+            site_transform=OccupancyTransform.fit(dataset, layouts, sets=2),
+            init_seed=0)
+        history = train(operator, dataset, epochs=1, batch_size=2,
+                        validation=dataset, eval_every=1, verbose=False)
+        measured = history["val_occupancy_error"][-1]
+        assert math.isfinite(measured) and measured > 0.0
+
+    def test_the_records_come_back_from_the_accelerator(self, dataset):
+        """
+        The same cast, at the other end of the operator: reading predicted
+        records off the device for ``--paw-source model``. ``.to("cpu",
+        float64)`` asks the *source* device for the conversion, so on Metal
+        both sites had to move first and cast after.
+        """
+        from poraque.fields import ExternalPotential
+        from poraque.ml import FieldOperator
+
+        layouts = {14: (1,)}
+        operator = FieldOperator(
+            "ext2paw", width=6, modes=4, n_layers=1, projection_channels=8,
+            device=str(accelerator()), in_channels=1, out_channels=2,
+            site_layouts=layouts, readout_g_max=3.0,
+            site_transform=OccupancyTransform.fit(dataset, layouts, sets=2),
+            init_seed=0)
+        potential = ExternalPotential.read(
+            os.path.join(dataset.root, "structure_0000", "EXTCAR"))
+        records = operator.predict_occupancies(potential)
+        assert len(records) == 2 and records[0][0].dtype == np.float64
+        assert np.isfinite(records[0][0]).all()

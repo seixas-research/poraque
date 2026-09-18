@@ -2229,6 +2229,33 @@ def validate_symbolic_settings(settings):
             f"between fewer than four individuals.")
 
 
+def progress_checkpoint_path(config, task):
+    """
+    Where :func:`~poraque.ml.train` writes the best weights *while* it runs.
+
+    The loop has always accepted a path and saved to it on every improvement;
+    nothing ever passed one, so the best weights lived only in memory until the
+    run finished and anything that killed the process -- an out-of-memory kill,
+    a Slurm time limit, a closed laptop -- took the whole fit with it. A
+    3-hour ``ext2paw`` run died at epoch 240 that way, with a better model than
+    its predecessor's already measured and nothing on disk to show for it.
+
+    The file is a single operator's state, not a bundle
+    (:meth:`FieldOperator.save`), and :func:`save_task_checkpoint` supersedes
+    and removes it the moment the fit returns.
+
+    Returns
+    -------
+    str or None
+        ``None`` when the run writes no output at all.
+    """
+    run = config.run_dir()
+    if run is None or not config.output.checkpoint:
+        return None
+    os.makedirs(run, exist_ok=True)
+    return os.path.join(run, f"{model_name(config)}_{task.name}_best_so_far.pt")
+
+
 def save_task_checkpoint(task, operator, config, log):
     """
     Persist one task's weights immediately, before any optional analysis.
@@ -2495,10 +2522,14 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
         patience = 0
 
     log(f"\n  progress (every {config.training.eval_epoch} epochs):")
+    progress = progress_checkpoint_path(config, task)
+    if progress is not None:
+        log(f"    best weights are written to {os.path.basename(progress)} as "
+            f"they improve, so a run that is killed keeps them")
     profile.begin(f"{task.name}: training")
     start = time.time()
     history = train(
-        operator, train_set, validation=validation,
+        operator, train_set, validation=validation, checkpoint=progress,
         epochs=config.training.epochs, batch_size=config.training.batch_size,
         learning_rate=learning_rate,
         weight_decay=config.training.weight_decay,
@@ -2652,6 +2683,11 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
     # trade worth making, so a single-task copy goes to disk first and the
     # unified bundle supersedes it.
     save_task_checkpoint(task, operator, config, log)
+    if progress is not None and os.path.exists(progress):
+        # The bundle beside it holds the same weights with the config and the
+        # architecture record, so the bare state would only be a second answer
+        # to "which file is the model".
+        os.remove(progress)
 
     # ---------------- symbolic distillation ---------------- #
     if config.symbolic.enable:

@@ -484,7 +484,9 @@ class FieldOperator:
                  "atom_mask": torch.ones_like(species, dtype=torch.bool)}
         _, normalised = self.model(normalized, cell, sites=sites)
         physical = self.site_transform.inverse(normalised, species)[0]
-        physical = physical.to("cpu", torch.float64).numpy()
+        # `.cpu()` first, then the cast: `.to("cpu", torch.float64)` asks
+        # the source device for a float64 view, which Metal refuses.
+        physical = physical.cpu().double().numpy()
 
         lengths = [len(record_layout(self.model.layouts[number]))
                    for number in numbers]
@@ -1749,8 +1751,13 @@ def evaluate_occupancies(operator, loader):
     from .paw import occupancy_error
 
     operator.model.eval()
-    error = torch.zeros((), device=operator.device, dtype=torch.float64)
-    norm = torch.zeros((), device=operator.device, dtype=torch.float64)
+    # Two scalars, summed in float64 **on the CPU**. MPS has no float64 at
+    # all, so an accumulator on the device raises there and the run dies at
+    # its first evaluation; and this sum runs over every atom of every
+    # structure, which is where a float32 accumulator would quietly lose
+    # digits. The transfer is one scalar per batch.
+    error = torch.zeros((), dtype=torch.float64)
+    norm = torch.zeros((), dtype=torch.float64)
     for batch in loader:
         device = operator.device
         sites = {key: batch[key].to(device)
@@ -1760,8 +1767,8 @@ def evaluate_occupancies(operator, loader):
         predicted = operator.site_transform.inverse(occupancy, sites["species"])
         squared, total = occupancy_error(predicted, batch["paw"].to(device),
                                          batch["paw_mask"].to(device))
-        error += squared.double()
-        norm += total.double()
+        error += squared.detach().cpu().double()
+        norm += total.detach().cpu().double()
     return float(torch.sqrt(error / norm.clamp(min=1e-300)))
 
 

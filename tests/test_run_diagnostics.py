@@ -424,3 +424,55 @@ class TestTheChargeAndMagnetisationPartsOfTheLoss:
                         eval_every=1, log=lines.append, verbose=True)
         assert "train_loss_charge" not in history
         assert not any("mag" in line for line in lines if "epoch" in line)
+
+
+class TestAKilledRunKeepsItsBestWeights:
+    """
+    Before, a fit that died left nothing: ``train()`` has always taken a
+    ``checkpoint`` path and written to it on every improvement, but
+    ``poraque-train`` never passed one, so the best weights sat in memory until
+    the run finished. A 3-hour ``ext2paw`` fit was killed at epoch 240 with a
+    better model than its predecessor's already measured and no file to show
+    for it.
+    """
+
+    def test_the_best_weights_reach_disk_while_the_fit_runs(self, tmp_path):
+        import poraque_train
+        from poraque.ml import FieldOperator
+        from test_cache_only import _config
+
+        import yaml
+
+        from poraque.ml.config import TrainingConfig
+        from poraque.ml.tasks import TASKS
+
+        config = TrainingConfig.from_dict(
+            yaml.safe_load(open(_config(tmp_path))))
+        progress = poraque_train.progress_checkpoint_path(config,
+                                                          TASKS["ext2chg"])
+        assert progress.endswith("_ext2chg_best_so_far.pt")
+
+        operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+                                 projection_channels=4, device="cpu")
+        operator.save(progress)                      # what train() does on '*'
+        assert os.path.exists(progress)
+        # A bare operator state, not a bundle: it reloads on its own.
+        back = FieldOperator.load(progress, device="cpu")
+        assert back.task.name == "ext2chg"
+
+    def test_the_finished_bundle_supersedes_it(self, tmp_path, capsys):
+        import poraque_train
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            poraque_train.run(["--config", _cache_only_config(tmp_path)])
+        run = tmp_path / "models" / "cache_only_smoke"
+        assert not list(run.glob("*_best_so_far.pt")), \
+            "the in-progress copy outlived the bundle that supersedes it"
+        assert list(run.glob("*.poraque"))
+
+
+def _cache_only_config(tmp_path):
+    from test_cache_only import _config
+
+    return _config(tmp_path)

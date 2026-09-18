@@ -12,5 +12,6 @@ guides in `latex/`.
 | [`fno_physics.md`](fno_physics.md) | What each model corresponds to in DFT terms |
 | [`vasp_analysis_report.md`](vasp_analysis_report.md) | How VASP writes `EXTCAR` and `TAUCAR`, from the Fortran source |
 | [`committee.md`](committee.md) | Query by committee: `init_seed`, disagreement on 3D fields, and how to validate it |
+| [`implementation_2026-09-16.md`](implementation_2026-09-16.md) | What `v26.9.12`–`v26.9.14` built: PAW data in the checkpoint, the `ext2paw` operator and what predicts the occupancies, the resource profile, parity over every structure, the charge/magnetisation loss parts |
 
 Start with `roadmap.md`.

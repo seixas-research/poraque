@@ -5,14 +5,16 @@
 #   poraque-train --config configs/train_ext2paw.yaml
 #
 # An FNO for the grid, a readout at each atom over one band of |G|, and an
-# equivariant head per element. To predict records beside the orbital-free
-# chain, use task.type: all with this model.paw block instead. See
+# equivariant head per element. The field settings mirror configs/train.yaml,
+# the platinum run, so the two are comparable; model.paw is the operator this
+# task trains. To predict records beside the orbital-free chain, use
+# task.type: all with this model.paw block instead. See
 # configs/train_complete_and_commented.yaml, model.paw, for the whole story.
 # =====================================================================
 
 task:
   type: ext2paw                     # requires model.paw.enable: true
-  name: platinum_ext2paw            # names models/<name>/ and everything inside it
+  name: platinum_ext2paw_w32_m8_L4_r16_occ3   # names models/<name>/ and everything inside it
 
 data:
   data_paths:                                            # one entry per dataset root; each holds
@@ -24,19 +26,45 @@ data:
   paw_source: atomic                                     # the free atom's own record, per element and transferable
   delta_density: true                                    # the grid target is rho - rho_sup, as for ext2chg
   resolution: 48                                         # longest grid axis; the records do not depend on it
-  cache_in_memory: true                                  # auto | true | false
+  cache_in_memory: true         # the whole set decodes to 235 MiB, so this is cheap
+                                #   and saves re-parsing 78 text CHGCARs every epoch
   storage: files                                         # files | hdf5; both carry the records
 
 model:
   width: 16                     # the field operator's settings still name the cache and
   modes: 8                      #   the grid target's normalisation; model.paw is the
   n_layers: 4                   #   operator this task trains
+  projection_channels: 64       # hidden width of the read-out head
+  mode_selection: physical      # every cell retains the same band in 1/Ang, not the same mode count
+  g_max: 16
+  use_coordinates: false        # required false beside equivariant.enable: true
+  equivariant:                  # one block: the switch and what it governs
+    enable: true
+    n_radial: 16
+    g_basis: 16                 # = g_max: the band `physical` retains spans up to g_max by construction
+    spherical_cutoff: true
   paw:                          # one block: the switch and the operator it governs
     enable: true
-    width: 64                   # channels
-    modes: 16                   # retained Fourier modes per axis
+    width: 32                   # channels
+    modes: 8                    # retained Fourier modes per axis
     n_layers: 4                 # Fourier layers
+    readout_g_max: auto         # the band read at each atom; auto is 95 % of the coarsest grid's Nyquist
+    # The occupancy term against the field objective, and in the validation
+    # score `rel L2 + w x occ`. One knob does both jobs, which is what makes it
+    # delicate. At 1.0 the field's spikes vetoed every epoch after the 150th and
+    # the run kept a model 8 % worse at occupancies; on that run's own curve the
+    # occupancy-best epoch wins the score for w > 2.41. At 5.0 the field fell to
+    # a sixth of the objective and the optimiser abandoned it outright: rel L2
+    # 0.05 -> 0.33 -> 0.81 -> 43 over four evaluations. 3.0 is above the
+    # crossover and leaves the field a quarter of the objective.
+    occupancy_weight: 3.0
 
 training:
   epochs: 500
-  batch_size: 16                # samples per batch within one grid-shape bucket
+  # batch_size stays at its default of 4. The readout holds a stencil of points
+  # per atom per sample, and autograd keeps every sample's until the backward
+  # pass, so this is the setting memory scales with: 3.1 GiB peak at 4, and a
+  # 16 GiB machine swapped at 16.
+  learning_rate: 0.0007         # below the platinum run's, for a quarter of its batch and
+                                #   because the field term diverged at 1e-3 once reweighted
+  early_stopping: 100           # epochs without improvement in the combined score
