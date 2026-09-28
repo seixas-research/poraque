@@ -14,7 +14,7 @@
 
 task:
   type: ext2paw                     # requires model.paw.enable: true
-  name: platinum_ext2paw_w32_m8_L4_r16_occ3   # names models/<name>/ and everything inside it
+  name: platinum_ext2paw_w64_m8_L4_r16_occ3   # names models/<name>/ and everything inside it
 
 data:
   data_paths:                                            # one entry per dataset root; each holds
@@ -45,7 +45,11 @@ model:
     spherical_cutoff: true
   paw:                          # one block: the switch and the operator it governs
     enable: true
-    width: 32                   # channels
+    width: 64                   # channels. Measured at 1000 epochs, two seeds each,
+                                #   against 32: held-out score 0.336/0.356 vs 0.382/0.396,
+                                #   density rel L2 0.0174/0.0180 vs 0.0185/0.0189,
+                                #   occupancies 3.17/2.97 % vs 3.31/3.15 % (within seed
+                                #   spread). 324k parameters against 104k, same wall time
     modes: 8                    # retained Fourier modes per axis
     n_layers: 4                 # Fourier layers
     readout_g_max: auto         # the band read at each atom; auto is 95 % of the coarsest grid's Nyquist
@@ -61,7 +65,8 @@ model:
     occupancy_weight: 3.0
 
 training:
-  epochs: 500
+  epochs: 1000                  # best epochs fell at 800-900 in all four measured runs;
+                                #   500 left the density at 0.0226 against 0.0185 at 1000
   # batch_size stays at its default of 4. The readout holds a stencil of points
   # per atom per sample, and autograd keeps every sample's until the backward
   # pass, so this is the setting memory scales with: 3.1 GiB peak at 4, and a
