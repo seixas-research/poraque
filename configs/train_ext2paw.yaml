@@ -49,14 +49,15 @@ model:
     modes: 8                    # retained Fourier modes per axis
     n_layers: 4                 # Fourier layers
     readout_g_max: auto         # the band read at each atom; auto is 95 % of the coarsest grid's Nyquist
-    # The occupancy term against the field objective, and in the validation
-    # score `rel L2 + w x occ`. One knob does both jobs, which is what makes it
-    # delicate. At 1.0 the field's spikes vetoed every epoch after the 150th and
-    # the run kept a model 8 % worse at occupancies; on that run's own curve the
-    # occupancy-best epoch wins the score for w > 2.41. At 5.0 the field fell to
-    # a sixth of the objective and the optimiser abandoned it outright: rel L2
-    # 0.05 -> 0.33 -> 0.81 -> 43 over four evaluations. 3.0 is above the
-    # crossover and leaves the field a quarter of the objective.
+    # The occupancy term against the field objective. The validation score is
+    # the same sum on held-out data, `rel L2 + w x occ loss`, so the knob means
+    # one thing in training and in selection. At 3.0 the two terms end a
+    # 200-epoch run at 0.03 and 3 x 0.20: the records hold most of the
+    # objective, and the field still fell steadily (0.048 -> 0.025, two seeds).
+    # The earlier calibration here -- the field's spikes vetoing epochs, the
+    # optimiser abandoning the field at 5.0 -- was measured while the
+    # magnetisation's transform inverted with a gain of 14, and on a score in
+    # other units; it no longer describes this run.
     occupancy_weight: 3.0
 
 training:

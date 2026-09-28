@@ -633,8 +633,12 @@ therefore raises, at training and at inference.
 The records train with L = 0 centred and every (set, L, pair) block scaled to
 unit RMS, fitted on the training split and inverted from the checkpoint, and
 every L block weighs the same in the loss. The log gains a \opt{val occ}
-column, and the best epoch is chosen on \opt{val rel L2 + occupancy\_weight
-$\times$ val occ}. Each element's record layout comes from the POTCAR's
+column, the relative RMS in physical units, and an \opt{occ loss} column, the
+training term on held-out data; the best epoch is chosen on \opt{val rel L2 +
+occupancy\_weight $\times$ occ loss}, the objective itself. \opt{val occ} is
+reported, not selected on: 99\,\% of the records' norm is the charge set's
+L = 0 block, so it cannot see the L > 0 blocks. The report breaks the error
+down by record set and L. Each element's record layout comes from the POTCAR's
 \opt{Non local Part}, so a dataset without POTCARs cannot train it; nor, yet,
 can \opt{--kfold}, fine-tuning or an f-channel element, all refused before the
 cache. A cache built before 16 September 2026 dropped the records; delete it and

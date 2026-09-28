@@ -461,14 +461,15 @@ class TestReportStyle:
         Four colours, and the yellow is the logo's own.
 
         Earlier revisions used a blue that appeared nowhere else, then a red
-        that appeared only here. The palette is now a single sweep of hues --
-        48 -> 77 -> 160 -> 163 degrees -- anchored on the yellow the logo is
-        drawn in, with the last reserved for cover grounds.
+        that appeared only here, then a green sweep. The palette is now the
+        logo's yellow and a navy ramp at one hue, the darkest reserved for
+        cover grounds --- the guides' palette, value for value, which
+        :class:`TestTheReportMatchesTheGuides` holds it to.
         """
         assert r"\definecolor{poraqueyellow}{RGB}{255,204,0}" in preamble
-        assert r"\definecolor{poraquelime}{RGB}{163,198,75}" in preamble
-        assert r"\definecolor{poraquegreen}{RGB}{15,61,46}" in preamble
-        assert r"\definecolor{poraquecover}{RGB}{6,35,27}" in preamble
+        assert r"\definecolor{poraquelime}{RGB}{145,178,226}" in preamble
+        assert r"\definecolor{poraquegreen}{RGB}{23,53,95}" in preamble
+        assert r"\definecolor{poraquecover}{RGB}{10,30,59}" in preamble
         assert "poraqueblue" not in preamble
 
     def test_the_cover_ground_is_used_only_as_a_cover_ground(self, preamble):

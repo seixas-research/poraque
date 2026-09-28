@@ -1306,8 +1306,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     occupancy_weight : float, optional
         For an operator with an occupancy head (``ext2paw``): the weight of the
         per-atom term, the equally-weighted L blocks of the normalised records,
-        against the field objective. Also the weight their relative error
-        carries in the validation score the best epoch is chosen on.
+        against the field objective. The validation score the best epoch is
+        chosen on is the same sum on the held-out split, so selection and
+        optimisation weigh the two terms, and the L blocks, alike.
 
     Returns
     -------
@@ -1418,6 +1419,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
                 "an ext2paw operator needs its site_transform, fitted on the "
                 "training split (OccupancyTransform.fit), before training.")
         history["val_occupancy_error"] = []
+        history["val_occupancy_loss"] = []
         history["val_field_error"] = []
     if operator.device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(operator.device)
@@ -1476,7 +1478,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     if validating:
         header += f"  {f'val {val_metric}':>13s}"
         if sites_task:
-            header += f"  {'val occ':>9s}  {'score':>9s}"
+            header += f"  {'val occ':>9s}  {'occ loss':>9s}  {'score':>9s}"
     if verbose:
         legend = f"    train loss: mean {type(criterion).__name__} per batch"
         if validating:
@@ -1484,9 +1486,13 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
                        f"physical units")
             if sites_task:
                 legend += (f"\n    val occ: relative RMS of the held-out "
-                           f"augmentation occupancies   |   score = val "
-                           f"{val_metric} + {occupancy_weight:g} x val occ, "
-                           f"which the best epoch is chosen on")
+                           f"augmentation occupancies, physical units   |   "
+                           f"occ loss: the training term on the held-out "
+                           f"split, L blocks and sets weighted alike\n"
+                           f"    score = val {val_metric} + "
+                           f"{occupancy_weight:g} x occ loss, the objective "
+                           f"on held-out data, which the best epoch is "
+                           f"chosen on")
             if sobolev_weight > 0.0:
                 norm = "relative" if val_metric.startswith("rel") else "absolute"
                 base = val_metric.replace("H1", "L2")
@@ -1664,12 +1670,14 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
                              sobolev_weight=sobolev_weight)
             message += f"  {error:>13.5f}"
             if sites_task:
-                occupancy_error = evaluate_occupancies(operator,
-                                                       validation_loader)
+                occupancy_error, occupancy_loss = validate_occupancies(
+                    operator, validation_loader)
                 history["val_field_error"].append(error)
                 history["val_occupancy_error"].append(occupancy_error)
-                error = error + occupancy_weight * occupancy_error
-                message += f"  {occupancy_error:>9.5f}  {error:>9.5f}"
+                history["val_occupancy_loss"].append(occupancy_loss)
+                error = error + occupancy_weight * occupancy_loss
+                message += (f"  {occupancy_error:>9.5f}  "
+                            f"{occupancy_loss:>9.5f}  {error:>9.5f}")
             history["val_error"].append(error)
             history["val_epoch"].append(epoch + 1)
 
@@ -1701,7 +1709,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         operator.model.load_state_dict(best_state)
         if verbose and not stopped_early and best_epoch != len(history["train_loss"]):
             scored = (f"val {val_metric}" if not sites_task else
-                      f"score {val_metric} + {occupancy_weight:g} x occ")
+                      f"score {val_metric} + {occupancy_weight:g} x occ loss")
             emit(f"    restored the best weights, from epoch {best_epoch} "
                  f"({scored} {best_error:.5f})")
 
@@ -1712,7 +1720,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         # Which norm `val_error` is in, so a figure or a report cannot label a
         # stored series by assuming it.
         history["val_metric"] = (val_metric if not sites_task else
-                                 f"{val_metric} + {occupancy_weight:g} x occ")
+                                 f"{val_metric} + {occupancy_weight:g} x occ "
+                                 f"loss")
 
     # Reported in the run's own JSON rather than sampled from outside it with
     # `nvidia-smi`, which is how every number in the CUDA work list had to be
@@ -1729,13 +1738,32 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     return history
 
 
-@torch.no_grad()
 def evaluate_occupancies(operator, loader):
     """
     Relative RMS of the predicted augmentation occupancies, in physical units.
 
-    Pooled over every atom, set and value of every batch before the ratio is
-    taken, so a large cell counts for its atoms rather than as one sample.
+    The first of :func:`validate_occupancies`' two numbers, for a caller that
+    wants only the report.
+    """
+    return validate_occupancies(operator, loader)[0]
+
+
+@torch.no_grad()
+def validate_occupancies(operator, loader):
+    r"""
+    The held-out occupancies, measured twice in one pass.
+
+    **Relative RMS in physical units**, pooled over every atom, set and value
+    of every batch before the ratio is taken, so a large cell counts for its
+    atoms rather than as one sample. This is the number to report, and a poor
+    one to select on: 99 % of the records' squared norm is the charge set's
+    L = 0 block, so it is blind to the L > 0 blocks (8--42 % error on a
+    held-out slab while it read 3 %) and to the magnetisation set.
+
+    **The training term** --- :meth:`~poraque.ml.paw.OccupancyTransform.loss`,
+    every L block of every set weighted alike --- averaged over atoms and sets.
+    This is what the validation score adds to the field error, so the best
+    epoch is chosen on the objective the optimiser minimised.
 
     Parameters
     ----------
@@ -1746,30 +1774,45 @@ def evaluate_occupancies(operator, loader):
 
     Returns
     -------
-    float
+    tuple of float
+        ``(relative RMS, training-form loss)``.
     """
     from .paw import occupancy_error
 
     operator.model.eval()
-    # Two scalars, summed in float64 **on the CPU**. MPS has no float64 at
-    # all, so an accumulator on the device raises there and the run dies at
-    # its first evaluation; and this sum runs over every atom of every
-    # structure, which is where a float32 accumulator would quietly lose
-    # digits. The transfer is one scalar per batch.
+    transform = operator.site_transform
+    # Sums in float64 **on the CPU**. MPS has no float64 at all, so an
+    # accumulator on the device raises there and the run dies at its first
+    # evaluation; and these sums run over every atom of every structure,
+    # which is where a float32 accumulator would quietly lose digits. The
+    # transfer is a few scalars per batch.
     error = torch.zeros((), dtype=torch.float64)
     norm = torch.zeros((), dtype=torch.float64)
+    loss = torch.zeros((), dtype=torch.float64)
+    weight = torch.zeros((), dtype=torch.float64)
     for batch in loader:
         device = operator.device
         sites = {key: batch[key].to(device)
                  for key in ("species", "positions", "atom_mask")}
         _, occupancy = operator.model(batch["input"].to(device),
                                       batch["cell"].to(device), sites=sites)
-        predicted = operator.site_transform.inverse(occupancy, sites["species"])
-        squared, total = occupancy_error(predicted, batch["paw"].to(device),
+        target = batch["paw"].to(device)
+        predicted = transform.inverse(occupancy, sites["species"])
+        squared, total = occupancy_error(predicted, target,
                                          batch["paw_mask"].to(device))
         error += squared.detach().cpu().double()
         norm += total.detach().cpu().double()
-    return float(torch.sqrt(error / norm.clamp(min=1e-300)))
+        # `loss` is a mean over this batch's atoms and sets; weighting it back
+        # by them pools batches of different sizes as one mean.
+        atom_mask = sites["atom_mask"].to(occupancy.dtype)
+        count = float(atom_mask.sum()) * occupancy.shape[2]
+        batch_loss = transform.loss(
+            occupancy, transform.normalize(target, sites["species"]),
+            sites["species"], atom_mask)
+        loss += float(batch_loss) * count
+        weight += count
+    return (float(torch.sqrt(error / norm.clamp(min=1e-300))),
+            float(loss / weight.clamp(min=1.0)))
 
 
 @torch.no_grad()

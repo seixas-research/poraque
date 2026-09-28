@@ -670,7 +670,7 @@ model:
 | `modes` | `16` | its retained Fourier modes per axis, as `model.modes` |
 | `n_layers` | `4` | its Fourier layers, as `model.n_layers` |
 | `readout_g_max` | `auto` | the band in Å⁻¹ read at each atom; `auto` is 95 % of the coarsest training grid's Nyquist frequency |
-| `occupancy_weight` | `1.0` | the per-atom term against the field objective, and in the validation score |
+| `occupancy_weight` | `1.0` | the per-atom term against the field objective, in training and in the validation score alike |
 
 `ext2paw` maps $V_\mathrm{ext}$ to two things at once: the pseudo-density on the
 grid, as `ext2chg` does, and every atom's **augmentation occupancies**
@@ -717,11 +717,16 @@ precision. The layout of each element's record comes from the POTCAR's
 stored in the checkpoint and inverted at prediction — and every L block weighs
 the same in the loss. On raw records the loss would be 99 % the L = 0 block.
 
-The training log gains a `val occ` column (relative RMS of the held-out
-occupancies, physical units), and the best epoch is chosen on
-`val rel L2 + occupancy_weight × val occ`. After training, each structure's
-`occupancy_relative_rms` is written to the metrics JSON beside a baseline: the
-training-mean L = 0 record with every L > 0 block zero.
+The training log gains two columns: `val occ`, the relative RMS of the
+held-out occupancies in physical units, and `occ loss`, the training term on the
+held-out split. The best epoch is chosen on
+`val rel L2 + occupancy_weight × occ loss` — the objective itself, on held-out
+data. `val occ` is reported rather than selected on because 99 % of the
+records' squared norm is the charge set's L = 0 block: it reads a few percent
+while the L > 0 blocks are tens of percent wrong. After training, each
+structure's `occupancy_relative_rms` is written to the metrics JSON beside a
+baseline (the training-mean L = 0 record with every L > 0 block zero), and each
+split is broken down by record set and L, in the log and under `occupancies`.
 
 A bundle holding an `ext2paw` operator gives `poraque-inference --add-paw` a
 fourth PAW source, `model`. `auto` prefers it to the averaged table.

@@ -1228,17 +1228,31 @@ def _resolve_baseline(baseline):
 
 
 def _fit_transform(field_name, per_channel):
-    """
+    r"""
     Fit ``field_name``'s default transform to each channel's samples.
 
     A single-channel field gets the transform itself, not a
     :class:`~poraque.ml.transforms.Channelwise` of length one: wrapping it
     would change the serialized form of every existing checkpoint for no gain.
+
+    The magnetisation of a spin-polarised ``CHGCAR`` is not fitted: it takes
+    the charge channel's scale. Its own median is the wrong statistic twice
+    over. A spin set is mostly cells with m = 0 to round-off, and even a
+    magnetic cell is mostly vacuum, so the median of |m| is the noise floor ---
+    1.6e-6 on the platinum set, where the nanoparticles' moments reach 0.47.
+    An :class:`~poraque.ml.transforms.Asinh` that small inverts with a gain of
+    asinh(1/s) = 14 per unit of network output, so an overshoot of 0.2 on a
+    nanoparticle multiplied m sixteenfold, and the held-out error spiked from
+    0.03 to 10 between evaluations while the training loss fell smoothly. The
+    charge channel's scale is bounded by the physics instead (:math:`|m| \le
+    \rho`), and gives both channels the same gain.
     """
-    from .transforms import Channelwise
+    from .transforms import Asinh, Channelwise
 
     fitted = [DEFAULT_TRANSFORMS[field_name](np.concatenate(samples))
               for samples in per_channel]
+    if field_name == "CHGCAR" and len(fitted) == 2:
+        fitted[1] = Asinh(fitted[0].scale)
     return fitted[0] if len(fitted) == 1 else Channelwise(fitted)
 
 

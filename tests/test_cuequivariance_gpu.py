@@ -277,8 +277,9 @@ class TestTF32IsTheThingThatWillLookLikeAFailure:
     ``training.tf32`` is on by default and the training script sets it
     process-wide, so anyone who checks this property inside a real run will see
     :math:`\\sim10^{-3}` and reasonably conclude the architecture is broken.
-    It is not: it is the matmul. Written down as an assertion so the number is
-    on record rather than rediscovered.
+    It is not: it is TF32, in the matmuls and in cuDNN's convolutions alike.
+    Written down as an assertion so the number is on record rather than
+    rediscovered.
 
     **And it is Ampere and later only.** Run on `sequana_gpu` at LNCC — Tesla
     V100, ``sm_70`` — the flag does nothing at all: measured, ``exact`` is
@@ -292,20 +293,35 @@ class TestTF32IsTheThingThatWillLookLikeAFailure:
     """
 
     @AMPERE
-    def test_the_error_is_dominated_by_the_matmul_when_tf32_is_on(self):
+    def test_the_error_is_tf32s_when_it_is_on(self):
+        """
+        Both flags, as :func:`~poraque.ml.device` sets them for
+        ``training.tf32``. This test once switched only the matmul's and kept
+        cuDNN's at its default, which is on: the 1x1x1 lifts and projections
+        are cuDNN convolutions, so on an RTX 5060 Ti (``sm_120``, torch 2.13)
+        the "exact" reference itself read 3.2e-4 and the test failed on a
+        correct operator. Measured there, the worst rotation error is 1.2e-6
+        with both off, 3.2e-4 with cuDNN's alone, 5.8e-4 with the matmul's
+        alone and 2.1e-3 with both: the two share the blame, and neither
+        dominates.
+        """
         matmul = torch.backends.cuda.matmul.allow_tf32
+        cudnn = torch.backends.cudnn.allow_tf32
         try:
             field = sample_field()
             rotations = octahedral_rotations()[:6]
 
             torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
             exact = worst_rotation_error(build(True), field, cubic(),
                                          rotations)
             torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
             approximate = worst_rotation_error(build(True), field, cubic(),
                                                rotations)
         finally:
             torch.backends.cuda.matmul.allow_tf32 = matmul
+            torch.backends.cudnn.allow_tf32 = cudnn
 
         assert exact < 1e-4
         # Not a hard bound on TF32 itself -- the point is only that the two

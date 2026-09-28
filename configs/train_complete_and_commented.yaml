@@ -247,7 +247,7 @@ model:
     # modes: 16                 # its retained Fourier modes per axis, as model.modes
     # n_layers: 4               # its Fourier layers, as model.n_layers
     # readout_g_max: auto       # 1/Ang band read at each atom; auto = 95 % of the coarsest grid's Nyquist
-    # occupancy_weight: 1.0     # per-atom term against the field objective, and in the val score
+    # occupancy_weight: 1.0     # per-atom term against the field objective, in training and val score alike
   #
   # task.type: ext2paw with enable false RAISES, and so does enable true beside
   # ext2chg or chg2tau: two switches for one decision are checked against each
@@ -274,8 +274,10 @@ model:
   #     model.equivariant on, the whole operator is rotation-equivariant.
   # The records train in an invertible form (L = 0 centred, each block scaled),
   # fitted on the training split and stored in the checkpoint. The log gains a
-  # `val occ` column, and the best epoch is chosen on val rel L2 +
-  # occupancy_weight x val occ. The element projector channels come from the
+  # `val occ` column (physical relative RMS, reported) and an `occ loss` column
+  # (the training term on held-out data); the best epoch is chosen on val rel
+  # L2 + occupancy_weight x occ loss, and the report breaks the error down by
+  # record set and L. The element projector channels come from the
   # POTCAR, so a Gaussian-potential dataset cannot train it. Not yet under
   # --kfold or fine-tuning, both refused before the cache; an f-channel element
   # (L = 6) is refused too.

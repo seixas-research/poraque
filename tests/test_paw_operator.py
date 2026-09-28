@@ -475,6 +475,48 @@ class TestTheOperatorTrainsInTheOneLoop:
             < history["val_occupancy_error"][0]
         assert "occ" in history["val_metric"]
 
+    def test_the_best_epoch_is_chosen_on_the_objective_it_trained(
+            self, dataset):
+        """
+        The score was the field error plus w x the *physical* relative RMS of
+        the records. 99 % of the records' squared norm is the charge set's
+        L = 0 block, so the score could not see the L > 0 blocks the loss
+        weights equally --- a held-out slab read 3 % while its L = 2 block was
+        35 % wrong --- nor the magnetisation set at all. The score is now the
+        held-out objective: the field error plus w x the training term.
+        """
+        from poraque.ml import train
+
+        operator = self._operator(dataset)
+        history = train(operator, dataset, epochs=4, batch_size=2,
+                        learning_rate=5e-3, validation=dataset, eval_every=2,
+                        occupancy_weight=2.5, verbose=False)
+        for score, field, loss in zip(history["val_error"],
+                                      history["val_field_error"],
+                                      history["val_occupancy_loss"]):
+            assert score == pytest.approx(field + 2.5 * loss)
+        assert "occ loss" in history["val_metric"]
+
+    def test_the_held_out_term_is_the_training_term(self, dataset):
+        """One batch, so the pooled mean must equal the loss itself."""
+        from poraque.ml.data import collate_fields
+        from poraque.ml.training import validate_occupancies
+
+        operator = self._operator(dataset)
+        samples = [dataset[index] for index in range(len(dataset))]
+        batch = collate_fields(samples)
+        loader = [batch]
+        _, measured = validate_occupancies(operator, loader)
+
+        transform = operator.site_transform
+        with torch.no_grad():
+            _, occupancy = operator.model(batch["input"], batch["cell"],
+                                          sites=batch)
+            expected = transform.loss(
+                occupancy, transform.normalize(batch["paw"], batch["species"]),
+                batch["species"], batch["atom_mask"].to(occupancy.dtype))
+        assert measured == pytest.approx(float(expected), rel=1e-6)
+
     def test_the_checkpoint_rebuilds_the_head_and_its_transform(self, dataset,
                                                                 tmp_path):
         from poraque.fields import ExternalPotential
@@ -561,6 +603,42 @@ class TestTheScriptsDriveIt:
         metrics = json.loads((tmp_path / "models" / "paw_run" / "log"
                               / "paw_run.json").read_text())
         assert "occupancy_relative_rms" in json.dumps(metrics)
+
+    def test_the_error_is_reported_per_set_and_per_L(self, trained):
+        """
+        The pooled number is 99 % the charge set's L = 0 block, so alone it
+        read 3 % on a held-out slab whose L = 2 block was 35 % wrong.
+        """
+        import json
+
+        tmp_path, _ = trained
+        folder = tmp_path / "models" / "paw_run" / "log"
+        log = (folder / "paw_run.log").read_text()
+        assert "magnetisation L = 2" in log
+
+        def find(node):
+            if isinstance(node, dict):
+                if "occupancies" in node and node["occupancies"]:
+                    return node["occupancies"]
+                for value in node.values():
+                    found = find(value)
+                    if found:
+                        return found
+            if isinstance(node, list):
+                for value in node:
+                    found = find(value)
+                    if found:
+                        return found
+            return None
+
+        summary = find(json.loads((folder / "paw_run.json").read_text()))
+        # p x p couples to L = 0 and 2 (|l - l'| to l + l' in steps of 2), in
+        # both sets of a spin run.
+        for split in ("train", "validation"):
+            blocks = summary[split]["blocks"]
+            assert sorted(blocks) == ["set 0", "set 1"]
+            assert sorted(blocks["set 0"]) == ["L0", "L2"]
+            assert 0.0 <= blocks["set 0"]["L0"]["relative_rms"]
 
     def test_inference_writes_the_operators_own_records(self, trained):
         import shutil

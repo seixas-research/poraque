@@ -112,6 +112,25 @@ class TestTheProfileTimesAndWeighsEachStage:
         assert record["peak_rss_bytes"] > 0
         assert record["peak_vram_bytes"] is None
 
+    def test_no_workers_means_no_worker_line(self):
+        """
+        An ext2paw run with ``num_workers: 0`` reported "DataLoader workers
+        peaked at 3.0 GiB each". On Linux a child's ``ru_maxrss`` counts the
+        pages it inherited at fork, so the LaTeX call that typesets the PDF
+        read as a child the size of the parent.
+        """
+        import subprocess
+
+        subprocess.run([sys.executable, "-c", "pass"], check=True)
+        quiet = ResourceProfile("cpu")
+        quiet.begin("cache")
+        assert quiet.as_dict()["peak_worker_rss_bytes"] is None
+        assert "DataLoader workers" not in "\n".join(quiet.summary())
+
+        busy = ResourceProfile("cpu", workers=2)
+        busy.begin("cache")
+        assert busy.as_dict()["peak_worker_rss_bytes"] > 0
+
     def test_the_formats(self):
         assert format_seconds(42.34) == "42.3 s"
         assert format_seconds(782.1) == "13m 02.1s"

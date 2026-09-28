@@ -244,6 +244,76 @@ class TestSpinDataset:
         assert isinstance(target_transform, Channelwise)
         assert len(target_transform.transforms) == 2
 
+
+class TestTheMagnetisationSharesTheChargeScale:
+    r"""
+    The m channel of a CHGCAR takes the charge channel's Asinh scale.
+
+    Fitted on its own median it took the noise floor: the platinum set is 64
+    cells with m = 0 to round-off and 33 nanoparticles whose boxes are mostly
+    vacuum, and the median |m| came out at 1.6e-6. The inverse then has a gain
+    of asinh(1/s) = 14, so a 0.2 overshoot of the network's output multiplied a
+    nanoparticle's moment sixteenfold. The held-out ext2paw error jumped from
+    0.03 to 3.4 and 10.6 between evaluations, with the training loss smooth,
+    and early stopping kept an epoch 33 % worse at occupancies than the run
+    reached.
+    """
+
+    @pytest.fixture
+    def mostly_unpolarised(self, tmp_path, grid, poscar):
+        rng = np.random.default_rng(3)
+        for index in range(4):
+            directory = tmp_path / f"structure_{index:03d}"
+            directory.mkdir()
+            ExternalPotential(rng.normal(size=grid.shape) * 5.0, grid,
+                              poscar).write(str(directory / "EXTCAR"))
+            total = rng.random(grid.shape) + 0.5
+            if index == 0:
+                # One magnetic cell, its moment on a few voxels.
+                m = np.zeros(grid.shape)
+                m[:2, :2, :2] = 0.4
+            else:
+                m = rng.normal(size=grid.shape) * 1e-7
+            SpinDensity(total, m, grid, poscar).write(
+                str(directory / "CHGCAR"))
+            KineticEnergyDensity(rng.random(grid.shape) * 3.0, grid,
+                                 poscar).write(str(directory / "TAUCAR"))
+        return str(tmp_path)
+
+    def test_the_target_magnetisation_is_not_fitted_to_its_noise(
+            self, mostly_unpolarised):
+        dataset = FieldPairDataset(mostly_unpolarised, task="ext2chg")
+        _, target = dataset.fit_transforms()
+        charge, magnetisation = target.transforms
+        assert magnetisation.scale == charge.scale
+        assert magnetisation.scale > 1e-3
+
+    def test_the_gain_of_the_inverse_is_the_charge_channels(
+            self, mostly_unpolarised):
+        """
+        The quantity that failed: asinh(1/s), how many e-folds m moves per
+        unit of network output in the logarithmic regime. The old rule, the
+        channel's own median, is fitted alongside to show what it would be.
+        """
+        dataset = FieldPairDataset(mostly_unpolarised, task="ext2chg")
+        _, target = dataset.fit_transforms()
+        magnetisation = np.concatenate([
+            np.asarray(dataset.target_values(index))[1].ravel()
+            for index in range(len(dataset))])
+        own_median = Asinh.fit(magnetisation)
+
+        def gain(transform):
+            return float(np.arcsinh(1.0 / transform.scale))
+
+        assert gain(target.transforms[1]) == gain(target.transforms[0])
+        assert gain(own_median) > 2 * gain(target.transforms[0])
+
+    def test_the_chg2tau_input_follows_the_same_rule(self,
+                                                     mostly_unpolarised):
+        dataset = FieldPairDataset(mostly_unpolarised, task="chg2tau")
+        source, _ = dataset.fit_transforms()
+        assert source.transforms[1].scale == source.transforms[0].scale
+
     def test_a_collinear_dataset_stays_single_channel(self, tmp_path, grid,
                                                       poscar):
         """The default path must be untouched by any of this."""

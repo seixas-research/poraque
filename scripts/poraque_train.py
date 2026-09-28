@@ -1326,17 +1326,36 @@ def resolve_occupancy_head(train_set, config, log, sets):
 def report_occupancies(operator, train_set, train_records, validation,
                        test_records, per_material, log):
     """
-    Per-structure relative RMS of the predicted augmentation occupancies.
+    Relative RMS of the predicted augmentation occupancies, whole and by block.
 
-    Written into each structure's metrics as ``occupancy_relative_rms`` --- the
-    metrics JSON and the report read it from there --- and pooled per split
-    into one line, beside a baseline those numbers have to beat: each
-    element's training-mean L = 0 record with every L > 0 block zero, the best
-    a prediction can do that knows nothing about the atom's surroundings and
+    Per structure, written into its metrics as ``occupancy_relative_rms`` ---
+    the metrics JSON and the report read it from there. Per split, pooled over
+    its atoms, beside a baseline those numbers have to beat: each element's
+    training-mean L = 0 record with every L > 0 block zero, the best a
+    prediction can do that knows nothing about the atom's surroundings and
     does not depend on the frame it is written in.
+
+    And per split **by record set and L**, because the pooled number is 99 %
+    the charge set's L = 0 block: it read 3 % on a held-out slab whose L = 2
+    block was 35 % wrong, and it cannot see the magnetisation set at all. A
+    block is pooled over the split's atoms before the ratio is taken, so the
+    magnetisation set of a cell with m = 0 is measured against the moments of
+    the magnetic cells beside it rather than against its own round-off.
+
+    Returns
+    -------
+    dict
+        ``{split: {"relative_rms", "baseline", "blocks": {"set <s>": {"L<L>":
+        {"relative_rms", "baseline"}}}}}``, for the metrics JSON.
     """
+    from poraque.fields.vasp.augmentation import irreps_blocks
     from poraque.ml.data import collate_fields
     from poraque.ml.paw import occupancy_error
+
+    layouts = operator.model.layouts
+    positions = {z: {L: np.asarray(index).reshape(-1)
+                     for L, index in irreps_blocks(channels).items()}
+                 for z, channels in layouts.items()}
 
     def one(dataset, index):
         batch = collate_fields([dataset[index]])
@@ -1354,24 +1373,60 @@ def report_occupancies(operator, train_set, train_records, validation,
         mean = operator.site_transform.inverse(torch.zeros_like(target),
                                                sites["species"])
         mask = batch["paw_mask"].to(device)
-        return occupancy_error(predicted, target, mask), \
-            occupancy_error(mean, target, mask)[0]
 
+        # (set, L) -> [squared error, squared norm, baseline squared error]
+        blocks = {}
+        species = sites["species"][0].cpu().numpy()
+        arrays = [a[0].detach().cpu().double().numpy()
+                  for a in (predicted, target, mean)]
+        for z in np.unique(species[species > 0]):
+            atoms = species == z
+            p, r, b = (a[atoms] for a in arrays)        # (atoms, sets, values)
+            for L, where in positions[int(z)].items():
+                for s in range(r.shape[1]):
+                    sums = blocks.setdefault((s, L), np.zeros(3))
+                    sums += (((p[:, s, where] - r[:, s, where]) ** 2).sum(),
+                             (r[:, s, where] ** 2).sum(),
+                             ((b[:, s, where] - r[:, s, where]) ** 2).sum())
+        return (occupancy_error(predicted, target, mask),
+                occupancy_error(mean, target, mask)[0], blocks)
+
+    def ratio(numerator, denominator):
+        return float(np.sqrt(numerator / denominator)) if denominator > 0 \
+            else float("nan")
+
+    summary = {}
     log("\n  augmentation occupancies (relative RMS, physical units):")
     for label, dataset, records in (("train", train_set, train_records),
                                     ("validation", validation, test_records)):
         if dataset is None:
             continue
         pooled = np.zeros(3)
+        blocks = {}
         for index in range(len(dataset)):
-            (squared, norm), baseline = one(dataset, index)
+            (squared, norm), baseline, parts = one(dataset, index)
             squared, norm, baseline = float(squared), float(norm), float(baseline)
             pooled += (squared, norm, baseline)
+            for key, sums in parts.items():
+                blocks.setdefault(key, np.zeros(3))
+                blocks[key] += sums
             per_material[records[index].identifier]["metrics"][
                 "occupancy_relative_rms"] = float(np.sqrt(squared / norm))
-        log(f"      {label:<11s} {np.sqrt(pooled[0] / pooled[1]):.5f}   "
-            f"(training-mean L = 0 record: "
-            f"{np.sqrt(pooled[2] / pooled[1]):.5f})")
+        whole = ratio(pooled[0], pooled[1])
+        mean = ratio(pooled[2], pooled[1])
+        log(f"      {label:<11s} {whole:.5f}   "
+            f"(training-mean L = 0 record: {mean:.5f})")
+        summary[label] = {"relative_rms": whole, "baseline": mean,
+                          "blocks": {}}
+        for (s, L), (error, norm, baseline) in sorted(blocks.items()):
+            name = "charge" if s == 0 else "magnetisation"
+            summary[label]["blocks"].setdefault(f"set {s}", {})[f"L{L}"] = {
+                "relative_rms": ratio(error, norm),
+                "baseline": ratio(baseline, norm)}
+            log(f"        {name:<13s} L = {L}   {ratio(error, norm):.5f}   "
+                f"(baseline {ratio(baseline, norm):.5f}, "
+                f"{100.0 * norm / pooled[1]:.2g} % of the norm)")
+    return summary
 
 
 def resolve_radial_basis(train_set, config, log):
@@ -2640,9 +2695,11 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
                 name="parity_magnetisation", label=r"$m$", unit=unit,
                 log=False, title=r"Parity over every structure: $m$"))
 
+    occupancies = None
     if task.site_target is not None:
-        report_occupancies(operator, train_set, train_records, validation,
-                           test_records, per_material, log)
+        occupancies = report_occupancies(operator, train_set, train_records,
+                                         validation, test_records,
+                                         per_material, log)
 
     # ---------------- aggregate ---------------- #
     train_metrics = [v["metrics"] for v in per_material.values()
@@ -2772,6 +2829,9 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
         "validation": sorted(validation_names),
         "grid_shapes": [list(s) for s in shapes],
         "per_material": per_material,
+        # ext2paw: the records' error pooled per split, whole and per (set, L)
+        # block; None for a field-only task.
+        "occupancies": occupancies,
         "checkpoint": checkpoint,
         "figures": figures,
         "seconds": elapsed,
@@ -3347,7 +3407,7 @@ def run(argv=None):
     # what it had spent -- the stage it died in is the row most worth reading.
     from poraque.ml.profiling import ResourceProfile
 
-    profile = ResourceProfile()
+    profile = ResourceProfile(workers=config.training.num_workers)
     try:
         # Through the Tee, so the environment that produced a run is recorded
         # in its log rather than only shown once on a terminal that is long

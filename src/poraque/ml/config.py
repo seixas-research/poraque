@@ -1231,9 +1231,10 @@ class ModelConfig:
             training grid's Nyquist frequency --- the widest band every
             structure supplies. A number above that raises before training.
         ``occupancy_weight``
-            The weight of the per-atom term against the field objective, and
-            of the occupancy error in the validation score the best epoch is
-            chosen on. 1.0 by default.
+            The weight of the per-atom term against the field objective. The
+            validation score the best epoch is chosen on is the same sum on
+            the held-out split, so one number means one thing. 1.0 by
+            default.
 
         See :mod:`poraque.ml.paw` for the operator, and
         ``experiments/paw_occupancies`` for the measurements it was designed

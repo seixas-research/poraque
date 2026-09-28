@@ -178,3 +178,39 @@ than DFT's.** Every ρ̃ row above used the reference density. The features are
 linear in ρ̃, so the error propagates linearly, but its size depends on the
 `ext2chg` model, and every existing `.poraque` must be retrained before it can be
 measured.
+
+## 6. The open measurement, on the trained operator
+
+Measured 2026-09-27 on an RTX 5060 Ti with `configs/train_ext2paw.yaml` at
+200 epochs, the same 19 held-out structures (split seed 42), two
+initialisation seeds per arm. The readout band is 6.65 Å⁻¹ (95 % of the res48
+cache's coarsest Nyquist), not the 9 Å⁻¹ of §3, so the rows are comparable in
+kind rather than in the last digit.
+
+| held-out, relative RMS | L = 0 | L = 1 | L = 2 | L = 3 | L = 4 |
+|---|---|---|---|---|---|
+| charge set, seed 0 | 2.7 % | 9.5 % | 30 % | 22 % | 32 % |
+| charge set, seed 1 | 3.1 % | 9.4 % | 27 % | 23 % | 33 % |
+| magnetisation set, seed 0 | 19 % | 41 % | 77 % | 60 % | 55 % |
+| magnetisation set, seed 1 | 20 % | 40 % | 81 % | 57 % | 54 % |
+
+Pooled by norm, the charge set's L > 0 blocks are ~28 % wrong from a
+*predicted* density, against 21–23 % in §3 from the DFT density over a wider
+band. The head is close to the linear ceiling for what it reads; what remains
+is the band (a finer cache) and a deeper equivariant head (§4).
+
+**Reading the predicted field in physical units does not help.** The head reads
+the backbone's output in its Asinh-compressed training form, which is not the
+density §3 found the records linear in. A variant that also read the decoded
+(physical, detached) δρ and m at each atom was trained in both seeds: held-out
+occupancy loss 0.197 and 0.199 against 0.201 and 0.196 without it, every block
+within ±0.02. It was not kept.
+
+**The magnetisation set is limited by its labels as much as by the model.**
+Each nanoparticle family has one relaxation run (`IBRION = 2`) beside ten
+single points 0.2 Å from it. Two of the three relaxations ended non-magnetic
+(structure_0075, structure_0086) and the third (structure_0064) at half its
+siblings' moment, while every single point is magnetic. Nearly identical
+potentials therefore carry different magnetisations, and the operator can only
+average them. Whether the relaxed state is the ground state or an artefact of
+the SCF history is a question for VASP, not for this pipeline.

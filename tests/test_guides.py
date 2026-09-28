@@ -129,18 +129,20 @@ class TestCoverPalette:
     r"""
     Four colours, and the darkest has exactly one permitted use.
 
-    The palette is one sweep of hues -- 48 -> 77 -> 160 -> 163 degrees --
-    anchored on the yellow the logo is drawn in. ``poraquecover`` is the
-    outlier: it exists only to be the ground a cover is printed on, and at
-    1.37:1 against ``poraquegreen`` it buys nothing anywhere else. The name
-    states the restriction; these tests enforce it.
+    The logo's yellow, and a navy ramp held at one hue (~215 degrees) that
+    varies only in lightness: ``poraquelime`` a sky blue, ``poraquegreen`` the
+    navy anchor (the name kept for the ``\color{poraquegreen}`` calls already in
+    the text), ``poraquecover`` darker still. ``poraquecover`` is the outlier:
+    it exists only to be the ground a cover is printed on, and beside
+    ``poraquegreen`` it buys nothing anywhere else. The name states the
+    restriction; these tests enforce it.
     """
 
     PALETTE = {
         "poraqueyellow": "255,204,0",
-        "poraquelime": "163,198,75",
-        "poraquegreen": "15,61,46",
-        "poraquecover": "6,35,27",
+        "poraquelime": "145,178,226",
+        "poraquegreen": "23,53,95",
+        "poraquecover": "10,30,59",
     }
 
     def test_every_colour_is_defined(self, guide):
@@ -178,3 +180,32 @@ class TestCoverPalette:
         for forbidden in ("coltitle=poraqueyellow", "linkcolor=poraqueyellow",
                           "urlcolor=poraqueyellow"):
             assert forbidden not in source, forbidden
+
+
+class TestTheReportMatchesTheGuides:
+    """
+    The per-run PDF report says its palette is "shared with the user and
+    technical guides", and it was not: the guides moved to navy and every
+    report went on printing the retired green. Compared here colour by colour,
+    so the next recolour of either fails until both agree.
+    """
+
+    NAMES = ("poraqueyellow", "poraquelime", "poraquegreen", "poraquecover",
+             "poraquedark")
+
+    @staticmethod
+    def _colours(source):
+        import re
+
+        return dict(re.findall(
+            r"\\definecolor\{+(poraque\w+)\}+\{+RGB\}+\{+([\d,]+)\}+", source))
+
+    def test_every_brand_colour_agrees(self):
+        from poraque.vis.pdf_report import ModelReport
+
+        report = self._colours(
+            ModelReport("reports", logo=None)._preamble("chg2tau", "x"))
+        for guide in GUIDES:
+            colours = self._colours(_read(f"latex/{guide}.tex"))
+            for name in self.NAMES:
+                assert report[name] == colours[name], (guide, name)

@@ -23,7 +23,11 @@ Three choices, each measured against the alternative:
 *current* RSS, and a sampler would have to run fast enough to catch a spike ---
 the spectral downsampling of an 800 MB ``CHGCAR`` allocates and frees its peak
 within one call. ``ru_maxrss`` cannot miss it, needs no dependency, and is also
-available for the process's children, which is where DataLoader workers live.
+available for the process's children, which is where DataLoader workers live
+--- but only reported when the run *had* workers. On Linux a child's
+``ru_maxrss`` includes the pages it inherited at ``fork``, so the LaTeX call
+that typesets the PDF reads as a child the size of the parent: 3.0 GiB of
+"DataLoader workers" on a run that had none.
 It is the peak **of the process so far**, so a stage's value is the high-water
 mark at its end, never below the previous stage's.
 
@@ -104,6 +108,9 @@ class ResourceProfile:
     device : torch.device or str, optional
         Where the run computes; settable later through :attr:`device`, since a
         run resolves its device after it has started the clock.
+    workers : int, optional
+        DataLoader worker processes per loader. The children's peak is
+        recorded as the workers' only when this is positive.
 
     Examples
     --------
@@ -115,8 +122,9 @@ class ResourceProfile:
     ['cache', 'training']
     """
 
-    def __init__(self, device=None):
+    def __init__(self, device=None, workers=0):
         self.device = None if device is None else torch.device(device)
+        self.workers = int(workers or 0)
         self.started = time.perf_counter()
         self.stages = []
         self._open = None
@@ -185,7 +193,8 @@ class ResourceProfile:
             "total_seconds": self.elapsed,
             "staged_seconds": sum(s["seconds"] for s in self.stages),
             "peak_rss_bytes": peak_rss_bytes(),
-            "peak_worker_rss_bytes": peak_rss_bytes(children=True) or None,
+            "peak_worker_rss_bytes": ((peak_rss_bytes(children=True) or None)
+                                      if self.workers > 0 else None),
             "peak_vram_bytes": max(vram) if vram else None,
             "peak_vram_reserved_bytes": max(reserved) if reserved else None,
         }

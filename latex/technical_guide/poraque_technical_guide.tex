@@ -35,29 +35,34 @@
 \usetikzlibrary{positioning,fit,backgrounds,arrows.meta}
 
 % --- Brand palette ---------------------------------------------------------
-% Three colours, and each has one job. The hues run 48 -> 77 -> 160 degrees,
-% a single sweep from the logo's yellow through yellow-green into deep green.
+% Navy accent (changed from the original green ramp). Three colours, held at
+% a single hue (~215 degrees) and varied only in lightness/saturation, rather
+% than the old palette's yellow-to-green hue sweep.
 %
 %   poraqueyellow  the logo's own yellow. ACCENT ONLY -- 1.7:1 on white, so
 %                  it is used for rules, badges and marks on dark grounds,
-%                  never for text on paper.
-%   poraquelime    the step between. Tints and secondary rules.
-%   poraquegreen   the anchor: 12.2:1 on white, 8.0:1 against the yellow.
-%                  Headings, links, anything that has to be read.
+%                  never for text on paper. Left as-is: it comes from the
+%                  logo artwork itself, not from this ramp.
+%   poraquelime    the step between. Tints, secondary rules, and dark-mode
+%                  text -- a bright sky blue rather than the old yellow-green.
+%   poraquegreen   the anchor (name kept for compatibility with existing
+%                  \color{poraquegreen} calls throughout this document; the
+%                  colour itself is now navy): 12.3:1 on white, 8.1:1 against
+%                  the yellow. Headings, links, anything that has to be read.
 %   poraquecover   COVER GROUND ONLY. Named for the restriction: it is the
 %                  one colour with a single permitted use, and a name that
 %                  says so is harder to misuse than a comment. Darker than
-%                  poraquegreen by 7 points of lightness -- a visible step
-%                  rather than a shade of the same thing -- and still green
-%                  at hue 163 rather than collapsing to black.
+%                  poraquegreen by about 9 points of lightness -- a visible
+%                  step rather than a shade of the same thing -- and still
+%                  the same navy hue rather than collapsing to black.
 \definecolor{poraqueyellow}{RGB}{255,204,0}
-\definecolor{poraquelime}{RGB}{163,198,75}
-\definecolor{poraquegreen}{RGB}{15,61,46}
-\definecolor{poraquecover}{RGB}{6,35,27}
+\definecolor{poraquelime}{RGB}{145,178,226}
+\definecolor{poraquegreen}{RGB}{23,53,95}
+\definecolor{poraquecover}{RGB}{10,30,59}
 % Retained so existing uses keep working; both now point into the new palette.
 \colorlet{poraquered}{poraquegreen}
 \definecolor{poraqueamber}{RGB}{176,125,42}
-\definecolor{poraquedark}{RGB}{15,61,46}
+\definecolor{poraquedark}{RGB}{23,53,95}
 \definecolor{codebg}{RGB}{246,249,242}
 \definecolor{shadegray}{RGB}{90,96,104}
 \definecolor{tipgreen}{RGB}{22,120,80}

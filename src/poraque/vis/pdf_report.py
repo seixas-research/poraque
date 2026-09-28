@@ -205,20 +205,20 @@ class ModelReport:
 \tcbuselibrary{{skins,breakable}}
 
 % --- Brand palette, shared with the user and technical guides --------------
-% Three colours, each with one job. Hues run 48 -> 77 -> 160 degrees: one
-% sweep from the logo's yellow through yellow-green into deep green.
-% The yellow is ACCENT ONLY -- 1.7:1 on white -- so it carries rules and bands
-% and never body text. The green anchors: 12.2:1 on white.
-% poraquecover is COVER GROUND ONLY -- named for the restriction, since a
-% name that states it is harder to misuse than a comment. Darker than
-% poraquegreen by 7 points of lightness, and still green at hue 163.
+% The logo's yellow and a navy ramp held at one hue (~215 degrees), varied
+% only in lightness. The yellow is ACCENT ONLY -- 1.7:1 on white -- so it
+% carries rules and bands and never body text. poraquelime is the sky-blue
+% step between; poraquegreen (name kept for the calls that use it) is the navy
+% anchor, 12.3:1 on white. poraquecover is COVER GROUND ONLY -- named for the
+% restriction, since a name that states it is harder to misuse than a
+% comment -- and about 9 points of lightness darker than poraquegreen.
 \definecolor{{poraqueyellow}}{{RGB}}{{255,204,0}}
-\definecolor{{poraquelime}}{{RGB}}{{163,198,75}}
-\definecolor{{poraquegreen}}{{RGB}}{{15,61,46}}
-\definecolor{{poraquecover}}{{RGB}}{{6,35,27}}
+\definecolor{{poraquelime}}{{RGB}}{{145,178,226}}
+\definecolor{{poraquegreen}}{{RGB}}{{23,53,95}}
+\definecolor{{poraquecover}}{{RGB}}{{10,30,59}}
 \colorlet{{poraquered}}{{poraquegreen}}
 \definecolor{{poraqueamber}}{{RGB}}{{176,125,42}}
-\definecolor{{poraquedark}}{{RGB}}{{15,61,46}}
+\definecolor{{poraquedark}}{{RGB}}{{23,53,95}}
 \definecolor{{shadegray}}{{RGB}}{{90,96,104}}
 \definecolor{{codebg}}{{RGB}}{{246,249,242}}
 \definecolor{{warnamber}}{{RGB}}{{176,125,42}}
