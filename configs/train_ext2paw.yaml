@@ -41,7 +41,11 @@ model:
   equivariant:                  # one block: the switch and what it governs
     enable: true
     n_radial: 16
-    g_basis: 16                 # = g_max: the band `physical` retains spans up to g_max by construction
+    g_basis: auto               # the median band the training structures retain (3.43 1/Ang on
+                                #   this set); 16 left ~13 of 16 radial functions where no mode
+                                #   exists. Measured at width 64, 1000 epochs, two seeds each:
+                                #   occupancies 2.79/2.88 % vs 3.17/2.97 %, score 0.327/0.327
+                                #   vs 0.336/0.356, density rel L2 0.0190/0.0192 vs 0.0174/0.0180
     spherical_cutoff: true
   paw:                          # one block: the switch and the operator it governs
     enable: true

@@ -1,12 +1,7 @@
 <h1 align="center" style="margin-top:20px; margin-bottom:50px;">
 
-<a href="https://github.com/seixas-research/poraque" target="_blank" rel="noopener noreferrer">
-  <picture>
-    <source srcset="https://raw.githubusercontent.com/seixas-research/poraque/refs/heads/main/assets/logo/logo_dark.png" media="(prefers-color-scheme: dark)">
-    <source srcset="https://raw.githubusercontent.com/seixas-research/poraque/refs/heads/main/assets/logo/logo_light.png" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/seixas-research/poraque/refs/heads/main/assets/logo/logo_light.png" style="height: auto; width: auto; max-height: 100px; " alt="Poraquê logo">
-  </picture>
-</a>
+<img src="https://raw.githubusercontent.com/seixas-research/poraque/refs/heads/main/assets/logo/logo_light.png#gh-light-mode-only" alt="Poraquê logo" height="100">
+<img src="https://raw.githubusercontent.com/seixas-research/poraque/refs/heads/main/assets/logo/logo_dark.png#gh-dark-mode-only" alt="Poraquê logo" height="100">
 </h1>
 
 <div align="center">
