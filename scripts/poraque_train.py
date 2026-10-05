@@ -1081,11 +1081,11 @@ def build_operator(task, train_set, config, log):
     # a second `**`: both dicts carry the key, and `f(**a, **b)` on a shared
     # key is a TypeError.
     model_kwargs = config.model_kwargs()
-    model_kwargs.update(resolve_radial_basis(train_set, config, log))
-
     if task.site_target is not None:
         model_kwargs.update(resolve_occupancy_head(train_set, config, log,
                                                    out_channels))
+    model_kwargs.update(resolve_radial_basis(
+        train_set, config, log, modes=model_kwargs["modes"]))
 
     # init_seed reaches FieldOperator, which isolates the draw from the global
     # stream; the manual_seed here keeps the ambient behaviour when it is unset.
@@ -1114,7 +1114,7 @@ def build_operator(task, train_set, config, log):
     if config.model.precision != "float32":
         log(f"      precision: {config.model.precision} — roughly twice the "
             f"time and memory of the float32 default")
-    report_mode_selection(train_set, config, log)
+    report_mode_selection(train_set, config, log, modes=max(backbone.modes))
     report_radial_basis(train_set, backbone, log)
     return operator
 
@@ -1429,7 +1429,7 @@ def report_occupancies(operator, train_set, train_records, validation,
     return summary
 
 
-def resolve_radial_basis(train_set, config, log):
+def resolve_radial_basis(train_set, config, log, modes=None):
     r"""
     Turn ``model.equivariant.g_basis: auto`` into a number, from the data.
 
@@ -1463,7 +1463,7 @@ def resolve_radial_basis(train_set, config, log):
     if not cells:
         return {}
     resolved = resolve_g_basis(
-        cells, shapes, config.model.modes,
+        cells, shapes, config.model.modes if modes is None else modes,
         mode_selection=config.model.mode_selection, g_max=config.model.g_max)
     log(f"      g_basis: auto -> {resolved:.3f} 1/Ang, the median band the "
         f"{len(cells)} training structures retain")
@@ -1535,7 +1535,7 @@ def report_radial_basis(train_set, model, log):
             "wide cost 14-43 %. Set model.equivariant.g_basis: auto.")
 
 
-def report_mode_selection(train_set, config, log):
+def report_mode_selection(train_set, config, log, modes=None):
     r"""
     Say how many modes the run will actually use, per structure.
 
@@ -1552,7 +1552,7 @@ def report_mode_selection(train_set, config, log):
     if config.model.mode_selection != "physical" or config.model.g_max is None:
         return
 
-    ceiling = config.model.modes
+    ceiling = config.model.modes if modes is None else modes
     counts = []
     # The cells come from the dataset's own samples rather than from a second
     # read of the files: they are already the geometry `physical_modes` will be
@@ -3146,7 +3146,7 @@ def build_parser():
                         help="YAML configuration file (defaults are used if omitted)")
 
     parser.add_argument("--task", dest="task.type", default=None,
-                        choices=["all", "ext2chg", "chg2tau"])
+                        choices=["all", "ext2chg", "chg2tau", "ext2paw"])
     parser.add_argument("--name", dest="task.name", default=None,
                         metavar="NAME",
                         help="name this run's outputs: models/NAME.poraque, "

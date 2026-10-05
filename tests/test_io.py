@@ -409,6 +409,17 @@ class TestSpectralResample:
     def test_downsample_shape_by_factor(self):
         assert downsample_shape((64, 64, 64), factor=2) == (32, 32, 32)
 
+    def test_elongated_cells_keep_a_resampleable_short_axis(self):
+        shape = (36, 36, 480)
+        target = downsample_shape(shape, target_max=24)
+        assert target == (4, 4, 24)
+        x = np.arange(shape[0])[:, None, None] / shape[0]
+        data = np.broadcast_to(2.0 + np.cos(2 * np.pi * x), shape)
+        coarse = spectral_resample(data, target)
+        assert coarse.mean() == pytest.approx(2.0, abs=1e-12)
+        expected = 2.0 + np.cos(2 * np.pi * np.arange(4) / 4)
+        np.testing.assert_allclose(coarse[:, 0, 0], expected, atol=1e-12)
+
     def test_downsample_shape_never_upsamples(self):
         assert downsample_shape((16, 16, 16), target_max=64) == (16, 16, 16)
 

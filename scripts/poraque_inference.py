@@ -770,8 +770,13 @@ def run(args, log):
     log(f"        -> {extcar}")
 
     # ---------------- 3. Model 1: EXTCAR -> CHGCAR ---------------- #
-    operator, info = load_operator(args.models, "ext2chg", device)
-    log(f"\n  [2/3] CHGCAR  via {os.path.basename(args.models)} [ext2chg]")
+    try:
+        available = bundle_tasks(args.models)
+    except (FileNotFoundError, ValueError) as error:
+        raise SystemExit(f"{args.models}: {error}") from error
+    density_task = "ext2chg" if "ext2chg" in available else "ext2paw"
+    operator, info = load_operator(args.models, density_task, device)
+    log(f"\n  [2/3] CHGCAR  via {os.path.basename(args.models)} [{density_task}]")
     log(f"        model: {type(operator.model).__name__}  "
         f"{info['hyperparameters']}")
     warn_on_resolution_shift(grid, info, log)
@@ -903,36 +908,40 @@ def run(args, log):
     results["electrons_expected"] = expected or None
 
     # ---------------- 4. Model 2: CHGCAR -> TAUCAR ---------------- #
-    operator2, info2 = load_operator(args.models, "chg2tau", device)
-    log(f"\n  [3/3] TAUCAR  via {os.path.basename(args.models)} [chg2tau]")
-    log(f"        model: {type(operator2.model).__name__}  "
-        f"{info2['hyperparameters']}"
-        + ("   [tau = tau_vW + softplus head]" if info2["pauli_residual"] else ""))
-    warn_on_resolution_shift(grid, info2, log)
+    tau = None
+    if "chg2tau" in available:
+        operator2, info2 = load_operator(args.models, "chg2tau", device)
+        log(f"\n  [3/3] TAUCAR  via {os.path.basename(args.models)} [chg2tau]")
+        log(f"        model: {type(operator2.model).__name__}  "
+            f"{info2['hyperparameters']}"
+            + ("   [tau = tau_vW + softplus head]" if info2["pauli_residual"] else ""))
+        warn_on_resolution_shift(grid, info2, log)
 
-    start = time.time()
-    tau = operator2.predict(density)
-    log(f"        predicted in {time.time() - start:.2f} s")
-    log(f"        range [{tau.data.min():.4f}, {tau.data.max():.4f}] eV/A^3")
-    log(f"        integral = {tau.integrate():.4f} eV  (total T_s)")
+        start = time.time()
+        tau = operator2.predict(density)
+        log(f"        predicted in {time.time() - start:.2f} s")
+        log(f"        range [{tau.data.min():.4f}, {tau.data.max():.4f}] eV/A^3")
+        log(f"        integral = {tau.integrate():.4f} eV  (total T_s)")
 
-    # The Hoffmann-Ostenhof bound is a theorem; check it even when the head
-    # guarantees it, because it also validates the chained density.
-    bound = von_weizsacker_tau(charge.data, grid)
-    deficit = tau.data - bound
-    violations = int(np.count_nonzero(deficit < -1e-6))
-    log(f"        constraint tau >= tau_vW[rho]: {violations}/{deficit.size} "
-        f"violated ({100 * violations / deficit.size:.4f} %), min margin "
-        f"{deficit.min():+.4g} eV/A^3")
-    results["kinetic_energy"] = tau.integrate()
-    results["constraint"] = {"violations": violations,
-                             "fraction": violations / deficit.size,
-                             "worst_deficit": float(deficit.min())}
+        # Check the bound even when a head guarantees it: the check also
+        # validates the chained density.
+        bound = von_weizsacker_tau(charge.data, grid)
+        deficit = tau.data - bound
+        violations = int(np.count_nonzero(deficit < -1e-6))
+        log(f"        constraint tau >= tau_vW[rho]: {violations}/{deficit.size} "
+            f"violated ({100 * violations / deficit.size:.4f} %), min margin "
+            f"{deficit.min():+.4g} eV/A^3")
+        results["kinetic_energy"] = tau.integrate()
+        results["constraint"] = {"violations": violations,
+                                 "fraction": violations / deficit.size,
+                                 "worst_deficit": float(deficit.min())}
 
-    taucar = os.path.join(args.output, "TAUCAR")
-    tau.write(taucar)
-    results["outputs"]["TAUCAR"] = taucar
-    log(f"        -> {taucar}")
+        taucar = os.path.join(args.output, "TAUCAR")
+        tau.write(taucar)
+        results["outputs"]["TAUCAR"] = taucar
+        log(f"        -> {taucar}")
+    else:
+        log("\n  TAUCAR and total energy skipped: this bundle has no chg2tau operator")
 
     # ---------------- 4b. Hartree potential, solved not predicted ------- #
     # Poisson's equation is exact and costs two FFTs, so there is no third
@@ -976,6 +985,8 @@ def run(args, log):
             ("CHGCAR", ChargeDensity, charge),
             ("TAUCAR", KineticEnergyDensity, tau),
         ):
+            if predicted is None:
+                continue
             path = os.path.join(args.directory, filename)
             if not os.path.exists(path):
                 log(f"      {filename:<8s} no reference file")
@@ -995,7 +1006,7 @@ def run(args, log):
                 f"MAE {entry['mae']:10.5g}   r {entry['pearson_r']:7.4f}")
 
     # ---------------- 6. energy decomposition ---------------- #
-    if args.functional != "skip":
+    if args.functional != "skip" and tau is not None:
         log(f"\n  --- energy components (xc: {args.functional}) ---")
         from poraque.physics import EnergyCalculator
 
@@ -1036,6 +1047,8 @@ def run(args, log):
             ("CHGCAR", ChargeDensity, charge, r"$\rho$", r"e/$\AA^3$", True),
             ("TAUCAR", KineticEnergyDensity, tau, r"$\tau$", r"eV/$\AA^3$", True),
         ):
+            if predicted is None:
+                continue
             path = os.path.join(args.directory, filename)
             if os.path.exists(path):
                 reference = read_reference(path, field_class, grid)

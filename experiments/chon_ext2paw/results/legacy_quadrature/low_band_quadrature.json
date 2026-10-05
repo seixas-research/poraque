@@ -1,0 +1,13 @@
+{
+  "constant_field_L0_narrow_kernel_low_band": [
+    1.202187592129599,
+    0.46123856205132935
+  ],
+  "constant_field_L0_narrow_kernel_reference": [
+    0.5694269987670111,
+    0.5694203821050271
+  ],
+  "relative_feature_error": 0.11312842553211555,
+  "spurious_L1_norm": 0.540041494154339,
+  "spurious_L2_norm": 1.3646526871451963
+}

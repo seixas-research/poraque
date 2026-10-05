@@ -1318,6 +1318,17 @@ class TestTheRunSaysWhatBandItRetains:
         assert script.resolve_radial_basis(
             data, self._config(), lambda line: None) == {}
 
+    def test_paw_backbone_modes_override_the_field_config_for_auto_basis(self):
+        script = self._train_script()
+        data = self._Dataset([4.0, 7.0, 12.0, 20.0])
+        config = self._config(g_basis="auto")
+        resolved = script.resolve_radial_basis(data, config, lambda line: None, modes=10)
+        expected = fno.resolve_g_basis(
+            [torch.eye(3) * length for length in data.lengths],
+            [(24, 24, 24)] * 4, 10)
+        assert resolved == {"g_basis": pytest.approx(expected)}
+        assert resolved != script.resolve_radial_basis(data, config, lambda line: None)
+
     def test_a_dense_run_is_told_nothing(self):
         """
         The report is about a layer a dense backbone does not have, and the

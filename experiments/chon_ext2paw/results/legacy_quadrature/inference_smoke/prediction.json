@@ -1,0 +1,34 @@
+{
+  "directory": "/Users/leseixas/Library/CloudStorage/Dropbox/Repositories/seixas-research/poraque/experiments/chon_ext2paw/results/screen/inference_input",
+  "formula": "C6N2",
+  "natoms": 8,
+  "volume": 70.35053840076475,
+  "grid": [
+    14,
+    14,
+    24
+  ],
+  "device": "cpu",
+  "outputs": {
+    "EXTCAR": "experiments/chon_ext2paw/results/screen/inference_smoke/EXTCAR",
+    "CHGCAR": "experiments/chon_ext2paw/results/screen/inference_smoke/CHGCAR"
+  },
+  "magnetic_moment": 0.0013655438483412407,
+  "electrons_raw": 33.54401834195506,
+  "normalized": false,
+  "paw_augmentation": {
+    "records": 16,
+    "sets": 2,
+    "source": "model"
+  },
+  "electrons": 33.54401834195506,
+  "electrons_expected": 34.0,
+  "comparison": {
+    "CHGCAR": {
+      "relative_l2": 0.07133997792370741,
+      "mae": 0.03175374567700225,
+      "rmse": 0.05279694335959202,
+      "pearson_r": 0.9956251678182182
+    }
+  }
+}

@@ -29,11 +29,9 @@ The architecture follows directly:
 :class:`SiteReadout`
     A grid-to-atom kernel integral --- the decoder half of a graph neural
     operator --- with kernels :math:`r^L Y_{LM}(\hat r)\,e^{-r^2/2s_n^2}`. The
-    fields are first restricted to :math:`|\mathbf G| \le G_{\max}` and resampled
-    to a spacing :math:`\pi / 2G_{\max}`, so the quadrature is the same wherever
-    the atom sits and whatever grid the cell came on. The solid harmonics are
-    polynomials, smooth at the nucleus, so their aliasing at that spacing is
-    below 1e-4.
+    fields are first restricted to :math:`|\mathbf G| \le G_{\max}`. Low bands
+    use Fourier-space kernel integrals, so even the narrowest Gaussian is
+    resolved. Higher bands use the existing dense spatial quadrature.
 :class:`NeighbourExpansion`
     :math:`\sum_j R_n(r_{aj})\,Y_{LM}(\hat r_{aj})`: the geometry, first order.
 :class:`EquivariantHead`
@@ -52,6 +50,7 @@ the neighbour expansion and the head are equivariant by construction.
 """
 
 import math
+from collections import OrderedDict
 
 import numpy as np
 import torch
@@ -170,10 +169,12 @@ class SiteReadout(nn.Module):
     projection's size does not depend on L or on the width.
 
     The restriction is what makes the readout a property of the field rather
-    than of its grid. The band-limited field is resampled to spacing
-    :math:`h = \pi / 2G_{\max}`, and the integral is a sum over that fine grid
-    around each atom. Every cell, coarse or fine, is integrated with the same
-    quadrature, whose aliasing error is below 1e-4 for these kernels.
+    than of its grid. At low bands, spacing :math:`h = \pi / 2G_{\max}` would
+    undersample the narrow Gaussian kernels even though it resolves the field.
+    There we integrate each Fourier wave analytically over angles and use
+    Gauss-Legendre radial quadrature. At higher bands, where that spacing
+    resolves the kernels, we retain spatial quadrature around each atom.
+    Cell geometry is fixed; gradients propagate to fields and atom positions.
 
     Parameters
     ----------
@@ -196,11 +197,92 @@ class SiteReadout(nn.Module):
             for L in range(self.lmax + 1)])
         self.register_buffer("widths", widths.float())
         self.register_buffer("norms", norms.float())
+        # Geometry only; not checkpoint state. Bound memory across diverse cells.
+        self._spectral_cache = OrderedDict()
+        self._spectral_cache_bytes = 0
 
     @property
     def size(self):
         """Radial functions per field channel."""
         return len(READOUT_WIDTHS)
+
+    def spectral_integral(self, fields, cell, frac):
+        """Integrate band-limited Fourier waves against each radial kernel.
+
+        The angular integral is 4π i^L j_L(Gr) Y_LM(Ghat). Radial integrals
+        are computed in float64 once per geometry; all field operations and
+        atom phases remain differentiable on the model's device.
+        """
+        from scipy.special import spherical_jn
+
+        shape = tuple(fields.shape[1:])
+        geometry = cell.detach().cpu().double().numpy()
+        widths = self.widths.detach().cpu().double().numpy()
+        norms = self.norms.detach().cpu().double().numpy()
+        key = (shape, geometry.tobytes(), str(fields.device), fields.dtype,
+               widths.tobytes(), norms.tobytes())
+        cached = self._spectral_cache.get(key)
+        if cached is None:
+            nyquist = np.pi * np.array(shape) / np.linalg.norm(geometry, axis=1)
+            if nyquist.min() < self.g_max * (1.0 - 1e-6):
+                raise ValueError(
+                    f"a grid of shape {shape} resolves {nyquist.min():.2f} "
+                    f"1/Ang along its coarsest axis, below the "
+                    f"{self.g_max:.2f} 1/Ang band. Use a finer grid.")
+            integers = np.stack(np.meshgrid(*[
+                np.fft.fftfreq(n, 1.0 / n) for n in shape], indexing="ij"), -1)
+            vectors = integers @ (2 * math.pi * np.linalg.inv(geometry).T)
+            magnitude = np.linalg.norm(vectors, axis=-1)
+            keep = magnitude <= self.g_max
+            for axis, n in enumerate(shape):
+                keep &= np.abs(integers[..., axis]) < n / 2.0
+            indices = np.flatnonzero(keep)
+            modes = integers[keep]
+            vectors, magnitude = vectors[keep], magnitude[keep]
+            unit = vectors / np.maximum(magnitude[:, None], 1e-30)
+            harmonics = solid_harmonics(torch.from_numpy(unit), self.lmax)
+            nodes, weights = np.polynomial.legendre.leggauss(128)
+            radius = (nodes + 1) * READOUT_RADIUS / 2
+            weights = weights * READOUT_RADIUS / 2
+            radial = np.exp(-radius[:, None] ** 2 / (2 * widths ** 2))
+            radial *= (0.5 * (1 + np.cos(math.pi * radius / READOUT_RADIUS)))[:, None]
+            kernels = []
+            for L in range(self.lmax + 1):
+                bessel = spherical_jn(L, magnitude[:, None] * radius[None])
+                integral = (bessel * (weights * radius ** (L + 2))[None]) @ radial
+                kernel = (4 * math.pi * integral * norms[L])[..., None] \
+                    * harmonics[L].numpy()[:, None, :]
+                kernels.append(torch.as_tensor(kernel, dtype=fields.dtype,
+                                                device=fields.device))
+            cached = (torch.as_tensor(indices, device=fields.device),
+                      torch.as_tensor(modes, dtype=fields.dtype, device=fields.device),
+                      kernels)
+            size = sum(t.numel() * t.element_size() for t in
+                       (cached[0], cached[1], *kernels))
+            limit = 64 * 1024 ** 2
+            while self._spectral_cache and self._spectral_cache_bytes + size > limit:
+                _, old = self._spectral_cache.popitem(last=False)
+                self._spectral_cache_bytes -= sum(t.numel() * t.element_size()
+                    for t in (old[0], old[1], *old[2]))
+            if size <= limit:
+                self._spectral_cache[key] = cached
+                self._spectral_cache_bytes += size
+        elif key in self._spectral_cache:
+            self._spectral_cache.move_to_end(key)
+        indices, modes, kernels = cached
+        spectrum = torch.fft.fftn(fields, dim=(-3, -2, -1), norm="forward")
+        coefficients = torch.view_as_real(spectrum).reshape(fields.shape[0], -1, 2)
+        coefficients = coefficients[:, indices]
+        phase = 2 * math.pi * ((frac % 1.0) @ modes.T)
+        cosine, sine = torch.cos(phase)[:, None], torch.sin(phase)[:, None]
+        real = coefficients[None, ..., 0] * cosine - coefficients[None, ..., 1] * sine
+        imaginary = coefficients[None, ..., 0] * sine + coefficients[None, ..., 1] * cosine
+        components = (real, -imaginary, -real, imaginary)
+        out = {}
+        for L, kernel in enumerate(kernels):
+            value = torch.einsum("acg,gnm->acnm", components[L % 4], kernel)
+            out[L] = value.reshape(frac.shape[0], -1, 2 * L + 1)
+        return out
 
     def band_limited(self, fields, cell):
         """``fields`` restricted to the band and resampled: ``(C, S1, S2, S3)``."""
@@ -235,12 +317,14 @@ class SiteReadout(nn.Module):
         source = keep.nonzero(as_tuple=True)
         destination = [(integers[..., axis][source].long() % target[axis])
                        for axis in range(3)]
-        out = torch.zeros(channels, *target, dtype=spectrum.dtype,
+        # Real-valued indexing also keeps the backward scatter portable to
+        # MPS, whose complex advanced-index backward is unsupported.
+        out = torch.zeros(channels, *target, 2, dtype=fields.dtype,
                           device=fields.device)
         scale = float(np.prod(target)) / float(np.prod(shape))
-        out[(slice(None), *destination)] = spectrum[(slice(None), *source)] \
-            * scale
-        return torch.fft.ifftn(out, dim=(-3, -2, -1)).real
+        out[(slice(None), *destination, slice(None))] = torch.view_as_real(
+            spectrum)[(slice(None), *source, slice(None))] * scale
+        return torch.fft.ifftn(torch.view_as_complex(out), dim=(-3, -2, -1)).real
 
     def forward(self, fields, cell, frac):
         """
@@ -258,6 +342,8 @@ class SiteReadout(nn.Module):
         dict
             ``{L: (A, C * n, 2L+1)}``.
         """
+        if self.spacing > 1.25 * min(READOUT_WIDTHS):
+            return self.spectral_integral(fields, cell, frac)
         dense = self.band_limited(fields, cell)
         channels, *shape = dense.shape
         shape_t = torch.tensor(shape, device=fields.device)
@@ -288,7 +374,9 @@ class SiteReadout(nn.Module):
         radial = torch.exp(-r2[..., None] / (2.0 * widths ** 2)) \
             * window[..., None]                                     # (A, P, n)
         harmonics = solid_harmonics(displacement, self.lmax)
-        volume = torch.abs(torch.linalg.det(cell)) / float(np.prod(shape))
+        from .physics import cell_volume
+
+        volume = cell_volume(cell, dtype=fields.dtype)[0] / float(np.prod(shape))
 
         weighted = torch.einsum("cap,apn->acnp", values, radial) * volume
         out = {}
@@ -656,6 +744,11 @@ class OccupancyTransform:
     def loss(self, predicted, target, species, atom_mask):
         """Mean squared error in the normalised form, each L block weighted
         equally, averaged over real atoms and sets."""
+        # The model pads to its longest element; a shape bucket containing
+        # only shorter records (e.g. H in a CHON model) pads to less.
+        if predicted.shape[-1] < target.shape[-1]:
+            raise ValueError("the prediction is shorter than the PAW target")
+        predicted = predicted[..., :target.shape[-1]]
         _, _, weight = self._lookup(species, predicted.device, predicted.dtype)
         n = predicted.shape[-1]
         error = ((predicted - target) ** 2) * weight[..., :n]
@@ -694,6 +787,9 @@ def occupancy_error(predicted, target, paw_mask):
         ``(squared error, squared norm)`` sums, so a caller can pool batches
         before taking the ratio.
     """
+    if predicted.shape[-1] < target.shape[-1]:
+        raise ValueError("the prediction is shorter than the PAW target")
+    predicted = predicted[..., :target.shape[-1]]
     valid = paw_mask[:, :, None, :].to(predicted.dtype)
     return (((predicted - target) ** 2) * valid).sum(), \
         ((target ** 2) * valid).sum()

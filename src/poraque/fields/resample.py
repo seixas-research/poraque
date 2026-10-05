@@ -204,7 +204,8 @@ def downsample_shape(shape, factor=None, target_max=None):
         Divide every axis by this integer.
     target_max : int, optional
         Scale so the longest axis is at most this many points, preserving the
-        aspect ratio — the right choice when materials have different grids,
+        aspect ratio with a minimum of four points on each reduced axis —
+        the right choice when materials have different grids,
         since it keeps the *physical* resolution comparable rather than forcing
         a common shape.
 
@@ -223,5 +224,8 @@ def downsample_shape(shape, factor=None, target_max=None):
     else:
         raise ValueError("Pass either `factor` or `target_max`.")
 
-    return tuple(min(source, fft_friendly_size(value))
+    # Spectral truncation drops the Nyquist row and needs at least one
+    # conjugate pair. Very elongated CHON cells otherwise request 2x2x24,
+    # which spectral_resample cannot represent.
+    return tuple(min(source, max(4, fft_friendly_size(value)))
                  for source, value in zip(shape, scaled))

@@ -1,19 +1,15 @@
 <h1 align="center" style="margin-top:20px; margin-bottom:50px;">
 
-<img src="https://raw.githubusercontent.com/seixas-research/poraque/refs/heads/main/assets/logo/logo_light.png#gh-light-mode-only" alt="Poraquê logo" height="100">
-<img src="https://raw.githubusercontent.com/seixas-research/poraque/refs/heads/main/assets/logo/logo_dark.png#gh-dark-mode-only" alt="Poraquê logo" height="100">
+<img src="https://raw.githubusercontent.com/seixas-research/poraque/refs/heads/main/assets/logo/logo_light.png#gh-light-mode-only" alt="Poraquê logo" height="200">
+<img src="https://raw.githubusercontent.com/seixas-research/poraque/refs/heads/main/assets/logo/logo_dark.png#gh-dark-mode-only" alt="Poraquê logo" height="200">
 </h1>
 
 <div align="center">
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-red?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11+-fcbc2c.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![PyPI](https://img.shields.io/pypi/v/poraque?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/poraque/)
-[![Python](https://img.shields.io/pypi/pyversions/poraque?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![ASE](https://img.shields.io/badge/ASE-3.2x-4B8BBE?style=for-the-badge)](https://wiki.fysik.dtu.dk/ase/)
-[![h5py](https://img.shields.io/badge/h5py-HDF5-0E7C86?style=for-the-badge)](https://www.h5py.org/)
-[![mp-api](https://img.shields.io/badge/mp--api-Materials%20Project-3B3F8C?style=for-the-badge)](https://pypi.org/project/mp-api/)
-[![On-line manual](https://img.shields.io/readthedocs/poraque?style=for-the-badge&logo=readthedocs&logoColor=white&label=Manual)](https://poraque.readthedocs.io/)
-[![License: MIT](https://img.shields.io/github/license/seixas-research/poraque?color=green&style=for-the-badge)](LICENSE)
+[![On-line manual](https://img.shields.io/readthedocs/poraque?style=for-the-badge&logo=readthedocs&logoColor=white&label=Docs)](https://poraque.readthedocs.io/)
 [![GitHub](https://img.shields.io/badge/GitHub-poraque-181717?style=for-the-badge&logo=github)](https://github.com/seixas-research/poraque)
 
 </div>

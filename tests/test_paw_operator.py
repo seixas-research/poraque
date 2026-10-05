@@ -54,6 +54,49 @@ PLATINUM = os.path.join(_ROOT, "data", "vasp", "structures", "structure_0000",
                         "CHGCAR")
 
 
+@pytest.mark.parametrize("device", ["cpu", pytest.param(
+    "mps", marks=[pytest.mark.gpu, pytest.mark.skipif(
+        not torch.backends.mps.is_available(), reason="requires MPS")])])
+def test_hydrogen_only_batch_in_a_multielement_operator(device):
+    """CHON output pads to 33; a hydrogen-only batch has 15 targets."""
+    from poraque.ml import FieldOperator
+    from poraque.ml.paw import occupancy_error
+    from poraque.ml.training import validate_occupancies
+
+    layouts = {1: (0, 0, 1), 6: (0, 0, 1, 1)}
+    lengths = {z: len(record_layout(channels)) for z, channels in layouts.items()}
+    transform = OccupancyTransform(
+        layouts, 1, {z: np.zeros((1, n)) for z, n in lengths.items()},
+        {z: np.ones((1, n)) for z, n in lengths.items()})
+    operator = FieldOperator(
+        "ext2paw", device=device, width=4, modes=2, n_layers=1,
+        use_coordinates=False, site_layouts=layouts, readout_g_max=2,
+        site_transform=transform)
+    batch = {"input": torch.randn(1, 1, 8, 8, 8),
+             "cell": torch.eye(3)[None] * 4,
+             "species": torch.ones(1, 1, dtype=torch.long),
+             "positions": torch.zeros(1, 1, 3),
+             "atom_mask": torch.ones(1, 1, dtype=torch.bool),
+             "paw": torch.ones(1, 1, 1, 15),
+             "paw_mask": torch.ones(1, 1, 15, dtype=torch.bool)}
+    batch = {k: v.to(device) for k, v in batch.items()}
+    sites = {k: batch[k] for k in ("species", "positions", "atom_mask")}
+    _, predicted = operator.model(batch["input"], batch["cell"], sites=sites)
+    assert predicted.shape[-1] == 33
+    wanted = transform.normalize(batch["paw"], batch["species"])
+    loss = transform.loss(predicted, wanted, batch["species"], batch["atom_mask"])
+    reference = transform.loss(predicted[..., :15], wanted,
+                               batch["species"], batch["atom_mask"])
+    torch.testing.assert_close(loss, reference)
+    loss.backward()
+    assert operator.model.heads["1"].scalar_out.weight.grad is not None
+    physical = transform.inverse(predicted.detach(), batch["species"])
+    squared, norm = occupancy_error(physical, batch["paw"], batch["paw_mask"])
+    error, measured_loss = validate_occupancies(operator, [batch])
+    assert error == pytest.approx(float(torch.sqrt(squared / norm)), rel=1e-5)
+    assert measured_loss == pytest.approx(float(loss), rel=1e-5)
+
+
 def _wigner(rotation, lmax=4, seed=0):
     """Real Wigner matrices by least squares: Y_L(R u) = D_L Y_L(u)."""
     rng = np.random.default_rng(seed)
@@ -178,7 +221,8 @@ class TestTheReadoutIsAPropertyOfTheFieldNotTheGrid:
     integrated on one spacing, the same features are 4.9 %.
     """
 
-    def test_two_grids_give_the_same_features(self):
+    @pytest.mark.parametrize("g_max", [6.5, 2.239581])
+    def test_two_grids_give_the_same_features(self, g_max):
         """
         The coarse grid holds modes up to |k| = 7 and the fine one up to 19,
         so the two arrays differ above the band --- and must agree on it.
@@ -191,7 +235,7 @@ class TestTheReadoutIsAPropertyOfTheFieldNotTheGrid:
         assert float(torch.linalg.vector_norm(field.G[~held], dim=1).min()) \
             > 6.5
 
-        readout = SiteReadout(g_max=6.5).double()
+        readout = SiteReadout(g_max=g_max).double()
         frac = torch.tensor([[0.13, 0.41, 0.77], [0.5, 0.52, 0.1]],
                             dtype=torch.float64)
         coarse = readout(field.grid(coarse_grid), field.cell, frac)
@@ -199,11 +243,12 @@ class TestTheReadoutIsAPropertyOfTheFieldNotTheGrid:
         for L in range(5):
             assert torch.allclose(coarse[L], fine[L], rtol=1e-10, atol=1e-12)
 
-    def test_it_is_the_integral_it_claims_to_be(self):
+    @pytest.mark.parametrize("g_max", [6.5, 2.239581])
+    def test_it_is_the_integral_it_claims_to_be(self, g_max):
         from poraque.ml.paw import READOUT_RADIUS
 
-        field = _Field(g_below=6.0)
-        readout = SiteReadout(g_max=6.5).double()
+        field = _Field(g_below=g_max - 0.1, kmax=2, count=40)
+        readout = SiteReadout(g_max=g_max).double()
         frac = torch.tensor([[0.13, 0.41, 0.77]], dtype=torch.float64)
         got = readout(field.grid((30, 34, 40)), field.cell, frac)
 
@@ -225,6 +270,37 @@ class TestTheReadoutIsAPropertyOfTheFieldNotTheGrid:
             reference = reference * readout.norms[L][:, None]
             error = torch.linalg.norm(got[L][0] - reference.reshape(-1, 2 * L + 1))
             assert float(error / torch.linalg.norm(reference)) < tolerance, L
+
+    def test_low_band_constant_has_no_position_error_or_multipoles(self):
+        from scipy.integrate import quad
+        from poraque.ml.paw import READOUT_RADIUS
+
+        readout = SiteReadout(g_max=2.239581).double()
+        cell = torch.eye(3, dtype=torch.float64) * 6
+        frac = torch.tensor([[0, 0, 0], [0.137, 0.416, 0.771]], dtype=torch.float64)
+        got = readout(torch.ones(2, 12, 12, 12, dtype=torch.float64), cell, frac)
+        reference = []
+        for width, norm in zip(readout.widths, readout.norms[0]):
+            integral = quad(lambda r: r ** 2 * math.exp(-r ** 2 / (2 * float(width) ** 2))
+                            * 0.5 * (1 + math.cos(math.pi * r / READOUT_RADIUS)),
+                            0, READOUT_RADIUS, epsabs=1e-12)[0]
+            reference.append(math.sqrt(4 * math.pi) * float(norm) * integral)
+        expected = torch.tensor(reference * 2, dtype=torch.float64)
+        torch.testing.assert_close(got[0][..., 0], expected.expand(2, -1),
+                                   atol=1e-12, rtol=1e-12)
+        for L in range(1, 5):
+            assert float(got[L].abs().max()) < 1e-12
+
+    def test_low_band_field_and_position_gradients(self):
+        torch.manual_seed(1)
+        readout = SiteReadout(2, lmax=2).double()
+        fields = torch.randn(1, 4, 4, 4, dtype=torch.float64, requires_grad=True)
+        frac = torch.tensor([[0.13, 0.41, 0.77]], dtype=torch.float64,
+                            requires_grad=True)
+        cell = torch.eye(3, dtype=torch.float64) * 4
+        def project(f, positions):
+            return tuple(readout(f, cell, positions).values())
+        assert torch.autograd.gradcheck(project, (fields, frac), fast_mode=True)
 
     def test_a_grid_too_coarse_for_the_band_is_refused(self):
         field = _Field(g_below=6.0)
@@ -257,7 +333,8 @@ class TestTheReadoutIsAPropertyOfTheFieldNotTheGrid:
 class TestEveryPartRotatesWithTheCrystal:
     """``D^L`` in, ``D^L`` out, for every L block."""
 
-    def test_the_readout_and_the_neighbours(self):
+    @pytest.mark.parametrize("g_max", [6.5, 2.239581])
+    def test_the_readout_and_the_neighbours(self, g_max):
         field = _Field(g_below=6.0)
         rotation = _rotation()
         D = _wigner(rotation)
@@ -265,7 +342,7 @@ class TestEveryPartRotatesWithTheCrystal:
         frac = torch.tensor([[0.13, 0.41, 0.77], [0.6, 0.2, 0.3],
                              [0.9, 0.8, 0.5]], dtype=torch.float64)
         values = field.grid((30, 34, 40))
-        readout = SiteReadout(g_max=6.5).double()
+        readout = SiteReadout(g_max=g_max).double()
         neighbours = NeighbourExpansion().double()
         a, b = readout(values, field.cell, frac), readout(values,
                                                           rotated_cell, frac)
@@ -639,6 +716,41 @@ class TestTheScriptsDriveIt:
             assert sorted(blocks) == ["set 0", "set 1"]
             assert sorted(blocks["set 0"]) == ["L0", "L2"]
             assert 0.0 <= blocks["set 0"]["L0"]["relative_rms"]
+
+    def test_inference_accepts_a_standalone_paw_bundle(self, trained):
+        import shutil
+        import poraque_inference
+        from poraque.ml import read_bundle
+        from poraque.fields.vasp.volumetric import read_augmentation_blocks
+        from poraque.fields.vasp.augmentation import occupancy_arrays
+
+        tmp_path, runs = trained
+        original = tmp_path / "models" / "paw_run" / "paw_run.poraque"
+        state = read_bundle(str(original))
+        state["model_state_dict"] = {"ext2paw": state["model_state_dict"]["ext2paw"]}
+        bundle = tmp_path / "paw_only.poraque"
+        torch.save(state, bundle)
+        new = tmp_path / "new_paw_only"
+        new.mkdir()
+        # Keep a tau reference to check that compare/plot also skip a field
+        # the bundle cannot predict, even if a reference file is present.
+        for name in ("POSCAR", "POTCAR", "INCAR", "CHGCAR", "TAUCAR"):
+            shutil.copy(os.path.join(runs, "structure_0000", name), new / name)
+        out = tmp_path / "predicted_paw_only"
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            result = poraque_inference.predict([
+                str(new), "--models", str(bundle), "--output", str(out),
+                "--grid", "16", "16", "16", "--add-paw", "--paw-source", "model",
+                "--compare", "--plot-dir", str(tmp_path / "plots_paw_only"), "--device", "cpu"])
+        assert set(result["outputs"]) == {"EXTCAR", "CHGCAR"}
+        assert "energy" not in result and "kinetic_energy" not in result
+        assert "TAUCAR" not in result["comparison"]
+        assert result["paw_augmentation"]["source"] == "model"
+        _, blocks = read_augmentation_blocks(str(out / "CHGCAR"))
+        records, lengths = occupancy_arrays(blocks)
+        assert records.shape == (2, 2, 6)
+        assert lengths.tolist() == [6, 6]
 
     def test_inference_writes_the_operators_own_records(self, trained):
         import shutil

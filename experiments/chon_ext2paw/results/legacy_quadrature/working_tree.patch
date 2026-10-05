@@ -1,0 +1,143 @@
+diff --git a/scripts/poraque_train.py b/scripts/poraque_train.py
+index c59e8fe..71b5d9c 100644
+--- a/scripts/poraque_train.py
++++ b/scripts/poraque_train.py
+@@ -1081,11 +1081,11 @@ def build_operator(task, train_set, config, log):
+     # a second `**`: both dicts carry the key, and `f(**a, **b)` on a shared
+     # key is a TypeError.
+     model_kwargs = config.model_kwargs()
+-    model_kwargs.update(resolve_radial_basis(train_set, config, log))
+-
+     if task.site_target is not None:
+         model_kwargs.update(resolve_occupancy_head(train_set, config, log,
+                                                    out_channels))
++    model_kwargs.update(resolve_radial_basis(
++        train_set, config, log, modes=model_kwargs["modes"]))
+ 
+     # init_seed reaches FieldOperator, which isolates the draw from the global
+     # stream; the manual_seed here keeps the ambient behaviour when it is unset.
+@@ -1114,7 +1114,7 @@ def build_operator(task, train_set, config, log):
+     if config.model.precision != "float32":
+         log(f"      precision: {config.model.precision} — roughly twice the "
+             f"time and memory of the float32 default")
+-    report_mode_selection(train_set, config, log)
++    report_mode_selection(train_set, config, log, modes=max(backbone.modes))
+     report_radial_basis(train_set, backbone, log)
+     return operator
+ 
+@@ -1429,7 +1429,7 @@ def report_occupancies(operator, train_set, train_records, validation,
+     return summary
+ 
+ 
+-def resolve_radial_basis(train_set, config, log):
++def resolve_radial_basis(train_set, config, log, modes=None):
+     r"""
+     Turn ``model.equivariant.g_basis: auto`` into a number, from the data.
+ 
+@@ -1463,7 +1463,7 @@ def resolve_radial_basis(train_set, config, log):
+     if not cells:
+         return {}
+     resolved = resolve_g_basis(
+-        cells, shapes, config.model.modes,
++        cells, shapes, config.model.modes if modes is None else modes,
+         mode_selection=config.model.mode_selection, g_max=config.model.g_max)
+     log(f"      g_basis: auto -> {resolved:.3f} 1/Ang, the median band the "
+         f"{len(cells)} training structures retain")
+@@ -1535,7 +1535,7 @@ def report_radial_basis(train_set, model, log):
+             "wide cost 14-43 %. Set model.equivariant.g_basis: auto.")
+ 
+ 
+-def report_mode_selection(train_set, config, log):
++def report_mode_selection(train_set, config, log, modes=None):
+     r"""
+     Say how many modes the run will actually use, per structure.
+ 
+@@ -1552,7 +1552,7 @@ def report_mode_selection(train_set, config, log):
+     if config.model.mode_selection != "physical" or config.model.g_max is None:
+         return
+ 
+-    ceiling = config.model.modes
++    ceiling = config.model.modes if modes is None else modes
+     counts = []
+     # The cells come from the dataset's own samples rather than from a second
+     # read of the files: they are already the geometry `physical_modes` will be
+diff --git a/src/poraque/fields/resample.py b/src/poraque/fields/resample.py
+index c7fe4d2..d6241a0 100644
+--- a/src/poraque/fields/resample.py
++++ b/src/poraque/fields/resample.py
+@@ -204,7 +204,8 @@ def downsample_shape(shape, factor=None, target_max=None):
+         Divide every axis by this integer.
+     target_max : int, optional
+         Scale so the longest axis is at most this many points, preserving the
+-        aspect ratio — the right choice when materials have different grids,
++        aspect ratio with a minimum of four points on each reduced axis —
++        the right choice when materials have different grids,
+         since it keeps the *physical* resolution comparable rather than forcing
+         a common shape.
+ 
+@@ -223,5 +224,8 @@ def downsample_shape(shape, factor=None, target_max=None):
+     else:
+         raise ValueError("Pass either `factor` or `target_max`.")
+ 
+-    return tuple(min(source, fft_friendly_size(value))
++    # Spectral truncation drops the Nyquist row and needs at least one
++    # conjugate pair. Very elongated CHON cells otherwise request 2x2x24,
++    # which spectral_resample cannot represent.
++    return tuple(min(source, max(4, fft_friendly_size(value)))
+                  for source, value in zip(shape, scaled))
+diff --git a/src/poraque/ml/paw.py b/src/poraque/ml/paw.py
+index 5e89a3e..c0506b2 100644
+--- a/src/poraque/ml/paw.py
++++ b/src/poraque/ml/paw.py
+@@ -235,12 +235,14 @@ class SiteReadout(nn.Module):
+         source = keep.nonzero(as_tuple=True)
+         destination = [(integers[..., axis][source].long() % target[axis])
+                        for axis in range(3)]
+-        out = torch.zeros(channels, *target, dtype=spectrum.dtype,
++        # Real-valued indexing also keeps the backward scatter portable to
++        # MPS, whose complex advanced-index backward is unsupported.
++        out = torch.zeros(channels, *target, 2, dtype=fields.dtype,
+                           device=fields.device)
+         scale = float(np.prod(target)) / float(np.prod(shape))
+-        out[(slice(None), *destination)] = spectrum[(slice(None), *source)] \
+-            * scale
+-        return torch.fft.ifftn(out, dim=(-3, -2, -1)).real
++        out[(slice(None), *destination, slice(None))] = torch.view_as_real(
++            spectrum)[(slice(None), *source, slice(None))] * scale
++        return torch.fft.ifftn(torch.view_as_complex(out), dim=(-3, -2, -1)).real
+ 
+     def forward(self, fields, cell, frac):
+         """
+@@ -288,7 +290,9 @@ class SiteReadout(nn.Module):
+         radial = torch.exp(-r2[..., None] / (2.0 * widths ** 2)) \
+             * window[..., None]                                     # (A, P, n)
+         harmonics = solid_harmonics(displacement, self.lmax)
+-        volume = torch.abs(torch.linalg.det(cell)) / float(np.prod(shape))
++        from .physics import cell_volume
++
++        volume = cell_volume(cell, dtype=fields.dtype)[0] / float(np.prod(shape))
+ 
+         weighted = torch.einsum("cap,apn->acnp", values, radial) * volume
+         out = {}
+@@ -656,6 +660,11 @@ class OccupancyTransform:
+     def loss(self, predicted, target, species, atom_mask):
+         """Mean squared error in the normalised form, each L block weighted
+         equally, averaged over real atoms and sets."""
++        # The model pads to its longest element; a shape bucket containing
++        # only shorter records (e.g. H in a CHON model) pads to less.
++        if predicted.shape[-1] < target.shape[-1]:
++            raise ValueError("the prediction is shorter than the PAW target")
++        predicted = predicted[..., :target.shape[-1]]
+         _, _, weight = self._lookup(species, predicted.device, predicted.dtype)
+         n = predicted.shape[-1]
+         error = ((predicted - target) ** 2) * weight[..., :n]
+@@ -694,6 +703,9 @@ def occupancy_error(predicted, target, paw_mask):
+         ``(squared error, squared norm)`` sums, so a caller can pool batches
+         before taking the ratio.
+     """
++    if predicted.shape[-1] < target.shape[-1]:
++        raise ValueError("the prediction is shorter than the PAW target")
++    predicted = predicted[..., :target.shape[-1]]
+     valid = paw_mask[:, :, None, :].to(predicted.dtype)
+     return (((predicted - target) ** 2) * valid).sum(), \
+         ((target ** 2) * valid).sum()
