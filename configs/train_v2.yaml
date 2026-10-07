@@ -1,0 +1,59 @@
+# CHONPS ext2paw, revised 2026-10-06 (see poraque_modifications.md).
+# Changes against train_original.yaml:
+#   - backbone 16/6/3 -> 64/24/6, radial basis 8 -> 24 functions spanning 12 1/Ang
+#     (the old basis stopped at 3.9 1/Ang; bonding charge needs the band);
+#   - model.structure_input: rho_sup and one superposition per element as inputs;
+#   - data.max_spacing 0.25: long thin cells no longer cached at 0.4-0.7 Ang;
+#   - data.target_scale 0.1: asinh scale of the delta-density target (median was 0.014);
+#   - paw.readout_g_max 6.0 (was 2.24, the res-24 limit; <6.28 keeps the spectral readout), magnetization_weight 0.1;
+#   - early_stopping = epochs: the cosine schedule runs to the end, best weights restored.
+task:
+  type: ext2paw
+  name: chonps_v2
+data:
+  data_paths:
+  - ./MP/CHONPS/
+  cache: ./cache/chonps_res48
+  potcar_dir: /home/leseixas/Codes/vasp/POTCARs
+  strict_potcar: true
+  atomic_reference: ./isolated_atoms/
+  delta_density: true
+  resolution: 48
+  max_spacing: 0.25
+  target_scale: 0.1
+  storage: hdf5
+  cache_in_memory: true
+model:
+  use_coordinates: false
+  mode_selection: physical
+  g_max: 12
+  structure_input:
+    enable: true
+    superposition: true
+    elements: auto
+  equivariant:
+    enable: true
+    n_radial: 24
+    g_basis: 12
+    spherical_cutoff: true
+  paw:
+    enable: true
+    width: 64
+    modes: 24
+    n_layers: 6
+    readout_g_max: 6.0
+    occupancy_weight: 3
+    neighbor_min: 0.6
+    magnetization_weight: 0.1
+    readout_cache_mib: 1024
+training:
+  epochs: 300
+  learning_rate: 0.003
+  batch_size: 4
+  eval_epoch: 5
+  early_stopping: 300
+  init_seed: 1
+  device: cuda
+  physics_informed:
+    enable: true
+    electron_count_weight: 10.0
