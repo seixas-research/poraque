@@ -131,12 +131,22 @@ class TestCurrentDirectory:
         ])
         assert args.directory == "."
         assert args.output == "."
-        assert args.models == "../../../best.poraque"
+        assert args.models == ["../../../best.poraque"]
 
     @pytest.mark.parametrize("flag", ["--model", "--models", "-m"])
     def test_model_aliases(self, flag):
         args = poraque_inference.build_parser().parse_args([flag, "best.poraque"])
-        assert args.models == "best.poraque"
+        assert args.models == ["best.poraque"]
+
+    def test_a_directory_after_the_models_stays_the_directory(self):
+        """
+        ``--models`` is repeated, not ``nargs="+"``: a list option would
+        swallow the positional directory written after it.
+        """
+        args = poraque_inference.build_parser().parse_args(
+            ["--models", "a.poraque", "--models", "b.poraque", "Pt2"])
+        assert args.models == ["a.poraque", "b.poraque"]
+        assert args.directory == "Pt2"
 
     def test_explicit_directories_are_respected(self):
         args = poraque_inference.build_parser().parse_args([
@@ -536,3 +546,89 @@ class TestAnIncarImpliesAVaspReadyOutput:
         log = "\n".join(lines)
         assert "--resolution 12 is ignored" in log
         assert max(grid.shape) != 12
+
+
+# ===================================================================== #
+# The chain for a PAW density: ext2paw -> paw2tau
+# ===================================================================== #
+#: PAW_PBE Pt projector channels, in POTCAR order: d d s s p p.
+PT_LAYOUT = {78: (2, 2, 0, 0, 1, 1)}
+
+
+def _occupancy_transform(sets=1):
+    from poraque.fields.vasp.augmentation import record_layout
+    from poraque.ml.paw import OccupancyTransform
+
+    length = len(record_layout(PT_LAYOUT[78]))
+    return OccupancyTransform(PT_LAYOUT, sets, {78: np.zeros((sets, length))},
+                              {78: np.ones((sets, length))})
+
+
+def _paw_bundles(tmp_path):
+    """
+    Two bundles from two "runs": an ext2paw operator and a paw2tau one.
+
+    Untrained, as :func:`_bundle`'s are; the read-out bias makes the density
+    positive so the renormalization branch is entered as in a real run.
+    """
+    common = dict(width=4, modes=2, n_layers=1, projection_channels=8,
+                  device="cpu", in_channels=1, out_channels=1,
+                  training_resolution=8, site_layouts=PT_LAYOUT,
+                  site_transform=_occupancy_transform())
+    density = FieldOperator("ext2paw", readout_g_max=3.0, **common)
+    with torch.no_grad():
+        density.model.backbone.project[-1].bias.fill_(4.0)
+    kinetic = FieldOperator("paw2tau", occupancy_channels=2, **common)
+    return (save_bundle(str(tmp_path / "density.poraque"),
+                        {"ext2paw": density}),
+            save_bundle(str(tmp_path / "kinetic.poraque"),
+                        {"paw2tau": kinetic}))
+
+
+class TestTheExt2pawChainFeedsPaw2tau:
+    """
+    ``--models`` takes the density operator and the kinetic one from two
+    bundles, and paw2tau reads the occupancies ext2paw predicts for the very
+    structure in front of it --- the chain proper, from a POSCAR alone.
+    """
+
+    def test_two_bundles_chain_into_a_taucar(self, structure_directory,
+                                             tmp_path):
+        density, kinetic = _paw_bundles(tmp_path)
+        results = poraque_inference.predict([
+            structure_directory, "--models", density, "--models", kinetic,
+            "--output", str(tmp_path / "predictions"), "--grid", "8", "8", "8",
+            "--zval", "Pt=10", "--functional", "skip", "--device", "cpu"])
+        assert results["kinetic_task"] == "paw2tau"
+        assert results["paw2tau_occupancies"].startswith("ext2paw")
+        assert os.path.exists(results["outputs"]["TAUCAR"])
+        log = (tmp_path / "predictions" / "inference.log").read_text()
+        assert "[KINETIC ENERGY DENSITY]" in log
+        assert "[paw2tau]" in log and "[ext2paw]" in log
+
+    def test_the_occupancies_are_laid_out_as_in_training(self):
+        """One record set, two Pt atoms, padded to the longest record."""
+        records = [[np.arange(138.0), np.arange(138.0) + 1.0]]
+        sites = poraque_inference.occupancy_sites(records, _structure())
+        assert sites["occupancies"].shape == (2, 1, 138)
+        assert list(sites["species"]) == [78, 78]
+        np.testing.assert_allclose(sites["positions"][1], [0.5, 0.5, 0.5])
+
+    def test_without_a_source_of_occupancies_it_says_what_to_add(
+            self, structure_directory, tmp_path):
+        _, kinetic = _paw_bundles(tmp_path)
+        density = _bundle(tmp_path, 1)
+        with pytest.raises(SystemExit, match="ext2paw operator to --models"):
+            poraque_inference.predict([
+                structure_directory, "--models", density, "--models", kinetic,
+                "--output", str(tmp_path / "predictions"),
+                "--grid", "8", "8", "8", "--zval", "Pt=10",
+                "--functional", "skip", "--device", "cpu"])
+
+    def test_kinetic_chg2tau_still_takes_the_density_route(
+            self, structure_directory, tmp_path):
+        _, kinetic = _paw_bundles(tmp_path)
+        results = _run(structure_directory, _bundle(tmp_path, 1), tmp_path,
+                       "--kinetic", "chg2tau")
+        assert results["kinetic_task"] == "chg2tau"
+        assert "paw2tau_occupancies" not in results

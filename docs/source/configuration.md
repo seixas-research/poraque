@@ -939,11 +939,27 @@ and positions assembled by hand, and raises without them.
 
 ```{warning}
 `paw2tau` is refused under `--kfold` and under fine-tuning, as `ext2paw` is
-and for the same reasons. It is not yet wired into `poraque-inference` or the
-ASE calculator, which still run `ext2chg` then `chg2tau`; chaining `ext2paw`
-into `paw2tau` for a total energy is the next step, not a feature of this
-release.
+and for the same reasons. The ASE calculator does not run it yet.
 ```
+
+`poraque-inference` chains `ext2paw` into `paw2tau`. The two operators are
+usually trained apart --- the density on whatever archive is at hand, the
+kinetic energy density on calculations that wrote a `TAUCAR` --- so
+`--models` may be repeated, and each task is taken from the first bundle that
+holds it:
+
+```bash
+poraque-inference Pt2/ --models models/chonps_v2/chonps_v2.poraque \
+                       --models models/pt_paw2tau/pt_paw2tau.poraque
+```
+
+`--kinetic auto` (the default) runs `paw2tau` whenever a bundle holds it, and
+then prefers `ext2paw` for the density, so the pseudo-density and the
+occupancies `paw2tau` reads come from one model; `--kinetic chg2tau` keeps the
+density route. The occupancies are the ones the `ext2paw` operator predicts
+for the structure in front of it; with no `ext2paw` in `--models`, those of a
+reference `CHGCAR` beside the structure; with neither, the run stops and says
+what to add.
 
 ### `pauli_residual` and its scale
 

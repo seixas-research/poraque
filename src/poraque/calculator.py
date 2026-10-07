@@ -1004,3 +1004,145 @@ def _grid_shape(cell, resolution):
     scale = resolution / lengths.max()
     return tuple(fft_friendly_size(max(4, int(round(length * scale))))
                  for length in lengths)
+
+
+class PoraquePAW(Calculator):
+    r"""
+    Total energy and forces through the PAW chain ``ext2paw -> paw2tau``.
+
+    The energy is VASP's PAW total energy (:mod:`poraque.physics.paw`),
+    evaluated on the fields the operators predict: the pseudo-density with its
+    compensation charge and magnetization, every atom's augmentation
+    occupancies, and the pseudo kinetic energy density. It is comparable to the
+    ``TOTEN`` of the calculations the operators were trained on --- same
+    ``POTCAR``, same ``ENCUT`` --- and evaluated from those calculations' own
+    fields it reproduces ``TOTEN`` to the meV.
+
+    The forces are :math:`-\partial E/\partial\mathbf R` of that predicted
+    energy, by automatic differentiation through the whole chain
+    (:class:`~poraque.ml.energy.PawEnergyChain`): conservative, and exactly
+    consistent with :meth:`get_potential_energy`. They are as good as the
+    energy surface the operators learned, and no better.
+
+    Parameters
+    ----------
+    models : str or sequence of str, optional
+        Bundles; each task is taken from the first that holds it. One must
+        hold ``ext2paw`` and one ``paw2tau`` (or ``chg2tau``), unless the
+        operators are passed directly.
+    potcar_dir : str
+        The POTCAR library the operators were trained with.
+    lasph : bool, optional
+        One-center xc as the training data's ``LASPH`` (the Materials Project
+        sets it; VASP's default does not).
+    encut : float, optional
+        The training data's ``ENCUT``, for the basis error of ``EATOM``.
+    resolution, max_spacing : optional
+        The grid rule; default to the density bundle's training settings.
+    device : str, optional
+    precision : str, optional
+        ``"float64"`` (default) for the forces; ``"float32"`` is faster.
+    density_operator, kinetic_operator : FieldOperator, optional
+        Already-loaded operators, overriding ``models``.
+    """
+
+    implemented_properties = ["energy", "free_energy", "forces"]
+
+    def __init__(self, models=None, potcar_dir=None, lasph=True, encut=None,
+                 resolution=None, max_spacing=None, device="auto",
+                 precision="float64", density_operator=None,
+                 kinetic_operator=None, **kwargs):
+        if _ASE_ERROR is not None:                        # pragma: no cover
+            raise ImportError("PoraquePAW requires ASE") from _ASE_ERROR
+        Calculator.__init__(self, **kwargs)
+        from .ml.training import bundle_tasks, load_bundle, read_bundle
+
+        if potcar_dir is None:
+            raise ValueError("PoraquePAW needs potcar_dir, the POTCAR library "
+                             "the operators were trained with.")
+        bundles = [] if models is None else (
+            [models] if isinstance(models, (str, os.PathLike)) else list(models))
+        bundles = [resolve_bundle_path(str(b)) for b in bundles]
+
+        def first(task):
+            return next((b for b in bundles if task in bundle_tasks(b)), None)
+
+        device = None if device == "auto" else device
+        data = {}
+        if density_operator is None:
+            density_bundle = first("ext2paw")
+            if density_bundle is None:
+                raise ValueError(f"{bundles} hold no ext2paw operator; pass "
+                                 f"one, or density_operator=.")
+            density_operator = load_bundle(density_bundle, "ext2paw",
+                                           device=device)
+            data = (read_bundle(density_bundle).get("config")
+                    or {}).get("data", {})
+        if kinetic_operator is None:
+            kinetic_task = "paw2tau" if first("paw2tau") else "chg2tau"
+            kinetic_bundle = first(kinetic_task)
+            if kinetic_bundle is None:
+                raise ValueError(f"{bundles} hold no paw2tau or chg2tau "
+                                 f"operator; pass one, or kinetic_operator=.")
+            kinetic_operator = load_bundle(kinetic_bundle, kinetic_task,
+                                           device=device)
+        self.density_operator = density_operator
+        self.kinetic_operator = kinetic_operator
+        self.resolution = int(resolution or data.get("resolution")
+                              or self.density_operator.training_resolution
+                              or DEFAULT_RESOLUTION)
+        self.max_spacing = max_spacing if max_spacing is not None \
+            else data.get("max_spacing")
+        self.potcar_dir = str(potcar_dir)
+        self.lasph = bool(lasph)
+        self.encut = encut
+        self.precision = precision
+        self._chains = {}
+        self.components = None
+
+    def _grid(self, cell):
+        from .fields.grid import fft_friendly_size
+        from .fields.resample import downsampled_grid
+
+        lengths = np.linalg.norm(np.asarray(cell, dtype=float), axis=1)
+        # A fine 'native' grid to downsample from, by the cache's own rule.
+        native = FieldGrid(tuple(fft_friendly_size(length / 0.05)
+                                 for length in lengths), cell)
+        return downsampled_grid(native, self.resolution, self.max_spacing)
+
+    def _chain(self, atoms):
+        from .ml.energy import PawEnergyChain
+
+        order = np.argsort([element_of(s) for s in atoms.get_chemical_symbols()],
+                           kind="stable")
+        symbols = [element_of(atoms.get_chemical_symbols()[i]) for i in order]
+        species, counts = [], []
+        for symbol in symbols:
+            if not species or species[-1] != symbol:
+                species.append(symbol)
+                counts.append(0)
+            counts[-1] += 1
+        cell = np.asarray(atoms.cell, dtype=float)
+        key = (tuple(species), tuple(counts), tuple(np.round(cell, 8).ravel()))
+        frac = atoms.get_scaled_positions(wrap=True)[order]
+        if key not in self._chains:
+            structure = Structure(cell, species, counts, frac)
+            self._chains[key] = PawEnergyChain(
+                self.density_operator, self.kinetic_operator, structure,
+                self._grid(cell), self.potcar_dir, lasph=self.lasph,
+                encut=self.encut, precision=self.precision)
+        return self._chains[key], order, frac
+
+    def calculate(self, atoms=None, properties=("energy",),
+                  system_changes=None):
+        from ase.calculators.calculator import all_changes
+
+        Calculator.calculate(self, atoms, properties,
+                             system_changes or all_changes)
+        chain, order, frac = self._chain(self.atoms)
+        energy, sorted_forces = chain.forces(frac)
+        forces = np.zeros_like(sorted_forces)
+        forces[order] = sorted_forces
+        self.results["energy"] = energy
+        self.results["free_energy"] = energy
+        self.results["forces"] = forces

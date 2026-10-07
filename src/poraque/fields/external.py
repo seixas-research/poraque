@@ -392,16 +392,8 @@ class ExternalPotential(ScalarField):
         -------
         ExternalPotential
         """
-        from scipy.interpolate import CubicSpline
-
         entries = {entry.element: entry for entry in potcar}
-        g2 = grid.get_g2()
-        magnitude = np.sqrt(g2)
-        inverse_g2 = grid.get_inverse_g2(g2)
-        nonzero = inverse_g2 > 0
-
         v_g = np.zeros(grid.shape, dtype=complex)
-
         for symbol, atom_slice in structure.species_slices():
             element = element_of(symbol)
             entry = entries.get(element)
@@ -410,29 +402,9 @@ class ExternalPotential(ScalarField):
                     f"No tabulated local potential for {element!r}. Read the "
                     f"POTCAR with parse_tables=True."
                 )
+            v_g += potcar_local_spectrum(grid, entry) * _structure_factor(
+                grid, structure.scaled_positions[atom_slice])
 
-            q_grid = entry.local_q_grid
-            spline = CubicSpline(q_grid, entry.local_potential,
-                                 bc_type="natural", extrapolate=False)
-
-            # VASP: IF (G /= 0 .AND. G < PSGMAX - PSGMAX/NPSPTS)
-            limit = entry.psgmax - entry.psgmax / entry.NPSPTS
-            inside = nonzero & (magnitude < limit)
-
-            short_range = np.zeros_like(g2)
-            short_range[inside] = spline(magnitude[inside])
-
-            coulomb = np.zeros_like(g2)
-            coulomb[inside] = (-4.0 * np.pi * entry.zval
-                               * COULOMB_CONSTANT_EV_ANGSTROM
-                               * inverse_g2[inside])
-
-            structure_factor = _structure_factor(
-                grid, structure.scaled_positions[atom_slice]
-            )
-            v_g += (short_range + coulomb) * structure_factor * inside
-
-        v_g /= grid.volume
         data = np.real(np.fft.ifftn(v_g) * grid.npoints)
 
         payload = {
@@ -544,6 +516,51 @@ class ExternalPotential(ScalarField):
 # ---------------------------------------------------------------------- #
 # Helpers
 # ---------------------------------------------------------------------- #
+def potcar_local_spectrum(grid, entry):
+    r"""
+    One species' local potential on ``grid``'s reciprocal mesh, per atom.
+
+    .. math::
+
+        \frac{1}{\Omega}\left[v_{\rm short}(G) - \frac{4\pi Z e^2}{G^2}\right]
+
+    for :math:`0 < G < \mathrm{PSGMAX}(1 - 1/N_{\rm pts})`, zero elsewhere ---
+    VASP's ``POTION``. The potential of a structure is the sum over species of
+    this times the species' structure factor, then an inverse FFT; kept as the
+    complex spectrum, before that real projection, because a caller that moves
+    the atoms (:class:`~poraque.ml.energy.PawEnergyChain`) must apply its own
+    phases first: on a skew cell the Nyquist planes are not Hermitian, and the
+    real part does not commute with a phase.
+
+    Parameters
+    ----------
+    grid : FieldGrid
+    entry : PotcarSingle
+        Read with ``parse_tables=True``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Complex, ``grid.shape``, eV.
+    """
+    from scipy.interpolate import CubicSpline
+
+    g2 = grid.get_g2()
+    magnitude = np.sqrt(g2)
+    inverse_g2 = grid.get_inverse_g2(g2)
+    nonzero = inverse_g2 > 0
+    spline = CubicSpline(entry.local_q_grid, entry.local_potential,
+                         bc_type="natural", extrapolate=False)
+    # VASP: IF (G /= 0 .AND. G < PSGMAX - PSGMAX/NPSPTS)
+    limit = entry.psgmax - entry.psgmax / entry.NPSPTS
+    inside = nonzero & (magnitude < limit)
+    spectrum = np.zeros(grid.shape, dtype=complex)
+    spectrum[inside] = (spline(magnitude[inside])
+                        - 4.0 * np.pi * entry.zval
+                        * COULOMB_CONSTANT_EV_ANGSTROM * inverse_g2[inside])
+    return spectrum / grid.volume
+
+
 def structure_factor(grid, scaled_positions):
     r"""
     Structure factor :math:`\sum_a e^{-i\mathbf{G}\cdot\boldsymbol{\tau}_a}`.

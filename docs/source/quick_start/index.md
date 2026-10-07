@@ -79,8 +79,10 @@ write `CHGCAR` here with:
 poraque-inference --model ../../../best.poraque --from-incar ./INCAR --paw-source model
 ```
 
-`--model`, `--models` and `-m` select the same checkpoint. An explicit input
-directory or `--output` overrides its respective default.
+`--model`, `--models` and `-m` select the same checkpoint, and may be
+repeated to take each task from the first bundle holding it (an `ext2paw`
+from one run, a `paw2tau` from another). An explicit input directory or
+`--output` overrides its respective default.
 
 Both operators come from the single `.poraque` bundle written by
 step 3. The grid is sized from `--encut` (default **200 eV**) at `PREC=Normal`,

@@ -398,3 +398,117 @@ Rescaling the predicted density to the known electron count does **not** help:
 $E_\mathrm{ext}$ is linear in $\rho$, so correcting a 0.3% electron-count error
 shifts a $-12690$ eV term by about 38 eV. It was measured and rejected, not
 assumed.
+
+## The PAW total energy and forces
+
+The energy above is an orbital-free estimate on the total density. The PAW
+chain --- `ext2paw` for the pseudo-density, its magnetization and every atom's
+augmentation occupancies, then `paw2tau` for the pseudo kinetic energy density
+--- predicts every field VASP's own total energy is a function of, and
+{mod}`poraque.physics.paw` evaluates that function. Evaluated on a VASP
+calculation's own files it reproduces `TOTEN`:
+
+| Run (VASP 6.6.1, PBE) | `LASPH` | Rebuilt − `TOTEN` (eV) |
+|---|---|---|
+| diamond, 2 atoms | F | +0.0002 |
+| COS, 3 atoms | F | −0.0006 |
+| CN, displaced | T | +0.000005 |
+| Pt bulk, 32 atoms, spin-polarized (`structure_0000`) | F | +0.0012 |
+
+### The expression
+
+$$
+\begin{aligned}
+E ={}& \int\tilde\tau + E_H[\tilde n + \hat n] + \int v_{\rm loc}(\tilde n + \hat n)
++ \alpha Z + E_{\rm Ewald} + E_{\rm xc}[\tilde n + \hat n + \tilde n_c] \\
+&+ \sum_a \Big\{\sum_{ij}\bar D^a_{ij}\rho^a_{ij}
++ E_H[n^1_a] - E_H[\tilde n^1_a + \hat n_a]
++ E_{\rm xc}[n^1_a + n_c] - E_{\rm xc}[\tilde n^1_a + \hat n_a + \tilde n_c]
+- E_{\rm xc}[n_c] \Big\} \\
+&+ \sum_a \big(E^{\rm atom}_a - E^{\rm err}_a(E_{\rm cut})\big),
+\end{aligned}
+$$
+
+in VASP's units and conventions throughout (`AUTOA`, `RYTOEV` and the
+`FELECT` they imply, not CODATA: the difference alone is 0.1--0.2 eV on a Pt
+cell). The grid terms are evaluated on the `CHGCAR` mesh; the one-center terms
+on each `POTCAR`'s logarithmic grid with VASP's Simpson weights, its radial
+Hartree solver and its compensation shapes (two spherical Bessel functions per
+L). With `LASPH = .FALSE.` the one-center xc is VASP's: second-order in the
+non-spherical part for LDA, spherical-only for the gradient correction; with
+`LASPH = .TRUE.` it is the full functional on a Gauss--Legendre × uniform
+angular grid.
+
+One point is easy to get wrong: $\bar D_{ij}$ must be built with the
+reference-atom potentials VASP **recomputes** at start-up from the occupancies
+in the `POTCAR`, not with the `aepotential`/`pspotential` tables written in it.
+With the tables, the Pt cell is 1.17 eV off; with the recomputed potentials,
+1.2 meV.
+
+From files:
+
+```python
+from poraque.physics.paw import vasp_total_energy
+
+terms = vasp_total_energy("path/to/run")    # CHGCAR, TAUCAR, POTCAR, INCAR
+terms["total"]                              # TOTEN, less EENTRO (pass entropy=)
+```
+
+The run must write `TAUCAR` (`LTAU = .TRUE.`, VASP >= 6.6) and, for an
+element with d channels, occupancies to L = 4 (`LMAXMIX = 4`).
+
+### Forces
+
+{class}`~poraque.ml.energy.PawEnergyChain` writes the whole chain in torch:
+the external potential, the atomic superposition and the per-element
+structure channels are rebuilt on the fixed grid as per-species spectra times
+structure factors (checked at construction against the direct construction),
+fed to `ext2paw`, its output to `paw2tau`, and both to the differentiable
+energy ({class}`~poraque.ml.energy.GridEnergyTorch`,
+{class}`~poraque.ml.energy.OneCenterTorch`, equal to the NumPy evaluation to
+1e-11 eV). The forces are $-\partial E/\partial\mathbf R$ by automatic
+differentiation, plus the analytic Ewald forces: conservative by construction,
+and checked against central differences of the same energy.
+
+```python
+from poraque.calculator import PoraquePAW
+
+atoms.calc = PoraquePAW(["pt_ext2paw.poraque", "pt_paw2tau.poraque"],
+                        potcar_dir="POTCARs", lasph=False, encut=400)
+atoms.get_potential_energy(), atoms.get_forces()
+```
+
+`lasph` and `encut` must be the training data's. The operators run in double
+precision by default (`precision="float64"`), which the forces need.
+
+What this does not do: VASP's forces come from the variational minimum, where
+the derivative of the density with respect to $\mathbf R$ drops out. Here the
+density is a learned function of the positions and its derivative is kept, so
+the forces are those of the predicted energy surface: as accurate as the
+operators make that surface, and no more.
+
+### How accurate the operators must be
+
+The expression is not variational in the predicted fields: an error in any of
+them enters the energy at first order, and the terms it enters are large. On
+the 32-atom Pt cell, $\int\tilde\tau \approx 7000$ eV and the one-center
+energy $\approx 7100$ eV, and three L = 0 occupancies of the d channels carry
+a sensitivity of about 70 eV per unit occupancy each. Measured with Pt
+operators trained on this repository's 97 structures (density 0.6 %,
+$\tilde\tau$ 1.4 %, occupancies about 1.5 % relative error on held-out data):
+
+| Source of the error | Energy error, Pt bulk cell |
+|---|---|
+| $\tilde\tau$, 1.3 % | −77 eV |
+| occupancies, 1.6 % | +94 eV |
+| density, 0.07 % (normalized to the electron count) | −6 eV |
+
+Fine-tuning both operators jointly on the energy itself (the label being each
+structure's PAW energy from its own fields) brings the held-out error from 2.7
+to 0.20 eV/atom, but the forces stay unusable: on a held-out 38-atom
+nanoparticle, a force RMS error of 14.8 eV/Å against VASP's 0.73 eV/Å RMS,
+almost all of it from the kinetic and one-center terms, whose predicted values
+vary with the positions in a way the field losses never constrain. Energies
+to meV/atom need occupancies and $\int\tilde\tau$ to about $10^{-5}$
+relative; useful forces need a training signal on the gradient itself, i.e.
+force labels.
