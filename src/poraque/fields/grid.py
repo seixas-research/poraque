@@ -244,7 +244,7 @@ class FieldGrid:
     def from_vasp_inputs(cls, poscar, incar=None, potcar=None, shape=None,
                          encut=None, prec=None):
         """
-        Build the grid from a set of VASP inputs, honouring the usual precedence.
+        Build the grid from a set of VASP inputs, honoring the usual precedence.
 
         The shape is resolved in this order, first hit wins:
 
@@ -361,7 +361,7 @@ class FieldGrid:
         Every periodic electrostatic term in the package — the Hartree
         potential, the local pseudopotential, the Hellmann–Feynman force —
         divides by :math:`|G|^2` and drops the :math:`G = 0` component, which
-        is the neutralising background of a charged periodic system. One
+        is the neutralizing background of a charged periodic system. One
         helper, so the threshold below which a mode counts as :math:`G = 0` is
         decided once.
 

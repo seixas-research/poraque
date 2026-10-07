@@ -845,7 +845,7 @@ class TestTheKanBlockInAConfig:
         assert kwargs["kan_use_base"] is False
         assert "kan_setup" not in kwargs
 
-    def test_a_bare_kan_is_the_papers_own_parameterisation(self):
+    def test_a_bare_kan_is_the_papers_own_parameterization(self):
         """`activation: kan` with nothing else means the B-spline KAN, so the
         unqualified word means what the literature means by it rather than
         whichever variant happens to be cheapest."""

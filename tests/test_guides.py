@@ -108,7 +108,7 @@ class TestTheStampMatchesThePackage:
         # a defect -- failing on it would make the suite red for every commit
         # that touches version.py. What this test is for is a PDF that was
         # rebuilt *after* the bump and still carries the old string, which is
-        # a broken stamp rather than a stale artefact.
+        # a broken stamp rather than a stale artifact.
         source = os.path.join(ROOT, "src", "poraque", "version.py")
         if os.path.getmtime(pdf) < os.path.getmtime(source):
             pytest.skip("version.py is newer than the built PDF; "
@@ -127,7 +127,7 @@ class TestTheStampMatchesThePackage:
 @pytest.mark.parametrize("guide", GUIDES)
 class TestCoverPalette:
     r"""
-    Four colours, and the darkest has exactly one permitted use.
+    Four colors, and the darkest has exactly one permitted use.
 
     The logo's yellow, and a navy ramp held at one hue (~215 degrees) that
     varies only in lightness: ``poraquelime`` a sky blue, ``poraquegreen`` the
@@ -145,7 +145,7 @@ class TestCoverPalette:
         "poraquecover": "10,30,59",
     }
 
-    def test_every_colour_is_defined(self, guide):
+    def test_every_color_is_defined(self, guide):
         source = _read(f"latex/{guide}.tex")
         for name, rgb in self.PALETTE.items():
             assert f"\\definecolor{{{name}}}{{RGB}}{{{rgb}}}" in source, name
@@ -186,26 +186,26 @@ class TestTheReportMatchesTheGuides:
     """
     The per-run PDF report says its palette is "shared with the user and
     technical guides", and it was not: the guides moved to navy and every
-    report went on printing the retired green. Compared here colour by colour,
-    so the next recolour of either fails until both agree.
+    report went on printing the retired green. Compared here color by color,
+    so the next recolor of either fails until both agree.
     """
 
     NAMES = ("poraqueyellow", "poraquelime", "poraquegreen", "poraquecover",
              "poraquedark")
 
     @staticmethod
-    def _colours(source):
+    def _colors(source):
         import re
 
         return dict(re.findall(
             r"\\definecolor\{+(poraque\w+)\}+\{+RGB\}+\{+([\d,]+)\}+", source))
 
-    def test_every_brand_colour_agrees(self):
+    def test_every_brand_color_agrees(self):
         from poraque.vis.pdf_report import ModelReport
 
-        report = self._colours(
+        report = self._colors(
             ModelReport("reports", logo=None)._preamble("chg2tau", "x"))
         for guide in GUIDES:
-            colours = self._colours(_read(f"latex/{guide}.tex"))
+            colors = self._colors(_read(f"latex/{guide}.tex"))
             for name in self.NAMES:
-                assert report[name] == colours[name], (guide, name)
+                assert report[name] == colors[name], (guide, name)

@@ -19,7 +19,7 @@ Three things added together, because they are read together:
   random sample of each one's voxels folded into a sparse histogram. Before, it
   drew the first training structure against the first validation one; and a
   split is too large to hold as voxels at all;
-* a **spin-polarised** operator's objective is over (rho, m) at once, so its
+* a **spin-polarized** operator's objective is over (rho, m) at once, so its
   log now says how much of it is each channel.
 """
 
@@ -92,7 +92,7 @@ class TestTheProfileTimesAndWeighsEachStage:
         profile.end()
         lines = profile.summary()
         text = "\n".join(lines)
-        assert "RESOURCE PROFILING SUMMARY" in text
+        assert "[RESOURCES]" in text
         assert "wall time" in text and "peak RSS" in text
         assert "total (wall clock)" in text
         # No VRAM column on a CPU run rather than a column of dashes.
@@ -155,13 +155,13 @@ class TestPoraqueTrainPrintsTheSummaryLast:
             warnings.simplefilter("ignore", RuntimeWarning)
             poraque_train.run(["--config", self._config(tmp_path)])
         out = capsys.readouterr().out
-        summary = out[out.rindex("RESOURCE PROFILING SUMMARY"):]
+        summary = out[out.rindex("[RESOURCES]"):]
         for stage in ("cache", "ext2chg: training",
                       "ext2chg: evaluation and figures", "chg2tau: training",
                       "checkpoint", "total (wall clock)"):
             assert stage in summary, stage
         # Nothing of the run itself comes after it.
-        assert "OVERALL" not in summary
+        assert "[OVERALL]" not in summary
 
     def test_a_cache_only_run(self, tmp_path, capsys):
         import poraque_train
@@ -172,7 +172,7 @@ class TestPoraqueTrainPrintsTheSummaryLast:
                 poraque_train.run(["--config", self._config(tmp_path),
                                    "--cache-only"])
         summary = capsys.readouterr().out.split(
-            "RESOURCE PROFILING SUMMARY")[-1]
+            "[RESOURCES]")[-1]
         assert "cache" in summary and "training" not in summary
 
     def test_a_run_that_fails_reports_where(self, tmp_path, capsys,
@@ -189,7 +189,7 @@ class TestPoraqueTrainPrintsTheSummaryLast:
             with pytest.raises(RuntimeError, match="pretend"):
                 poraque_train.run(["--config", self._config(tmp_path)])
         summary = capsys.readouterr().out.split(
-            "RESOURCE PROFILING SUMMARY")[-1]
+            "[RESOURCES]")[-1]
         assert "ext2chg: training  (interrupted)" in summary
 
 
@@ -359,9 +359,9 @@ class TestTheParityFigureCoversEveryStructure:
 
 
 # ===================================================================== #
-# The two channels of a spin-polarised objective
+# The two channels of a spin-polarized objective
 # ===================================================================== #
-class TestTheChargeAndMagnetisationPartsOfTheLoss:
+class TestTheChargeAndMagnetizationPartsOfTheLoss:
     """
     Reported beside the objective, never instead of it: the objective is still
     over (rho, m) at once, and a relative error of m alone would divide by
@@ -383,7 +383,7 @@ class TestTheChargeAndMagnetisationPartsOfTheLoss:
         assert torch.allclose(torch.sqrt(parts[0] ** 2 + parts[1] ** 2),
                               whole, rtol=1e-6)
 
-    def test_the_parts_stay_finite_when_the_magnetisation_is_zero(self):
+    def test_the_parts_stay_finite_when_the_magnetization_is_zero(self):
         from poraque.ml.losses import data_error
 
         target = torch.zeros(1, 2, 6, 6, 6)
@@ -427,7 +427,7 @@ class TestTheChargeAndMagnetisationPartsOfTheLoss:
                       and "epoch" in line)
         assert "charge" in header and "mag" in header
         assert len(history["train_loss_charge"]) == 2
-        assert len(history["train_loss_magnetisation"]) == 2
+        assert len(history["train_loss_magnetization"]) == 2
         assert any("sqrt(charge^2 + mag^2)" in line for line in lines)
 
     def test_a_one_channel_run_has_no_such_columns(self, spin_cache):

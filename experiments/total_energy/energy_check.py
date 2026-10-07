@@ -4,7 +4,7 @@ Can the trained pair produce a total energy, and how close is it?
 Two reference points, and they answer different questions.
 
 **The same expression on the DFT fields.** Every term this expression omits --
-the PAW one-centre energies, the non-local pseudopotential -- is identical
+the PAW one-center energies, the non-local pseudopotential -- is identical
 whether it is handed a predicted density or a reference one, so it cancels
 exactly in the difference. What is left is purely the model error propagated
 into an energy, which is the number that says whether the operators are good

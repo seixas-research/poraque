@@ -27,7 +27,7 @@ The offset is bookkeeping, not error, and it closes to 0.3 eV:
 |---|---|
 | `EATOM`, the atomic reference | +23331.582 |
 | PAW double counting | +810.066 |
-| non-local + one-centre block, inside `EBANDS` | −4835.860 |
+| non-local + one-center block, inside `EBANDS` | −4835.860 |
 | entropy `EENTRO` | −0.582 |
 
 Poraquê integrates **pseudo-valence** fields. There is no arrangement of them
@@ -67,7 +67,7 @@ difference; this one does not, because it varies from structure to structure.
 ### Why: the kinetic term, multiplied by seven thousand
 
 `|dE|` correlates at **0.97** with `relL2(tau) * int(tau)`, and `int(tau)` is
-about 6987 eV. So tau's *relative* error is multiplied by that, and the realised
+about 6987 eV. So tau's *relative* error is multiplied by that, and the realized
 error runs from near zero — where the tau error oscillates and cancels in the
 integral — up to the full bound. On `structure_0000` the kinetic term is 96 % of
 the total error (+32.40 eV of +33.77 eV).
@@ -95,12 +95,12 @@ constraint is `chg2tau`, and the target to quote for it is an absolute one —
 
 ## One bug this found
 
-The chain could not produce an energy at all for a spin-polarised model.
+The chain could not produce an energy at all for a spin-polarized model.
 `EnergyCalculator.compute` does `np.asarray(density)`, which a `SpinDensity` is
 not; `SpinDensity.as_charge_density` existed for exactly this and nothing called
 it. Since `data.spin: auto` resolves against the data, that was every model
 trained on these `ISPIN = 2` runs. Fixed in `physics/energy.py:total_density`,
 with the ASE calculator's electron-count check and Hellmann-Feynman call made
 channel-correct alongside. `E_xc` is still evaluated on the total density, which
-is the unpolarised form and therefore drops LSDA — small and second order in
-`m/rho` for a cell this weakly polarised, and stated rather than hidden.
+is the unpolarized form and therefore drops LSDA — small and second order in
+`m/rho` for a cell this weakly polarized, and stated rather than hidden.

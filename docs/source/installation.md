@@ -154,7 +154,8 @@ export PYTHONNOUSERSITE=1
 
 Poraquê's start-up banner prints torch's version, its CUDA build **and its
 install directory** for exactly this reason, so a mismatch appears in the run's
-own log instead of becoming a four-hour CPU run.
+own log instead of becoming a four-hour CPU run. It is the `[DEPENDENCIES]`
+block of every command's output; see {doc}`output`.
 
 (multi-gpu)=
 ### Several GPUs, under Slurm
@@ -202,7 +203,7 @@ sets of variables and its own describe the group it actually formed.
 Three things to know before reading a scaling number:
 
 - **The effective batch size is `batch_size` × the world size.** A four-rank
-  run at `batch_size: 10` steps on 40 samples and is not the same optimiser as
+  run at `batch_size: 10` steps on 40 samples and is not the same optimizer as
   the one-rank run it is being compared against.
 - **Rank 0 alone writes** the checkpoint, the metrics, the figures and the PDF,
   and alone prints. Four ranks opening one log truncate each other's.
@@ -250,13 +251,12 @@ poraque-train --config configs/train.yaml --cache-only
 ```
 
 which builds the cache exactly as a training run would and then stops —
-before a model, an optimiser, a process group or a training loop exists — with
+before a model, an optimizer, a process group or a training loop exists — with
 exit status 0 and a summary:
 
 ```
-==============================================================================
-CACHE BUILT -- no training was run (--cache-only)
-==============================================================================
+[CACHE SUMMARY]
+  status      : built; no training was run (--cache-only)
   cache       : data/cache/res48_potcar
   storage     : files (one CHGCAR-format text file per field)
   materials   : 97 cached  (ext2chg: 97, chg2tau: 97)
@@ -277,8 +277,9 @@ Three things about the mode are worth knowing:
   stay in the file for the GPU job; the CPU job overrides all three for its own
   process and touches nothing on disk but the cache.
 - **The GPU job rebuilds nothing** as long as its config keeps the cache
-  fingerprint — `data.resolution`, `data.storage`, `data.compression`,
-  `data.spin`, `data.potcar_dir` and the data paths — as it was. Its cache
+  fingerprint — `data.resolution`, `data.max_spacing`, `data.storage`,
+  `data.compression`, `data.spin`, `data.potcar_dir` and the data paths — as
+  it was. Its cache
   table then reads `cached` on every row and training starts at once. Change
   one of those keys and the GPU job builds a *different* cache, on the GPU
   node, which is what the split exists to avoid.

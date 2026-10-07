@@ -90,7 +90,7 @@ class TestPoissonSolver:
         """
         The neutralizing background, stated as a number.
 
-        With G = 0 removed a uniform density is exactly cancelled by its
+        With G = 0 removed a uniform density is exactly canceled by its
         compensating background, so the potential is zero — not small.
         """
         density = ChargeDensity(np.full(grid.shape, 0.7), grid, poscar)
@@ -215,7 +215,7 @@ class TestHartreeField:
 
     def test_a_spin_density_contributes_through_its_total(self, grid, poscar):
         r"""
-        The Hartree term is blind to polarisation.
+        The Hartree term is blind to polarization.
 
         It is the classical repulsion of the whole charge, so
         :math:`v_{\rm H}[\rho_\uparrow, \rho_\downarrow]` depends only on
@@ -265,7 +265,7 @@ class TestCalculatorAccessors:
 
     def test_the_sibling_accessors_exist_and_share_one_grid(self, calculator,
                                                             atoms):
-        """`get_hartree_potential` must behave like its neighbours."""
+        """`get_hartree_potential` must behave like its neighbors."""
         with pytest.warns(RuntimeWarning):
             fields = [
                 calculator.get_external_potential(atoms),

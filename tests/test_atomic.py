@@ -66,14 +66,14 @@ needs_reference_atom = pytest.mark.skipif(
 # Fixtures
 # ---------------------------------------------------------------------- #
 def gaussian_atom(grid, position, n_electrons=4.0, sigma=0.7):
-    """A normalised Gaussian at a fractional position, in e/Å³."""
+    """A normalized Gaussian at a fractional position, in e/Å³."""
     coords = grid.cartesian_coordinates()
     cell = np.asarray(grid.cell, dtype=float)
-    centre = np.asarray(position, dtype=float) @ cell
+    center = np.asarray(position, dtype=float) @ cell
 
     # The nearest periodic image, so an atom near a face is not smeared by the
     # tail of the one across the boundary being measured from the wrong side.
-    delta = coords - centre
+    delta = coords - center
     fractional = delta @ np.linalg.inv(cell)
     fractional -= np.round(fractional)
     r2 = ((fractional @ cell) ** 2).sum(axis=-1)
@@ -135,7 +135,7 @@ class TestTheFormFactor:
         For a Gaussian, :math:`f(G) = N e^{-G^2\sigma^2/2}` exactly.
 
         Checked against mathematics rather than against another array, so a
-        drift in the FFT normalisation or the volume factor cannot hide.
+        drift in the FFT normalization or the volume factor cannot hide.
         """
         reference = synthetic_reference(n_electrons=4.0, sigma=0.7)
         g = np.linspace(0.0, 5.0, 400)

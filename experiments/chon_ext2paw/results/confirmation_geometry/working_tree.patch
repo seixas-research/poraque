@@ -1,0 +1,143 @@
+diff --git a/scripts/poraque_train.py b/scripts/poraque_train.py
+index 1c6b134..ab63bfb 100644
+--- a/scripts/poraque_train.py
++++ b/scripts/poraque_train.py
+@@ -1320,7 +1320,8 @@ def resolve_occupancy_head(train_set, config, log, sets):
+ 
+     return {"width": settings["width"], "modes": settings["modes"],
+             "n_layers": settings["n_layers"], "site_layouts": layouts,
+-            "readout_g_max": float(band), "site_transform": transform}
++            "readout_g_max": float(band), "site_transform": transform,
++            "neighbour_min": settings["neighbour_min"]}
+ 
+ 
+ def report_occupancies(operator, train_set, train_records, validation,
+diff --git a/src/poraque/ml/config.py b/src/poraque/ml/config.py
+index 9e503e0..0c1074e 100644
+--- a/src/poraque/ml/config.py
++++ b/src/poraque/ml/config.py
+@@ -664,7 +664,8 @@ EQUIVARIANT_SETUP_KEYS = {
+ #: names for the same three decisions, so they mean one thing everywhere in this
+ #: schema; the other two belong to the occupancy head alone.
+ PAW_DEFAULTS = {"width": 64, "modes": 16, "n_layers": 4,
+-                "readout_g_max": "auto", "occupancy_weight": 1.0}
++                "readout_g_max": "auto", "occupancy_weight": 1.0,
++                "neighbour_min": 2.2}
+ PAW_SETUP_KEYS = tuple(PAW_DEFAULTS)
+ 
+ #: ``training.physics_informed`` settings: the weight of each constraint on the
+@@ -1235,6 +1236,11 @@ class ModelConfig:
+             validation score the best epoch is chosen on is the same sum on
+             the held-out split, so one number means one thing. 1.0 by
+             default.
++        ``neighbour_min``
++            First of ten geometric neighbour-kernel centres, in Å; the last
++            stays at 5.8 Å. Default 2.2 preserves the Pt basis. Smaller values
++            such as 0.6 resolve short covalent bonds in CHON. Must be at least
++            zero and below 5.8. The checkpoint preserves the actual centres.
+ 
+         See :mod:`poraque.ml.paw` for the operator, and
+         ``experiments/paw_occupancies`` for the measurements it was designed
+@@ -1391,6 +1397,12 @@ class ModelConfig:
+             raise ValueError(
+                 f"model.paw.occupancy_weight is {weight!r}; expected a "
+                 f"non-negative number.")
++        minimum = settings["neighbour_min"]
++        if isinstance(minimum, bool) or not isinstance(minimum, (int, float)) \
++                or not 0 <= minimum < 5.8:
++            raise ValueError(
++                f"model.paw.neighbour_min is {minimum!r}; expected a number "
++                f"from 0 (inclusive) to 5.8 (exclusive), in Ang.")
+         return settings
+ 
+     def activation_kwargs(self):
+diff --git a/src/poraque/ml/paw.py b/src/poraque/ml/paw.py
+index 83c5bd7..265ba5c 100644
+--- a/src/poraque/ml/paw.py
++++ b/src/poraque/ml/paw.py
+@@ -393,10 +393,16 @@ class NeighbourExpansion(nn.Module):
+     images within :data:`NEIGHBOUR_CUTOFF`: ``{L: (A, n, 2L+1)}``.
+     """
+ 
+-    def __init__(self, lmax=MAX_L):
++    def __init__(self, lmax=MAX_L, minimum=None):
+         super().__init__()
+         self.lmax = int(lmax)
+-        self.register_buffer("centres", torch.tensor(NEIGHBOUR_CENTRES))
++        centres = torch.tensor(NEIGHBOUR_CENTRES)
++        if minimum is not None and minimum != NEIGHBOUR_CENTRES[0]:
++            if isinstance(minimum, bool) or not 0 <= float(minimum) < NEIGHBOUR_CENTRES[-1]:
++                raise ValueError("neighbour minimum must be non-negative and below 5.8 Ang")
++            centres = torch.linspace(float(minimum), float(centres[-1]),
++                                     len(NEIGHBOUR_CENTRES), dtype=centres.dtype)
++        self.register_buffer("centres", centres)
+ 
+     @property
+     def size(self):
+@@ -515,7 +521,7 @@ class PAWOperatorModel(nn.Module):
+         The readout band, Å⁻¹.
+     """
+ 
+-    def __init__(self, backbone, layouts, g_max):
++    def __init__(self, backbone, layouts, g_max, neighbour_min=None):
+         super().__init__()
+         from ..fields.vasp.augmentation import irreps_blocks
+ 
+@@ -530,7 +536,7 @@ class PAWOperatorModel(nn.Module):
+         self.lmax = max(layout_lmax(channels)
+                         for channels in self.layouts.values())
+         self.readout = SiteReadout(self.g_max, self.lmax)
+-        self.neighbours = NeighbourExpansion(self.lmax)
++        self.neighbours = NeighbourExpansion(self.lmax, minimum=neighbour_min)
+         self.reduce = nn.Conv3d(backbone.width, READOUT_CHANNELS, kernel_size=1)
+ 
+         read = (READOUT_CHANNELS + backbone.out_channels) * self.readout.size
+diff --git a/src/poraque/ml/training.py b/src/poraque/ml/training.py
+index 5d1484b..31521a3 100644
+--- a/src/poraque/ml/training.py
++++ b/src/poraque/ml/training.py
+@@ -182,6 +182,9 @@ class FieldOperator:
+     readout_g_max : float, optional
+         The band in Å⁻¹ the occupancy head reads the fields over; required with
+         ``site_layouts``.
++    neighbour_min : float, optional
++        First geometric neighbour-kernel centre in Å. Defaults to the
++        original 2.2 Å; 0.6 Å also resolves short covalent bonds.
+     site_transform : OccupancyTransform, optional
+         The occupancies' training form, fitted on the training split. Stored
+         in the checkpoint, and what :meth:`predict_occupancies` inverts.
+@@ -194,7 +197,7 @@ class FieldOperator:
+                  pauli_scale=1.0, learn_pauli_scale=True,
+                  training_resolution=None, init_seed=None, baseline=None,
+                  strict_device=False, site_layouts=None, readout_g_max=None,
+-                 site_transform=None, **model_kwargs):
++                 site_transform=None, neighbour_min=None, **model_kwargs):
+         self.task = resolve_task(task)
+         self.device = resolve_device(device, strict=strict_device)
+         self.input_transform = input_transform or Identity()
+@@ -239,7 +242,8 @@ class FieldOperator:
+                         f"reads, 1/Ang).")
+                 from .paw import PAWOperatorModel
+ 
+-                return PAWOperatorModel(network, site_layouts, readout_g_max)
++                return PAWOperatorModel(network, site_layouts, readout_g_max,
++                                        neighbour_min=neighbour_min)
+ 
+             if self.init_seed is None:
+                 backbone = build()
+@@ -581,6 +585,7 @@ class FieldOperator:
+                 "layouts": {str(z): list(channels) for z, channels
+                             in self.model.layouts.items()},
+                 "readout_g_max": self.model.g_max,
++                "neighbour_min": float(self.model.neighbours.centres[0]),
+                 "transform": (None if self.site_transform is None
+                               else self.site_transform.state_dict()),
+             }),
+@@ -654,6 +659,7 @@ class FieldOperator:
+             inferred["site_layouts"] = {int(z): channels for z, channels
+                                         in site["layouts"].items()}
+             inferred["readout_g_max"] = site["readout_g_max"]
++            inferred["neighbour_min"] = site.get("neighbour_min")
+             if site.get("transform"):
+                 inferred["site_transform"] = OccupancyTransform.from_state_dict(
+                     site["transform"])

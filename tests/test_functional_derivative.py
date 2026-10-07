@@ -5,7 +5,7 @@ Tests for the autograd functional derivative delta T_s / delta rho.
 
 This is the mechanism that turns a learned tau into a usable kinetic energy
 functional, so it is validated against closed forms rather than against itself.
-The discretisation factor 1/dv is the failure mode worth guarding: omitting it
+The discretization factor 1/dv is the failure mode worth guarding: omitting it
 rescales the whole potential by the number of grid points, silently.
 """
 
@@ -57,7 +57,7 @@ class TestAgainstClosedForms:
         assert (computed - expected).abs().max() < 1e-12 * expected.abs().max()
 
     def test_von_weizsacker_on_a_smooth_density(self, cell):
-        r"""vW involves derivatives, so the two routes are different discretisations.
+        r"""vW involves derivatives, so the two routes are different discretizations.
 
         Autograd differentiates the discrete :math:`\tau_{\rm vW}` exactly, while
         the analytic form applies a spectral Laplacian to :math:`\sqrt\rho` --
@@ -89,7 +89,7 @@ class TestAgainstClosedForms:
             float(thomas_fermi_potential(uniform).mean()), rel=1e-10)
 
 
-class TestDiscretisationFactor:
+class TestDiscretizationFactor:
     def test_matches_finite_differences(self, density, cell):
         """The definitive check on the 1/dv factor."""
         dv = float(volume_element(density, cell).flatten()[0])

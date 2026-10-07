@@ -120,7 +120,7 @@
       0.6639416813850403,
       0.6639971733093262
     ],
-    "train_loss_magnetisation": [
+    "train_loss_magnetization": [
       0.18988829851150513,
       0.14825966954231262,
       0.13482312858104706,
@@ -184,7 +184,7 @@
   "validation": {
     "charge_relative_l2": 0.08973532512953336,
     "occupancy_relative_rms": 0.09917091166253396,
-    "magnetisation_relative_l2_pooled": 0.9824065030793966,
+    "magnetization_relative_l2_pooled": 0.9824065030793966,
     "electron_count_relative_error": 0.01498763052371611,
     "occupancy_balanced_loss": 0.5386224822607217,
     "common_score": 1.7056027719116986,
@@ -755,6 +755,8 @@
       }
     ]
   },
-  "checkpoint": "experiments/chon_ext2paw/results/screen/lr_high_s0_e30/model.poraque",
-  "baseline": true
+  "checkpoint": "experiments/chon_ext2paw/results/legacy_quadrature/lr_high_s0_e30/model.poraque",
+  "baseline": true,
+  "archived_from_checkpoint": "experiments/chon_ext2paw/results/screen/lr_high_s0_e30/model.poraque",
+  "excluded_reason": "Low-band PAW kernel quadrature undersampling; do not rank with corrected runs."
 }

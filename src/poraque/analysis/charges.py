@@ -55,7 +55,7 @@ is what makes it the usual default despite being the most expensive.
    so a Bader volume here is not the all-electron Bader volume, and the charges
    are systematically compressed toward zero relative to an all-electron
    analysis. This matters most for Bader, whose basin boundaries are set by the
-   density's topology near the nuclei — exactly where the pseudisation is
+   density's topology near the nuclei — exactly where the pseudization is
    largest. Treat the numbers as comparative across a series, not absolute.
 
    For a proper Bader analysis VASP's own guidance is to sum ``AECCAR0`` and
@@ -317,7 +317,7 @@ def _distance_to_atom(scaled, atom_scaled, cell, orthogonal):
         :math:`[-\tfrac12, \tfrac12)` already gives the minimum image and the
         27-image search is skipped. That shortcut is *only* valid for a
         rectangular cell: in a skewed one the nearest image can be a diagonal
-        neighbour, and taking the wrap alone would overestimate the distance.
+        neighbor, and taking the wrap alone would overestimate the distance.
 
     Returns
     -------
@@ -440,7 +440,7 @@ def voronoi_charges(density, structure=None, grid=None, valence=None):
     Distances respect periodic boundary conditions, and in a non-orthogonal
     cell the 27 nearest images are searched rather than trusting a wrap of the
     fractional coordinates — in a skewed lattice the nearest image can be a
-    diagonal neighbour.
+    diagonal neighbor.
 
     Parameters
     ----------
@@ -534,7 +534,7 @@ def atomic_radial_profile(density, structure=None, grid=None, atom_index=0,
     structure : Structure, optional
     grid : FieldGrid, optional
     atom_index : int, optional
-        Which atom to centre on; an isolated-atom reference has only one.
+        Which atom to center on; an isolated-atom reference has only one.
     n_bins : int, optional
         Radial bins.
     max_radius : float, optional
@@ -759,15 +759,15 @@ def bader_charges(density, structure=None, grid=None, valence=None,
     Notes
     -----
     The native backend implements on-grid steepest ascent: every voxel points
-    at whichever of its 26 neighbours gives the largest density increase *per
+    at whichever of its 26 neighbors gives the largest density increase *per
     unit distance*, and those pointers are followed to a local maximum. The
-    distance weighting matters — without it the diagonal neighbours, which are
+    distance weighting matters — without it the diagonal neighbors, which are
     :math:`\sqrt3` further away, win too often and the basins acquire a
     staircase bias along the cell diagonals.
 
     This is the grid-constrained approximation to the true zero-flux surface.
     It converges to the exact partition as the mesh is refined, and on a coarse
-    mesh the boundaries are quantised to voxel faces; the Henkelman
+    mesh the boundaries are quantized to voxel faces; the Henkelman
     implementation additionally offers refinement schemes this does not.
     """
     values, structure, grid = _resolve_inputs(density, structure, grid)
@@ -802,8 +802,8 @@ def bader_charges(density, structure=None, grid=None, valence=None,
     )
 
 
-def _neighbour_offsets():
-    """The 26 neighbours of a voxel, as integer displacements."""
+def _neighbor_offsets():
+    """The 26 neighbors of a voxel, as integer displacements."""
     return [offset for offset in itertools.product((-1, 0, 1), repeat=3)
             if offset != (0, 0, 0)]
 
@@ -823,7 +823,7 @@ def _bader_native(values, structure, grid):
     parent = flat_index.copy()
     best_gain = np.zeros(shape, dtype=float)
 
-    for offset in _neighbour_offsets():
+    for offset in _neighbor_offsets():
         # Cartesian length of this step, so the gradient is per unit distance.
         step = np.array([offset[axis] / shape[axis] for axis in range(3)])
         length = float(np.linalg.norm(step @ cell))
@@ -831,8 +831,8 @@ def _bader_native(values, structure, grid):
             continue
 
         shift = tuple(-component for component in offset)
-        neighbour = np.roll(values, shift=shift, axis=(0, 1, 2))
-        gain = (neighbour - values) / length
+        neighbor = np.roll(values, shift=shift, axis=(0, 1, 2))
+        gain = (neighbor - values) / length
 
         steeper = gain > best_gain
         if steeper.any():
@@ -879,7 +879,7 @@ def _bader_native(values, structure, grid):
 
     return populations, {
         "backend": "native",
-        "algorithm": "on-grid steepest ascent, 26 neighbours, "
+        "algorithm": "on-grid steepest ascent, 26 neighbors, "
                      "distance-weighted",
         "maxima": int(maxima.size),
         "atoms": int(structure.natoms),

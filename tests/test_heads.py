@@ -133,7 +133,7 @@ class TestHardConstraint:
 
     @pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
     def test_holds_for_arbitrary_weights(self, chg2tau, seed):
-        """Randomised weights of large magnitude must not break it.
+        """Randomized weights of large magnitude must not break it.
 
         The exact invariant lives on the Pauli term: ``softplus`` is
         non-negative for every real argument, so ``tau >= tau_vW`` identically.

@@ -1,0 +1,601 @@
+{
+  "sampling": "validation atom-count quantiles; descriptive sample",
+  "structures": 12,
+  "mean_errors": {
+    "24": {
+      "native_charge_projection_error": 0.07443599051665938,
+      "native_residual_projection_error_over_charge_norm": 0.02968235863920152
+    },
+    "32": {
+      "native_charge_projection_error": 0.027527308069240423,
+      "native_residual_projection_error_over_charge_norm": 0.01495213446327809
+    },
+    "48": {
+      "native_charge_projection_error": 0.006866253262832324,
+      "native_residual_projection_error_over_charge_norm": 0.0037543524216940368
+    },
+    "64": {
+      "native_charge_projection_error": 0.0015307253303508282,
+      "native_residual_projection_error_over_charge_norm": 0.0006387717332884844
+    }
+  },
+  "per_material": [
+    {
+      "id": "mp-1065697",
+      "atoms": 1,
+      "native_shape": [
+        36,
+        36,
+        24
+      ],
+      "native_atomic_baseline_error": 0.05918630923340232,
+      "resolutions": {
+        "24": {
+          "shape": [
+            24,
+            24,
+            16
+          ],
+          "native_charge_projection_error": 6.56798035123019e-05,
+          "native_residual_projection_error_over_charge_norm": 3.579275639963969e-05
+        },
+        "32": {
+          "shape": [
+            32,
+            32,
+            24
+          ],
+          "native_charge_projection_error": 1.674678664707493e-05,
+          "native_residual_projection_error_over_charge_norm": 1.6580773265484176e-05
+        },
+        "48": {
+          "shape": [
+            36,
+            36,
+            24
+          ],
+          "native_charge_projection_error": 0.0,
+          "native_residual_projection_error_over_charge_norm": 0.0
+        },
+        "64": {
+          "shape": [
+            36,
+            36,
+            24
+          ],
+          "native_charge_projection_error": 0.0,
+          "native_residual_projection_error_over_charge_norm": 0.0
+        }
+      }
+    },
+    {
+      "id": "mp-47",
+      "atoms": 4,
+      "native_shape": [
+        40,
+        40,
+        64
+      ],
+      "native_atomic_baseline_error": 0.12893448073484293,
+      "resolutions": {
+        "24": {
+          "shape": [
+            16,
+            16,
+            24
+          ],
+          "native_charge_projection_error": 0.0001719169802049742,
+          "native_residual_projection_error_over_charge_norm": 0.0001932883334745532
+        },
+        "32": {
+          "shape": [
+            20,
+            20,
+            32
+          ],
+          "native_charge_projection_error": 7.137481816090721e-05,
+          "native_residual_projection_error_over_charge_norm": 7.98442777163747e-05
+        },
+        "48": {
+          "shape": [
+            30,
+            30,
+            48
+          ],
+          "native_charge_projection_error": 1.4553635240749843e-05,
+          "native_residual_projection_error_over_charge_norm": 1.5543939512686263e-05
+        },
+        "64": {
+          "shape": [
+            40,
+            40,
+            64
+          ],
+          "native_charge_projection_error": 0.0,
+          "native_residual_projection_error_over_charge_norm": 0.0
+        }
+      }
+    },
+    {
+      "id": "mp-1078845",
+      "atoms": 8,
+      "native_shape": [
+        72,
+        72,
+        40
+      ],
+      "native_atomic_baseline_error": 0.12835647279147405,
+      "resolutions": {
+        "24": {
+          "shape": [
+            24,
+            24,
+            14
+          ],
+          "native_charge_projection_error": 0.0007594297187097824,
+          "native_residual_projection_error_over_charge_norm": 0.0005200236624611304
+        },
+        "32": {
+          "shape": [
+            32,
+            32,
+            18
+          ],
+          "native_charge_projection_error": 0.000112798433003368,
+          "native_residual_projection_error_over_charge_norm": 0.00012649298698308982
+        },
+        "48": {
+          "shape": [
+            48,
+            48,
+            28
+          ],
+          "native_charge_projection_error": 2.2576748222134995e-05,
+          "native_residual_projection_error_over_charge_norm": 2.4887344590112413e-05
+        },
+        "64": {
+          "shape": [
+            64,
+            64,
+            36
+          ],
+          "native_charge_projection_error": 6.530339625994245e-06,
+          "native_residual_projection_error_over_charge_norm": 6.721234035134828e-06
+        }
+      }
+    },
+    {
+      "id": "mp-1080711",
+      "atoms": 10,
+      "native_shape": [
+        80,
+        80,
+        80
+      ],
+      "native_atomic_baseline_error": 0.0884233032983356,
+      "resolutions": {
+        "24": {
+          "shape": [
+            24,
+            24,
+            24
+          ],
+          "native_charge_projection_error": 0.0019109838465790304,
+          "native_residual_projection_error_over_charge_norm": 0.0009972227248913298
+        },
+        "32": {
+          "shape": [
+            32,
+            32,
+            32
+          ],
+          "native_charge_projection_error": 0.0001873814803561494,
+          "native_residual_projection_error_over_charge_norm": 0.00010909643081608729
+        },
+        "48": {
+          "shape": [
+            48,
+            48,
+            48
+          ],
+          "native_charge_projection_error": 3.92253475191727e-05,
+          "native_residual_projection_error_over_charge_norm": 2.3421972923496472e-05
+        },
+        "64": {
+          "shape": [
+            64,
+            64,
+            64
+          ],
+          "native_charge_projection_error": 1.2586248311640312e-05,
+          "native_residual_projection_error_over_charge_norm": 1.1063011692911766e-05
+        }
+      }
+    },
+    {
+      "id": "mp-567885",
+      "atoms": 14,
+      "native_shape": [
+        72,
+        72,
+        108
+      ],
+      "native_atomic_baseline_error": 0.11061645722605572,
+      "resolutions": {
+        "24": {
+          "shape": [
+            16,
+            16,
+            24
+          ],
+          "native_charge_projection_error": 0.021952388177451026,
+          "native_residual_projection_error_over_charge_norm": 0.010401621136303638
+        },
+        "32": {
+          "shape": [
+            24,
+            24,
+            32
+          ],
+          "native_charge_projection_error": 0.0021290054253735534,
+          "native_residual_projection_error_over_charge_norm": 0.0010270540014215453
+        },
+        "48": {
+          "shape": [
+            32,
+            32,
+            48
+          ],
+          "native_charge_projection_error": 0.000175918933154459,
+          "native_residual_projection_error_over_charge_norm": 0.00011415140794212608
+        },
+        "64": {
+          "shape": [
+            48,
+            48,
+            64
+          ],
+          "native_charge_projection_error": 4.270076684478725e-05,
+          "native_residual_projection_error_over_charge_norm": 2.94598313288889e-05
+        }
+      }
+    },
+    {
+      "id": "mp-2647017",
+      "atoms": 20,
+      "native_shape": [
+        160,
+        160,
+        36
+      ],
+      "native_atomic_baseline_error": 0.13868552605420104,
+      "resolutions": {
+        "24": {
+          "shape": [
+            24,
+            24,
+            6
+          ],
+          "native_charge_projection_error": 0.05008869395299562,
+          "native_residual_projection_error_over_charge_norm": 0.02258449027897366
+        },
+        "32": {
+          "shape": [
+            32,
+            32,
+            8
+          ],
+          "native_charge_projection_error": 0.02315071049663242,
+          "native_residual_projection_error_over_charge_norm": 0.00736325078221563
+        },
+        "48": {
+          "shape": [
+            48,
+            48,
+            12
+          ],
+          "native_charge_projection_error": 0.0016061916578910976,
+          "native_residual_projection_error_over_charge_norm": 0.000999148222182392
+        },
+        "64": {
+          "shape": [
+            64,
+            64,
+            16
+          ],
+          "native_charge_projection_error": 0.00016063689007421092,
+          "native_residual_projection_error_over_charge_norm": 0.00017849565983129735
+        }
+      }
+    },
+    {
+      "id": "mp-1194028",
+      "atoms": 28,
+      "native_shape": [
+        240,
+        192,
+        140
+      ],
+      "native_atomic_baseline_error": 0.08458938885969612,
+      "resolutions": {
+        "24": {
+          "shape": [
+            24,
+            20,
+            14
+          ],
+          "native_charge_projection_error": 0.20356550228109116,
+          "native_residual_projection_error_over_charge_norm": 0.06443167772741862
+        },
+        "32": {
+          "shape": [
+            32,
+            28,
+            20
+          ],
+          "native_charge_projection_error": 0.06746533031146666,
+          "native_residual_projection_error_over_charge_norm": 0.04153683836346432
+        },
+        "48": {
+          "shape": [
+            48,
+            40,
+            28
+          ],
+          "native_charge_projection_error": 0.023221274407083277,
+          "native_residual_projection_error_over_charge_norm": 0.014327939517159261
+        },
+        "64": {
+          "shape": [
+            64,
+            54,
+            40
+          ],
+          "native_charge_projection_error": 0.005719448138266366,
+          "native_residual_projection_error_over_charge_norm": 0.0024642190643677448
+        }
+      }
+    },
+    {
+      "id": "mp-1212532",
+      "atoms": 36,
+      "native_shape": [
+        120,
+        120,
+        120
+      ],
+      "native_atomic_baseline_error": 0.10122578290754265,
+      "resolutions": {
+        "24": {
+          "shape": [
+            24,
+            24,
+            24
+          ],
+          "native_charge_projection_error": 0.027851519844420195,
+          "native_residual_projection_error_over_charge_norm": 0.016758321161642928
+        },
+        "32": {
+          "shape": [
+            32,
+            32,
+            32
+          ],
+          "native_charge_projection_error": 0.007895332597524733,
+          "native_residual_projection_error_over_charge_norm": 0.003922304938563236
+        },
+        "48": {
+          "shape": [
+            48,
+            48,
+            48
+          ],
+          "native_charge_projection_error": 0.0003545414792351559,
+          "native_residual_projection_error_over_charge_norm": 0.00016309536955797012
+        },
+        "64": {
+          "shape": [
+            64,
+            64,
+            64
+          ],
+          "native_charge_projection_error": 0.00011072083778079761,
+          "native_residual_projection_error_over_charge_norm": 5.235465522679836e-05
+        }
+      }
+    },
+    {
+      "id": "mp-30184",
+      "atoms": 48,
+      "native_shape": [
+        64,
+        120,
+        240
+      ],
+      "native_atomic_baseline_error": 0.13523367122854946,
+      "resolutions": {
+        "24": {
+          "shape": [
+            8,
+            12,
+            24
+          ],
+          "native_charge_projection_error": 0.18103473056254563,
+          "native_residual_projection_error_over_charge_norm": 0.08556046327819157
+        },
+        "32": {
+          "shape": [
+            10,
+            16,
+            32
+          ],
+          "native_charge_projection_error": 0.08536711789349523,
+          "native_residual_projection_error_over_charge_norm": 0.04229947253359977
+        },
+        "48": {
+          "shape": [
+            14,
+            24,
+            48
+          ],
+          "native_charge_projection_error": 0.024108814664309156,
+          "native_residual_projection_error_over_charge_norm": 0.012256108659392802
+        },
+        "64": {
+          "shape": [
+            18,
+            32,
+            64
+          ],
+          "native_charge_projection_error": 0.005845401563603556,
+          "native_residual_projection_error_over_charge_norm": 0.002537243258158002
+        }
+      }
+    },
+    {
+      "id": "mp-1212613",
+      "atoms": 58,
+      "native_shape": [
+        108,
+        108,
+        216
+      ],
+      "native_atomic_baseline_error": 0.09634522321531139,
+      "resolutions": {
+        "24": {
+          "shape": [
+            12,
+            12,
+            24
+          ],
+          "native_charge_projection_error": 0.1644932967808984,
+          "native_residual_projection_error_over_charge_norm": 0.06597667198798617
+        },
+        "32": {
+          "shape": [
+            16,
+            16,
+            32
+          ],
+          "native_charge_projection_error": 0.059928862143013295,
+          "native_residual_projection_error_over_charge_norm": 0.039672334256819625
+        },
+        "48": {
+          "shape": [
+            24,
+            24,
+            48
+          ],
+          "native_charge_projection_error": 0.016366036765749156,
+          "native_residual_projection_error_over_charge_norm": 0.008931435298780384
+        },
+        "64": {
+          "shape": [
+            32,
+            32,
+            64
+          ],
+          "native_charge_projection_error": 0.0026360779403843395,
+          "native_residual_projection_error_over_charge_norm": 0.0010748220201977426
+        }
+      }
+    },
+    {
+      "id": "mp-708965",
+      "atoms": 76,
+      "native_shape": [
+        140,
+        128,
+        160
+      ],
+      "native_atomic_baseline_error": 0.10752494330371137,
+      "resolutions": {
+        "24": {
+          "shape": [
+            24,
+            20,
+            24
+          ],
+          "native_charge_projection_error": 0.056997207581020025,
+          "native_residual_projection_error_over_charge_norm": 0.03599649562872772
+        },
+        "32": {
+          "shape": [
+            28,
+            28,
+            32
+          ],
+          "native_charge_projection_error": 0.02212699239543529,
+          "native_residual_projection_error_over_charge_norm": 0.013789840750882937
+        },
+        "48": {
+          "shape": [
+            42,
+            40,
+            48
+          ],
+          "native_charge_projection_error": 0.0021956081060458,
+          "native_residual_projection_error_over_charge_norm": 0.0008308625044368206
+        },
+        "64": {
+          "shape": [
+            56,
+            54,
+            64
+          ],
+          "native_charge_projection_error": 0.0003236433317906825,
+          "native_residual_projection_error_over_charge_norm": 0.00012308850804238224
+        }
+      }
+    },
+    {
+      "id": "mp-1225208",
+      "atoms": 108,
+      "native_shape": [
+        168,
+        108,
+        216
+      ],
+      "native_atomic_baseline_error": 0.08683109929304136,
+      "resolutions": {
+        "24": {
+          "shape": [
+            20,
+            12,
+            24
+          ],
+          "native_charge_projection_error": 0.18434053667048436,
+          "native_residual_projection_error_over_charge_norm": 0.05273223499394728
+        },
+        "32": {
+          "shape": [
+            28,
+            16,
+            32
+          ],
+          "native_charge_projection_error": 0.0618760440497764,
+          "native_residual_projection_error_over_charge_norm": 0.029482503463588997
+        },
+        "48": {
+          "shape": [
+            40,
+            24,
+            48
+          ],
+          "native_charge_projection_error": 0.014290297409537732,
+          "native_residual_projection_error_over_charge_norm": 0.007365634823850391
+        },
+        "64": {
+          "shape": [
+            50,
+            32,
+            64
+          ],
+          "native_charge_projection_error": 0.0035109579075275634,
+          "native_residual_projection_error_over_charge_norm": 0.0011877935565809106
+        }
+      }
+    }
+  ],
+  "interpretation": "Projection errors, not model errors. The residual projection uses native atomic content; it assumes a perfect coarse residual and is not a measured inference result."
+}

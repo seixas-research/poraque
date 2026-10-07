@@ -7,7 +7,7 @@ measures built on it.
 
 The load-bearing property is the *separation* of the two seeds. If varying
 ``init_seed`` also perturbed the batch order, the committee's disagreement
-would mix optimisation variance with a reshuffled dataset and could not be
+would mix optimization variance with a reshuffled dataset and could not be
 read as either.
 """
 
@@ -77,7 +77,7 @@ class TestInitSeed:
         assert torch.equal(after_seeded, after_other)
 
     def test_unseeded_construction_still_advances_the_stream(self):
-        """Without init_seed the ambient behaviour is unchanged."""
+        """Without init_seed the ambient behavior is unchanged."""
         torch.manual_seed(0)
         _build()
         first = torch.randn(4)
@@ -202,7 +202,7 @@ class TestJensenShannon:
         """
         Members that share no support are maximally divergent, and the JSD is
         then exactly ln K. An implementation that is off by a volume element
-        or a normalisation fails this.
+        or a normalization fails this.
         """
         block = grid.shape[0] // members
         fields = []
@@ -213,7 +213,7 @@ class TestJensenShannon:
 
         result = jensen_shannon_spread(fields, grid)
         assert result["jsd"] == pytest.approx(np.log(members), rel=1e-9)
-        assert result["normalised"] == pytest.approx(1.0, rel=1e-9)
+        assert result["normalized"] == pytest.approx(1.0, rel=1e-9)
 
     def test_is_blind_to_a_common_rescaling(self, grid):
         """
@@ -254,7 +254,7 @@ class TestJensenShannon:
         assert np.isfinite(result["jsd"])
         assert result["clipped"] >= 1
 
-    def test_pointwise_integrand_localises_the_disagreement(self, grid):
+    def test_pointwise_integrand_localizes_the_disagreement(self, grid):
         """The field form says *where*, which the scalar cannot."""
         a = np.full(grid.shape, 0.2)
         b = a.copy()
@@ -299,7 +299,7 @@ class TestCommitteeClass:
     def test_untrained_members_predict_a_signed_field_and_jsd_is_withheld(
             self, members, potential):
         """
-        Real behaviour, not a limitation of the test: an untrained operator
+        Real behavior, not a limitation of the test: an untrained operator
         predicts a density that is negative over much of the cell. That is not
         a probability density, and flooring it into one would yield a number
         that looks meaningful. The L2 measures still apply.
@@ -325,7 +325,7 @@ class TestCommitteeClass:
 
         scored = Committee(members).disagreement(potential)
         assert scored["jsd"] is not None and scored["jsd"] > 0.0
-        assert 0.0 <= scored["jsd_normalised"] <= 1.0
+        assert 0.0 <= scored["jsd_normalized"] <= 1.0
         assert scored["jsd_pointwise"].shape == potential.grid.shape
         # the L2 and integral measures ride alongside, not instead
         assert "relative" in scored and "integral_relative" in scored
@@ -375,7 +375,7 @@ class TestCommitteeClass:
         assert not _mostly_positive(signed)
 
     def test_ringing_negatives_are_tolerated(self):
-        """A few Gibbs voxels are an artefact, not a change of object."""
+        """A few Gibbs voxels are an artifact, not a change of object."""
         from poraque.ml.committee import _mostly_positive
 
         field = np.full((10, 10, 10), 0.5)
@@ -417,9 +417,9 @@ class TestRankingSurvivesAnUndefinedJSD:
         from poraque.ml.active_learning import format_ranking
 
         records = [
-            {"material": "a", "jsd": None, "jsd_normalised": None,
+            {"material": "a", "jsd": None, "jsd_normalized": None,
              "relative": 0.5, "integral_relative": 0.1},
-            {"material": "b", "jsd": 0.2, "jsd_normalised": 0.3,
+            {"material": "b", "jsd": 0.2, "jsd_normalized": 0.3,
              "relative": 0.4, "integral_relative": 0.2},
         ]
         rows = format_ranking(records).splitlines()[2:]
@@ -429,7 +429,7 @@ class TestRankingSurvivesAnUndefinedJSD:
         """The end state the smoke test hit: no structure scores at all."""
         from poraque.ml.active_learning import format_ranking
 
-        records = [{"material": f"m{i}", "jsd": None, "jsd_normalised": None,
+        records = [{"material": f"m{i}", "jsd": None, "jsd_normalized": None,
                     "relative": 1.0, "integral_relative": 0.1}
                    for i in range(3)]
         text = format_ranking(records)

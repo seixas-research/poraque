@@ -167,7 +167,7 @@ def resample_field(field, shape, grid=None):
                        field.structure, metadata=metadata)
 
 
-def downsampled_grid(grid, resolution):
+def downsampled_grid(grid, resolution, max_spacing=None):
     """
     The grid a material is cached and trained on, given its native one.
 
@@ -179,6 +179,14 @@ def downsampled_grid(grid, resolution):
         Longest axis after downsampling, as :func:`downsample_shape` reads
         ``target_max``. ``None`` or ``0`` keeps the native grid, so a caller
         can pass the setting straight through.
+    max_spacing : float, optional
+        Largest grid spacing in Å any axis may end with. An axis that
+        ``resolution`` would leave coarser than this is refined to the smallest
+        FFT-friendly count that meets it, never beyond its native count.
+        ``resolution`` alone caps the *longest* axis, so on a cell of 3 x 4 x
+        35 Å the short axes kept 6 and 8 points --- 0.6 Å spacing, where the
+        median cell of the CHONPS set had 0.2 Å --- and those cells were the
+        worst-predicted of the validation split by a factor of five.
 
     Returns
     -------
@@ -188,8 +196,16 @@ def downsampled_grid(grid, resolution):
     """
     if not resolution:
         return grid
-    return resample_grid(grid, downsample_shape(grid.shape,
-                                               target_max=int(resolution)))
+    shape = downsample_shape(grid.shape, target_max=int(resolution))
+    if max_spacing:
+        from .grid import fft_friendly_size
+
+        lengths = np.linalg.norm(np.asarray(grid.cell, dtype=float), axis=1)
+        shape = tuple(
+            min(int(native), max(int(n), fft_friendly_size(length
+                                                           / float(max_spacing))))
+            for n, native, length in zip(shape, grid.shape, lengths))
+    return resample_grid(grid, shape)
 
 
 def downsample_shape(shape, factor=None, target_max=None):

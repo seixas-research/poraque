@@ -61,12 +61,12 @@ _HA_TO_EV = HARTREE_TO_EV
 #
 # The cost is O(1) per structure against an O(N log N) FFT, i.e. unmeasurable.
 #
-#   Checked on CUDA, not assumed: `.cpu()` on a CUDA tensor synchronises, and
+#   Checked on CUDA, not assumed: `.cpu()` on a CUDA tensor synchronizes, and
 #   this runs several times per step, so keeping it on the device looked like a
 #   free win. Measured on a V100 with 32^3 grids it is 2 % *slower* -- a 3x3
 #   `linalg.det` costs 0.138 ms on the device against 0.098 ms via the host,
 #   because the kernel launch for 27 numbers costs more than the copy it
-#   avoids, and the synchronisation is cheap because the queue behind it is one
+#   avoids, and the synchronization is cheap because the queue behind it is one
 #   57 ms step. Worth re-measuring only if the grids grow enough for that queue
 #   to get long -- 128^3, or a batch an order of magnitude larger.
 # ---------------------------------------------------------------------- #
@@ -128,7 +128,7 @@ def _integer_mesh(shape, device, dtype):
     r"""
     The integer mesh :math:`(m_1, m_2, m_3)` of an FFT grid, ``(3, Nx, Ny, Nz)``.
 
-    Memoised because it depends only on ``(shape, device, dtype)`` and **not on
+    Memoized because it depends only on ``(shape, device, dtype)`` and **not on
     the cell**, while :func:`reciprocal_vectors` is called several times per
     batch --- once for the model's coordinate channels, again for each spectral
     gradient in an :math:`H^1` loss, again for the von Weizsäcker bound --- each
@@ -148,7 +148,7 @@ def _integer_mesh(shape, device, dtype):
     shape : tuple of int
         Must be a tuple of plain ``int``. A list is unhashable and a
         :class:`torch.Size` of tensors would key the cache on objects it then
-        keeps alive; :func:`reciprocal_vectors` normalises before calling.
+        keeps alive; :func:`reciprocal_vectors` normalizes before calling.
     device : torch.device
     dtype : torch.dtype
 
@@ -187,7 +187,7 @@ def reciprocal_vectors(cell, shape, device=None, dtype=torch.float32):
     device = device or cell.device
     reciprocal = cell_reciprocal(cell, device=device, dtype=dtype)  # (B, 3, 3)
 
-    # Normalised to a plain tuple of ints before it becomes a cache key: a
+    # Normalized to a plain tuple of ints before it becomes a cache key: a
     # `torch.Size` hashes correctly but a list does not, and an entry keyed on
     # tensors would hold them alive for the life of the process.
     integers = _integer_mesh(tuple(int(n) for n in shape),
@@ -220,7 +220,7 @@ def spectral_gradient(field, cell):
     A multi-channel field used to be a ``RuntimeError``: the channel axis was
     removed with ``squeeze(1)``, which is a **silent no-op** on an axis of
     width 2, and the surviving axis then broadcast against the three Cartesian
-    components. Every spin-polarised run reaches this through
+    components. Every spin-polarized run reaches this through
     :class:`~poraque.ml.losses.SobolevLoss`, so ``loss: sobolev`` could not be
     used on ``ISPIN = 2`` data at all.
     """
@@ -347,7 +347,7 @@ def functional_derivative(energy, density, cell, create_graph=False,
 
     Notes
     -----
-    **The discretisation factor is not optional.** With
+    **The discretization factor is not optional.** With
     :math:`F = \sum_i f_i\,\Delta v` autograd returns
     :math:`\partial F/\partial\rho_i`, whereas the functional derivative is
     defined through :math:`\delta F = \int (\delta F/\delta\rho)\,\delta\rho\,
@@ -437,8 +437,8 @@ def operator_kinetic_potential(operator, density, cell, create_graph=False):
     :math:`\delta T_s/\delta\rho` from a trained ``chg2tau``
     :class:`~poraque.ml.training.FieldOperator`.
 
-    Handles the normalisation round trip: the operator consumes and returns
-    normalised fields, while the derivative must be taken with respect to the
+    Handles the normalization round trip: the operator consumes and returns
+    normalized fields, while the derivative must be taken with respect to the
     **physical** density, or its magnitude is meaningless.
 
     Parameters
@@ -502,8 +502,8 @@ def hartree_potential(density, cell):
     """
     squeezed = density.dim() == 5
     # Channel 0 is rho. The Hartree term is the classical repulsion of the
-    # total charge and the magnetisation is not one of its arguments;
-    # `squeeze(1)` was a silent no-op on a spin-polarised (rho, m) pair, which
+    # total charge and the magnetization is not one of its arguments;
+    # `squeeze(1)` was a silent no-op on a spin-polarized (rho, m) pair, which
     # then broadcast a (B, ...) kernel against a (B, 2, ...) field -- a crash
     # for most batch sizes and, at batch 2, a finite wrong answer.
     values = density[:, 0] if squeezed else density
@@ -570,7 +570,7 @@ def von_weizsacker_tau(density, cell, epsilon=1e-10):
         Same shape as ``density``, in eV/Å³.
     """
     squeezed = density.dim() == 5
-    # Channel 0 is rho; a spin-polarised (rho, m) pair must not reach the
+    # Channel 0 is rho; a spin-polarized (rho, m) pair must not reach the
     # gradient -- squeeze(1) was a silent no-op on the size-2 channel axis.
     values = density[:, 0] if squeezed else density
 
@@ -612,7 +612,7 @@ def von_weizsacker_potential(density, cell, epsilon=1e-10):
 #: Dirac exchange coefficient, :math:`-\tfrac34(3/\pi)^{1/3}`.
 _DIRAC_X = -0.75 * (3.0 / np.pi) ** (1.0 / 3.0)
 
-#: Perdew-Wang 1992 correlation parameters, unpolarised branch. Identical to
+#: Perdew-Wang 1992 correlation parameters, unpolarized branch. Identical to
 #: :data:`poraque.physics.energy._PW92`; the two must not drift apart.
 _PW92 = {"A": 0.031091, "alpha1": 0.21370,
              "beta1": 7.5957, "beta2": 3.5876, "beta3": 1.6382, "beta4": 0.49294}
@@ -654,7 +654,7 @@ def lda_exchange_potential(density):
 
 def pw92_correlation_potential(density, epsilon=1e-12):
     r"""
-    Perdew-Wang 1992 correlation potential, unpolarised branch, in eV.
+    Perdew-Wang 1992 correlation potential, unpolarized branch, in eV.
 
     Uses :math:`v_{\rm c} = \varepsilon_{\rm c}
     - \tfrac{r_s}{3}\,\mathrm{d}\varepsilon_{\rm c}/\mathrm{d}r_s`, with the
@@ -754,8 +754,8 @@ def xc_energy_density(density, cell=None, functional="pbe", epsilon=1e-30):
 
     squeezed = density.dim() == 5
     # Channel 0 is rho. `squeeze(1)` was used here and is a silent no-op on a
-    # spin-polarised (rho, m) pair, which then reached spectral_gradient as a
-    # two-channel field. This form of v_xc is the unpolarised one evaluated on
+    # spin-polarized (rho, m) pair, which then reached spectral_gradient as a
+    # two-channel field. This form of v_xc is the unpolarized one evaluated on
     # the total density -- see von_weizsacker_tau, which already did this.
     values = density[:, 0] if squeezed else density
 
@@ -817,7 +817,7 @@ def xc_potential(density, functional="pbe", cell=None, epsilon=1e-12,
     and that divergence term is taken by **autograd** through
     :func:`xc_energy_density` rather than derived by hand. The spectral
     gradient inside is itself differentiable and exact for a band-limited
-    field, so the result carries no discretisation error, and there is no
+    field, so the result carries no discretization error, and there is no
     hand-derived expression to get wrong.
 
     .. important::
@@ -856,10 +856,10 @@ def xc_potential(density, functional="pbe", cell=None, epsilon=1e-12,
     """
     name = str(functional).lower()
     # Channel 0 is rho, reduced once so every branch below agrees on what it
-    # is a functional of. This is the unpolarised form evaluated on the total
+    # is a functional of. This is the unpolarized form evaluated on the total
     # density (see xc_energy_density), so m is not one of its arguments: the
     # LDA branch is elementwise and would otherwise return v_x(m) in the
-    # second channel as though the magnetisation were a density, while the
+    # second channel as though the magnetization were a density, while the
     # gradient-corrected branch would return an exactly-zero one. Both are
     # answers to a question nobody asked, and both then broadcast into an
     # Euler-Lagrange residual built from single-channel potentials.
@@ -1056,7 +1056,7 @@ def euler_lagrange_residual(density, v_external, cell, lam=1.0 / 9.0,
     the warning that the residual alone has trivial solutions and the data
     terms must stay dominant.
     """
-    # Every term below is a functional of rho, so the magnetisation is reduced
+    # Every term below is a functional of rho, so the magnetization is reduced
     # away once, here, rather than in each of them. The elementwise helpers --
     # thomas_fermi_potential and the LDA branch of xc_potential -- cannot
     # detect a channel they were handed by mistake: they would return

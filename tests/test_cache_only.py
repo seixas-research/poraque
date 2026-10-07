@@ -132,7 +132,8 @@ class TestACacheOnlyRunBuildsTheCacheAndStops:
             poraque_train.run(["--config", config, "--cache-only"])
 
         out = capsys.readouterr().out
-        assert "CACHE BUILT -- no training was run (--cache-only)" in out
+        assert "[CACHE SUMMARY]" in out
+        assert "built; no training was run (--cache-only)" in out
         assert "materials   : 2 cached  (ext2chg: 2, chg2tau: 2)" in out
         assert "grid shapes : 8x8x8" in out
         assert "on disk     :" in out
@@ -140,11 +141,11 @@ class TestACacheOnlyRunBuildsTheCacheAndStops:
         assert "elements    : Si" in out
         # The same summary is in the run's own log, which is what a batch job
         # leaves behind.
-        assert "CACHE BUILT" in _log(tmp_path)
+        assert "[CACHE SUMMARY]" in _log(tmp_path)
 
     def test_the_device_is_the_cpu_whatever_was_asked_for(self, tmp_path,
                                                           no_training):
-        """A CPU node has no GPU to honour ``--device cuda`` on, and the mode
+        """A CPU node has no GPU to honor ``--device cuda`` on, and the mode
         must not fail there for want of one -- nor form a group."""
         config = _config(tmp_path, training={"device": "cuda",
                                              "strict_device": True,
@@ -168,8 +169,15 @@ class TestACacheOnlyRunBuildsTheCacheAndStops:
 
         assert stop.value.code == 0
         rows = [line for line in capsys.readouterr().out.splitlines()
-                if line.strip().startswith("structure_") and "8x8x8" in line]
+                if _is_material_row(line) and "8x8x8" in line]
         assert len(rows) == 2 and all(row.endswith("cached") for row in rows)
+
+
+def _is_material_row(line):
+    """A cache-table row: ``i/N`` in the first column, the material next."""
+    tokens = line.split()
+    return (len(tokens) > 1 and "/" in tokens[0]
+            and tokens[1].startswith("structure_"))
 
 
 class TestTheTrainingJobFindsTheCache:
@@ -187,7 +195,7 @@ class TestTheTrainingJobFindsTheCache:
         # The cache table's rows carry the native and cached grid shapes; the
         # per-material metrics rows further down do not.
         rows = [line for line in out.splitlines()
-                if line.strip().startswith("structure_") and "8x8x8" in line]
+                if _is_material_row(line) and "8x8x8" in line]
         assert len(rows) == 2 and all(row.endswith("cached") for row in rows)
         assert {result["task"] for result in results} == {"ext2chg",
                                                             "chg2tau"}

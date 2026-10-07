@@ -16,7 +16,7 @@ We have two supervised operator-learning tasks defined on a shared 3D grid:
 Trained purely on data, both are curve-fits that happen to have a physical
 label. This document specifies how to turn them into a **physics-informed**
 system in which the governing equations of KS-DFT and OF-DFT enter the
-optimisation directly.
+optimization directly.
 
 The central claim is that these are not two independent regressions. They are
 the two legs of one variational statement:
@@ -30,7 +30,7 @@ $$
 The stationarity condition couples $V_{\rm ext}$, $\rho$ and $\tau$ in a single
 pointwise equation. Enforcing it makes the output of `chg2tau` a constraint on
 the output of `ext2chg`, and vice versa — the two networks stop being
-independent and start being a *discretised DFT solver with learned components*.
+independent and start being a *discretized DFT solver with learned components*.
 
 **Why an FNO is unusually well suited to this.** A physics-informed loss needs
 derivatives: $\nabla\rho$, $\nabla^2\sqrt\rho$, and the Hartree convolution
@@ -64,7 +64,7 @@ Two exact relations follow that need **no orbitals** and are therefore directly
 usable as losses:
 
 * **Poisson / Hartree.** $\nabla^2 v_H = -4\pi e^2\rho$, solved exactly in
-  reciprocal space with $v_H(\mathbf G{=}0)=0$ — the same neutralising
+  reciprocal space with $v_H(\mathbf G{=}0)=0$ — the same neutralizing
   background convention `ExternalPotential` uses, so $v_H$ and $V_{\rm ext}$ are
   directly addable. Implemented: `physics.hartree_potential`.
 * **Particle number.** $\int\rho\,d^3r = N_{\rm val}$, exactly, where
@@ -72,7 +72,7 @@ usable as losses:
 
 ### 2.2 Orbital-free DFT
 
-Minimising $E[\rho]$ under $\int\rho = N$ gives the Euler–Lagrange equation
+Minimizing $E[\rho]$ under $\int\rho = N$ gives the Euler–Lagrange equation
 
 $$
 \boxed{\;\frac{\delta T_s}{\delta\rho}(\mathbf r) + V_{\rm ext}(\mathbf r) + v_H[\rho](\mathbf r) + v_{xc}[\rho](\mathbf r) = \mu\;}
@@ -95,8 +95,8 @@ These constrain `chg2tau` and are theorems, not heuristics:
 
 | Property | Statement | Use |
 | --- | --- | --- |
-| Non-negativity | $\tau \ge 0$ | hard, via output parameterisation |
-| **Hoffmann-Ostenhof bound** | $\tau \ge \tau_{\rm vW}=\dfrac{\lvert\nabla\rho\rvert^2}{8\rho}$ | hard, via output parameterisation |
+| Non-negativity | $\tau \ge 0$ | hard, via output parameterization |
+| **Hoffmann-Ostenhof bound** | $\tau \ge \tau_{\rm vW}=\dfrac{\lvert\nabla\rho\rvert^2}{8\rho}$ | hard, via output parameterization |
 | Uniform-gas limit | $\tau\to\tau_{\rm TF}=C_{\rm TF}\rho^{5/3}$ as $\nabla\rho\to0$ | soft penalty / augmentation |
 | **Coordinate scaling** | $\rho_\lambda(\mathbf r)=\lambda^3\rho(\lambda\mathbf r)\Rightarrow T_s[\rho_\lambda]=\lambda^2T_s[\rho]$ | exact, label-free augmentation |
 | Pauli positivity | $\tau_P=\tau-\tau_{\rm vW}\ge0$ and $v_P=\delta T_P/\delta\rho\ge0$ | hard / soft |
@@ -117,14 +117,14 @@ that cannot.
 
 **Three constraints move into the architecture.**
 
-### 3.1 Exact positivity — output parameterisation
+### 3.1 Exact positivity — output parameterization
 
 Predict $\log\rho$ and exponentiate. `transforms.Log` already does this: its
 `inverse` returns `exp(y) - epsilon`, so $\rho > -\epsilon$ *identically*, for
-every weight configuration, at initialisation and after any optimiser step.
+every weight configuration, at initialization and after any optimizer step.
 No penalty, no weight to tune.
 
-### 3.2 Exact electron count — a normalisation head
+### 3.2 Exact electron count — a normalization head
 
 $$
 \rho_{\rm out}(\mathbf r) \;=\; N_{\rm val}\,\frac{\tilde\rho(\mathbf r)}{\int\tilde\rho\,d^3r}
@@ -134,7 +134,7 @@ One reduction and one division makes $\int\rho = N_{\rm val}$ hold to machine
 precision, and it is differentiable. This is strictly better than
 `electron_count_loss`, which should be kept only as a diagnostic.
 
-### 3.3 Exact von Weizsäcker bound — residual parameterisation ✅ IMPLEMENTED
+### 3.3 Exact von Weizsäcker bound — residual parameterization ✅ IMPLEMENTED
 
 $$
 \tau_{\rm out} \;=\; \tau_{\rm vW}[\rho] \;+\; s\,\mathrm{softplus}\big(f_\theta(\rho)\big)
@@ -149,13 +149,13 @@ Implemented as `poraque.ml.heads.PauliResidualOperator`; enable with
 `FieldOperator(..., pauli_residual=True)` or `poraque-train --pauli-head`.
 Notes from the implementation:
 
-* The head consumes and returns *normalised* fields, so it is a drop-in
+* The head consumes and returns *normalized* fields, so it is a drop-in
   replacement for a bare backbone. Internally it decodes $\rho$, evaluates
   $\tau_{\rm vW}$ spectrally (exact on a plane-wave grid), adds the positive
   residual, and re-encodes — keeping the loss well-conditioned while the
   constraint lives in physical units.
 * The scale $s$ is fitted on the **training split only** (`fit_pauli_scale`)
-  so the ``softplus`` operates near unit argument; it is then optimised as
+  so the ``softplus`` operates near unit argument; it is then optimized as
   $\log s$, which cannot change sign.
 * $\tau_{\rm vW}$ is a fixed function of the *input*, so it contributes no
   gradient to $\theta$ — it is a per-sample offset, not a second branch.
@@ -163,7 +163,7 @@ Notes from the implementation:
   it: for strongly negative backbone output ``softplus`` underflows and the
   head returns $\tau = \tau_{\rm vW}$ *exactly*. That single-orbital limit is
   reachable, not merely approachable — something a soft penalty can never do.
-* Verified holding at random initialisation, for weights scaled by 50×, and
+* Verified holding at random initialization, for weights scaled by 50×, and
   after training at a deliberately destructive learning rate
   (`tests/test_heads.py`). A control test confirms the *unconstrained*
   backbone does violate the bound, so the head is not solving a non-problem.
@@ -173,15 +173,15 @@ densities; VASP's `CHGCAR`/`TAUCAR` are pseudo quantities. Use
 `pauli_bound_violation` before enabling the head. On the Pt dataset it holds at
 every point of `struct_001`/`struct_002` and at all but one point of
 `struct_000` — and that point is where spectral downsampling rang $\tau$
-slightly negative, i.e. an artefact of resampling rather than of physics.
+slightly negative, i.e. an artifact of resampling rather than of physics.
 $\tau_{\rm vW}$ supplies ~31 % of $\tau$ there, which is the capacity the head
 hands back to the network for free.
 
 > **Recommendation.** Implement §3.1–3.3 *before* adding any soft physics loss.
-> They cost nothing at inference, cannot destabilise training, and remove three
+> They cost nothing at inference, cannot destabilize training, and remove three
 > hyper-parameters. `physics.positivity_loss`, `physics.electron_count_loss`
 > and `physics.von_weizsacker_bound_loss` then serve as *verification* that the
-> parameterisation works, not as training signal.
+> parameterization works, not as training signal.
 
 ---
 
@@ -204,11 +204,11 @@ on deliberately.
 | $\mathcal{L}_{\rm scale}$ | violation of $T_s[\rho_\lambda]=\lambda^2T_s[\rho]$ | `chg2tau` | label-free |
 
 **All physics terms are evaluated on the prediction decoded to physical
-units**, never in the normalised representation — a constraint is a statement
+units**, never in the normalized representation — a constraint is a statement
 about physics, not about whatever preprocessing training happens to use. This
 is why `PhysicsInformedLoss.forward` takes `physical_prediction` separately.
 
-Every term is **normalised to be dimensionless**. A raw $(\mathrm{eV/Å^3})^2$
+Every term is **normalized to be dimensionless**. A raw $(\mathrm{eV/Å^3})^2$
 penalty varies by orders of magnitude between a light semiconductor and a
 transition-metal oxide, and no single weight could serve both.
 
@@ -236,7 +236,7 @@ increasing order of ambition:
    exact in the limit of a perfect KEDF.
 3. **Self-consistent** — see §5.
 
-Option 2 is the pivot point of the whole programme: it is what couples the two
+Option 2 is the pivot point of the whole program: it is what couples the two
 tasks.
 
 ### 4.3 Weighting and scheduling
@@ -246,12 +246,12 @@ in order of preference:
 
 * **Warm-up.** Train supervised to convergence, then ramp $\lambda$ linearly
   over ~10% of the remaining budget. A physics residual evaluated on a random
-  initialisation is meaningless and its gradient is noise.
+  initialization is meaningless and its gradient is noise.
 * **Gradient-norm balancing.** Set $\lambda_i$ each step so that
   $\lambda_i\lVert\nabla_\theta\mathcal{L}_i\rVert \approx \alpha\lVert\nabla_\theta\mathcal{L}_{\rm data}\rVert$
   with $\alpha\sim0.1$. Removes manual tuning; costs one extra backward pass.
 * **Uncertainty weighting.** Learn $\lambda_i = 1/2\sigma_i^2$ with a
-  $\log\sigma_i$ regulariser. Cheaper, less controllable.
+  $\log\sigma_i$ regularizer. Cheaper, less controllable.
 * **Ablate one term at a time** against a frozen supervised baseline. A physics
   term that does not improve held-out error is not earning its place.
 
@@ -281,13 +281,13 @@ with $\mu$ removed as the cell average. Training $\theta_A$ and $\theta_B$
 jointly on $\mathcal{L}_{\rm data}^A+\mathcal{L}_{\rm data}^B+\lambda\lVert r\rVert^2$
 gives three things a separate training cannot:
 
-* **Mutual regularisation.** $\theta_B$ is constrained on densities produced by
+* **Mutual regularization.** $\theta_B$ is constrained on densities produced by
   $\theta_A$, i.e. exactly the distribution it will see at deployment, not only
   on VASP-converged densities. This directly attacks the distribution shift
   that breaks naive ML-KEDFs when they are put inside an SCF loop.
 * **A usable KEDF.** The object OF-DFT actually needs is
   $\delta T_s/\delta\rho$, not $\tau$. Training through the functional
-  derivative optimises the quantity that will be used.
+  derivative optimizes the quantity that will be used.
 * **Physical consistency at inference.** A predicted $(\rho,\tau)$ pair
   satisfies the variational condition it is supposed to satisfy.
 
@@ -325,7 +325,7 @@ constraints that avoid orbitals:
 | Phase | Work | Deliverable | Depends on |
 | --- | --- | --- | --- |
 | **0** | Supervised baseline, both tasks, honest held-out split by material | baseline relative $L^2$ per task | done (`poraque.ml`) |
-| **1** | Hard constraints §3.1–3.3: `Log` head, charge-normalisation head, $\tau=\tau_{\rm vW}+\mathrm{softplus}$ | constraints satisfied to machine precision; accuracy ≥ baseline | 0 |
+| **1** | Hard constraints §3.1–3.3: `Log` head, charge-normalization head, $\tau=\tau_{\rm vW}+\mathrm{softplus}$ | constraints satisfied to machine precision; accuracy ≥ baseline | 0 |
 | **2** | $H^1$ data loss; scaling-relation augmentation | improved gradient fidelity for `chg2tau` | 1 |
 | **3** | $\mathcal{L}_{\rm EL}$ with the **analytic** `TF+λvW` surrogate, warm-up schedule, gradient-norm balancing | label-free physics signal on `ext2chg` | 1 |
 | **4** | $\delta T_s/\delta\rho$ by autograd through `FNO_B`; joint training of both operators | coupled PI-FNO (§5) | 3 |
@@ -354,7 +354,7 @@ contribution. Phases 5–6 are stretch.
 `ExternalPotential` builds the **long-range local** ionic potential from
 `ZVAL` with a Gaussian-smeared pseudo-ion whose width comes from the `POTCAR`
 `RCORE`. It is not VASP's PAW local pseudopotential: the short-range
-pseudisation inside $R_{\rm core}$ is modelled rather than read from the
+pseudization inside $R_{\rm core}$ is modeled rather than read from the
 tabulated `local part`, and non-local projectors are out of scope for a local
 field by construction.
 
@@ -384,7 +384,7 @@ its $q$-mesh convention supplied to be usable.
    `mode_selection="physical"`).
 5. **Chemistry-transfer test.** Hold out an entire chemical family.
 6. **Downstream test**, the one that matters: insert the learned KEDF into the
-   OF-DFT minimiser and measure the error in the converged density and energy —
+   OF-DFT minimizer and measure the error in the converged density and energy —
    not the error in $\tau$.
 
 ---
@@ -403,7 +403,7 @@ its $q$-mesh convention supplied to be usable.
 | Operator | `fno.FNO3d`, `fno.SpectralConv3d` |
 | Training | `training.train`, `training.FieldOperator` |
 
-Not yet implemented, in roadmap order: the charge-normalisation head, the
+Not yet implemented, in roadmap order: the charge-normalization head, the
 $\tau_{\rm vW}+\mathrm{softplus}$ head, the scaling-relation augmentation, the
 autograd functional derivative, joint two-operator training, density-to-potential
 inversion.

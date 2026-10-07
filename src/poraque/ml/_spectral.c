@@ -18,7 +18,7 @@
  * `m` of length M = m1*m2*m3. Flattening is exact -- the axes are the fastest
  * varying in both operands and the contraction is elementwise across all
  * three -- and it turns a five-index gather into the loop below, whose inner
- * iteration walks three contiguous arrays in lockstep and vectorises.
+ * iteration walks three contiguous arrays in lockstep and vectorizes.
  *
  * Why this is worth a C file at all
  * ---------------------------------
@@ -71,7 +71,7 @@ int poraque_spectral_abi(void) { return PORAQUE_SPECTRAL_ABI; }
  * performance or cause incorrect results", and the documented workaround is an
  * environment variable whose own documentation calls it unsafe. pthreads have
  * no runtime to collide with, are in libc on every platform this runs on, and
- * the parallelisation needed here -- independent output rows, no reduction --
+ * the parallelization needed here -- independent output rows, no reduction --
  * does not benefit from anything OpenMP would add.
  */
 int poraque_spectral_threaded(void) { return PORAQUE_HAVE_PTHREADS; }

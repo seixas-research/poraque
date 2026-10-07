@@ -46,7 +46,7 @@
     "nanoparticle": 8.389169124755231
    }
   },
-  "magnetisation": {
+  "magnetization": {
    "energy_by_L": {
     "0": 0.93501298002053,
     "1": 0.0005007560934595911,
@@ -95,9 +95,9 @@
   "round_trip": {
    "regroup_bit_exact": true,
    "regroup_scale_text_identical": true,
-   "centre_rotate_max_abs": 9.769962616701378e-15,
-   "centre_rotate_text_identical": false,
-   "centre_rotate_text_identical_above_1e-12": true,
+   "center_rotate_max_abs": 9.769962616701378e-15,
+   "center_rotate_text_identical": false,
+   "center_rotate_text_identical_above_1e-12": true,
    "symmetry_zero_fraction": 0.039305750350631136
   }
  },
@@ -742,7 +742,7 @@
    }
   }
  },
- "magnetisation": {
+ "magnetization": {
   "element mean (current table)": {
    "fold 0": {
     "all": 0.8704272767257041,

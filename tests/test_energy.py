@@ -464,7 +464,7 @@ class TestEnergyCalculator:
 # Helpers
 # ===================================================================== #
 def _ionic_crystal(name):
-    """``(Structure, nearest-neighbour distance)`` for a textbook lattice."""
+    """``(Structure, nearest-neighbor distance)`` for a textbook lattice."""
     if name == "rocksalt":
         a = 5.64
         positions = np.array([

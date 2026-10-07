@@ -52,11 +52,11 @@ guarded to stay clear of zero (Molina et al., 2020). All four share the
 differ in expressiveness and cost, not in how they plug into an
 :class:`~poraque.ml.fno.FNOBlock`.
 
-Every learnable variant shares one stabilisation trick, taken directly from
+Every learnable variant shares one stabilization trick, taken directly from
 the original KAN paper's own construction — its edge activation is
 :math:`\phi(x) = w_b\, b(x) + w_s\, \mathrm{spline}(x)` with base function
 :math:`b = \mathrm{SiLU}`, a fixed nonlinearity plus a learned residual that
-starts small — reproduced here at initialisation as
+starts small — reproduced here at initialization as
 
 .. math:: \phi_c(x) = w_c \cdot \mathrm{SiLU}(x) + \varepsilon_c(x),
           \qquad w_c = 1,\ \varepsilon_c \text{ small at init},
@@ -73,14 +73,14 @@ activation rather than the paper's; corrected 2026-08-17 — see
 learned residual — no base weight, no fixed nonlinearity, nothing but the
 spline/Chebyshev/RBF/rational function. This is the more minimal reading of
 "KAN" some descriptions use — the original paper keeps a base term
-deliberately, noting it helps optimisation, and it is the default here for
+deliberately, noting it helps optimization, and it is the default here for
 the same reason. Each residual was designed to sit *on top of* an unbounded
 base, not to be the sole nonlinearity, so switching it off changes more than
 removing one term: :class:`ChebyshevKANActivation` and
 :class:`BSplineKANActivation` become bounded for every input, and
 :class:`RBFKANActivation` and (with the default degrees)
 :class:`RationalKANActivation` decay to zero for a large
-:math:`|x|` — a real behavioural difference from a base-carrying channel,
+:math:`|x|` — a real behavioral difference from a base-carrying channel,
 not only a smaller parameter count. See each class's docstring.
 """
 
@@ -103,7 +103,7 @@ KAN_ACTIVATIONS = frozenset({"kan_bspline", "kan_chebyshev", "kan_rbf", "kan_rat
 #: Every valid ``activation`` name, stateless and learnable together.
 ACTIVATIONS = frozenset(SIMPLE_ACTIVATIONS) | KAN_ACTIVATIONS
 
-#: Std. dev. of the learnable residual at initialisation, shared by every KAN
+#: Std. dev. of the learnable residual at initialization, shared by every KAN
 #: variant. Not exposed through the config: it sets how far from the base
 #: activation (or, under ``use_base=False``, from zero) training starts, not
 #: what the operator is allowed to learn, and 0.1 is small enough that the
@@ -291,7 +291,7 @@ class BSplineKANActivation(nn.Module):
     ----------------------
     An input outside ``grid_range`` is **clamped**, not linearly extrapolated.
     A B-spline basis sums to a bounded value only *inside* its knot support;
-    evaluated outside it the boundary basis functions are not normalised and
+    evaluated outside it the boundary basis functions are not normalized and
     the residual can grow without control exactly where training has the
     least information about what it should do — an FNO's pre-activations are
     unbounded, so a rare wide tail is the expected case, not a pathological
@@ -305,7 +305,7 @@ class BSplineKANActivation(nn.Module):
     option the design allows and was not taken: it would need its own
     bookkeeping at the two boundary segments and can amplify rather than
     dampen a wide tail, which is the opposite of what an activation function
-    sitting inside a residual stream should do at initialisation.
+    sitting inside a residual stream should do at initialization.
 
     Parameters
     ----------
@@ -359,7 +359,7 @@ class BSplineKANActivation(nn.Module):
         # [low, high], so the Cox-de Boor recursion below has enough support
         # to build a degree-`spline_order` basis across the whole interval.
         # Standard construction (Liu et al. 2024 and the efficient-kan
-        # reference implementation it popularised).
+        # reference implementation it popularized).
         step = (high - low) / self.grid_size
         knots = torch.arange(
             -self.spline_order, self.grid_size + self.spline_order + 1,
@@ -530,7 +530,7 @@ class RBFKANActivation(nn.Module):
         centers = torch.linspace(low, high, self.n_basis, dtype=torch.float32)
         self.register_buffer("centers", centers)
         # Fixed to the center spacing (not learned, not user-facing): keeps
-        # neighbouring Gaussians overlapping by a constant amount regardless
+        # neighboring Gaussians overlapping by a constant amount regardless
         # of grid_size, the same role `step` plays in the B-spline knot
         # vector. A plain float, not a buffer -- nothing to move between
         # devices or precisions.
@@ -603,7 +603,7 @@ class RationalKANActivation(nn.Module):
     denominator, which a spectral block cannot recover from (one infinite
     voxel poisons every mode the FFT touches). Learning :math:`b_{c,k}`
     unconstrained and taking :math:`|b_{c,k}|` only in the forward pass keeps
-    the parameterisation free for the optimiser while the forward pass
+    the parameterization free for the optimizer while the forward pass
     enforces positivity by construction.
 
     With the default degrees (:math:`K_p = 4`, :math:`K_q = 4`) the

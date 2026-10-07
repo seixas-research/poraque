@@ -175,7 +175,7 @@ __marimo__/
 # Pseudopotentials (from PseudoDojo)
 pseudos/
 
-# Generated artefacts: downsampled dataset caches and trained model weights.
+# Generated artifacts: downsampled dataset caches and trained model weights.
 # The logs are small plain text and are kept deliberately.
 data/cache/
 models/
@@ -209,7 +209,7 @@ IBZKPT
 CONTCAR
 
 
-# LaTeX build artefacts (the .tex sources and the final PDF are kept)
+# LaTeX build artifacts (the .tex sources and the final PDF are kept)
 *.aux
 *.log
 *.out

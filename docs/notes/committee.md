@@ -11,7 +11,7 @@ answer today is a guess. A committee turns that guess into a measurement.
 
 The mechanism: train N operators that share their data, architecture and batch
 order, differing only in `init_seed`. Where they agree, the data determined the
-answer. Where they diverge, the initialisation did — which is to say the data
+answer. Where they diverge, the initialization did — which is to say the data
 did not pin it down.
 
 ```bash
@@ -28,7 +28,7 @@ poraque-committee --models "models/committee_*" --task ext2chg
 restores the global RNG state around the weight draw, so members differ in
 their weights and in nothing else. Had a single seed governed both, two members
 would also see different batch orders, and their disagreement would mix
-optimisation variance with a reshuffled dataset — measuring neither.
+optimization variance with a reshuffled dataset — measuring neither.
 
 ## What makes our setup unusual
 
@@ -92,7 +92,7 @@ uncertain. Two options, and they answer different questions:
   $\tau$. Gives the uncertainty a user actually experiences.
 
 Do the end-to-end one for active learning; the per-stage one when deciding
-where to spend modelling effort.
+where to spend modeling effort.
 
 ## Validating it: the only question that matters
 
@@ -117,9 +117,9 @@ harder than the ten 27-atom ones.
 | 32-atom (2 structures) | 0.0445 ± 0.0182 | 0.0894 ± 0.0420 |
 
 So: **does a committee rank `struct_010` and `struct_011` as its two most
-uncertain?** If yes, the measure has recovered a real generalisation gap
+uncertain?** If yes, the measure has recovered a real generalization gap
 without being told about it, and is worth trusting to pick the next
-calculation. If no, it is measuring optimisation noise and nothing else.
+calculation. If no, it is measuring optimization noise and nothing else.
 
 ### Result: it failed (2026-08-04)
 
@@ -147,7 +147,7 @@ five-fold.
 
 **The test design was also flawed.** With `valid_fraction: 0` every member saw
 every structure it was then scored on; asking a committee about data it
-memorised guarantees agreement. That confounds "the measure is weak" with "the
+memorized guarantees agreement. That confounds "the measure is weak" with "the
 test was unfair".
 
 The honest form is a **per-fold committee**: for each CV fold, train K members
@@ -170,7 +170,7 @@ the next calculation.**
 
 ## What this cannot tell us
 
-> **Members differ only in initialisation, so they explore optimisation
+> **Members differ only in initialization, so they explore optimization
 > variance — not epistemic uncertainty over the data distribution.**
 
 Three consequences, all of which bound the claim:

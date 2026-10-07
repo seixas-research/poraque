@@ -9,7 +9,7 @@
 r"""
 Low-Rank Adaptation of a trained operator's dense layers.
 
-Fine-tuning normally updates every weight, which needs optimiser state for
+Fine-tuning normally updates every weight, which needs optimizer state for
 every weight and produces a checkpoint the size of the model. **LoRA** instead
 freezes the trained weights and learns a low-rank correction beside them:
 
@@ -19,7 +19,7 @@ freezes the trained weights and learns a low-rank correction beside them:
     \qquad A \in \mathbb{R}^{r \times d_{\rm in}},
     \quad B \in \mathbb{R}^{d_{\rm out} \times r} ,
 
-with :math:`r \ll \min(d_{\rm in}, d_{\rm out})`. ``B`` is initialised to zero
+with :math:`r \ll \min(d_{\rm in}, d_{\rm out})`. ``B`` is initialized to zero
 and ``A`` to a small random matrix, so :math:`BA = 0` at step 0 and the adapted
 model *is* the base model until training moves it — a fine-tune that starts
 anywhere else has already discarded some of what it was adapting.
@@ -33,7 +33,7 @@ it back to physical units, and between them sit the spectral weights.
 
 The spectral weights are deliberately left alone. They are complex tensors of
 shape ``(width, width, m1, m2, m3)`` and hold ~99.8 % of the parameters, so
-they look like the obvious target — but a rank-:math:`r` factorisation of a
+they look like the obvious target — but a rank-:math:`r` factorization of a
 5-index complex kernel is not one decomposition, it is a choice of which axes
 to pair, and each choice is a different and unvalidated model. A LoRA that
 adapted them would also stop being cheap, which is the point. Adapting the ends
@@ -89,7 +89,7 @@ class LoRAConv3d(nn.Module):
                 f"LoRA is applied to the 1x1x1 (dense) convolutions, and this "
                 f"one has kernel_size={tuple(base.kernel_size)}. A larger "
                 f"kernel is a spatial operator, not a channel map, and "
-                f"factorising it means something else.")
+                f"factorizing it means something else.")
         if int(rank) <= 0:
             raise ValueError(f"lora_rank must be positive, got {rank!r}.")
 
@@ -111,7 +111,7 @@ class LoRAConv3d(nn.Module):
             torch.zeros(base.out_channels, self.rank))
         # Kaiming on A, zeros on B: the product is exactly zero at step 0, so
         # the wrapped model reproduces the base model bit for bit before any
-        # optimiser step. A non-zero start would silently perturb the weights
+        # optimizer step. A non-zero start would silently perturb the weights
         # the fine-tune exists to preserve.
         nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
 
@@ -251,7 +251,7 @@ def load_lora_state_dict(model, state):
 
     Strict about *what it was given*, not about what the model has: a key in
     ``state`` with no home is a mismatch worth raising on, while an adapter the
-    checkpoint does not mention keeps its zero-initialised value and so leaves
+    checkpoint does not mention keeps its zero-initialized value and so leaves
     that layer at the base weights.
 
     Raises

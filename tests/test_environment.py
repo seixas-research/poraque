@@ -88,7 +88,7 @@ class TestBannerContent:
 
     def test_emit_redirects_every_line(self):
         """
-        The hook a :class:`Tee` uses, so a training log opens with the exact
+        The hook a :class:`~poraque.utils.logging.Logger` uses, so a training log opens with the exact
         environment the run happened in.
         """
         captured = []

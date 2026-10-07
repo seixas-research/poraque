@@ -14,7 +14,7 @@ beside its dense layers. Four claims carry the feature, and each of them fails
 *quietly* if it is wrong — which is why they are asserted rather than assumed:
 
 **It starts as the identity.** :math:`B` is zero, so the adapted model
-reproduces the base bit for bit before the first optimiser step. A non-zero
+reproduces the base bit for bit before the first optimizer step. A non-zero
 start perturbs the very weights the fine-tune exists to preserve, and the only
 symptom is a slightly worse model.
 
@@ -89,10 +89,10 @@ class TestItStartsAsTheIdentity:
         before = model(x, cell).clone()
         apply_lora(model, rank=4)
 
-        optimiser = torch.optim.AdamW(
+        optimizer = torch.optim.AdamW(
             [p for p in model.parameters() if p.requires_grad], lr=1e-2)
         model(x, cell).square().mean().backward()
-        optimiser.step()
+        optimizer.step()
 
         assert not torch.allclose(model(x, cell), before)
 
@@ -109,7 +109,7 @@ class TestTheBaseIsStrictlyFrozen:
     def test_the_spectral_weights_never_move(self, model, sample):
         """
         They are ~99.8 % of the parameters and are deliberately not adapted:
-        factorising a 5-index complex kernel is a choice of which axes to pair,
+        factorizing a 5-index complex kernel is a choice of which axes to pair,
         not one decomposition.
         """
         x, cell = sample
@@ -118,12 +118,12 @@ class TestTheBaseIsStrictlyFrozen:
                   if tensor.is_complex()}
         apply_lora(model, rank=4)
 
-        optimiser = torch.optim.AdamW(
+        optimizer = torch.optim.AdamW(
             [p for p in model.parameters() if p.requires_grad], lr=1e-1)
         for _ in range(3):
-            optimiser.zero_grad()
+            optimizer.zero_grad()
             model(x, cell).square().mean().backward()
-            optimiser.step()
+            optimizer.step()
 
         after = dict(model.named_parameters())
         for name, tensor in before.items():
@@ -213,7 +213,7 @@ class TestItRefusesToDoNothingQuietly:
     def test_a_spatial_convolution_is_not_wrapped(self):
         """
         A larger kernel is a spatial operator, not a channel map, and
-        factorising it means something else.
+        factorizing it means something else.
         """
         with pytest.raises(ValueError, match="1x1x1"):
             LoRAConv3d(torch.nn.Conv3d(4, 4, kernel_size=3), rank=2)

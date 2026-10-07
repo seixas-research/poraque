@@ -56,12 +56,12 @@ What this is not
 
    These are **pseudo-valence** energies. ``CHGCAR`` holds the valence pseudo
    density and ``TAUCAR`` the valence pseudo kinetic energy density, so the
-   PAW one-centre terms — the difference between the pseudo and all-electron
+   PAW one-center terms — the difference between the pseudo and all-electron
    descriptions inside the augmentation spheres — are absent entirely. The
    absolute number will therefore **not** reproduce a VASP total energy, and no
    amount of tuning the terms here will make it.
 
-   What survives is the *variation* with geometry, since the missing one-centre
+   What survives is the *variation* with geometry, since the missing one-center
    terms are dominated by a per-atom constant. Use this for energy
    **differences** between structures of the same composition, and calibrate
    against reference DFT before trusting the scale. :attr:`EnergyComponents.total`
@@ -619,7 +619,7 @@ def total_density(density):
     Every energy term in this module is a functional of :math:`\rho` alone, so
     a two-channel :math:`(\rho, m)` field has to be reduced before any of them
     can integrate it. Doing that here rather than at each call site is what
-    lets a spin-polarised prediction reach an energy at all: the adapter
+    lets a spin-polarized prediction reach an energy at all: the adapter
     existed on :class:`~poraque.fields.SpinDensity` but nothing called it, so
     ``EnergyCalculator.compute`` -- and therefore the ASE calculator's
     ``get_potential_energy`` -- raised ``TypeError`` on any model trained with
@@ -628,12 +628,12 @@ def total_density(density):
     .. warning::
 
        This makes the *electrostatic* and kinetic terms exact for a
-       spin-polarised field, because they depend only on the total. It does
-       **not** make :math:`E_{\rm xc}` exact: a spin-polarised
+       spin-polarized field, because they depend only on the total. It does
+       **not** make :math:`E_{\rm xc}` exact: a spin-polarized
        exchange-correlation energy is a functional of
        :math:`(\rho_\uparrow, \rho_\downarrow)` separately, and evaluating
-       the unpolarised form on :math:`\rho` is the local-spin-density
-       approximation thrown away. For a nearly unpolarised cell the error is
+       the unpolarized form on :math:`\rho` is the local-spin-density
+       approximation thrown away. For a nearly unpolarized cell the error is
        small and second order in :math:`m/\rho`; for a magnetic one it is not.
 
     Parameters
@@ -734,7 +734,7 @@ class EnergyComponents:
 
         .. warning::
 
-           A **pseudo-valence** energy: the PAW one-centre terms are absent, so
+           A **pseudo-valence** energy: the PAW one-center terms are absent, so
            this does not reproduce a VASP total energy. Its geometry
            *dependence* is the usable part. See :attr:`missing` for terms that
            were skipped outright.
@@ -749,7 +749,7 @@ class EnergyComponents:
         The energy released on assembling this cell from isolated atoms. This
         is the number to quote and to compare against a reference calculation:
         :attr:`total` carries a per-atom offset of order :math:`10^3` eV that
-        belongs to the pseudopotential and the missing PAW one-centre terms,
+        belongs to the pseudopotential and the missing PAW one-center terms,
         and subtracting the isolated-atom energies removes exactly that part.
 
         ``None`` when no reference energies were available — reporting zero
@@ -784,7 +784,7 @@ class EnergyComponents:
         Names of the terms that were not computed, as a tuple.
 
         Empty means every component this module knows about was evaluated —
-        which still does not include the PAW one-centre terms, since Poraquê
+        which still does not include the PAW one-center terms, since Poraquê
         never sees them.
         """
         absent = []

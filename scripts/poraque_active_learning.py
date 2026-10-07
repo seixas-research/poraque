@@ -8,7 +8,7 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-**Selection.** Which unlabelled structures should the next DFT runs be spent on?
+**Selection.** Which unlabeled structures should the next DFT runs be spent on?
 
 .. rubric:: This command, or ``poraque-committee``?
 
@@ -18,7 +18,7 @@ difference is the data each one runs on, and it decides everything else:
 ==================  ==============================  ==========================
                     ``poraque-active-learning``     ``poraque-committee``
 ==================  ==============================  ==========================
-runs on             an **unlabelled** pool          a **labelled** dataset
+runs on             an **unlabeled** pool          a **labeled** dataset
                     (``--pool``): inputs only,      (``--cache``): inputs
                     targets not computed yet        *and* targets
 answers             "which structures should I      "is this measure worth
@@ -40,17 +40,17 @@ why the two outputs look alike — they differ in what the number is *for*.
 
 .. rubric:: What it does
 
-A reference structure costs a plane-wave DFT run. Labelling at random spends
+A reference structure costs a plane-wave DFT run. Labeling at random spends
 that budget uniformly over structures the model already predicts well. This
 spends it where the committee is least determined, ranked by the
 **Jensen-Shannon divergence** across members that differ only in their weight
-initialisation.
+initialization.
 
 .. code-block:: text
 
     M members  ->  predict rho for every candidate in the pool
                           |
-                   normalise to probability densities
+                   normalize to probability densities
                           |
         JSD = (1/M) sum_i D_KL( rho_i || rho_bar )     one number per candidate
                           |
@@ -109,7 +109,6 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 if os.path.isdir(_SRC):
     sys.path.insert(0, _SRC)
 
-from poraque import banner  # noqa: E402
 from poraque.ml import Committee  # noqa: E402
 from poraque.ml.active_learning import (  # noqa: E402
     TRANSFERS,
@@ -121,6 +120,7 @@ from poraque.ml.active_learning import (  # noqa: E402
 )
 from poraque.ml.device import describe_device, resolve_device  # noqa: E402
 from poraque.ml.tasks import resolve_task  # noqa: E402
+from poraque.utils.logging import INDENT, Logger, header  # noqa: E402
 
 
 def existing_identifiers(directory):
@@ -131,15 +131,66 @@ def existing_identifiers(directory):
             if os.path.isdir(os.path.join(directory, entry))}
 
 
+def _section(log, name):
+    """
+    Open the block ``name`` on ``log``, whatever ``log`` is.
+
+    :func:`report_round` takes any callable, so a test can hand it
+    ``list.append`` and read back what it said; :func:`main` hands it a
+    :class:`~poraque.utils.logging.Logger`. A plain callable gets exactly what
+    :meth:`Logger.section` would have written --- a blank line and the header
+    --- so the layout does not depend on who is listening.
+    """
+    if isinstance(log, Logger):
+        log.section(name)
+    else:
+        log("")
+        log(header(name))
+
+
+def report_round(result, log=print, round_number=1, show=20):
+    """
+    What a scored round found, before anything on disk moves.
+
+    Three blocks: ``[STATISTICS]``, the spread of the disagreement over the
+    pool, which says whether the round carries any ranking at all;
+    ``[RANKING]``, the pool most uncertain first; and ``[SELECTION]``, what
+    the round buys.
+
+    Parameters
+    ----------
+    result : dict
+        As :func:`~poraque.ml.active_learning.run_round` returns it.
+    log : callable, optional
+    round_number : int, optional
+    show : int, optional
+        Rows of the ranking; ``0`` for all of them.
+    """
+    _section(log, "statistics")
+    log(f"  active-learning metrics, round {round_number}:")
+    log(format_statistics(result["statistics"], indent=INDENT))
+
+    _section(log, "ranking")
+    log("  ranked by Jensen-Shannon divergence (most uncertain first):")
+    log(format_ranking(result["records"], limit=None if show == 0 else show,
+                       indent=INDENT))
+
+    _section(log, "selection")
+    log(f"  selected {len(result['selection'])} structure(s):")
+    for record in result["selection"]:
+        log(f"    {record['material']:<18s} JSD {record['jsd']:.4e}"
+            f"   ({record['jsd_normalized']:.4f} of ln M)")
+
+
 def build_parser():
     """The command line, as its own function so the tests can exercise it."""
     parser = argparse.ArgumentParser(
-        description="SELECTION: which unlabelled structures to compute next. "
+        description="SELECTION: which unlabeled structures to compute next. "
                     "Ranks a pool by committee disagreement (JSD) and takes "
                     "the top K.",
-        epilog="Runs on an UNLABELLED pool (--pool): input fields only, "
+        epilog="Runs on an UNLABELED pool (--pool): input fields only, "
                "targets not yet computed. Its sibling poraque-committee runs "
-               "on LABELLED data and answers a different question -- whether "
+               "on LABELED data and answers a different question -- whether "
                "the disagreement measure predicts error at all. Run that one "
                "first; this one spends the DFT budget.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -148,7 +199,7 @@ def build_parser():
     parser.add_argument("--task", default="ext2chg",
                         choices=["ext2chg", "chg2tau"])
     parser.add_argument("--pool", default="data/pool",
-                        help="directory of unlabelled candidates; each needs "
+                        help="directory of unlabeled candidates; each needs "
                              "only the task's input field")
     parser.add_argument("--train", default=None,
                         help="training-set root the selection is moved into, "
@@ -179,8 +230,14 @@ def build_parser():
     return parser
 
 
-def select(argv=None):
-    """Parse ``argv``, run one round, and return its result dict."""
+def select(argv=None, log=None):
+    """
+    Parse ``argv``, run one round, and return its result dict.
+
+    ``log`` is the :class:`~poraque.utils.logging.Logger` :func:`main` built;
+    called directly, the command builds its own, on the terminal.
+    """
+    log = log if log is not None else Logger()
     args = build_parser().parse_args(argv)
     if args.promote and not args.train:
         # Checked before any scoring: this mistake is knowable from the
@@ -196,71 +253,63 @@ def select(argv=None):
     paths = resolve_bundles(args.models)
     committee = Committee.from_bundles(paths, task.name, device=device)
 
-    print("=" * 78)
-    print(f"Active learning round {args.round} - {task.name}: "
-          f"{task.input_field} -> {task.target_field}")
-    print("SELECTION: choosing which unlabelled structures to compute next.")
-    print("(To ask whether this measure predicts error at all, that is")
-    print(" poraque-committee, on labelled data.)")
-    print("=" * 78)
-    print(f"  members    : {len(committee)}  (init_seed "
-          f"{committee.init_seeds})")
-    print(f"  device     : {describe_device(device)}")
-    print(f"  pool       : {args.pool}")
-    print(f"  training   : {args.train or '(not given; ranking only)'}")
-    print(f"  selecting  : top {args.select} by Jensen-Shannon divergence")
-    print()
+    log.title(f"Active learning round {args.round} - {task.name}: "
+              f"{task.input_field} -> {task.target_field}")
+    log.section("purpose")
+    log.text("SELECTION: choosing which unlabeled structures to compute next.")
+    log.text("(To ask whether this measure predicts error at all, that is")
+    log.text(" poraque-committee, on labeled data.)")
+    log.section("committee")
+    log.fields({"members": f"{len(committee)}  (init_seed "
+                           f"{committee.init_seeds})",
+                "device": describe_device(device),
+                "pool": args.pool,
+                "training": args.train or "(not given; ranking only)",
+                "selecting": f"top {args.select} by Jensen-Shannon divergence"})
 
     already = existing_identifiers(args.train)
     if already:
-        print(f"  excluding {len(already)} structure(s) already in "
-              f"{args.train}")
+        log.text(f"excluding {len(already)} structure(s) already in "
+                 f"{args.train}")
 
     # Scored and ranked first, with no `train_root`, so the whole report is on
     # screen before anything on disk moves. `run_round` can do both in one call
     # and does for a programmatic caller; here the ordering of the output is
     # what a reader needs to judge the round before it is committed to.
+    log.section("scoring")
     result = run_round(
         committee, args.pool, task,
         n_select=args.select,
         batch_size=args.batch_size,
         residency=args.residency,
         exclude=already,
-        log=print,
+        log=log,
     )
 
-    print(f"\n  active-learning metrics, round {args.round}:")
-    print(format_statistics(result["statistics"]))
+    report_round(result, log, round_number=args.round, show=args.show)
 
-    print("\n  ranked by Jensen-Shannon divergence (most uncertain first):")
-    print(format_ranking(result["records"],
-                         limit=None if args.show == 0 else args.show))
-
-    print(f"\n  selected {len(result['selection'])} structure(s):")
-    for record in result["selection"]:
-        print(f"    {record['material']:<18s} JSD {record['jsd']:.4e}"
-              f"   ({record['jsd_normalised']:.4f} of ln M)")
-
+    log.section("promotion")
     if not args.promote:
-        print("\n  nothing was moved: pass --promote {move,copy,symlink} "
-              "together")
-        print("  with --train to transfer the selection into the training set.")
+        log.text("nothing was moved: pass --promote {move,copy,symlink} "
+                 "together")
+        log.text("with --train to transfer the selection into the training "
+                 "set.")
     else:
         # --promote without --train was rejected at argument time.
         verb = "would transfer" if args.dry_run else "transferring"
-        print(f"\n  {verb} the selection into {args.train}:")
+        log.text(f"{verb} the selection into {args.train}:")
         result["promoted"] = promote(result["selection"], args.train,
                                      mode=args.promote, dry_run=args.dry_run,
-                                     log=print)
+                                     log=log)
         if args.dry_run:
-            print("\n  --dry-run: nothing was moved.")
+            log.text("--dry-run: nothing was moved.")
 
-    print("\n" + "=" * 78)
-    print("  Members differ only in initialisation, so this ranks by")
-    print("  optimisation variance -- a lower bound on the error, not a")
-    print("  calibrated bar. Validate the ordering with")
-    print("  `poraque-committee --against` before spending a DFT budget on it.")
-    print("=" * 78)
+    log.section("caveats")
+    log.text("Members differ only in initialization, so this ranks by")
+    log.text("optimization variance -- a lower bound on the error, not a")
+    log.text("calibrated bar. Validate the ordering with")
+    log.text("`poraque-committee --against` before spending a DFT budget on "
+             "it.")
 
     if args.json:
         os.makedirs(os.path.dirname(args.json) or ".", exist_ok=True)
@@ -270,7 +319,8 @@ def select(argv=None):
         payload["init_seeds"] = committee.init_seeds
         with open(args.json, "w") as handle:
             json.dump(payload, handle, indent=2, default=float)
-        print(f"\n  summary -> {args.json}")
+        log.section("output files")
+        log.fields({"summary": args.json})
     return result
 
 
@@ -281,8 +331,9 @@ def main(argv=None):
     calls ``sys.exit(main())`` and would treat any other object as an error
     message. :func:`select` returns the round itself.
     """
-    banner()
-    select(argv)
+    log = Logger()
+    log.banner()
+    select(argv, log)
     return 0
 
 

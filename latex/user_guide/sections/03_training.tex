@@ -53,19 +53,19 @@ in electrons, and it is the metric a pointwise loss controls worst. \\
 
 \begin{ptip}
 The \opt{train} and \opt{validation} rows read against each other \emph{are}
-the generalisation gap. That is the single most useful thing the table says,
+the generalization gap. That is the single most useful thing the table says,
 and it is why the splits are rows.
 \end{ptip}
 
 \begin{pnote}
 The rel.\ $H^1$ here is the textbook relative Sobolev norm, which has no free
 parameter --- \textbf{not} the $H^1$ objective \opt{loss: relative\_h1}
-minimises, whose value depends on \opt{sobolev\_weight} and so cannot be
+minimizes, whose value depends on \opt{sobolev\_weight} and so cannot be
 compared between two runs. Every column is computed without consulting the
 loss, for exactly that reason.
 
 For a two-channel model every number is the \textbf{density} channel; the
-magnetisation is measured separately, as \opt{magnetisation\_relative\_l2} in
+magnetization is measured separately, as \opt{magnetization\_relative\_l2} in
 the metrics JSON, and the report says so in its caveats.
 
 The table lists \emph{splits}, not structures: it used to print one row per
@@ -87,8 +87,8 @@ arrive and leave together.
 
 The parity plot is drawn over \textbf{every structure} of each split, training
 and validation side by side, each panel titled with how many structures and
-voxels it holds and labelled with its relative $L^2$, $R^2$, MAE and RMSE. A
-held-out density visibly wider about the identity line is the generalisation
+voxels it holds and labeled with its relative $L^2$, $R^2$, MAE and RMSE. A
+held-out density visibly wider about the identity line is the generalization
 gap, read off the figure instead of inferred from two numbers. Under
 \opt{--kfold} the one panel is every structure as its own fold held it out.
 
@@ -121,11 +121,11 @@ will do on a new material. On the reference data the training fit is about
 $4\times$ better than the cross-validated score, which is the size of the
 mistake if the two are confused.
 
-That setting is still the right one for the artefact you ship, since it uses
+That setting is still the right one for the artifact you ship, since it uses
 all the data --- just quote a cross-validated number alongside it.
 \end{pwarn}
 
-\section{Measuring generalisation}
+\section{Measuring generalization}
 
 Splitting is always at the \emph{structure} level.
 
@@ -196,7 +196,7 @@ Model & held out (3 structures) & all structures (training fit) \\
 \end{tabular}
 \end{center}
 
-Quote the held-out column. The gap to the training fit is the memorisation
+Quote the held-out column. The gap to the training fit is the memorization
 margin --- roughly two- to four-fold here.
 
 \begin{pwarn}

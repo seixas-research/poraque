@@ -174,7 +174,7 @@ depends on every part of the sum being individually right.
 \subsection{It is not a DFT total energy}
 
 \file{CHGCAR} holds the valence \emph{pseudo} density and \file{TAUCAR} the
-valence pseudo kinetic energy density. The PAW one-centre terms --- the
+valence pseudo kinetic energy density. The PAW one-center terms --- the
 difference between the pseudo and all-electron descriptions inside the
 augmentation spheres --- never appear in any file Poraqu\^e reads, so they are
 absent from Equation~\ref{eq:total-energy} entirely. For the 27-atom Pt
@@ -255,7 +255,7 @@ Two candidate explanations were tested and rejected:
     The drift is a symptom, not the cause.
 \end{description}
 
-\subsection{Consequences for the programme}
+\subsection{Consequences for the program}
 
 This is the sharpest quantitative target the project has produced so far, and
 it reframes what ``accurate enough'' means. A relative $L^{2}$ of $0.03$ on the
@@ -271,7 +271,7 @@ one. Two directions follow, and they are not equivalent:
     at the true density the energy is stationary, so a first-order density
     error produces only a second-order energy error. That property is
     available only if the energy is evaluated with a \emph{self-consistent}
-    functional, which is what the physics-informed programme of
+    functional, which is what the physics-informed program of
     Chapter~\ref{ch:pifno} is ultimately for.
 \end{enumerate}
 
@@ -301,7 +301,7 @@ number.
 
 It resembles MACE or NequIP at the interface but not underneath.
 \opt{get\_forces()} and \opt{get\_stress()} raise \opt{NotImplementedError}, so
-geometry optimisation and molecular dynamics are out of reach. Two independent
+geometry optimization and molecular dynamics are out of reach. Two independent
 pieces are missing: $\partial\vext/\partial\Rv_a$ (analytic, a
 Hellmann--Feynman term) and back-propagation of $\partial E/\partial\rho$
 through both operators. A finite-difference stand-in is no shortcut --- on a

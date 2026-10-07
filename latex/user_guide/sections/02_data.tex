@@ -52,7 +52,7 @@ before any model is trained.
 \opt{poraque-train} does not repeat this check, but it does stop with an error
 on a missing \file{CHGCAR}, and it reports how many points a field drives
 negative when it is band-limited to \opt{data.resolution} --- Gibbs ringing
-around the core peaks, which is an artefact of the truncation rather than a
+around the core peaks, which is an artifact of the truncation rather than a
 fault in the data.
 
 A missing \file{TAUCAR} is \emph{not} an error. It simply means the material
@@ -70,7 +70,7 @@ Every material whose composition uses only those elements is fetched, across
 all stoichiometries and structures.
 
 Size it before committing to the transfer. Over a chemical space the estimate
-is exact rather than modelled: charge densities are objects in a public S3
+is exact rather than modeled: charge densities are objects in a public S3
 bucket, so their sizes are read with \opt{HEAD} requests that move no payload.
 
 \begin{lstlisting}
@@ -190,8 +190,8 @@ poraque-mp --all --num-sites 1 12 --max-size-mb 20 \
 \opt{--hdf5} writes each density as a chunked, compressed field store rather
 than a \file{CHGCAR}. It is a re-encoding, not a conversion --- pymatgen
 already holds $\rho\Omega$, which is the convention the store keeps --- and it
-carries \textbf{everything the text file does}: the magnetisation block of a
-spin-polarised density, and the PAW augmentation records, the one-centre terms
+carries \textbf{everything the text file does}: the magnetization block of a
+spin-polarized density, and the PAW augmentation records, the one-center terms
 \opt{ICHARG = 1} will not restart without.
 
 \begin{pwarn}
@@ -239,7 +239,7 @@ a number nobody needs to four digits. A sampled estimate measures its \opt{N}
 exactly --- so \opt{TOTAL DOWNLOAD} is a measurement of what a fetch would
 actually transfer, not an extrapolation --- and \emph{also} projects to the
 whole set, as the sample mean times the number advertised, on its own line and
-labelled as a projection. Both are printed because they answer different
+labeled as a projection. Both are printed because they answer different
 questions, \emph{what will this fetch} and \emph{what would all of it cost},
 and a report stating one of them gets read as the other.
 
@@ -293,7 +293,7 @@ data:
 \end{lstlisting}
 
 \file{.gz} and \file{.Z} entries are read directly, and a flat
-\file{POTCAR.Ag} / \file{Ag.POTCAR} layout is recognised too. A run that has
+\file{POTCAR.Ag} / \file{Ag.POTCAR} layout is recognized too. A run that has
 its own \file{POTCAR} ignores the library entirely --- it is a fallback, not an
 override, and it also rescues local runs whose \file{POTCAR} was stripped for
 licensing.
@@ -387,7 +387,7 @@ is read, not declared.
 Everything found is pooled into one training set, and identifiers that collide
 between directories are prefixed with their own so no material is silently
 dropped. \file{TAUCAR} is optional \textbf{per material}: one run may have
-written one while its neighbour did not, and the one that did still reaches
+written one while its neighbor did not, and the one that did still reaches
 \opt{chg2tau} while both reach \opt{ext2chg}.
 
 \begin{pwarn}

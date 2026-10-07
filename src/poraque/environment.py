@@ -20,7 +20,7 @@ PyTorch are not imported there because the field and energy layers do not need
 them, three lines below the imports that did it. They are now taken inside
 :func:`banner_lines`, at the moment the banner is actually wanted.
 
-**A banner is output, not initialisation.** It is written by the console
+**A banner is output, not initialization.** It is written by the console
 commands, and a training run writes it through its own logger, so the
 environment that produced a result is recorded in the log beside the result.
 """
@@ -111,42 +111,46 @@ def banner_lines():
     -------
     list of str
     """
+    from .utils.logging import INDENT, field_lines, header
+
+    dependencies = {
+        "ase": _describe_dependency("ase"),
+        "numpy": _describe_dependency("numpy"),
+        "scipy": _describe_dependency("scipy"),
+        "matplotlib": _describe_dependency("matplotlib"),
+        "torch": _describe_torch(),
+        "yaml": _describe_dependency("yaml"),
+        "pytest": _describe_dependency("pytest"),
+    }
     return [
-        "                                                 ",
-        "    ████▄ ▄███▄ ████▄  ▀▀█▄ ▄████ ██ ██ ▄█▀█▄    ",
-        "    ██ ██ ██ ██ ██ ▀▀ ▄█▀██ ██ ██ ██ ██ ██▄█▀    ",
-        "    ████▀ ▀███▀ ██    ▀█▄██ ▀████ ▀██▀█ ▀█▄▄▄    ",
-        "    ██                         ██                ",
-        "    ▀▀                         ▀▀                ",
-        "                                                 ",
-        f"    version: {__version__}                       ",
-        "        developed by: Leandro Seixas Rocha      ",
-        "        homepage:     https://poraque.seixas.dev",
-        "        repository:   https://github.com/seixas-research/poraque",
-        "                                                  ",
-        "------------------------------------------------------------",
-        "                                                  ",
-        "System:",
-        f" ├── architecture: {platform.machine()}",
-        f" ├── platform: {platform.system()}",
-        f" ├── user: {_current_user()}",
-        f" ├── hostname: {gethostname()}",
-        f" ├── cwd: {os.getcwd()}",
-        f" └── PID: {os.getpid()}",
-        "                                               ",
-        "Python:",
-        f" ├── version: {__python_version__}      ",
-        f" └── executable: {__python_executable__}      ",
-        "                                               ",
-        "Dependencies:",
-        f" ├── ase version: {_describe_dependency('ase')}",
-        f" ├── numpy version: {_describe_dependency('numpy')}",
-        f" ├── scipy version: {_describe_dependency('scipy')}",
-        f" ├── matplotlib version: {_describe_dependency('matplotlib')}",
-        f" ├── torch version: {_describe_torch()}",
-        f" ├── yaml version: {_describe_dependency('yaml')}",
-        f" └── pytest version: {_describe_dependency('pytest')}",
-        "                                               ",
+        "",
+        "    ████▄ ▄███▄ ████▄  ▀▀█▄ ▄████ ██ ██ ▄█▀█▄",
+        "    ██ ██ ██ ██ ██ ▀▀ ▄█▀██ ██ ██ ██ ██ ██▄█▀",
+        "    ████▀ ▀███▀ ██    ▀█▄██ ▀████ ▀██▀█ ▀█▄▄▄",
+        "    ██                         ██",
+        "    ▀▀                         ▀▀",
+        "",
+        "-" * 64,
+        f"{INDENT}version:      {__version__}",
+        f"{INDENT}developed by: Leandro Seixas Rocha",
+        f"{INDENT}homepage:     https://poraque.seixas.dev",
+        f"{INDENT}repository:   https://github.com/seixas-research/poraque",
+        "-" * 64,
+        "",
+        header("system"),
+        *field_lines({"architecture": platform.machine(),
+                      "platform": platform.system(),
+                      "user": _current_user(),
+                      "hostname": gethostname(),
+                      "cwd": os.getcwd(),
+                      "PID": os.getpid()}),
+        "",
+        header("python"),
+        *field_lines({"version": __python_version__,
+                      "executable": __python_executable__}),
+        "",
+        header("dependencies"),
+        *field_lines(dependencies),
     ]
 
 
@@ -158,7 +162,7 @@ def banner(emit=print):
     ----------
     emit : callable, optional
         Sink for each line. Defaults to :func:`print`; a training run passes
-        its ``Tee``, so the environment is recorded in the log as well as
+        its :class:`~poraque.utils.logging.Logger`, so the environment is recorded in the log as well as
         shown on screen.
 
     Notes

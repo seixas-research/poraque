@@ -17,7 +17,7 @@ Materials Project
 -----------------
 :class:`~poraque.data.materials_project.MPDataFetcher` downloads charge
 densities for a chemical space; :mod:`poraque.data.mp_dataset` trains on them,
-synthesising the external potential from the structure each density carries and
+synthesizing the external potential from the structure each density carries and
 handling the fields MP does not publish.
 
 ::

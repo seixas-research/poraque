@@ -68,7 +68,7 @@ print(f"    {'unexplained remainder':<30} "
 # VASP:    EBANDS = T_s + int(rho V_H) + int(rho v_xc) + int(rho V_ext^loc) + E_nl
 # Poraque: kinetic + external = T_s + int(rho V_ext^loc)
 # so the two bookkeepings of the same block differ by E_nl plus the PAW
-# one-centre kinetic/external pieces folded into EBANDS.
+# one-center kinetic/external pieces folded into EBANDS.
 int_rho_vh = 2.0 * c.hartree                      # E_H = 1/2 int(rho V_H)
 int_rho_vxc = c.xc - vasp["XCENC"]                # XCENC = E_xc - int(rho v_xc)
 vasp_block = vasp["EBANDS"] - int_rho_vh - int_rho_vxc

@@ -106,7 +106,7 @@
     "(20, 14, 24)": 1
   },
   "negative_grid_fraction": 0.0406013614868882,
-  "magnetisation_to_charge_rms": 0.05196225121555414,
+  "magnetization_to_charge_rms": 0.05196225121555414,
   "POTCAR_titles": {
     "1": "PAW_PBE H 15Jun2001",
     "6": "PAW_PBE C 08Apr2002",

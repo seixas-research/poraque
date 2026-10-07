@@ -188,7 +188,7 @@ def sample_field(shape=(32, 32, 32), seed=0, batch=1,
 
 
 def build(equivariant, width=16, seed=7, **kwargs):
-    """A model on the GPU, deterministically initialised."""
+    """A model on the GPU, deterministically initialized."""
     torch.manual_seed(seed)
     kwargs.setdefault("use_coordinates", not equivariant)
     kwargs.setdefault("cell_conditioning", True)
@@ -362,7 +362,7 @@ class TestABatchOfDifferentCells:
 
         It failed at 4.485e-04 on a V100 and the batch was innocent: an
         11 Ang cell fails **on its own**, because its face modes tie with the
-        spherical cutoff's own round-off. Batch-of-three-identical equalled
+        spherical cutoff's own round-off. Batch-of-three-identical equaled
         batch-of-one throughout, so the per-sample basis was broadcast
         correctly all along. The cause and its fix are
         :data:`~poraque.ml.fno.CUTOFF_SLACK`; the 11 Ang cell stays in this
@@ -408,7 +408,7 @@ class TestTheGradientFlowsThroughTheRadialKernel:
     contracts each against the same real coefficients. That is arithmetic
     autograd handles, but ``torch.complex`` in the middle of a graph is exactly
     where a backward pass stops being obvious, and a layer that silently
-    received no gradient would train to its initialisation and read as a bad
+    received no gradient would train to its initialization and read as a bad
     dataset.
     """
 

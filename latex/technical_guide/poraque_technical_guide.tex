@@ -35,7 +35,7 @@
 \usetikzlibrary{positioning,fit,backgrounds,arrows.meta}
 
 % --- Brand palette ---------------------------------------------------------
-% Navy accent (changed from the original green ramp). Three colours, held at
+% Navy accent (changed from the original green ramp). Three colors, held at
 % a single hue (~215 degrees) and varied only in lightness/saturation, rather
 % than the old palette's yellow-to-green hue sweep.
 %
@@ -47,10 +47,10 @@
 %                  text -- a bright sky blue rather than the old yellow-green.
 %   poraquegreen   the anchor (name kept for compatibility with existing
 %                  \color{poraquegreen} calls throughout this document; the
-%                  colour itself is now navy): 12.3:1 on white, 8.1:1 against
+%                  color itself is now navy): 12.3:1 on white, 8.1:1 against
 %                  the yellow. Headings, links, anything that has to be read.
 %   poraquecover   COVER GROUND ONLY. Named for the restriction: it is the
-%                  one colour with a single permitted use, and a name that
+%                  one color with a single permitted use, and a name that
 %                  says so is harder to misuse than a comment. Darker than
 %                  poraquegreen by about 9 points of lightness -- a visible
 %                  step rather than a shade of the same thing -- and still
@@ -191,12 +191,12 @@
 % =========================== TITLE PAGE ===================================
 \begin{titlepage}
 % A full-bleed dark-green cover. `\AddToShipoutPictureBG*` paints the whole
-% sheet including the margins, which a coloured \rule cannot reach, and the
+% sheet including the margins, which a colored \rule cannot reach, and the
 % starred form applies to this page only.
 \AddToShipoutPictureBG*{%
   \AtPageLowerLeft{\color{poraquecover}\rule{\paperwidth}{\paperheight}}%
   % The brand mark along the foot: a yellow band with a lime hairline above
-  % it, so the three colours appear together once, at full strength.
+  % it, so the three colors appear together once, at full strength.
   \AtPageLowerLeft{\color{poraqueyellow}\rule{\paperwidth}{14mm}}%
   \AtPageLowerLeft{\raisebox{14mm}{\color{poraquelime}%
     \rule{\paperwidth}{2mm}}}%

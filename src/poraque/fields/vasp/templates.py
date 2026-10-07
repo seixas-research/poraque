@@ -129,7 +129,7 @@ def tau_incar(system="poraque", encut=450, ediff=1e-8, ispin=1, prec="Accurate",
                 "only thing that produces a TAUCAR",
         "LCHARG": "write CHGCAR *and* TAUCAR; LTAU alone only evaluates tau",
         "LASPH": "aspherical gradient corrections -- on for d/f elements",
-        "LMAXMIX": "one-centre occupancies written to CHGCAR up to this l "
+        "LMAXMIX": "one-center occupancies written to CHGCAR up to this l "
                    "(4 for d, 6 for f)",
         "EDIFF": "tau is a training label; converge it like one",
         "PREC": "fixes the fine FFT grid the fields are written on",
@@ -199,7 +199,7 @@ def band_structure_incar(system="poraque", encut=450, ispin=1, nbands=None,
         "ISTART": "do not read a WAVECAR -- there is none for a predicted "
                   "density",
         "ENCUT": "MUST match the run the density's FFT grid came from",
-        "LMAXMIX": "must match the CHGCAR's own one-centre occupancies",
+        "LMAXMIX": "must match the CHGCAR's own one-center occupancies",
         "LCHARG": "the density is an input here, not an output",
     }
     body = _render(tags, comments, extra)
@@ -318,7 +318,7 @@ def dos_incar(system="poraque", encut=450, ispin=1, nedos=3001, lorbit=11,
     ``ISMEAR = -5`` is the tetrahedron method with Blöchl corrections, which is
     what makes a DOS smooth without smearing structure away. It needs a
     **mesh**, not a line: at least four k-points, and in practice a dense
-    Γ-centred grid. This is why the DOS mode writes
+    Γ-centered grid. This is why the DOS mode writes
     :func:`automatic_kpoints` and the band mode writes
     :func:`line_mode_kpoints` — the two are not interchangeable.
 
@@ -327,7 +327,7 @@ def dos_incar(system="poraque", encut=450, ispin=1, nedos=3001, lorbit=11,
     computed to look at.
 
     ``LORBIT = 11`` adds the site- and l-projected weights, which is the part
-    that lets a d-band centre be read off a transition metal.
+    that lets a d-band center be read off a transition metal.
 
     Parameters
     ----------
@@ -389,7 +389,7 @@ def dos_incar(system="poraque", encut=450, ispin=1, nedos=3001, lorbit=11,
         "ENCUT": "MUST match the run the density's FFT grid came from",
         "NEDOS": "energy points in DOSCAR; VASP's default 301 hides structure",
         "LORBIT": "site- and l-projected DOS",
-        "LMAXMIX": "must match the CHGCAR's own one-centre occupancies",
+        "LMAXMIX": "must match the CHGCAR's own one-center occupancies",
         "LCHARG": "the density is an input here, not an output",
     }
     comments.update(_smearing_comments(ismear))
@@ -482,7 +482,7 @@ def total_energy_incar(system="poraque", encut=450, ispin=1,
                   "density",
         "ENCUT": "MUST match the run the density's FFT grid came from",
         "LASPH": "aspherical gradient corrections -- on for d/f elements",
-        "LMAXMIX": "must match the CHGCAR's own one-centre occupancies",
+        "LMAXMIX": "must match the CHGCAR's own one-center occupancies",
         "LCHARG": density_out,
     }
     comments.update(_smearing_comments(ismear))
@@ -496,7 +496,7 @@ def total_energy_incar(system="poraque", encut=450, ispin=1,
 def automatic_kpoints(mesh, shift=(0.0, 0.0, 0.0), gamma=True,
                       comment="automatic mesh"):
     r"""
-    A ``KPOINTS`` file holding an automatic Γ-centred (or Monkhorst-Pack) mesh.
+    A ``KPOINTS`` file holding an automatic Γ-centered (or Monkhorst-Pack) mesh.
 
     This is the counterpart of :func:`line_mode_kpoints`: a *mesh* samples the
     Brillouin zone for a quantity that integrates over it — a DOS, a total
@@ -509,9 +509,9 @@ def automatic_kpoints(mesh, shift=(0.0, 0.0, 0.0), gamma=True,
     mesh : sequence of int
         Subdivisions along each reciprocal axis; three positive integers.
     shift : sequence of float, optional
-        Mesh shift. ``(0, 0, 0)`` with ``gamma=True`` is the Γ-centred grid.
+        Mesh shift. ``(0, 0, 0)`` with ``gamma=True`` is the Γ-centered grid.
     gamma : bool, optional
-        Γ-centred when true, Monkhorst-Pack when false. Γ-centred is the safe
+        Γ-centered when true, Monkhorst-Pack when false. Γ-centered is the safe
         default: it respects the lattice symmetry for hexagonal cells, where a
         Monkhorst-Pack grid does not.
     comment : str, optional
@@ -768,10 +768,10 @@ def write_chgcar(source, destination):
     What makes it worth a function rather than a copy is what has to come with
     the values:
 
-    * the **magnetisation block**, when the store carries one, written as the
-      second grid block a spin-polarised ``CHGCAR`` has;
+    * the **magnetization block**, when the store carries one, written as the
+      second grid block a spin-polarized ``CHGCAR`` has;
     * the **PAW augmentation records** --- one set per grid block --- which are
-      the one-centre terms no grid can carry and ``ICHARG = 1`` will not start
+      the one-center terms no grid can carry and ``ICHARG = 1`` will not start
       without.
 
     A text source is **copied byte for byte** rather than parsed and
@@ -797,7 +797,7 @@ def write_chgcar(source, destination):
     A store written before augmentation records were storable has none, and
     this says so by writing a density with no records rather than failing:
     the file is still exactly what ``ICHARG = 11`` needs for a band structure,
-    and it is only ``ICHARG = 1`` that wants the one-centre terms back.
+    and it is only ``ICHARG = 1`` that wants the one-center terms back.
     """
     import shutil
 

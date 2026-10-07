@@ -1,0 +1,35 @@
+[
+  {
+    "arm": "short_neighbors",
+    "seed": 0,
+    "charge_error_median": 0.07925838232040405,
+    "charge_error_p90": 0.13755350559949875,
+    "worst_five": [
+      {
+        "id": "mp-1021328",
+        "charge_relative_l2": 0.7772939801216125,
+        "electron_count_relative_error": 0.020027756690979004
+      },
+      {
+        "id": "mp-1188177",
+        "charge_relative_l2": 0.4976193606853485,
+        "electron_count_relative_error": 0.06433979421854019
+      },
+      {
+        "id": "mp-707289",
+        "charge_relative_l2": 0.43185287714004517,
+        "electron_count_relative_error": 0.11110628396272659
+      },
+      {
+        "id": "mp-632250",
+        "charge_relative_l2": 0.1835748851299286,
+        "electron_count_relative_error": 0.38131996989250183
+      },
+      {
+        "id": "mp-1096892",
+        "charge_relative_l2": 0.17494361102581024,
+        "electron_count_relative_error": 0.021022237837314606
+      }
+    ]
+  }
+]

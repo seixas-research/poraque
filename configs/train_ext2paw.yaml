@@ -22,7 +22,7 @@ data:
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # without a library V_ext is the Gaussian model
   atomic_reference: ./data/vasp/isolated_atoms           # the Pt atom: the baseline and the PAW records
   # spin stays at its default, auto: both record sets, since the nanoparticles
-  #   carry 17 % of their records in the magnetisation's
+  #   carry 17 % of their records in the magnetization's
   paw_source: atomic                                     # the free atom's own record, per element and transferable
   delta_density: true                                    # the grid target is rho - rho_sup, as for ext2chg
   resolution: 48                                         # longest grid axis; the records do not depend on it
@@ -32,7 +32,7 @@ data:
 
 model:
   width: 16                     # the field operator's settings still name the cache and
-  modes: 8                      #   the grid target's normalisation; model.paw is the
+  modes: 8                      #   the grid target's normalization; model.paw is the
   n_layers: 4                   #   operator this task trains
   projection_channels: 64       # hidden width of the read-out head
   mode_selection: physical      # every cell retains the same band in 1/Ang, not the same mode count
@@ -63,8 +63,8 @@ model:
     # 200-epoch run at 0.03 and 3 x 0.20: the records hold most of the
     # objective, and the field still fell steadily (0.048 -> 0.025, two seeds).
     # The earlier calibration here -- the field's spikes vetoing epochs, the
-    # optimiser abandoning the field at 5.0 -- was measured while the
-    # magnetisation's transform inverted with a gain of 14, and on a score in
+    # optimizer abandoning the field at 5.0 -- was measured while the
+    # magnetization's transform inverted with a gain of 14, and on a score in
     # other units; it no longer describes this run.
     occupancy_weight: 3.0
 

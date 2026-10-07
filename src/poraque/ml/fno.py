@@ -26,7 +26,7 @@ make this the natural architecture for the present problem:
 
 * **The convolution is periodic by construction.** The FFT enforces exactly the
   Born-von Kármán boundary conditions a crystal unit cell already obeys — no
-  padding, no edge artefacts, no wasted capacity learning periodicity.
+  padding, no edge artifacts, no wasted capacity learning periodicity.
 * **The learned weights live in mode space, not on the grid.** Nothing in
   :math:`R_\ell` refers to :math:`(N_x, N_y, N_z)`, so a single set of
   parameters applies to every material regardless of its grid.
@@ -85,7 +85,7 @@ PRECISIONS = {
 
 def resolve_precision(precision):
     """
-    Normalise a precision name to its ``(real, complex)`` torch dtypes.
+    Normalize a precision name to its ``(real, complex)`` torch dtypes.
 
     Parameters
     ----------
@@ -206,7 +206,7 @@ def complex_contract(equation, x, weight):
        ``.real``/``.imag`` of a non-contiguous complex tensor yields a real
        view with a stride of two elements, and MPS silently computes the wrong
        ``einsum`` over such a view — no error, no warning, results off by
-       40-90 %. Materialising the operands first reduces the error to ~1e-7,
+       40-90 %. Materializing the operands first reduces the error to ~1e-7,
        i.e. ordinary float32 rounding. Verified in ``tests/test_device.py``.
 
     Parameters
@@ -226,7 +226,7 @@ def complex_contract(equation, x, weight):
     # every prediction has.
     #
     # `torch.is_grad_enabled()` is the load-bearing condition, not a
-    # micro-optimisation: the kernel writes into a plain tensor and records
+    # micro-optimization: the kernel writes into a plain tensor and records
     # nothing on the autograd tape, so using it while a graph is being built
     # would produce a model that trains to a constant with no error anywhere.
     # `predict()` is wrapped in `torch.no_grad()`, so inference takes this path
@@ -436,7 +436,7 @@ DEFAULT_G_BASIS = 8.0
 #: quantity: ``radius`` comes from the reciprocal cell contracted against the
 #: integer frequencies, ``inscribed`` from :math:`2\pi m_i/|a_i|`. They agree
 #: analytically and differ in the last bits, so a mode sitting *exactly* on
-#: :math:`|\mathbf{G}| = g_{\rm inscribed}` — the face-centre modes
+#: :math:`|\mathbf{G}| = g_{\rm inscribed}` — the face-center modes
 #: :math:`(\pm m, 0, 0)` and their rotations — falls on whichever side of the
 #: strict ``<`` the round-off puts it, and the three axes need not agree. One
 #: kept where its own rotation image was dropped is a discrete change in the
@@ -509,7 +509,7 @@ def _mode_frequencies(modes, device, dtype):
     :math:`|\mathbf{G}|` of mode :math:`-1` is that of mode :math:`+1`, and an
     unsigned index would put it at the far edge of the basis.
 
-    Memoised on the same argument as
+    Memoized on the same argument as
     :func:`~poraque.ml.physics._integer_mesh` and for the same reason: it
     depends on the mode counts and not on the cell, while a training step asks
     for it once per Fourier layer per batch.
@@ -543,7 +543,7 @@ def _mode_frequencies(modes, device, dtype):
 @lru_cache(maxsize=64)
 def _mode_counts(modes, device, dtype):
     """
-    ``(m1, m2, m3)`` as a device tensor, memoised.
+    ``(m1, m2, m3)`` as a device tensor, memoized.
 
     Three numbers, and building them cost a host allocation and a
     host-to-device copy on **every forward pass of every equivariant layer** --
@@ -551,7 +551,7 @@ def _mode_counts(modes, device, dtype):
     payload, and on CUDA a small transfer is dominated by its launch rather
     than by its bytes. They are constant for the run, so they are built once.
 
-    Memoised on the same key as :func:`_mode_frequencies`, and bounded for the
+    Memoized on the same key as :func:`_mode_frequencies`, and bounded for the
     same reason: the distinct mode counts in a run are the distinct grid shapes
     a :class:`~poraque.ml.data.ShapeBucketSampler` produces, which was 19 on
     the dataset this was measured against.
@@ -613,7 +613,7 @@ def retained_radii(cell, modes, device=None, dtype=None):
 
     # The plane n_i = m_i lies at 2*pi*m_i / |a_i| from the origin, so the
     # largest sphere inside the retained parallelepiped has that radius,
-    # minimised over the three axes. Cell lengths are all it takes, for any
+    # minimized over the three axes. Cell lengths are all it takes, for any
     # cell -- no inverse, no per-mode geometry.
     lengths = torch.linalg.vector_norm(cell.to(device=device, dtype=dtype),
                                        dim=-1)                    # (B, 3)
@@ -714,7 +714,7 @@ class RadialSpectralConv3d(nn.Module):
     Notes
     -----
     The basis is Gaussian on a uniform grid of :math:`u = |\mathbf{G}|/g_{\rm
-    basis} \in [0, 1]`, with the width set to the node spacing so neighbours
+    basis} \in [0, 1]`, with the width set to the node spacing so neighbors
     cross at :math:`e^{-1/4}` and the partition is smooth without being flat.
     The radius is computed from the sample's **own cell**, so the same
     coefficient means the same physical wavevector in every material — which
@@ -751,7 +751,7 @@ class RadialSpectralConv3d(nn.Module):
         # Buffers rather than constants so `.to(device)` and `.double()` carry
         # them with the parameters; a basis left on the CPU in float32 would
         # fail the first forward pass of a float64 CUDA model.
-        self.register_buffer("centres",
+        self.register_buffer("centers",
                              torch.linspace(0.0, 1.0, self.n_radial))
         self.register_buffer(
             "inverse_width",
@@ -790,9 +790,9 @@ class RadialSpectralConv3d(nn.Module):
         # wider than the retained band leaves basis functions where no mode
         # exists and costs 14-43 %. See :func:`resolve_g_basis`.
         reduced = (radius / self.g_basis).clamp(max=1.0).unsqueeze(1)
-        centres = self.centres.to(dtype).view(1, -1, 1, 1, 1)
+        centers = self.centers.to(dtype).view(1, -1, 1, 1, 1)
         basis = torch.exp(
-            -((reduced - centres) * self.inverse_width.to(dtype)) ** 2)
+            -((reduced - centers) * self.inverse_width.to(dtype)) ** 2)
 
         if self.spherical_cutoff:
             basis = basis * kept.unsqueeze(1).to(basis.dtype)
@@ -850,7 +850,7 @@ class RadialSpectralConv3d(nn.Module):
         if basis is None:
             basis = self.radial_basis(cell, (m1, m2, m3), x.device, x.dtype)
         elif tuple(basis.shape) != (batch, self.n_radial, 2 * m1, 2 * m2, m3):
-            # A shared basis is an optimisation, and an optimisation that can
+            # A shared basis is an optimization, and an optimization that can
             # be handed the wrong tensor has to say so. Every axis but the
             # radial one would broadcast against the mode block, so a basis
             # built for another grid or another sample would return a finite
@@ -1044,7 +1044,7 @@ class CellEncoder(nn.Module):
     Embed a unit cell into a feature vector for FiLM conditioning.
 
     Descriptors are invariant under rotation of the cell and under permutation-
-    free relabelling: the three lattice lengths, the cosines of the three
+    free relabeling: the three lattice lengths, the cosines of the three
     angles, and the cube root of the volume. Feeding these to the network is
     what lets one operator distinguish materials whose grids look alike but
     whose physical scales do not.
@@ -1245,7 +1245,7 @@ class FNO3d(nn.Module):
         ``'gelu'``, ``'relu'``, ``'tanh'``, or the per-channel learnable
         Kolmogorov-Arnold variants ``'kan_bspline'`` / ``'kan_chebyshev'`` /
         ``'kan_rbf'`` / ``'kan_rational'`` (see :mod:`poraque.ml.kan`). Every
-        learnable variant starts at initialisation close to ``silu`` (its own
+        learnable variant starts at initialization close to ``silu`` (its own
         base term, matching the original KAN paper) and is opt-in: every
         existing config and checkpoint keeps using whatever ``activation`` it
         was trained with — recorded in the checkpoint, never inferred.
@@ -1589,15 +1589,15 @@ class FNO3d(nn.Module):
         # block in the stack is constructed from the same `self.modes` and the
         # same `radial_kwargs`, and they all see this call's `cell`, `shape`
         # and `max_modes`, so the tensor each one used to build for itself was
-        # bit-identical to its neighbours'.
+        # bit-identical to its neighbors'.
         #
-        # It is not a micro-optimisation. Building it calls `cell_reciprocal`,
+        # It is not a micro-optimization. Building it calls `cell_reciprocal`,
         # which moves the cell to the host to widen it to float64 (MPS cannot
         # represent one) and copies the result back -- so an `n_layers=3` model
         # made three device-to-host-to-device round trips per forward pass,
         # where the dense backbone makes none at all. On CUDA a device-to-host
         # copy also drains the queue, which is the part that costs more than
-        # the arithmetic it was synchronising for.
+        # the arithmetic it was synchronizing for.
         basis = None
         if self.equivariant:
             spectral = self.blocks[0].spectral

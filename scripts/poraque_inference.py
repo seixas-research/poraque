@@ -72,6 +72,10 @@ command and runs from any directory::
 
     poraque-inference new_structure/ --output predictions/new
 
+    # Input and output default to the current directory
+    poraque-inference --model best.poraque --from-incar INCAR \
+        --paw-source model
+
     # explicit bundle, and a coarser grid
     poraque-inference new_structure/ \
         --models models/poraque_models.poraque --encut 300
@@ -81,7 +85,7 @@ command and runs from any directory::
 
     # a CHGCAR VASP will restart from with ICHARG=1: the PAW augmentation
     # records are copied from the reference, since no grid-based model can
-    # produce the one-centre terms
+    # produce the one-center terms
     poraque-inference run/ --like run/CHGCAR --add-paw
 
 Running this file directly — ``python scripts/poraque_inference.py`` — is
@@ -107,7 +111,6 @@ if os.path.isdir(_SRC):
 
 import torch  # noqa: E402
 
-from poraque import banner  # noqa: E402
 from poraque.fields import (  # noqa: E402
     ChargeDensity,
     ExternalPotential,
@@ -128,6 +131,12 @@ from poraque.ml import (  # noqa: E402
     read_bundle,
 )
 from poraque.ml.device import describe_device, resolve_device  # noqa: E402
+from poraque.utils.logging import (  # noqa: E402
+    Logger,
+    field_lines,
+    header,
+    table_lines,
+)
 
 #: Plane-wave cutoff (eV) that sizes the inference grid by default.
 #:
@@ -200,7 +209,7 @@ AUGMENTATION_SOURCES = ("CHGCAR", "AECCAR0", "CHG")
 
 def collect_augmentation(directory, structure, shape, log):
     r"""
-    Take the PAW one-centre records from a reference calculation.
+    Take the PAW one-center records from a reference calculation.
 
     The model predicts :math:`\rho` on the plane-wave grid. VASP's
     ``ICHARG=1`` also wants the augmentation occupancies — the part of the
@@ -218,7 +227,7 @@ def collect_augmentation(directory, structure, shape, log):
         read_augmentation,
     )
 
-    log("\n        --add-paw: looking for reference augmentation records")
+    log("  --add-paw: looking for reference augmentation records")
     for name in AUGMENTATION_SOURCES:
         path = os.path.join(directory, name)
         if not os.path.exists(path):
@@ -226,28 +235,28 @@ def collect_augmentation(directory, structure, shape, log):
         try:
             reference_shape, block = read_augmentation(path)
         except (OSError, ValueError, IndexError) as error:
-            log(f"        !! {name}: could not be parsed ({error})")
+            log(f"  !! {name}: could not be parsed ({error})")
             continue
         if not block:
-            log(f"        {name}: no augmentation records (not a PAW CHGCAR)")
+            log(f"  {name}: no augmentation records (not a PAW CHGCAR)")
             continue
 
         records = count_augmentation_records(block)
         atoms = int(sum(structure.counts))
         if records != atoms:
-            log(f"        !! {name}: {records} augmentation records for "
+            log(f"  !! {name}: {records} augmentation records for "
                 f"{atoms} atoms — the reference is a different structure, "
                 f"so its on-site occupancies do not correspond to these "
                 f"positions. Skipping.")
             continue
 
-        log(f"        {name}: {records} records for {atoms} atoms "
+        log(f"  {name}: {records} records for {atoms} atoms "
             f"({len(block)} lines)")
         # The records are on-site and grid-independent, so a mismatch here is
         # not an error in them -- but VASP reads the density on the grid the
         # file declares, and ICHARG=1 wants that to be the run's own FFT grid.
         if tuple(reference_shape) != tuple(shape):
-            log(f"        !! the prediction is on {tuple(shape)} and the "
+            log(f"  !! the prediction is on {tuple(shape)} and the "
                 f"reference on {tuple(reference_shape)}. The records are "
                 f"still valid, but VASP expects the CHGCAR grid to match "
                 f"NGXF/NGYF/NGZF — rerun with --like {path} to match it.")
@@ -284,7 +293,7 @@ def augmentation_from_bundle(bundle, structure, log):
 
     lines, missing = records_for_structure(structure, reference)
     if missing:
-        log(f"        !! the bundle's PAW reference covers "
+        log(f"  !! the bundle's PAW reference covers "
             f"{sorted(reference)} but this structure also contains "
             f"{missing} — no records were written, because a file with them "
             f"for some atoms and not others is worse than one with none.")
@@ -294,8 +303,8 @@ def augmentation_from_bundle(bundle, structure, log):
         f"{element} (averaged over {entry['atoms']} atoms in "
         f"{entry['structures']} structures)"
         for element, entry in sorted(reference.items()))
-    log(f"        using the bundle's PAW reference: {covered}")
-    log("        !! these are AVERAGED on-site terms, not this structure's. "
+    log(f"  using the bundle's PAW reference: {covered}")
+    log("  !! these are AVERAGED on-site terms, not this structure's. "
         "They are a starting guess for ICHARG=1, not a converged on-site "
         "density — about 9 % RMS from the truth on the reference dataset.")
     return lines
@@ -303,13 +312,13 @@ def augmentation_from_bundle(bundle, structure, log):
 
 def augmentation_from_atoms(reference, structure, log):
     r"""
-    Last resort: the isolated atoms' own one-centre records.
+    Last resort: the isolated atoms' own one-center records.
 
     The only source that works for an element the training set has never seen,
     and **measurably the worst of the three**. On this project's platinum data a
     free Pt atom's record sits 86.6 % RMS away from a bulk Pt site, against
     9.9 % for the training-set average — a free atom and an atom in a metal
-    genuinely have different on-site occupations, and the one-centre terms are
+    genuinely have different on-site occupations, and the one-center terms are
     exactly where that difference lives.
 
     Never chosen automatically. ``--paw-source atomic`` asks for it explicitly.
@@ -325,25 +334,25 @@ def augmentation_from_atoms(reference, structure, log):
 
     library = AtomicReferenceLibrary.load(reference)
     if not len(library):
-        log(f"        {reference}: no isolated-atom references there")
+        log(f"  {reference}: no isolated-atom references there")
         return None
 
     lines, missing = records_from_atoms(structure, library)
     if missing:
-        log(f"        !! the isolated-atom database covers "
+        log(f"  !! the isolated-atom database covers "
             f"{library.elements()} but this structure also contains "
             f"{missing} — no records were written, because a file with them "
             f"for some atoms and not others is worse than one with none.")
         return None
 
-    log(f"        using ISOLATED-ATOM records for {library.elements()}")
-    log("        !! these are FREE-ATOM on-site terms. Measured on this "
+    log(f"  using ISOLATED-ATOM records for {library.elements()}")
+    log("  !! these are FREE-ATOM on-site terms. Measured on this "
         "project's platinum")
-    log("        data they are ~86 % RMS from a bulk site, against ~9 % for "
+    log("  data they are ~86 % RMS from a bulk site, against ~9 % for "
         "the")
-    log("        training-set average. Use them only for an element the "
+    log("  training-set average. Use them only for an element the "
         "training set")
-    log("        does not cover.")
+    log("  does not cover.")
     return lines
 
 
@@ -379,10 +388,10 @@ def augmentation_from_model(bundle, potential, channels, device, log,
     except ValueError as error:
         if required:
             raise SystemExit(f"--paw-source model: {error}") from error
-        log(f"        ext2paw operator not used: {error}")
+        log(f"  ext2paw operator not used: {error}")
         return None
     blocks = [format_augmentation(per_set) for per_set in records[:channels]]
-    log(f"        using the ext2paw operator's predicted occupancies: "
+    log(f"  using the ext2paw operator's predicted occupancies: "
         f"{len(records[0])} atoms, {len(blocks)} record set(s)")
     return blocks if len(blocks) > 1 else blocks[0]
 
@@ -391,7 +400,7 @@ def resolve_augmentation(directory, bundle, structure, shape, log,
                          source="auto", atomic_reference=None,
                          potential=None, channels=1, device=None):
     """
-    Where to take the one-centre terms from, best first.
+    Where to take the one-center terms from, best first.
 
     The order is a ranking by how close each source is to *this* structure's
     own occupancies, and it is not arbitrary --- the gaps were measured on this
@@ -450,7 +459,7 @@ def resolve_augmentation(directory, bundle, structure, shape, log,
         f"--add-paw found no PAW augmentation records to use.\n"
         f"None of {list(AUGMENTATION_SOURCES)} in {directory!r} carries any, "
         f"and {bundle} has no stored per-element reference either.\n"
-        f"The records are the one-centre part of the density, inside the PAW "
+        f"The records are the one-center part of the density, inside the PAW "
         f"spheres; they are not representable on the plane-wave grid, so no "
         f"field model predicts them. Either run VASP once on this geometry "
         f"(LCHARG=.TRUE.) and point at that directory, or train an ext2paw "
@@ -460,7 +469,7 @@ def resolve_augmentation(directory, bundle, structure, shape, log,
         f"`poraque-atoms` and pass --paw-source atomic (a much rougher "
         f"approximation: ~86 % RMS from a real site, against ~9 % for the "
         f"bundle's average), or drop --add-paw and use the "
-        f"file for visualisation rather than as an ICHARG=1 restart.")
+        f"file for visualization rather than as an ICHARG=1 restart.")
 
 
 def read_reference(path, field_class, grid):
@@ -640,6 +649,24 @@ def warn_on_resolution_shift(grid, info, log):
 # ===================================================================== #
 # Pipeline
 # ===================================================================== #
+def _section(log, name):
+    """
+    Open the block ``name`` on ``log``, whatever ``log`` is.
+
+    The functions of this script take any callable, as they always have, so
+    a test can hand them ``list.append`` and read back what they said; only
+    :func:`predict` hands them a :class:`~poraque.utils.logging.Logger`. A
+    plain callable gets exactly what :meth:`Logger.section` would have written
+    --- a blank line and the header --- so the layout does not depend on who
+    is listening.
+    """
+    if isinstance(log, Logger):
+        log.section(name)
+    else:
+        log("")
+        log(header(name))
+
+
 #: Flags ``--from-incar`` switches on, as ``(flag, attribute)``.
 INCAR_IMPLIES = (("--to-vasp", "to_vasp"), ("--add-paw", "add_paw"))
 
@@ -656,7 +683,7 @@ def apply_incar_implications(args, log):
       rather than VASP's own two-stage one, and VASP refuses the ``CHGCAR`` on
       an ``ICHARG=1`` restart — off by a factor of two on a 27-atom platinum
       cell at 450 eV;
-    * without ``--add-paw`` the file carries no one-centre records, and VASP
+    * without ``--add-paw`` the file carries no one-center records, and VASP
       restarts from the plane-wave part alone.
 
     So they are switched on here, whatever was typed, and the log names the
@@ -687,22 +714,34 @@ def apply_incar_implications(args, log):
 
 
 def run(args, log):
-    """Execute the geometry -> EXTCAR -> CHGCAR -> TAUCAR pipeline."""
+    """
+    Execute the geometry -> EXTCAR -> CHGCAR -> TAUCAR pipeline.
+
+    One block per stage: ``[RUNTIME]``, ``[INPUT]``, ``[GRID]``,
+    ``[POTENTIAL]``, ``[DENSITY]``, ``[PAW RECORDS]`` (with ``--add-paw``),
+    ``[KINETIC ENERGY DENSITY]``, ``[HARTREE POTENTIAL]`` (with
+    ``--write-locpot``), ``[COMPARISON]``, ``[ENERGY]``, ``[FIGURES]`` and
+    ``[OUTPUT FILES]``, the optional ones only when asked for.
+    """
     device = resolve_device(args.device)
-    log("=" * 78)
-    log("Poraque - FNO inference: crystal geometry -> charge and kinetic densities")
-    log("=" * 78)
+    _section(log, "runtime")
     log(f"  torch {torch.__version__}   device: {describe_device(device)}")
-    log(f"  structure directory: {args.directory}")
-    apply_incar_implications(args, log)
     # Only on CPU, because that is the only place it is consulted. Printed
-    # because a silent optimisation is one nobody can tell is missing: a run
+    # because a silent optimization is one nobody can tell is missing: a run
     # that falls back to PyTorch is 2-3x slower at cache resolutions and looks
     # exactly the same otherwise.
     if device.type == "cpu":
         from poraque.ml.backend import describe as describe_backend
 
         log(f"  {describe_backend()}")
+
+    _section(log, "input")
+    log(f"  structure directory: {args.directory}")
+    # Resolved here rather than by the caller, so that a note about a bundle
+    # found under its old name lands in the block that names the inputs.
+    args.models = resolve_bundle_path(args.models, log)
+    log(f"  models: {args.models}")
+    apply_incar_implications(args, log)
 
     # ---------------- 1. geometry and pseudopotentials ---------------- #
     reader = resolve_reader(args.directory, args.code)
@@ -730,6 +769,7 @@ def run(args, log):
             zval[element.strip()] = float(value)
         log(f"  valence-charge overrides: {zval}")
 
+    _section(log, "grid")
     grid = resolve_grid(structure, parameters, pseudopotentials, args, log)
     os.makedirs(args.output, exist_ok=True)
 
@@ -749,25 +789,25 @@ def run(args, log):
         args.directory, code=reader.code, grid=grid,
         rcore_factor=args.rcore_factor, sigma=args.sigma, zval=zval,
     )
-    log(f"\n  [1/3] EXTCAR  (analytic, no network)   {time.time() - start:.2f} s")
+    _section(log, "potential")
+    log(f"  [1/3] EXTCAR  (analytic, no network)   {time.time() - start:.2f} s")
     model_used = potential.metadata.get("model", "unknown")
     if model_used == "potcar":
-        log("        model: tabulated POTCAR local potential (exact; "
+        log("  model: tabulated POTCAR local potential (exact; "
             "reproduces VASP EXTCAR)")
-        log("        PSGMAX = " + ", ".join(
+        log("  PSGMAX = " + ", ".join(
             f"{k} {v:.3f} 1/A"
             for k, v in potential.metadata.get("psgmax", {}).items()))
     else:
-        log(f"        model: {model_used}   sigma = " + ", ".join(
+        log(f"  model: {model_used}   sigma = " + ", ".join(
             f"{k} {v:.4f} A"
             for k, v in potential.metadata.get("widths", {}).items()))
-    log(f"        range [{potential.data.min():.4f}, {potential.data.max():.4f}] eV"
+    log(f"  range [{potential.data.min():.4f}, {potential.data.max():.4f}] eV"
         f"   mean {potential.mean():+.3e} eV")
 
     extcar = os.path.join(args.output, "EXTCAR")
     potential.write(extcar)
     results["outputs"]["EXTCAR"] = extcar
-    log(f"        -> {extcar}")
 
     # ---------------- 3. Model 1: EXTCAR -> CHGCAR ---------------- #
     try:
@@ -776,20 +816,21 @@ def run(args, log):
         raise SystemExit(f"{args.models}: {error}") from error
     density_task = "ext2chg" if "ext2chg" in available else "ext2paw"
     operator, info = load_operator(args.models, density_task, device)
-    log(f"\n  [2/3] CHGCAR  via {os.path.basename(args.models)} [{density_task}]")
-    log(f"        model: {type(operator.model).__name__}  "
+    _section(log, "density")
+    log(f"  [2/3] CHGCAR  via {os.path.basename(args.models)} [{density_task}]")
+    log(f"  model: {type(operator.model).__name__}  "
         f"{info['hyperparameters']}")
     warn_on_resolution_shift(grid, info, log)
 
     start = time.time()
     density = operator.predict(potential)
-    log(f"        predicted in {time.time() - start:.2f} s")
+    log(f"  predicted in {time.time() - start:.2f} s")
 
     # Everything below reports on the *density*, and a two-channel prediction
     # stacks (rho, m) into `.data`. `charge` is rho alone -- a range in
     # e/Ang^3, a negative-voxel count and the von Weizsaecker bound are all
     # statements about rho, and evaluating them on the stack silently folds in
-    # a magnetisation that is legitimately signed and in different units.
+    # a magnetization that is legitimately signed and in different units.
     # `density` itself stays whatever `predict` returned, because that is what
     # gets written and what chg2tau consumes.
     charge = charge_channel(density)
@@ -800,20 +841,20 @@ def run(args, log):
                          if element in pseudopotentials else 0.0) * count
         for element, count in zip(structure.elements, structure.counts)
     )
-    log(f"        range [{charge.data.min():.5f}, {charge.data.max():.5f}] e/A^3")
-    log(f"        integral = {electrons:.4f} electrons"
+    log(f"  range [{charge.data.min():.5f}, {charge.data.max():.5f}] e/A^3")
+    log(f"  integral = {electrons:.4f} electrons"
         + (f"   (expected {expected:.1f}, error "
            f"{100 * abs(electrons - expected) / expected:.3f} %)"
            if expected else ""))
     if charge is not density:
         moment = density.magnetic_moment()
-        log(f"        magnetization: integral = {moment:+.4f} mu_B, range "
+        log(f"  magnetization: integral = {moment:+.4f} mu_B, range "
             f"[{density.magnetization.min():+.5f}, "
             f"{density.magnetization.max():+.5f}] e/A^3")
         results["magnetic_moment"] = moment
     negative = int(np.count_nonzero(charge.data < 0))
     if negative:
-        log(f"        !! {negative} negative voxels "
+        log(f"  !! {negative} negative voxels "
             f"({100 * negative / charge.data.size:.4f} %), min "
             f"{charge.data.min():.4g} e/A^3")
 
@@ -832,8 +873,8 @@ def run(args, log):
         # Three things follow from that and none of them are cosmetic: the
         # two-channel class's `.data` is a read-only stack, so the multiply
         # raised; it knows that scaling rho alone would change the local
-        # polarisation m/rho everywhere, which is a different prediction and
-        # not a normalisation, so it scales the pair and keeps rho_up and
+        # polarization m/rho everywhere, which is a different prediction and
+        # not a normalization, so it scales the pair and keeps rho_up and
         # rho_down non-negative; and there is then one implementation of the
         # arithmetic rather than a copy here that has to be kept in step.
         #
@@ -844,14 +885,14 @@ def run(args, log):
         charge = charge_channel(density)
         results["normalized"] = True
         results["normalization_factor"] = factor
-        log(f"        normalized to {expected:.4f} electrons "
+        log(f"  normalized to {expected:.4f} electrons "
             f"(x {factor:.6f}); pass --no-normalize to keep the raw "
             f"prediction")
         # Quote the deficit on the same basis as the line above, so the two
         # percentages agree instead of differing by their denominator.
         deficit = abs(electrons - expected) / expected
         if deficit > 0.05:
-            log(f"        !! the raw prediction was {100 * deficit:.1f} % "
+            log(f"  !! the raw prediction was {100 * deficit:.1f} % "
                 f"off. Renormalizing fixes the total charge, not the shape "
                 f"-- an error this large means the structure is far from the "
                 f"training set and the density is unreliable however it is "
@@ -862,6 +903,7 @@ def run(args, log):
 
     augmentation = None
     if getattr(args, "add_paw", False):
+        _section(log, "paw records")
         try:
             augmentation = resolve_augmentation(
                 args.directory, args.models, structure, grid.shape, log,
@@ -892,17 +934,20 @@ def run(args, log):
             "sets": len(augmentation_blocks(augmentation)),
             "source": getattr(args, "paw_source", "auto"),
         }
+        for line in field_lines({
+                "records": results["paw_augmentation"]["records"],
+                "sets": results["paw_augmentation"]["sets"],
+                "source": results["paw_augmentation"]["source"]}):
+            log(line)
 
     chgcar = os.path.join(args.output, "CHGCAR")
     density.write(chgcar, augmentation=augmentation)
     results["outputs"]["CHGCAR"] = chgcar
-    log(f"        -> {chgcar}")
 
     if args.write_chg:
         chg = os.path.join(args.output, "CHG")
         density.write(chg, columns=10, width=11, decimals=5)
         results["outputs"]["CHG"] = chg
-        log(f"        -> {chg}  (coarse CHG formatting)")
 
     results["electrons"] = electrons
     results["electrons_expected"] = expected or None
@@ -911,24 +956,25 @@ def run(args, log):
     tau = None
     if "chg2tau" in available:
         operator2, info2 = load_operator(args.models, "chg2tau", device)
-        log(f"\n  [3/3] TAUCAR  via {os.path.basename(args.models)} [chg2tau]")
-        log(f"        model: {type(operator2.model).__name__}  "
+        _section(log, "kinetic energy density")
+        log(f"  [3/3] TAUCAR  via {os.path.basename(args.models)} [chg2tau]")
+        log(f"  model: {type(operator2.model).__name__}  "
             f"{info2['hyperparameters']}"
             + ("   [tau = tau_vW + softplus head]" if info2["pauli_residual"] else ""))
         warn_on_resolution_shift(grid, info2, log)
 
         start = time.time()
         tau = operator2.predict(density)
-        log(f"        predicted in {time.time() - start:.2f} s")
-        log(f"        range [{tau.data.min():.4f}, {tau.data.max():.4f}] eV/A^3")
-        log(f"        integral = {tau.integrate():.4f} eV  (total T_s)")
+        log(f"  predicted in {time.time() - start:.2f} s")
+        log(f"  range [{tau.data.min():.4f}, {tau.data.max():.4f}] eV/A^3")
+        log(f"  integral = {tau.integrate():.4f} eV  (total T_s)")
 
         # Check the bound even when a head guarantees it: the check also
         # validates the chained density.
         bound = von_weizsacker_tau(charge.data, grid)
         deficit = tau.data - bound
         violations = int(np.count_nonzero(deficit < -1e-6))
-        log(f"        constraint tau >= tau_vW[rho]: {violations}/{deficit.size} "
+        log(f"  constraint tau >= tau_vW[rho]: {violations}/{deficit.size} "
             f"violated ({100 * violations / deficit.size:.4f} %), min margin "
             f"{deficit.min():+.4g} eV/A^3")
         results["kinetic_energy"] = tau.integrate()
@@ -939,9 +985,9 @@ def run(args, log):
         taucar = os.path.join(args.output, "TAUCAR")
         tau.write(taucar)
         results["outputs"]["TAUCAR"] = taucar
-        log(f"        -> {taucar}")
     else:
-        log("\n  TAUCAR and total energy skipped: this bundle has no chg2tau operator")
+        _section(log, "kinetic energy density")
+        log("  TAUCAR and total energy skipped: this bundle has no chg2tau operator")
 
     # ---------------- 4b. Hartree potential, solved not predicted ------- #
     # Poisson's equation is exact and costs two FFTs, so there is no third
@@ -950,15 +996,16 @@ def run(args, log):
     if args.write_locpot:
         from poraque.fields import HartreePotential
 
-        log("\n  [extra] LOCPOT  via Poisson's equation (no model)")
+        _section(log, "hartree potential")
+        log("  [extra] LOCPOT  via Poisson's equation (no model)")
         hartree = HartreePotential.from_density(density)
         combined = args.locpot_total
         field = (hartree.total_with(potential) if combined else hartree)
-        log(f"        v_H range [{hartree.data.min():.4f}, "
+        log(f"  v_H range [{hartree.data.min():.4f}, "
             f"{hartree.data.max():.4f}] eV")
         if combined:
-            log("        writing v_H + V_ext, as a plain VASP LOCPOT holds")
-            log(f"        total range [{field.data.min():.4f}, "
+            log("  writing v_H + V_ext, as a plain VASP LOCPOT holds")
+            log(f"  total range [{field.data.min():.4f}, "
                 f"{field.data.max():.4f}] eV")
 
         locpot = os.path.join(args.output, "LOCPOT")
@@ -969,17 +1016,18 @@ def run(args, log):
             "max": float(hartree.data.max()),
             "includes_external": bool(combined),
         }
-        log(f"        -> {locpot}")
 
     # ---------------- 5. optional comparison ---------------- #
     if args.compare:
-        log(f"\n  --- comparison against reference files in {args.directory} ---")
+        _section(log, "comparison")
+        log(f"  against reference files in {args.directory}")
         results["comparison"] = {}
+        rows = []
         # `charge`, not `density`: a reference CHGCAR read as a ChargeDensity
         # is one channel, and subtracting it from a (2, ...) stack broadcasts
         # rather than fails -- a relative L2 that silently averages the density
-        # error together with the magnetisation error, reported as the density
-        # error. The magnetisation has its own comparison below.
+        # error together with the magnetization error, reported as the density
+        # error. The magnetization has its own comparison below.
         for filename, field_class, predicted in (
             ("EXTCAR", ExternalPotential, potential),
             ("CHGCAR", ChargeDensity, charge),
@@ -989,7 +1037,7 @@ def run(args, log):
                 continue
             path = os.path.join(args.directory, filename)
             if not os.path.exists(path):
-                log(f"      {filename:<8s} no reference file")
+                rows.append((filename, "no reference file", "", ""))
                 continue
             reference = read_reference(path, field_class, grid)
             difference = predicted.data - reference.data
@@ -1002,12 +1050,15 @@ def run(args, log):
                                                reference.data.ravel())[0, 1]),
             }
             results["comparison"][filename] = entry
-            log(f"      {filename:<8s} relative L2 {entry['relative_l2']:8.4f}   "
-                f"MAE {entry['mae']:10.5g}   r {entry['pearson_r']:7.4f}")
+            rows.append((filename, f"{entry['relative_l2']:.4f}",
+                         f"{entry['mae']:.5g}", f"{entry['pearson_r']:.4f}"))
+        for line in table_lines(("field", "relative L2", "MAE", "r"), rows):
+            log(line)
 
     # ---------------- 6. energy decomposition ---------------- #
     if args.functional != "skip" and tau is not None:
-        log(f"\n  --- energy components (xc: {args.functional}) ---")
+        _section(log, "energy")
+        log(f"  components (xc: {args.functional})")
         from poraque.physics import EnergyCalculator
 
         pscore = None
@@ -1023,13 +1074,13 @@ def run(args, log):
             potential, pscore=pscore, functional=args.functional)
         components = energy.compute(density, tau, potential)
         for line in str(components).splitlines():
-            log(f"    {line}")
+            log(f"  {line}")
         results["energy"] = components.as_dict()
 
-        log("\n    NOTE: a pseudo-valence energy. The PAW one-centre terms")
-        log("    are absent, so this is not a DFT total energy, and on the")
-        log("    current models the error on energy differences exceeds the")
-        log("    differences themselves. See docs/source/energy/index.md.")
+        log("  NOTE: a pseudo-valence energy. The PAW one-center terms")
+        log("  are absent, so this is not a DFT total energy, and on the")
+        log("  current models the error on energy differences exceeds the")
+        log("  differences themselves. See docs/source/energy/index.md.")
 
     # ---------------- 7. optional figures ---------------- #
     if args.plot_dir:
@@ -1060,13 +1111,17 @@ def run(args, log):
                 produced.append(report.parity(reference, predicted, label=label,
                                               unit=unit, log=positive))
         results["figures"] = produced
-        log(f"\n  figures: {len(produced)} written to {args.plot_dir}"
+        _section(log, "figures")
+        log(f"  {len(produced)} written to {args.plot_dir}"
             if produced else
-            "\n  figures: none (no reference fields to compare against)")
+            "  none (no reference fields to compare against)")
 
-    log(f"\n{'=' * 78}")
-    log("Predicted fields are in CHGCAR format.")
-    log("=" * 78)
+    _section(log, "output files")
+    log("  Predicted fields are in CHGCAR format.")
+    labels = {"CHG": "CHG (coarse CHG formatting)"}
+    for line in field_lines({labels.get(name, name): path
+                             for name, path in results["outputs"].items()}):
+        log(line)
     return results
 
 
@@ -1086,17 +1141,19 @@ def build_parser():
         description="Predict CHGCAR and TAUCAR for a new structure from its "
                     "geometry, using the trained Fourier Neural Operators.",
     )
-    parser.add_argument("directory",
-                        help="directory with POSCAR/INCAR/POTCAR of the new structure")
-    parser.add_argument("--models", "-m",
+    parser.add_argument("directory", nargs="?", default=".",
+                        help="directory with POSCAR/INCAR/POTCAR of the new "
+                             "structure (default: current directory)")
+    parser.add_argument("--models", "--model", "-m",
                         default=os.path.join("models", "poraque_models",
                                              BUNDLE_FILENAME),
                         help=f"unified checkpoint holding both operators "
                              f"(default: models/poraque_models/"
                              f"{BUNDLE_FILENAME}, where an unnamed "
                              f"poraque-train run writes it)")
-    parser.add_argument("--output", "-o", default="predictions",
-                        help="directory for the predicted volumetric files")
+    parser.add_argument("--output", "-o", default=".",
+                        help="directory for the predicted volumetric files "
+                             "(default: current directory)")
 
     parser.add_argument("--code", default="auto", help="DFT code, or 'auto'")
     parser.add_argument("--encut", type=float, default=DEFAULT_ENCUT,
@@ -1141,7 +1198,7 @@ def build_parser():
     parser.add_argument("--paw-source", default="auto",
                         choices=("auto", "reference", "model", "bundle",
                                  "atomic"),
-                        help="where --add-paw takes the one-centre terms "
+                        help="where --add-paw takes the one-center terms "
                              "from. 'auto' prefers a reference calculation "
                              "beside the structure, then the occupancies an "
                              "ext2paw operator in the bundle predicts, then "
@@ -1193,28 +1250,29 @@ def build_parser():
 
 
 def predict(argv=None):
-    """Parse ``argv``, run the prediction, and return the result records."""
+    """
+    Parse ``argv``, run the prediction, and return the result records.
+
+    The one :class:`~poraque.utils.logging.Logger` of the command is built
+    here rather than in :func:`main`, because where its file goes ---
+    ``inference.log`` inside ``--output`` --- is not known until the arguments
+    are. Everything goes to the terminal and to that file alike, the banner
+    included, so the log records what produced it.
+    """
     args = build_parser().parse_args(argv)
-
-    lines = []
-
-    def log(message=""):
-        print(message)
-        lines.append(str(message))
-
-    args.models = resolve_bundle_path(args.models, log)
-    results = run(args, log)
-
-    if args.json:
-        os.makedirs(os.path.dirname(args.json) or ".", exist_ok=True)
-        with open(args.json, "w") as handle:
-            json.dump(results, handle, indent=2, default=float)
-        print(f"\nJSON summary -> {args.json}")
-
     log_path = os.path.join(args.output, "inference.log")
-    with open(log_path, "w") as handle:
-        handle.write("\n".join(lines) + "\n")
-    print(f"log          -> {log_path}")
+
+    with Logger(log_path) as log:
+        log.banner()
+        log.title("FNO inference: crystal geometry -> charge and kinetic "
+                  "densities")
+        results = run(args, log)
+
+        if args.json:
+            os.makedirs(os.path.dirname(args.json) or ".", exist_ok=True)
+            with open(args.json, "w") as handle:
+                json.dump(results, handle, indent=2, default=float)
+        log.fields({"JSON summary": args.json, "log": log_path})
     return results
 
 
@@ -1225,7 +1283,6 @@ def main(argv=None):
     calls ``sys.exit(main())`` and would treat any other object as an error
     message. :func:`predict` returns the result records themselves.
     """
-    banner()
     predict(argv)
     return 0
 

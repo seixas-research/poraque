@@ -103,10 +103,10 @@ DEFAULT_UNARY = ("exp", "log", "sqrt", "abs")
 DEFAULT_BINARY = ("+", "-", "*", "/", "^")
 
 #: Feature schemes understood by :func:`build_features`. These select the
-#: *input* variables; :data:`TEMPLATES` selects how the target is factorised.
+#: *input* variables; :data:`TEMPLATES` selects how the target is factorized.
 FEATURE_SCHEMES = ("gga", "reduced", "raw", "enhancement")
 
-#: Target factorisations.
+#: Target factorizations.
 #:
 #: ``"pauli"``
 #:     The **Pauli enhancement factor**, ``F = (tau - tau_vW) / tau_TF``. This
@@ -120,7 +120,7 @@ FEATURE_SCHEMES = ("gga", "reduced", "raw", "enhancement")
 TEMPLATES = ("none", "thomas_fermi", "pauli")
 
 #: ``features: enhancement`` predates the split between inputs and target
-#: factorisation, when one name selected both. It is kept as an alias so an
+#: factorization, when one name selected both. It is kept as an alias so an
 #: existing config keeps working and keeps meaning exactly what it did: the
 #: Pauli factor on ``(p, q)``.
 #:
@@ -163,7 +163,7 @@ class FeatureTable:
         Carried on the table rather than read back off the config, so a table
         built by hand cannot be reported as something it is not.
     template : str
-        Which of :data:`TEMPLATES` factorised the target.
+        Which of :data:`TEMPLATES` factorized the target.
     density : numpy.ndarray or None
         :math:`\rho` in atomic units for every retained voxel, kept even when
         it is not a feature. Reconstructing :math:`\tau` from an enhancement
@@ -251,7 +251,7 @@ class SymbolicResult:
     validation: dict = field(default_factory=dict)
     #: The same scoring as :attr:`validation`, but on the voxels the search was
     #: fitted to. Present even when nothing was held out, so a parity plot can
-    #: always be drawn; read it as a training fit, not a generalisation score.
+    #: always be drawn; read it as a training fit, not a generalization score.
     fitted: dict = field(default_factory=dict)
 
     #: The Pareto knee: the front entry nearest the ideal corner once
@@ -293,7 +293,7 @@ class SymbolicResult:
                 f"on {self.validation.get('n_points', 0)} voxels vs DFT")
         lines.append(
             "  constraints  : " +
-            (", ".join(self.constraints_enforced) + " (penalised in-loop)"
+            (", ".join(self.constraints_enforced) + " (penalized in-loop)"
              if self.constraints_enforced
              else "none in-loop; the limits below are checked after the search"))
         if self.limits:
@@ -416,7 +416,7 @@ def build_features(density, target, grid, scheme="gga",
         Supplies the reciprocal vectors for the spectral derivatives.
     scheme : {"gga", "reduced", "raw", "enhancement"}, optional
         The **input variables**; ``template`` separately selects how the target
-        is factorised.
+        is factorized.
 
         ``"gga"`` gives :math:`(\rho, p, q)`.
 
@@ -600,7 +600,7 @@ PROBE_DENSITIES = (0.05, 0.2, 0.8)
 PENALTY_CEILING = 1e6
 
 #: Default penalty weights, four orders of magnitude above a converged data
-#: term. These are constraints, not regularisers: the intent is that no
+#: term. These are constraints, not regularizers: the intent is that no
 #: accuracy gain can buy a violation.
 DEFAULT_PHYSICS_WEIGHTS = {
     "positivity": 1.0e2,
@@ -1395,7 +1395,7 @@ class SymbolicDistiller:
 
         Scoring is done here, on the same rows, rather than trusting the
         engine's own loss: engines differ in what they report (mean square,
-        mean absolute, normalised) and the numbers in the report have to be
+        mean absolute, normalized) and the numbers in the report have to be
         comparable with the operator's.
 
         Returns
@@ -1460,7 +1460,7 @@ def reconstruct_tau(values, table):
     if table.template == "pauli":
         # tau = tau_vW + tau_TF * F. The subtracted term has to be added back,
         # not just the divided one -- reporting tau_TF * F alone would be the
-        # Pauli term mislabelled as the whole kinetic energy density.
+        # Pauli term mislabeled as the whole kinetic energy density.
         if table.tau_vw is None:
             return None
         tau = tau + table.tau_vw
@@ -1473,7 +1473,7 @@ def full_expression(expression, template, target_name="tau"):
 
     The left-hand side is whatever the reconstruction *yields*, not what was
     fitted: under a template the search returns ``F``, but multiplying
-    :math:`\\tau_{\\rm TF}` back in gives :math:`\\tau`, and labelling that
+    :math:`\\tau_{\\rm TF}` back in gives :math:`\\tau`, and labeling that
     line ``F =`` would state an identity that is false.
     """
     if template == "pauli":
@@ -1496,7 +1496,7 @@ def full_latex(latex, template):
 
 def result_to_dict(result):
     """
-    Serialisable form of a :class:`SymbolicResult`.
+    Serializable form of a :class:`SymbolicResult`.
 
     The scored sections -- ``fitted``, ``validation`` and their knee
     counterparts -- carry the two voxel arrays a parity plot is drawn from.
@@ -1619,7 +1619,7 @@ def distill_dataset(dataset, config, operator=None, log=None, engine=None,
     distiller = SymbolicDistiller(config, engine=engine)
     enforced = distiller.parameters(table)["constraints_enforced"]
     if enforced:
-        emit(f"  physical constraints penalised inside the search: "
+        emit(f"  physical constraints penalized inside the search: "
              f"{', '.join(enforced)}  "
              f"[{config.data_loss} data term, "
              f"p_inf = {symbolic_physics(config)['p_infinity']:g}]")
@@ -1632,14 +1632,14 @@ def distill_dataset(dataset, config, operator=None, log=None, engine=None,
             emit(f"  not expressible in these variables, checked afterwards "
                  f"only: {', '.join(sorted(missing))}")
     else:
-        emit("  physical constraints are not penalised in the search "
+        emit("  physical constraints are not penalized in the search "
              "(symbolic.physics.enable is off); limits checked afterwards")
 
     result = distiller.fit(table)
 
     # Always scored on the data it was fitted to, so a parity plot can be drawn
     # even for a run with no validation split. It is a weaker statement than the
-    # held-out score and is labelled as such wherever it is used, but "no plot"
+    # held-out score and is labeled as such wherever it is used, but "no plot"
     # is not a better answer than "a plot that says which data it is".
     result.fitted = _score_on(result.expression, table)
     # The knee is scored on exactly the same voxels, so the two parity plots

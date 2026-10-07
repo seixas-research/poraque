@@ -67,7 +67,7 @@ class TestResolveDevice:
     def test_none_behaves_like_auto(self):
         assert resolve_device(None).type == resolve_device("auto").type
 
-    def test_explicit_cpu_is_honoured(self):
+    def test_explicit_cpu_is_honored(self):
         assert resolve_device("cpu").type == "cpu"
 
     def test_accepts_a_torch_device(self):
@@ -310,7 +310,7 @@ class TestAnOutOfRangeCudaOrdinal:
 
     def test_without_strict_it_warns_and_falls_back(self, four_gpus):
         """The documented non-strict contract, which an AssertionError from
-        two frames down does not honour."""
+        two frames down does not honor."""
         with pytest.warns(RuntimeWarning, match="cuda:9"):
             assert resolve_device("cuda:9").type == "cpu"
 
@@ -349,7 +349,7 @@ class TestTheDeviceReport:
         device_report("tpu")
         assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)]
 
-    def test_every_gpu_is_labelled_usable_or_not(self):
+    def test_every_gpu_is_labeled_usable_or_not(self):
         lines = device_report()
         if not cuda_available():
             assert any("cuda devices : none" in line for line in lines)
@@ -417,7 +417,7 @@ class TestCellMetric:
 
 
 # --------------------------------------------------------------------- #
-# The memoised integer mesh
+# The memoized integer mesh
 #
 # There is deliberately no test here asserting that the cell metric stays on
 # the host, or that any other operation happens on a particular device. That
@@ -428,17 +428,17 @@ class TestCellMetric:
 # complex einsum on MPS -- there are tests above. Where it changes only the
 # speed, the place is a benchmark.
 # --------------------------------------------------------------------- #
-class TestTheIntegerMeshIsMemoised:
+class TestTheIntegerMeshIsMemoized:
     """
     `reciprocal_vectors` rebuilds `(3, Nx, Ny, Nz)` of integers on every call,
     and it is called several times per batch while depending only on
-    `(shape, device, dtype)`. Memoising it is 1.6 % of training time -- small,
+    `(shape, device, dtype)`. Memoizing it is 1.6 % of training time -- small,
     consistent, and free. What it must not change is a single number.
     """
 
     @pytest.mark.parametrize("device", ["cpu"] + ACCELERATORS)
     def test_reciprocal_vectors_match_cpu(self, device):
-        """The memoised mesh must be identical to the rebuilt one.
+        """The memoized mesh must be identical to the rebuilt one.
 
         On a triclinic cell, which is the ill-conditioned case the float64
         host round-trip exists for.
@@ -459,7 +459,7 @@ class TestTheIntegerMeshIsMemoised:
         assert first is second
 
     def test_a_list_shape_keys_the_same_entry_as_a_tuple(self):
-        """A list is unhashable, so `reciprocal_vectors` must normalise before
+        """A list is unhashable, so `reciprocal_vectors` must normalize before
         it reaches the cache -- and a `torch.Size` must not key a second one."""
         cell = torch.eye(3).unsqueeze(0) * 5.0
         as_list = reciprocal_vectors(cell, [4, 4, 4])
@@ -549,7 +549,7 @@ class TestBackendAgreement:
         assert (reference - result).abs().max() < 1e-3 * reference.abs().max()
 
     def test_training_runs_and_stays_finite(self, device):
-        """A full optimiser step, including complex-parameter gradient clipping."""
+        """A full optimizer step, including complex-parameter gradient clipping."""
         from poraque.ml.training import clip_gradients
 
         torch.manual_seed(0)

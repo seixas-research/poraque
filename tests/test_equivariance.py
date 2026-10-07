@@ -93,7 +93,7 @@ def rotate_field(field, rotation):
 
 
 def build(equivariant, seed=7, **kwargs):
-    """A small operator, deterministically initialised."""
+    """A small operator, deterministically initialized."""
     torch.manual_seed(seed)
     kwargs.setdefault("use_coordinates", not equivariant)
     kwargs.setdefault("cell_conditioning", True)
@@ -250,7 +250,7 @@ class TestTheCutoffDoesNotTieWithItsOwnRoundOff:
     The two sides of the comparison are computed by different routes:
     ``radius`` from the reciprocal cell contracted against the integer
     frequencies, ``inscribed`` from :math:`2\pi m_i/|a_i|`. They agree
-    analytically and disagree in the last bits, and the face-centre modes
+    analytically and disagree in the last bits, and the face-center modes
     :math:`(\pm m, 0, 0)` and their rotations sit *exactly* on the boundary —
     so round-off decides which side each lands on, and it need not decide the
     same way for every axis. One face kept where its own rotation image was
@@ -287,7 +287,7 @@ class TestTheCutoffDoesNotTieWithItsOwnRoundOff:
         sooner in float32 than in float64, so an entry count differs between
         the precisions on most cells for a reason that has nothing to do with
         the mask. A mode that survives the cutoff always has its nearest
-        centre within half a spacing, which never underflows, so the maximum
+        center within half a spacing, which never underflows, so the maximum
         over the radial axis is a clean membership indicator in either dtype.
         """
         basis = layer.radial_basis(cell, modes, torch.device("cpu"), dtype)
@@ -779,7 +779,7 @@ class TestTheEquivariantOperatorCanActuallyBeTrained:
     ``torch.complex``. That is arithmetic autograd handles, but a complex
     constructor in the middle of a graph is exactly where a backward pass stops
     being obvious — and a layer that silently received nothing would train to
-    its initialisation and read as a bad dataset.
+    its initialization and read as a bad dataset.
 
     Asserted here rather than only in ``tests/test_cuequivariance_gpu.py``,
     because that file does not run on a machine without CUDA and this claim has
@@ -817,7 +817,7 @@ class TestTheEquivariantOperatorCanActuallyBeTrained:
     def test_the_equivariance_survives_the_training(self):
         """
         It is a property of the architecture rather than of the weights, so no
-        amount of optimisation can spend it — but a weight update that touched
+        amount of optimization can spend it — but a weight update that touched
         the wrong tensor could, and nothing else would notice.
         """
         torch.manual_seed(0)
@@ -918,7 +918,7 @@ class TestGMaxDoesNotSizeTheBasisUnderFixedModeSelection:
 
     def test_it_is_silent_when_there_is_nothing_to_say(self):
         """
-        The warning fires on the one configuration that changed behaviour.
+        The warning fires on the one configuration that changed behavior.
 
         A dense model has no radial basis to resize, and a ``physical`` run
         keeps the coupling, so neither is told anything. Warning on either
@@ -976,7 +976,7 @@ class TestTheRadialBasisIsBuiltOncePerForwardPass:
     there and copies it back. That is a device-to-host-to-device round trip
     per Fourier layer per batch, against a dense backbone that makes none at
     all; on CUDA the device-to-host half also drains the queue, so what is
-    being paid for is a synchronisation rather than a 3x3 inverse.
+    being paid for is a synchronization rather than a 3x3 inverse.
 
     Measured on MPS, batch 4 at 32^3, ``width 32 / n_radial 32``: 55.8 ms per
     forward down to 47.2, **15 %**; at ``width 16 / n_radial 16`` where the
@@ -1022,7 +1022,7 @@ class TestTheRadialBasisIsBuiltOncePerForwardPass:
         """
         Bit-identical, not merely close.
 
-        A shared basis is an optimisation: it earns its place only if the
+        A shared basis is an optimization: it earns its place only if the
         operator it computes is the same operator, so the assertion is
         `torch.equal` and not a tolerance.
         """
@@ -1052,7 +1052,7 @@ class TestTheRadialBasisIsBuiltOncePerForwardPass:
         A basis built for another grid, another mode count or a batch of one
         does not fail to multiply against the mode block -- it broadcasts, and
         returns a finite field computed from a geometry that is not the
-        sample's. That is the failure this optimisation makes possible, so it
+        sample's. That is the failure this optimization makes possible, so it
         is the one it has to refuse.
         """
         layer = RadialSpectralConv3d(2, 2, (4, 4, 4), n_radial=6)

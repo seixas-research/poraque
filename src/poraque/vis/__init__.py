@@ -14,7 +14,7 @@ answer three separate questions about a trained operator — did it train
 (loss curves), is it right in space (field cross-sections), is it right in
 distribution (parity) — and writes them to a results directory.
 
-Colour is assigned by the job it does: a single-hue sequential ramp for
+Color is assigned by the job it does: a single-hue sequential ramp for
 one-signed magnitudes, a two-hue diverging ramp with a neutral midpoint and
 zero-symmetric limits for signed errors, and a CVD-validated categorical set
 for series identity. See :mod:`poraque.vis.style`.

@@ -22,7 +22,7 @@ it holds identically.
 **The physics is incomplete.** The Hellmann-Feynman force of a local
 pseudopotential is the whole force only when the pseudopotential *is* local.
 Every PAW dataset for a transition metal is strongly non-local, and the
-projector and one-centre force terms are not recoverable from :math:`\rho`,
+projector and one-center force terms are not recoverable from :math:`\rho`,
 :math:`\tau` and :math:`V_{\rm loc}` sampled on a grid. The comparison against
 VASP's ``TOTAL-FORCE`` is therefore written as a characterization: it pins what
 the method currently achieves so a regression is visible, and it does not
@@ -126,7 +126,7 @@ class TestEwaldForces:
         Every component, against a central difference of :func:`ewald_energy`.
 
         This is the whole derivative: the Ewald energy is analytic and needs no
-        grid, so there is no discretisation to blame and the agreement should
+        grid, so there is no discretization to blame and the agreement should
         be at the finite-difference floor.
         """
         analytic = ewald_forces(cell, {"Na": 1.0})
@@ -145,7 +145,7 @@ class TestEwaldForces:
         assert force_consistency_error(ewald_forces(cell, {"Na": 1.0})) < 1e-9
 
     def test_a_symmetric_lattice_feels_nothing(self):
-        """Every site of a simple cubic lattice is an inversion centre."""
+        """Every site of a simple cubic lattice is an inversion center."""
         lattice = Structure(cell=np.eye(3) * 3.0, symbols=["Na"], counts=[1],
                             scaled_positions=[[0.0, 0.0, 0.0]])
         assert np.abs(ewald_forces(lattice, {"Na": 1.0})).max() < 1e-9

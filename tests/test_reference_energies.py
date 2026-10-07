@@ -20,7 +20,7 @@ are exact statements, and a tolerance would hide a wiring mistake that made
 them merely approximate.
 
 **Referencing against the right side is what matters.** Poraquê's totals carry
-a per-atom offset of order :math:`10^{3}` eV from the absent PAW one-centre
+a per-atom offset of order :math:`10^{3}` eV from the absent PAW one-center
 terms. Subtracting *VASP's* atomic energy leaves that offset untouched;
 subtracting *Poraquê's own* atomic energy cancels it. The measured difference
 on platinum is a cohesive energy of :math:`-1157` eV/atom against one of

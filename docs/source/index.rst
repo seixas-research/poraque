@@ -118,4 +118,5 @@ What Poraquê provides
    symbolic/index
    theory
    configuration
+   output
    api/index

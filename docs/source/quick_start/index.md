@@ -46,14 +46,24 @@ poraque-train --config configs/train.yaml
 ```
 
 This trains **one** `ext2chg` model and **one** `chg2tau` model on the combined
-data of every structure, then writes:
+data of every structure, then writes, under `models/<task.name>/`:
 
 | Output | Contents |
 | --- | --- |
-| `models/poraque_models.poraque` | both trained operators, in one file |
-| `logs/*.log`, `logs/*.json` | metrics, and the resolved configuration |
-| `results/plots/` | loss curves, field cross-sections, parity plots |
-| `reports/*.pdf` | a typeset report per model |
+| `<name>.poraque` | both trained operators, in one file |
+| `log/` | the log, the metrics JSON and the resolved configuration |
+| `plots/` | loss curves, field cross-sections, parity plots |
+| `report/` | a typeset report per model |
+
+The log is the terminal output kept: a banner recording the environment, then
+one `[NAME]` block per stage — the cache, each task's dataset, model, training
+and results, the resource profile last. {doc}`../output` describes the layout
+and how to read it from a script.
+
+`task.type` also names the two tasks that carry the PAW augmentation
+occupancies beside the chain: `ext2paw` predicts them with the pseudo-density,
+and `paw2tau` reads them with it to predict $\tau$. See
+{ref}`the configuration reference <paw>`.
 
 ## 4. Predict a new structure
 
@@ -61,7 +71,18 @@ data of every structure, then writes:
 poraque-inference new_structure/ --output predictions/new_structure
 ```
 
-Both operators come from the single `models/poraque_models.poraque` written by
+The input directory and `--output` both default to the current directory.
+With `POSCAR`, `INCAR` and `POTCAR` beside you, an `ext2paw` bundle can therefore
+write `CHGCAR` here with:
+
+```bash
+poraque-inference --model ../../../best.poraque --from-incar ./INCAR --paw-source model
+```
+
+`--model`, `--models` and `-m` select the same checkpoint. An explicit input
+directory or `--output` overrides its respective default.
+
+Both operators come from the single `.poraque` bundle written by
 step 3. The grid is sized from `--encut` (default **200 eV**) at `PREC=Normal`,
 unless `--grid`, `--like` or `--resolution` is given.
 
@@ -163,7 +184,7 @@ poraque-inference new_structure/ --like new_structure/CHGCAR --add-paw
 ```
 
 A `CHGCAR` that VASP accepts for `ICHARG=1` carries, after the grid block, one
-*augmentation occupancies* record per atom — the one-centre PAW terms, inside
+*augmentation occupancies* record per atom — the one-center PAW terms, inside
 the augmentation spheres.
 
 ```{warning}
@@ -174,7 +195,7 @@ model and core-region occupancies from the reference.
 
 It follows that `--add-paw` needs a converged `CHGCAR` for the geometry — and
 if you have one, you do not need a prediction to restart from. The flag is for
-the case where the reference is a *near-neighbour* geometry whose on-site
+the case where the reference is a *near-neighbor* geometry whose on-site
 occupancies are still a good approximation.
 ```
 
@@ -225,7 +246,7 @@ from the reference (a warning — the records are grid-independent, but
 element the table does not cover, which yields no records at all rather than a
 partial block.
 
-## 5. Evaluate generalisation
+## 5. Evaluate generalization
 
 Step 3 already holds back a fifth of the structures, so its score is genuinely
 held out. For a tighter estimate — every structure scored by a model that never
@@ -239,7 +260,7 @@ That is the only variation on the training protocol. It fits *K* models and
 reports a spread, so it produces a number to quote rather than a model to
 deploy; set `k_folds` to the number of structures for leave-one-out.
 
-For the artefact you actually ship, set `valid_fraction: 0` so training uses
+For the artifact you actually ship, set `valid_fraction: 0` so training uses
 every structure — accepting that its own metrics are then a training fit.
 
 ## 6. Drive it from ASE

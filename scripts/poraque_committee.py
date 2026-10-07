@@ -18,7 +18,7 @@ difference is the data each one runs on, and it decides everything else:
 ==================  ==========================  ==============================
                     ``poraque-committee``       ``poraque-active-learning``
 ==================  ==========================  ==============================
-runs on             a **labelled** dataset      an **unlabelled** pool
+runs on             a **labeled** dataset      an **unlabeled** pool
                     (``--cache``): inputs       (``--pool``): inputs only,
                     *and* targets               targets not computed yet
 answers             "is this measure worth      "which structures should I
@@ -42,7 +42,7 @@ the two outputs look alike — they differ in what the number is *for*.
 .. rubric:: What it measures
 
 Scores every structure by the **Jensen-Shannon divergence** across an ensemble
-whose members differ only in their weight initialisation, and orders them.
+whose members differ only in their weight initialization, and orders them.
 
 .. code-block:: text
 
@@ -63,12 +63,12 @@ directly. For an ensemble the right form is the divergence about the mean,
     \mathrm{JSD} = \frac1K\sum_k D_{\rm KL}(p_k \,\|\, \bar p),
 
 which is the mutual information between the prediction and the member index —
-the quantity active learning maximises. It is symmetric, bounded by
+the quantity active learning maximizes. It is symmetric, bounded by
 :math:`\ln K`, and finite wherever the members are, none of which a raw
 :math:`D_{\rm KL}` gives.
 
 The :math:`L^2` spread and the spread of the integrated quantity are reported
-beside it. They measure different things: JSD is normalised per member and so
+beside it. They measure different things: JSD is normalized per member and so
 is blind to a common rescaling, which is exactly the electron-count drift the
 integral spread captures.
 
@@ -116,7 +116,6 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 if os.path.isdir(_SRC):
     sys.path.insert(0, _SRC)
 
-from poraque import banner  # noqa: E402
 from poraque.fields import FIELD_CLASSES, FieldGrid  # noqa: E402
 from poraque.ml import (  # noqa: E402
     BUNDLE_FILENAME,
@@ -129,6 +128,7 @@ from poraque.ml.active_learning import format_ranking  # noqa: E402
 from poraque.ml.data import discover_materials  # noqa: E402
 from poraque.ml.device import describe_device, resolve_device  # noqa: E402
 from poraque.ml.tasks import resolve_task  # noqa: E402
+from poraque.utils.logging import INDENT, Logger, header  # noqa: E402
 
 
 def member_bundle(entry):
@@ -211,14 +211,136 @@ def reference_errors(path, task):
     return errors
 
 
-def rank(argv=None):
-    """Parse ``argv``, score every structure, and return the ranked records."""
+def _section(log, name):
+    """
+    Open the block ``name`` on ``log``, whatever ``log`` is.
+
+    The report functions take any callable, so a test can hand them
+    ``list.append`` and read back what they said; :func:`main` hands them a
+    :class:`~poraque.utils.logging.Logger`. A plain callable gets exactly what
+    :meth:`Logger.section` would have written --- a blank line and the header
+    --- so the layout does not depend on who is listening.
+    """
+    if isinstance(log, Logger):
+        log.section(name)
+    else:
+        log("")
+        log(header(name))
+
+
+def _correlations(scored_by_label, log):
+    """One Spearman/Pearson line per measure, or why there is none."""
+    for label, scored in scored_by_label:
+        if len(scored) < 3:
+            log(f"  {label:<11s} needs 3 scored structures, has {len(scored)}")
+            continue
+        stats = disagreement_error_correlation(scored)
+        log(f"  {label:<11s} Spearman {stats['spearman']:+.3f}   "
+            f"Pearson {stats['pearson']:+.3f}")
+
+
+def report_ranking(records, log=print):
+    """
+    The ``[RANKING]`` block: every structure, most uncertain first.
+
+    Parameters
+    ----------
+    records : list of dict
+        As :func:`rank` builds them; ``jsd`` is ``None`` for a structure the
+        members predict a signed field on.
+    log : callable, optional
+
+    Returns
+    -------
+    list of dict
+        The scored records, ranked.
+    """
+    # `disagreement` returns jsd=None by design when the members predict a
+    # signed field -- which is exactly what an under-trained density model
+    # does. Sorting on that raised `bad operand type for unary -: NoneType`
+    # and lost the whole ranking, including the structures that did score.
+    ranked = [record for record in records if record["jsd"] is not None]
+    unscored = [record for record in records if record["jsd"] is None]
+
+    _section(log, "ranking")
+    log(f"  ranked by Jensen-Shannon divergence (most uncertain first): "
+        f"{len(ranked)} of {len(records)}")
+    if ranked:
+        # The same table poraque-active-learning prints, from the same
+        # definition: it is the same measure over the same committee, and two
+        # hand-written tables had drifted apart in width, precision and column
+        # name.
+        log(format_ranking(ranked, indent=INDENT))
+    if unscored:
+        log(f"  {len(unscored)} structure(s) have no JSD: the members "
+            f"predict a signed field there, which is")
+        log("  not a density and has no divergence. The L2 spread below "
+            "still applies to them.")
+        for record in unscored:
+            log(f"    {record['material']:<18s} L2 spread "
+                f"{record['relative']:.4f}")
+    if not ranked:
+        log("  no structure could be ranked by JSD; train the members "
+            "further before")
+        log("  spending a DFT budget on this ordering.")
+    return ranked
+
+
+def report_calibration(records, log=print, truth=None, against=None):
+    """
+    The ``[CALIBRATION]`` block, and ``[MEASURED ERRORS]`` given ``truth``.
+
+    Whether the ranking means anything: the committee's spread against its own
+    error, and, when a previous run's errors are supplied, against those.
+
+    Parameters
+    ----------
+    records : list of dict
+    log : callable, optional
+    truth : dict, optional
+        ``{structure: relative_l2}``, from :func:`reference_errors`.
+    against : str, optional
+        Where ``truth`` came from, for the report.
+    """
+    _section(log, "calibration")
+    log("  committee spread vs its own error:")
+    _correlations(
+        [(label, [{"relative": r[key], "error": r["error"]} for r in records
+                  if r[key] is not None and r["error"] is not None])
+         for key, label in (("jsd", "JSD"), ("relative", "L2 spread"))], log)
+
+    if truth is None:
+        return
+    _section(log, "measured errors")
+    shared = [r for r in records if r["material"] in truth]
+    if len(shared) < 3:
+        log(f"  !! only {len(shared)} structures in common with "
+            f"{against}; need 3 to correlate.")
+        return
+    log(f"  against measured errors in {os.path.basename(str(against))} "
+        f"({len(shared)} structures):")
+    _correlations(
+        [(label, [{"relative": r[key], "error": truth[r["material"]]}
+                  for r in shared if r[key] is not None])
+         for key, label in (("jsd", "JSD"), ("relative", "L2 spread"))], log)
+    log("  Spearman is the one to read: active learning consumes")
+    log("  an ordering, not a calibrated magnitude.")
+
+
+def rank(argv=None, log=None):
+    """
+    Parse ``argv``, score every structure, and return the ranked records.
+
+    ``log`` is the :class:`~poraque.utils.logging.Logger` :func:`main` built;
+    called directly, the command builds its own, on the terminal.
+    """
+    log = log if log is not None else Logger()
     parser = argparse.ArgumentParser(
         description="CALIBRATION: does committee disagreement predict error? "
                     "Correlates the two on data where the error is known.",
-        epilog="Runs on a LABELLED dataset (--cache): inputs AND targets, so "
+        epilog="Runs on a LABELED dataset (--cache): inputs AND targets, so "
                "the true error is available to correlate against. Its sibling "
-               "poraque-active-learning runs on an unlabelled pool and spends "
+               "poraque-active-learning runs on an unlabeled pool and spends "
                "a DFT budget on the ranking. Run this one first -- read the "
                "Spearman coefficient before trusting that ordering.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -240,18 +362,18 @@ def rank(argv=None):
     paths = resolve_bundles(args.models)
     committee = Committee.from_bundles(paths, task.name, device=device)
 
-    print("=" * 78)
-    print(f"Query by committee - {task.name}: {task.input_field} -> "
-          f"{task.target_field}")
-    print("CALIBRATION: does disagreement predict error on data where the")
-    print("error is known? Read the Spearman coefficient below.")
-    print("(To spend a DFT budget on a ranking, that is")
-    print(" poraque-active-learning, on an unlabelled pool.)")
-    print("=" * 78)
-    print(f"  members    : {len(committee)}  (init_seed "
-          f"{committee.init_seeds})")
-    print(f"  device     : {describe_device(device)}")
-    print(f"  cache      : {args.cache}")
+    log.title(f"Query by committee - {task.name}: {task.input_field} -> "
+              f"{task.target_field}")
+    log.section("purpose")
+    log.text("CALIBRATION: does disagreement predict error on data where the")
+    log.text("error is known? Read the Spearman coefficient below.")
+    log.text("(To spend a DFT budget on a ranking, that is")
+    log.text(" poraque-active-learning, on an unlabeled pool.)")
+    log.section("committee")
+    log.fields({"members": f"{len(committee)}  (init_seed "
+                           f"{committee.init_seeds})",
+                "device": describe_device(device),
+                "cache": args.cache})
 
     if not os.path.isdir(args.cache):
         parent = os.path.dirname(args.cache) or "."
@@ -287,83 +409,25 @@ def rank(argv=None):
         records.append({
             "material": material.identifier,
             "jsd": scored["jsd"],
-            "jsd_normalised": scored["jsd_normalised"],
+            "jsd_normalized": scored["jsd_normalized"],
             "relative": scored["relative"],
             "integral_relative": scored["integral_relative"],
             "error": scored["error"],
             "ratio": scored["ratio"],
         })
 
-    # `disagreement` returns jsd=None by design when the members predict a
-    # signed field -- which is exactly what an under-trained density model
-    # does. Sorting on that raised `bad operand type for unary -: NoneType`
-    # and lost the whole ranking, including the structures that did score.
-    ranked = [record for record in records if record["jsd"] is not None]
-    unscored = [record for record in records if record["jsd"] is None]
-
-    print(f"\n  ranked by Jensen-Shannon divergence (most uncertain first): "
-          f"{len(ranked)} of {len(records)}")
-    if ranked:
-        # The same table poraque-active-learning prints, from the same
-        # definition: it is the same measure over the same committee, and two
-        # hand-written tables had drifted apart in width, precision and column
-        # name.
-        print(format_ranking(ranked))
-    if unscored:
-        print(f"\n    {len(unscored)} structure(s) have no JSD: the members "
-              f"predict a signed field there, which is")
-        print("    not a density and has no divergence. The L2 spread below "
-              "still applies to them.")
-        for record in unscored:
-            print(f"      {record['material']:<18s} L2 spread "
-                  f"{record['relative']:.4f}")
-    if not ranked:
-        print("\n  no structure could be ranked by JSD; train the members "
-              "further before")
-        print("  spending a DFT budget on this ordering.")
+    report_ranking(records, log)
 
     # ---------------- does the ranking mean anything? ---------------- #
-    print("\n  calibration (committee spread vs its own error):")
-    for key, label in (("jsd", "JSD"), ("relative", "L2 spread")):
-        scored = [{"relative": r[key], "error": r["error"]} for r in records
-                  if r[key] is not None and r["error"] is not None]
-        if len(scored) < 3:
-            print(f"    {label:<11s} needs 3 scored structures, has "
-                  f"{len(scored)}")
-            continue
-        stats = disagreement_error_correlation(scored)
-        print(f"    {label:<11s} Spearman {stats['spearman']:+.3f}   "
-              f"Pearson {stats['pearson']:+.3f}")
+    truth = (reference_errors(args.against, task.name) if args.against
+             else None)
+    report_calibration(records, log, truth=truth, against=args.against)
 
-    if args.against:
-        truth = reference_errors(args.against, task.name)
-        shared = [r for r in records if r["material"] in truth]
-        if len(shared) >= 3:
-            print(f"\n  against measured errors in "
-                  f"{os.path.basename(args.against)} ({len(shared)} structures):")
-            for key, label in (("jsd", "JSD"), ("relative", "L2 spread")):
-                scored = [{"relative": r[key],
-                           "error": truth[r["material"]]} for r in shared
-                          if r[key] is not None]
-                if len(scored) < 3:
-                    print(f"    {label:<11s} needs 3 scored structures, has "
-                          f"{len(scored)}")
-                    continue
-                stats = disagreement_error_correlation(scored)
-                print(f"    {label:<11s} Spearman {stats['spearman']:+.3f}   "
-                      f"Pearson {stats['pearson']:+.3f}")
-            print("\n    Spearman is the one to read: active learning consumes")
-            print("    an ordering, not a calibrated magnitude.")
-        else:
-            print(f"\n  !! only {len(shared)} structures in common with "
-                  f"{args.against}; need 3 to correlate.")
-
-    print("\n" + "=" * 78)
-    print("  Members differ only in initialisation, so this is optimisation")
-    print("  variance -- a lower bound on the error, not a calibrated bar.")
-    print("  Every member saw the same structures, so all of them can be")
-    print("  confidently wrong about chemistry the dataset omits.")
-    print("=" * 78)
+    log.section("caveats")
+    log.text("Members differ only in initialization, so this is optimization")
+    log.text("variance -- a lower bound on the error, not a calibrated bar.")
+    log.text("Every member saw the same structures, so all of them can be")
+    log.text("confidently wrong about chemistry the dataset omits.")
 
     if args.json:
         os.makedirs(os.path.dirname(args.json) or ".", exist_ok=True)
@@ -371,7 +435,8 @@ def rank(argv=None):
             json.dump({"task": task.name, "members": paths,
                        "init_seeds": committee.init_seeds,
                        "records": records}, handle, indent=2, default=float)
-        print(f"\n  summary -> {args.json}")
+        log.section("output files")
+        log.fields({"summary": args.json})
     return records
 
 
@@ -388,8 +453,9 @@ def main(argv=None):
     calls ``sys.exit(main())`` and would treat any other object as an error
     message. :func:`rank` returns the scored records themselves.
     """
-    banner()
-    rank(argv)
+    log = Logger()
+    log.banner()
+    rank(argv, log)
     return 0
 
 

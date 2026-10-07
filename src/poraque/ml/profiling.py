@@ -36,10 +36,10 @@ stage begins and read when it ends, so each row says what that stage needed.
 Both ``max_memory_allocated`` (tensors) and ``max_memory_reserved`` (what the
 caching allocator held, which is what ``nvidia-smi`` shows) are kept. Apple MPS
 exposes no peak; the driver's allocation at the end of the stage is recorded
-instead, and labelled as such.
+instead, and labeled as such.
 
-**Stage boundaries synchronise the device**, as the training loop's own clock
-does: CUDA and MPS dispatch asynchronously, and an unsynchronised clock times
+**Stage boundaries synchronize the device**, as the training loop's own clock
+does: CUDA and MPS dispatch asynchronously, and an unsynchronized clock times
 how fast work was queued.
 """
 
@@ -215,8 +215,9 @@ class ResourceProfile:
 
         width = max([len(s["name"]) + (15 if s["status"] != "ok" else 0)
                      for s in self.stages] + [len("total (wall clock)")])
-        rule = "=" * 78
-        lines = [rule, "RESOURCE PROFILING SUMMARY", rule]
+        from ..utils.logging import header
+
+        lines = ["", header("resources")]
         header = f"  {'stage':<{width}s}  {'wall time':>12s}  {'peak RSS':>11s}"
         if memory_heading:
             header += f"  {memory_heading:>11s}"

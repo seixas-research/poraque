@@ -53,7 +53,7 @@ that tail back analytically in ``POTION``. See
 
 The ``PAW radial sets`` block
 -----------------------------
-Further down, a PAW dataset tabulates its one-centre quantities on a
+Further down, a PAW dataset tabulates its one-center quantities on a
 logarithmic radial mesh: ``grid``, then ``aepotential``, then ``core
 charge-density``, and later ``core charge-density (pseudized)``. Two
 conventions in it are not written anywhere in the file, and both were pinned
@@ -393,7 +393,7 @@ class Potcar(list):
         Parameters
         ----------
         directory : str or pathlib.Path
-            Library root; see :func:`find_potcar` for the layouts recognised.
+            Library root; see :func:`find_potcar` for the layouts recognized.
         elements : sequence of str
             Bare chemical symbols, in species order.
         parse_tables : bool, optional
@@ -506,7 +506,7 @@ def find_potcar(directory, element):
     r"""
     Locate the ``POTCAR`` for ``element`` inside a library directory.
 
-    Recognised layouts, in preference order:
+    Recognized layouts, in preference order:
 
     1. ``<dir>/<element>/POTCAR`` --- what VASP ships;
     2. ``<dir>/<element>_<variant>/POTCAR`` --- ``Pt_pv``, ``Fe_sv``, ...;
@@ -670,7 +670,7 @@ def _parse_projector_channels(text):
     Each header is followed by one line, ``l  n_projectors  r_max``: the
     angular momentum and how many projectors share it. The channels are those
     l repeated per projector, in the order the blocks appear --- which is the
-    order VASP loops over them when it writes the one-centre occupancies.
+    order VASP loops over them when it writes the one-center occupancies.
 
     Returns
     -------

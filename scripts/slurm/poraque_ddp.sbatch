@@ -99,5 +99,5 @@ srun --kill-on-bad-exit=1 \
 #
 # and compare seconds_per_epoch in the metrics JSON. Remember that the
 # effective batch size is training.batch_size x world_size, so the four-rank
-# run is not the same optimiser -- halve the learning rate or quarter the batch
-# size if the comparison is meant to be of the same optimisation.
+# run is not the same optimizer -- halve the learning rate or quarter the batch
+# size if the comparison is meant to be of the same optimization.

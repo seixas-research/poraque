@@ -208,7 +208,7 @@ class AimsReader(CalculationReader):
         r"""
         Run settings, such as they are.
 
-        FHI-aims uses numeric atom-centred orbitals, so there is no plane-wave
+        FHI-aims uses numeric atom-centered orbitals, so there is no plane-wave
         cutoff to report and ``cutoff`` stays ``None``: the basis is chosen by
         the ``species_defaults`` level (``light``/``tight``/``really_tight``),
         which is recorded in ``extra`` rather than turned into an energy it is

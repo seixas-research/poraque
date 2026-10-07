@@ -32,7 +32,7 @@ The three deck modes
     ``KPOINTS``, ``ISMEAR = 0``, ``LORBIT = 11`` for fat bands.
 
 ``dos``
-    The same eigenvalues integrated over a **mesh**: an automatic Γ-centred
+    The same eigenvalues integrated over a **mesh**: an automatic Γ-centered
     ``KPOINTS``, ``ISMEAR = -5`` (tetrahedron with Blöchl corrections) and a
     generous ``NEDOS``. A DOS wants a mesh and a band structure wants a line;
     they are not interchangeable, which is the whole difference between these
@@ -45,7 +45,7 @@ And one mode that writes no deck
 --------------------------------
 ``chgcar``
     The density itself, written out as a ``CHGCAR`` VASP can open --- with its
-    magnetisation block and both sets of PAW augmentation records. A Poraquê
+    magnetization block and both sets of PAW augmentation records. A Poraquê
     field store (``fields.h5``) holds everything a ``CHGCAR`` does and no VASP
     build reads one, so this is the step between a ``poraque-mp --hdf5``
     download and any ``ICHARG = 1`` or ``ICHARG = 11`` run at all.
@@ -80,7 +80,7 @@ does not match the one it wants. The value is read off the source calculation
 when ``--like`` points at one.
 
 ``LMAXMIX`` must match whatever wrote the augmentation occupancies, or the
-one-centre terms are read into the wrong angular-momentum channels.
+one-center terms are read into the wrong angular-momentum channels.
 
 Checking the density first
 --------------------------
@@ -128,7 +128,6 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 if os.path.isdir(_SRC):
     sys.path.insert(0, _SRC)
 
-from poraque.environment import banner                        # noqa: E402
 from poraque.fields.vasp.templates import (                   # noqa: E402
     fcc_band_path,
     kpoint_mesh_from_spacing,
@@ -137,9 +136,27 @@ from poraque.fields.vasp.templates import (                   # noqa: E402
     write_dos_deck,
     write_total_energy_deck,
 )
+from poraque.utils.logging import Logger, header               # noqa: E402
 
 #: The subcommands, in the order they appear in ``--help``.
 MODES = ("bands", "dos", "energy", "chgcar")
+
+
+def _section(log, name):
+    """
+    Open the block ``name`` on ``log``, whatever ``log`` is.
+
+    Every function here takes any callable, as it always has, so a test can
+    hand it ``list.append`` and read back what it said; only :func:`main`
+    hands them a :class:`~poraque.utils.logging.Logger`. A plain callable gets
+    exactly what :meth:`Logger.section` would have written --- a blank line and
+    the header --- so the layout does not depend on who is listening.
+    """
+    if isinstance(log, Logger):
+        log.section(name)
+    else:
+        log("")
+        log(header(name))
 
 
 def describe_density(path, log=print):
@@ -173,22 +190,23 @@ def describe_density(path, log=print):
         records = 0
 
     natoms = len(density.structure.scaled_positions)
-    log(f"\n  density  {path}")
-    log(f"    grid       {'x'.join(str(n) for n in grid.shape)}"
+    _section(log, "density")
+    log(f"  path       {path}")
+    log(f"  grid       {'x'.join(str(n) for n in grid.shape)}"
         f"   volume {grid.volume:.3f} Ang^3")
-    log(f"    structure  {natoms} atoms, {density.structure.elements}")
-    log(f"    electrons  {density.integrate():.6f}")
+    log(f"  structure  {natoms} atoms, {density.structure.elements}")
+    log(f"  electrons  {density.integrate():.6f}")
 
     if records == natoms:
-        log(f"    PAW        {records} augmentation records (one per atom)")
+        log(f"  PAW        {records} augmentation records (one per atom)")
     elif records:
-        log(f"    PAW        !! {records} augmentation records for {natoms} "
+        log(f"  PAW        !! {records} augmentation records for {natoms} "
             f"atoms -- VASP expects one each, and will not read this file")
     else:
-        log("    PAW        none. VASP will read the grid, but the one-centre")
-        log("               terms are lost -- rerun poraque-inference with")
-        log("               --add-paw for a density that can seed ICHARG=11")
-        log("               without discarding them.")
+        log("  PAW        none. VASP will read the grid, but the one-center")
+        log("             terms are lost -- rerun poraque-inference with")
+        log("             --add-paw for a density that can seed ICHARG=11")
+        log("             without discarding them.")
 
     return {"structure": density.structure, "grid": grid,
             "electrons": float(density.integrate()),
@@ -205,7 +223,7 @@ def resolve_encut(args, log=print):
     option here.
     """
     if args.encut:
-        log(f"    ENCUT      {args.encut:g} eV (from --encut)")
+        log(f"  ENCUT      {args.encut:g} eV (from --encut)")
         return float(args.encut)
 
     if args.like:
@@ -216,13 +234,13 @@ def resolve_encut(args, log=print):
         if os.path.exists(candidate):
             encut = Incar.from_file(candidate).encut
             if encut:
-                log(f"    ENCUT      {encut:g} eV (from {candidate})")
+                log(f"  ENCUT      {encut:g} eV (from {candidate})")
                 return float(encut)
-        log(f"    ENCUT      !! no ENCUT found in {args.like}")
+        log(f"  ENCUT      !! no ENCUT found in {args.like}")
 
-    log(f"    ENCUT      {args.default_encut:g} eV -- A GUESS. This MUST match")
-    log("               the run the density's FFT grid came from, or VASP")
-    log("               will refuse the CHGCAR. Pass --encut or --like.")
+    log(f"  ENCUT      {args.default_encut:g} eV -- A GUESS. This MUST match")
+    log("             the run the density's FFT grid came from, or VASP")
+    log("             will refuse the CHGCAR. Pass --encut or --like.")
     return float(args.default_encut)
 
 
@@ -236,16 +254,16 @@ def resolve_mesh(args, structure, log=print):
     """
     if args.mesh:
         mesh = tuple(int(n) for n in args.mesh)
-        log(f"    k-mesh     {mesh[0]}x{mesh[1]}x{mesh[2]} (from --mesh)")
+        log(f"  k-mesh     {mesh[0]}x{mesh[1]}x{mesh[2]} (from --mesh)")
         return mesh
 
     mesh = kpoint_mesh_from_spacing(structure, args.kspacing)
-    log(f"    k-mesh     {mesh[0]}x{mesh[1]}x{mesh[2]} "
+    log(f"  k-mesh     {mesh[0]}x{mesh[1]}x{mesh[2]} "
         f"(from --kspacing {args.kspacing:g} 1/Ang)")
     if min(mesh) == 1 and max(mesh) > 1:
-        log("               a direction sampled at one point -- expected for "
+        log("             a direction sampled at one point -- expected for "
             "a slab")
-        log("               or a cluster, wrong for a bulk cell.")
+        log("             or a cluster, wrong for a bulk cell.")
     return mesh
 
 
@@ -279,7 +297,7 @@ def run_bands(args, info, encut, log=print):
         path, labels = fcc_band_path()
         origin = "the conventional FCC path G-X-W-K-G-L-U-W-L-K"
 
-    log(f"\n  k-path     {origin}, {args.points} points per segment")
+    log(f"  k-path     {origin}, {args.points} points per segment")
     if not args.kpath:
         log("             !! this is the FCC path. It is right for this "
             "project's cubic")
@@ -295,12 +313,11 @@ def run_bands(args, info, encut, log=print):
 
 def run_dos(args, info, encut, log=print):
     """Write the ``ICHARG = 11`` density-of-states deck."""
-    log("")
     mesh = resolve_mesh(args, info["structure"], log)
     if args.ismear == -5 and mesh[0] * mesh[1] * mesh[2] < 4:
-        log("               !! ISMEAR = -5 (tetrahedron) needs at least four")
-        log("                  k-points. Densify the mesh, or pass --ismear 0.")
-    log(f"    NEDOS      {args.nedos} energy points")
+        log("             !! ISMEAR = -5 (tetrahedron) needs at least four")
+        log("                k-points. Densify the mesh, or pass --ismear 0.")
+    log(f"  NEDOS      {args.nedos} energy points")
 
     return write_dos_deck(
         args.output, chgcar=args.chgcar if args.copy_density else None,
@@ -312,21 +329,20 @@ def run_dos(args, info, encut, log=print):
 
 def run_energy(args, info, encut, log=print):
     """Write the total-energy deck, non-self-consistent unless ``--scf``."""
-    log("")
     mesh = resolve_mesh(args, info["structure"], log)
     if args.ismear == -5 and mesh[0] * mesh[1] * mesh[2] < 4:
-        log("               !! ISMEAR = -5 (tetrahedron) needs at least four")
-        log("                  k-points. Densify the mesh, or pass --ismear 0.")
+        log("             !! ISMEAR = -5 (tetrahedron) needs at least four")
+        log("                k-points. Densify the mesh, or pass --ismear 0.")
 
     if args.scf:
-        log("    ICHARG     1 -- the prediction seeds an SCF cycle and is")
-        log("               converged from there. The energy is variational;")
-        log("               what the prediction buys is the iteration count.")
+        log("  ICHARG     1 -- the prediction seeds an SCF cycle and is")
+        log("             converged from there. The energy is variational;")
+        log("             what the prediction buys is the iteration count.")
     else:
-        log("    ICHARG     11 -- one diagonalization at the predicted")
-        log("               density. TOTEN is then the Harris-Foulkes")
-        log("               functional at that density, NOT a variational")
-        log("               SCF energy. Pass --scf for one that is.")
+        log("  ICHARG     11 -- one diagonalization at the predicted")
+        log("             density. TOTEN is then the Harris-Foulkes")
+        log("             functional at that density, NOT a variational")
+        log("             SCF energy. Pass --scf for one that is.")
 
     return write_total_energy_deck(
         args.output, chgcar=args.chgcar if args.copy_density else None,
@@ -338,16 +354,16 @@ def run_energy(args, info, encut, log=print):
 
 def run_chgcar(args, info, encut, log=print):
     """Write a VASP-readable ``CHGCAR`` and no deck at all."""
-    log("")
+    _section(log, "output files")
     written = write_chgcar(args.chgcar, args.output)
-    log(f"    wrote      {written}")
+    log(f"  wrote      {written}")
     if info["augmentation_records"]:
-        log(f"               with {info['augmentation_records']} augmentation "
+        log(f"             with {info['augmentation_records']} augmentation "
             f"records, so ICHARG = 1 can start from it")
     else:
-        log("               with no augmentation records: fine for "
+        log("             with no augmentation records: fine for "
             "ICHARG = 11,")
-        log("               not enough for ICHARG = 1.")
+        log("             not enough for ICHARG = 1.")
     return {"CHGCAR": written}
 
 
@@ -372,21 +388,34 @@ def run(args, log=print):
     if args.mode == "chgcar":
         return _RUNNERS[args.mode](args, info, None, log)
 
+    # The tags the deck is built from, each with where it came from: the
+    # cutoff, the k-points, and what the mode adds on top of them.
+    _section(log, "settings")
     encut = resolve_encut(args, log)
 
     written = _RUNNERS[args.mode](args, info, encut, log)
 
-    log(f"\n  wrote {len(written)} file(s) to {args.output}/")
+    _section(log, "output files")
+    log(f"  wrote {len(written)} file(s) to {args.output}/")
     for name in sorted(written):
         log(f"    {name}")
 
-    log("\n  Still needed before this runs:")
+    _section(log, "next steps")
+    log("  Still needed before this runs:")
     if not args.copy_density:
         log("    CHGCAR   copy the predicted density in (or use --copy-density)")
     log("    POTCAR   the same pseudopotentials the density was built with")
-    log(f"\n  Then: run VASP, and read the {_OUTPUTS[args.mode]}.")
+    log(f"  Then: run VASP, and read the {_OUTPUTS[args.mode]}.")
     return written
 
+
+#: What each mode is doing, as the title its output opens with.
+_TITLES = {
+    "bands": "VASP inputs: ICHARG = 11 band structure from a density",
+    "dos": "VASP inputs: ICHARG = 11 density of states from a density",
+    "energy": "VASP inputs: total energy at a density",
+    "chgcar": "VASP inputs: a readable CHGCAR from a density",
+}
 
 #: What to look at once the run finishes, per mode.
 _OUTPUTS = {
@@ -433,7 +462,7 @@ def _add_mesh_options(parser, kspacing):
                              f"the density's own cell by VASP's own KSPACING "
                              f"rule (default: {kspacing:g})")
     parser.add_argument("--monkhorst-pack", action="store_true",
-                        help="a Monkhorst-Pack mesh instead of a Gamma-centred "
+                        help="a Monkhorst-Pack mesh instead of a Gamma-centered "
                              "one")
     parser.add_argument("--ismear", type=int, default=-5,
                         help="ISMEAR; -5 is the tetrahedron method and needs "
@@ -506,7 +535,7 @@ def build_parser():
     chgcar = modes.add_parser(
         "chgcar", help="write a VASP-readable CHGCAR from a field store",
         description="Write a density out as a CHGCAR that VASP can open, "
-                    "carrying its magnetisation block and its PAW "
+                    "carrying its magnetization block and its PAW "
                     "augmentation records. No deck is written; this is the "
                     "step between a `poraque-mp --hdf5` store and any "
                     "ICHARG = 1 or ICHARG = 11 run, since no VASP build "
@@ -520,7 +549,7 @@ def build_parser():
     return parser
 
 
-def _normalise(argv):
+def _normalize(argv):
     """
     Let the pre-rename invocation keep working.
 
@@ -543,26 +572,29 @@ def main(argv=None):
     Returns a process exit status, because the ``[project.scripts]`` wrapper
     calls ``sys.exit(main())``.
     """
-    banner()
-    argv, implied = _normalise(sys.argv[1:] if argv is None else argv)
+    log = Logger()
+    log.banner()
+    argv, implied = _normalize(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.mode is None:
         parser.print_help()
         return 2
+    log.title(_TITLES[args.mode])
     if implied:
-        print("\n  note: no mode given, assuming `bands` (this is the "
-              "poraque-bands\n        spelling; poraque-vasp bands ... is the "
-              "current one).")
+        log.section("note")
+        log.text("no mode given, assuming `bands` (this is the poraque-bands")
+        log.text("spelling; poraque-vasp bands ... is the current one).")
     # A density may be addressed inside a store as `fields.h5::CHGCAR`, which
     # is a path plus a selector and not a filename anything can stat.
     from poraque.fields.hdf5 import split_target
 
     if not os.path.exists(split_target(args.chgcar)[0]):
-        print(f"\n  {args.chgcar}: no such file.")
+        log.section("error")
+        log.text(f"{args.chgcar}: no such file.")
         return 1
-    run(args)
+    run(args, log)
     return 0
 
 

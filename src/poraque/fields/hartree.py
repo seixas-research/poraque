@@ -83,7 +83,7 @@ class HartreePotential(ScalarField):
             Electron density in e/Å³. A
             :class:`~poraque.fields.SpinDensity` contributes through its
             **total** channel: the Hartree term is the classical repulsion of
-            the whole charge, and is blind to how it is polarised.
+            the whole charge, and is blind to how it is polarized.
         grid : FieldGrid, optional
             Required when ``density`` is a bare array.
         structure : Structure, optional

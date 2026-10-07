@@ -144,7 +144,7 @@ class TestAddressingAFieldInsideAStore:
 
     @pytest.mark.parametrize("path", ["a.h5", "a.hdf5", "A.H5",
                                       "a/fields.h5::CHGCAR"])
-    def test_hdf5_paths_are_recognised(self, path):
+    def test_hdf5_paths_are_recognized(self, path):
         assert is_hdf5_path(path)
 
     @pytest.mark.parametrize("path", ["CHGCAR", "CHGCAR.gz", "a/EXTCAR",
@@ -310,7 +310,7 @@ class TestShapesAndDtypes:
         assert peek_shape(path + "::CHGCAR") == field.grid.shape
 
     @pytest.mark.parametrize("dtype", ["float32", "float64"])
-    def test_the_reader_honours_the_requested_precision(self, store, dtype):
+    def test_the_reader_honors_the_requested_precision(self, store, dtype):
         path, _ = store
         assert ChargeDensity.read(path + "::CHGCAR",
                                   dtype=dtype).data.dtype == np.dtype(dtype)
@@ -458,7 +458,7 @@ class TestAStoreCarriesThePawRecords:
 
     def test_both_spin_blocks_are_kept(self, tmp_path):
         """
-        A spin-polarised CHGCAR carries one set of records per channel. Keeping
+        A spin-polarized CHGCAR carries one set of records per channel. Keeping
         the first alone loses the occupancies of the second, which is a file
         VASP reads rather than one it rejects.
         """
@@ -474,8 +474,8 @@ class TestAStoreCarriesThePawRecords:
     def test_a_rewrite_leaves_no_orphan_block(self, tmp_path):
         """
         Two blocks written, then one: the second must go. A stale
-        ``_augmentation1`` would be handed back as the magnetisation's records
-        by a store that no longer has a magnetisation.
+        ``_augmentation1`` would be handed back as the magnetization's records
+        by a store that no longer has a magnetization.
         """
         path = str(tmp_path / "f.h5")
         field = density()
@@ -507,7 +507,7 @@ class TestAStoreCarriesThePawRecords:
                             augmentation=[augmentation(), augmentation()])
 
 
-class TestNormalisingAugmentationRecords:
+class TestNormalizingAugmentationRecords:
     def test_one_block_may_be_given_flat(self):
         block = ["augmentation occupancies   1  2", " 1.0 2.0"]
         assert augmentation_blocks(block) == [block]
@@ -524,13 +524,13 @@ class TestNormalisingAugmentationRecords:
         """
         A block of no records is the absence of a record, not a record of no
         occupancies -- storing it would have ICHARG=1 read zeros where the
-        one-centre terms belong.
+        one-center terms belong.
         """
         assert augmentation_blocks([[], ["a"]]) == [["a"]]
 
 
 class TestReadingEverySetOfRecords:
-    def test_a_spin_polarised_file_has_two(self, tmp_path):
+    def test_a_spin_polarized_file_has_two(self, tmp_path):
         field = density()
         spin = SpinDensity(field.data, field.data * 0.1, field.grid,
                            field.structure)
@@ -542,7 +542,7 @@ class TestReadingEverySetOfRecords:
         assert shape == (12, 12, 12)
         assert back == blocks
 
-    def test_an_unpolarised_file_has_one(self, tmp_path):
+    def test_an_unpolarized_file_has_one(self, tmp_path):
         path = tmp_path / "CHGCAR"
         block = augmentation()
         density().write(path, augmentation=block)
@@ -560,9 +560,9 @@ class TestWritingAStoreBackOutForVasp:
     use to an ``ICHARG = 1`` or ``ICHARG = 11`` run.
 
     What the conversion has to carry is everything that is not the main grid:
-    the magnetisation block and both sets of PAW records. A converter that
+    the magnetization block and both sets of PAW records. A converter that
     moved only the values would produce a file that looks complete, opens
-    fine, and starts VASP from the wrong one-centre terms.
+    fine, and starts VASP from the wrong one-center terms.
     """
 
     def test_the_records_survive_the_round_trip(self, tmp_path):
@@ -608,7 +608,7 @@ class TestWritingAStoreBackOutForVasp:
 
     def test_a_store_without_records_still_converts(self, tmp_path):
         """
-        ICHARG = 11 wants the grid and not the one-centre terms, so a store
+        ICHARG = 11 wants the grid and not the one-center terms, so a store
         with no records is still worth writing out -- refusing would block the
         case that works.
         """

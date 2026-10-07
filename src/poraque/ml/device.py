@@ -197,7 +197,7 @@ def _cuda_diagnosis(index=None):
                 f"no GPU resource.")
 
     if not torch.cuda.is_available():
-        return (f"{build} (CUDA {cuda_build}) but no device initialised: "
+        return (f"{build} (CUDA {cuda_build}) but no device initialized: "
                 f"either the machine has no NVIDIA GPU, or its driver is older "
                 f"than CUDA {cuda_build} requires. `nvidia-smi` prints the "
                 f"highest CUDA version the driver supports.")
@@ -269,7 +269,7 @@ def resolve_device(preference="auto", verbose=False, strict=False):
     preference : str or torch.device or None, optional
         ``"auto"`` (or ``None``) picks the best available backend in
         :data:`PREFERENCE_ORDER`. An explicit ``"cuda"``, ``"cuda:1"``,
-        ``"mps"`` or ``"cpu"`` is honoured when possible and falls back to CPU
+        ``"mps"`` or ``"cpu"`` is honored when possible and falls back to CPU
         with a warning when not.
     verbose : bool, optional
         Print the resolved device and the reason.
@@ -345,7 +345,7 @@ def resolve_device(preference="auto", verbose=False, strict=False):
                 f"{requested} was requested but " + _cuda_diagnosis(index),
                 strict)
 
-        # Present, initialised, and unable to run a single kernel. Caught here
+        # Present, initialized, and unable to run a single kernel. Caught here
         # rather than left to surface as `no kernel image is available for
         # execution on the device` from inside the first forward pass, which is
         # both later and far harder to read.
@@ -485,7 +485,7 @@ def synchronize(device):
     Block until queued work on ``device`` has finished.
 
     Both CUDA and MPS dispatch asynchronously, so any wall-clock measurement
-    that does not synchronise first reports queueing time rather than compute
+    that does not synchronize first reports queueing time rather than compute
     time.
     """
     device = torch.device(device) if not isinstance(device, torch.device) else device

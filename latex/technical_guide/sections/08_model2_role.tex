@@ -21,7 +21,7 @@ Three answers are available. Two are weak.
 
 \begin{description}
   \item[``$\tau$ is a useful observable'' --- weak.] It enters meta-GGA
-    functionals, the electron localisation function and bonding analysis. True,
+    functionals, the electron localization function and bonding analysis. True,
     but anyone holding a converged \file{CHGCAR} also holds a \file{TAUCAR}.
     Predicting a quantity one already has is a benchmark, not an application.
   \item[``It completes the pipeline'' --- weak.] Chaining
@@ -58,11 +58,11 @@ Kohn--Sham equations. The functional is thus
 
 \begin{itemize}
   \item \textbf{exact but non-local}: $\tau$ at one point depends on $\rho$
-    everywhere, because the orbitals are delocalised Bloch states;
+    everywhere, because the orbitals are delocalized Bloch states;
   \item \textbf{not semi-local}: no finite gradient expansion converges to it,
     which is precisely why Thomas--Fermi and its gradient corrections fail;
   \item \textbf{expensive to evaluate exactly}: the definition requires the very
-    diagonalisation orbital-free DFT exists to avoid.
+    diagonalization orbital-free DFT exists to avoid.
 \end{itemize}
 
 Two architectural consequences follow. The architecture \emph{must} be
@@ -79,7 +79,7 @@ densities are not ground states of any $v_{\mathrm{s}}$, so strictly
 $\tau[\rho]$ is undefined there. Every orbital-free calculation uses the
 functional anyway --- but it means a model trained only on converged densities
 is \emph{extrapolated} every time it is used variationally. This is the single
-largest risk in the programme.
+largest risk in the program.
 \end{pwarn}
 
 \section{What the model must get right --- and it is not \texorpdfstring{$\tau$}{tau}}
@@ -102,10 +102,10 @@ $\epsilon G$ to the gradient. Three consequences:
   \item Reporting only pointwise $\tau$ error reports a \textbf{proxy}. The
     relative $L^2$ figures of Chapter~\ref{ch:results} are necessary, not
     sufficient.
-  \item The $H^1$ data loss exists for this reason: it penalises the gradient
+  \item The $H^1$ data loss exists for this reason: it penalizes the gradient
     error that plain $L^2$ ignores.
   \item The definitive test is \textbf{downstream} --- insert the functional
-    into an orbital-free minimiser and measure the converged density and energy.
+    into an orbital-free minimizer and measure the converged density and energy.
 \end{enumerate}
 
 \section{The mechanism: \texorpdfstring{$\delta \Ts/\delta\rho$}{dTs/drho} by autograd}
@@ -127,7 +127,7 @@ grad, = torch.autograd.grad(T_s.sum(), rho, create_graph=True)
 dTs_drho = grad / volume_element                      # see below
 \end{lstlisting}
 
-\subsection{The discretisation factor}
+\subsection{The discretization factor}
 
 Take $\Ts = \sum_i \tau_i \Delta v$. The functional derivative is defined by
 \[
@@ -204,7 +204,7 @@ ground-state density.
 
 The residual is computable from \textbf{Model~1's own input and output}, plus
 Model~2. It requires \textbf{no additional labels} --- no extra DFT
-calculations, no targets --- so it can be evaluated on unlabelled structures,
+calculations, no targets --- so it can be evaluated on unlabeled structures,
 on perturbed or interpolated geometries generated on the fly, and on the
 model's own predictions during training.
 
@@ -227,14 +227,14 @@ comparable across materials whose potentials differ by an order of magnitude.
 Three rules apply, each established elsewhere in this project: physics terms act
 on the prediction decoded to \emph{physical} units; every term is
 dimensionless; and $\lambda_{\mathrm{EL}}$ is ramped only after the data term
-has converged, since a residual evaluated at random initialisation is noise.
+has converged, since a residual evaluated at random initialization is noise.
 
 \subsection{Freeze Model 2, or train jointly?}
 
 \begin{description}
   \item[Frozen.] Model~2 is a fixed physics oracle. Simple, stable, and the
     constraint is exactly as good as the functional. Recommended first.
-  \item[Joint.] Mutual regularisation, and Model~2 is exposed to the densities
+  \item[Joint.] Mutual regularization, and Model~2 is exposed to the densities
     Model~1 actually produces --- which directly attacks the distribution-shift
     problem. But there is a real hazard.
 \end{description}
@@ -271,7 +271,7 @@ collapse is a residual that falls while the held-out data error rises.
   \item \textbf{Distribution shift} is the central risk, and it is a domain
     question rather than a practical inconvenience: the functional is strictly
     undefined off the $v$-representable manifold.
-  \item \textbf{We optimise $\tau$ and use $\delta\Ts/\delta\rho$}
+  \item \textbf{We optimize $\tau$ and use $\delta\Ts/\delta\rho$}
     (Section~\ref{sec:notthetau}). Until training runs through the derivative,
     the objective is a proxy.
   \item \textbf{The derivative is unvalidated.} Nothing in the results of
@@ -299,11 +299,11 @@ Falsifiable, in dependency order:
     material, matched otherwise. Same protocol as the Pauli-head comparison of
     Section~\ref{sec:headresult}.
   \item \textbf{Label efficiency} --- the real promise. Train Model~1 on $k$
-    labelled structures plus $m$ unlabelled ones under the residual, and show
-    the curve beats $k$ labelled alone. If the residual cannot buy label
+    labeled structures plus $m$ unlabeled ones under the residual, and show
+    the curve beats $k$ labeled alone. If the residual cannot buy label
     efficiency, its main practical argument fails.
   \item \textbf{Downstream} --- insert the functional into an orbital-free
-    minimiser and measure converged density and energy error. The only test
+    minimizer and measure converged density and energy error. The only test
     that matters.
 \end{enumerate}
 
@@ -324,7 +324,7 @@ Euler--Lagrange residual, \emph{learned} functional & done in the library
 (\opt{kinetic=}); not wired into training \\
 Joint training & not implemented \\
 Pauli potential $v_{\mathrm{P}}\ge0$ & not implemented \\
-Orbital-free minimiser integration & not implemented \\
+Orbital-free minimizer integration & not implemented \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -390,7 +390,7 @@ expression whatever it cost --- which is not a trade-off, it is a constant.
 The report carries both candidates: the lowest-loss expression and the knee,
 each with its own parity plot on identical voxels, laid side by side. Where the
 two clouds are indistinguishable the extra nodes bought nothing, and that is
-visible rather than summarised.
+visible rather than summarized.
 
 \begin{pnote}
 A knee is a heuristic, not a theorem. With one candidate it is that candidate;

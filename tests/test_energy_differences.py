@@ -10,7 +10,7 @@ r"""
 Validate energy **differences** against VASP.
 
 Absolute agreement is not the target and is not achievable: the fields Poraquê
-integrates are pseudo-valence quantities, so the PAW one-centre terms and
+integrates are pseudo-valence quantities, so the PAW one-center terms and
 VASP's atomic reference (``EATOM``) are absent and the total sits about
 :math:`10^3` eV per atom away from ``TOTEN``. What must survive is
 :math:`\Delta E`.
@@ -29,7 +29,7 @@ Feeding the reference ``CHGCAR``/``TAUCAR`` in removes all model error and
 leaves only the energy expression. This is the honest measure of the *ceiling*
 on :math:`\Delta E` accuracy, and it is recorded here as a characterization
 test rather than a pass/fail physics claim: the residual is the neglected PAW
-one-centre and non-local energy, which is not a per-atom constant.
+one-center and non-local energy, which is not a per-atom constant.
 
 **3. Molecular and cohesive references** — :math:`N_2` against isolated
 nitrogen, :math:`CO`, and the cohesive energy of diamond, as the task asks.
@@ -198,7 +198,7 @@ class TestTermsSharedWithVasp:
 
         Everything above matches, yet the total is ~1e3 eV per atom from
         ``TOTEN``. Pinning that here keeps the caveat honest: the gap is the
-        PAW one-centre and non-local energy plus ``EATOM``, not a slipped
+        PAW one-center and non-local energy plus ``EATOM``, not a slipped
         factor in a term that is already verified.
         """
         components, vasp = case
@@ -242,7 +242,7 @@ class TestDifferencesFromReferenceFields:
         """
         What makes differences meaningful at all.
 
-        The missing one-centre terms are dominated by a per-atom constant. If
+        The missing one-center terms are dominated by a per-atom constant. If
         that were not so, no subtraction would rescue anything. It holds to
         about a part in 1e4 — which is the good news and, at 1e3 eV/atom, also
         the bad news measured by the next test.
@@ -256,7 +256,7 @@ class TestDifferencesFromReferenceFields:
         Characterization, not a physics claim.
 
         With exact fields the residual error on :math:`\\Delta E` is a few
-        tenths of an eV per atom. That is the neglected PAW one-centre and
+        tenths of an eV per atom. That is the neglected PAW one-center and
         non-local energy, which varies with the environment. The bound is set
         just above the measured value so that a regression in the energy
         expression — which would move it by orders of magnitude — fails here,

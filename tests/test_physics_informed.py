@@ -48,6 +48,60 @@ from poraque.ml.losses import PhysicsInformedLoss
 ACTIVE = {"positivity_weight": 0.1}
 
 
+class TestExt2pawChargeConservation:
+    @pytest.mark.parametrize("device", ["cpu", pytest.param(
+        "mps", marks=pytest.mark.skipif(not torch.backends.mps.is_available(),
+                                       reason="MPS is unavailable"))])
+    def test_absolute_decoded_charge_has_a_gradient_but_magnetization_does_not(
+            self, device):
+        from poraque.ml.physics import cell_volume
+        from poraque.ml.transforms import Asinh
+
+        cell = torch.tensor([[[2., 0., 0.], [.3, 2., 0.], [0., 0., 2.]],
+                             [[3., 0., 0.], [0., 2., 0.], [0., 0., 4.]]],
+                            device=device)
+        count = torch.tensor([4., 10.], device=device)
+        baseline = torch.zeros(2, 2, 4, 4, 4, device=device)
+        baseline[:, 0] = (count / cell_volume(cell)).reshape(-1, 1, 1, 1)
+        residual = .1 * baseline
+        residual[:, 1] = -3.0  # The moment has no particle-number constraint.
+        transform = Asinh(scale=.02)
+        prediction = transform(residual).detach().requires_grad_(True)
+        criterion = PhysicsInformedLoss(task="ext2paw", electron_count_weight=2.)
+        terms = criterion(prediction, prediction.detach(), cell=cell,
+                          physical_prediction=transform.inverse(prediction) + baseline,
+                          physical_target=baseline)
+
+        assert float(terms["electron_count"]) == pytest.approx(.01, rel=2e-5)
+        assert float(terms["total"].detach()) == pytest.approx(.02, rel=2e-5)
+        terms["total"].backward()
+        assert torch.isfinite(prediction.grad).all()
+        assert float(prediction.grad[:, 0].abs().sum()) > 0
+        assert float(prediction.grad[:, 1].abs().sum()) == 0
+
+    def test_explicit_count_overrides_reference_for_charged_systems(self):
+        density = torch.ones(1, 2, 4, 4, 4)
+        cell = torch.eye(3).unsqueeze(0) * 2.
+        criterion = PhysicsInformedLoss(task="ext2paw", electron_count_weight=1.)
+        terms = criterion(density, density, cell=cell,
+                          physical_prediction=density,
+                          physical_target=density * 2., n_electrons=torch.tensor([8.]))
+        assert float(terms["electron_count"]) == 0.
+
+    def test_cli_configuration_activates_the_term(self):
+        from scripts.poraque_train import build_loss
+
+        config = TrainingConfig.from_dict({"training": {"physics_informed": {
+            "enable": True, "electron_count_weight": 1.}}})
+        criterion = build_loss(config, "ext2paw")
+        prediction = torch.ones(1, 1, 4, 4, 4)
+        terms = criterion(prediction, prediction, cell=torch.eye(3).unsqueeze(0),
+                          physical_prediction=prediction,
+                          physical_target=prediction * 2.)
+        assert float(terms["electron_count"]) == pytest.approx(.25)
+        assert float(terms["total"].detach()) == pytest.approx(.25)
+
+
 class TestAutoAnswersFromTheWeights:
     """
     The default, and the one that must not change anything for anybody.
@@ -119,7 +173,7 @@ class TestFalseMakesTheWeightsInertAndSaysSo:
 
     Zeroing them rather than merely skipping is what keeps the log header, the
     PDF report and the checkpoint from telling a reader a different story from
-    the one the optimiser followed — all three print the weights.
+    the one the optimizer followed — all three print the weights.
     """
 
     def test_the_weights_are_zeroed_not_merely_bypassed(self):

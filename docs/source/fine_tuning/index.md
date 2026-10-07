@@ -3,7 +3,7 @@
 A model fitted across a broad dataset is a good *starting point* for a specific
 material family, and a poor substitute for one. Fine-tuning continues that fit
 on the smaller set at a much lower learning rate: what the base model learned
-about the general map is kept, and only the specialisation is learned.
+about the general map is kept, and only the specialization is learned.
 
 ```{note}
 Off by default. Switch it on with `enable: true` in the `fine_tuning` block, or
@@ -14,7 +14,7 @@ with `--fine-tune` on the command line.
 # 1. the base model, trained across everything you have
 poraque-train --config configs/train.yaml
 
-# 2. specialise it on one family
+# 2. specialize it on one family
 poraque-train --config configs/train.yaml \
     --fine-tune --pretrained models/poraque_models.poraque \
     --root data/oxides --checkpoint-dir models/oxides
@@ -50,7 +50,7 @@ fine_tuning:
 
 The lifting map embeds the input field into the network's channel space before
 any operator acts on it. It is the most general part of the model, so it is the
-part least in need of specialising — and freezing it removes parameters a small
+part least in need of specializing — and freezing it removes parameters a small
 dataset could otherwise overfit. The cell encoder is frozen with it: that
 embeds the lattice, a property of the input rather than of the mapping.
 
@@ -68,9 +68,9 @@ The run reports what was actually frozen, so you never have to infer it:
 ```
 
 ```{tip}
-Frozen parameters are kept out of the optimiser entirely, not merely denied a
+Frozen parameters are kept out of the optimizer entirely, not merely denied a
 gradient. AdamW's decoupled weight decay applies without one, so a frozen
-weight left in the optimiser would shrink towards zero every step — quietly
+weight left in the optimizer would shrink towards zero every step — quietly
 undoing the pre-training the freeze was meant to preserve.
 ```
 
@@ -114,7 +114,7 @@ $$ W' = W + \frac{\alpha}{r} B A, \qquad
    B \in \mathbb{R}^{d_\mathrm{out} \times r} . $$
 
 On the shipped model that is **1 320 trainable parameters against 3 152 353
-frozen — 0.042 %**, so the optimiser state and the saved file shrink by three
+frozen — 0.042 %**, so the optimizer state and the saved file shrink by three
 orders of magnitude and the fine-tune fits where a full one does not:
 
 ```text
@@ -125,12 +125,12 @@ orders of magnitude and the fine-tune fits where a full one does not:
 ```
 
 $B$ starts at **zero**, so $BA = 0$ and the adapted model *is* the base model
-until the first optimiser step — a fine-tune that began anywhere else would
+until the first optimizer step — a fine-tune that began anywhere else would
 already have discarded some of what it set out to adapt.
 
 ```{warning}
 **The spectral weights are not adapted.** They hold ~99.8 % of the parameters
-and look like the obvious target, but a rank-$r$ factorisation of a 5-index
+and look like the obvious target, but a rank-$r$ factorization of a 5-index
 complex kernel is a *choice of which axes to pair* rather than one
 decomposition, and adapting them would also stop being cheap.
 
@@ -160,7 +160,7 @@ The PDF report leads its Configuration section with the fine-tuning facts and
 carries a caveat at the top:
 
 > This is a FINE-TUNED model, adapted from `models/poraque_models.poraque`. Its
-> scores describe the material family it was specialised on, and say nothing
+> scores describe the material family it was specialized on, and say nothing
 > about the broader set the base model was trained across.
 
 The checkpoint's `config` records `fine_tuning.pretrained_checkpoint`, the
@@ -175,7 +175,7 @@ after the architecture inside it:
 | File | Contents |
 | --- | --- |
 | `models/poraque_models.poraque` | the universal model: both operators in one file |
-| `models/poraque_finetuned.poraque` | a fine-tune, specialised to one family |
+| `models/poraque_finetuned.poraque` | a fine-tune, specialized to one family |
 
 The container is a `torch.save` dictionary of exactly three entries:
 
@@ -189,7 +189,7 @@ checkpoint = {
 
 | Key | Holds |
 | --- | --- |
-| `model_state_dict` | per task, everything that rebuilds the operator: the weights, the architecture record, both normalisations and the δ-density baseline. Weights alone would decode to a field in the wrong units |
+| `model_state_dict` | per task, everything that rebuilds the operator: the weights, the architecture record, both normalizations and the δ-density baseline. Weights alone would decode to a field in the wrong units |
 | `config` | the resolved configuration as a plain `dict` — the resolution, the epochs and the fine-tuning provenance live here |
 | `paw_profiles` | per element, keyed by *Z*: the radial core charge density (`r` in Å, `core_density` and `pseudo_core_density` in e/Å³, `core_electrons`), read from the POTCAR that built V_ext, and the `augmentation` occupancies `--add-paw` writes |
 
@@ -202,10 +202,10 @@ pseudized core rejoins the all-electron one at `RPACOR` converted to Å.
 ```{warning}
 The core density is derived from the POTCAR, which is licensed with VASP. A
 checkpoint carrying it carries pseudopotential data: mind that before sharing
-one outside a group that holds the licence.
+one outside a group that holds the license.
 ```
 
-The extension is a label, not a different serialisation. Nothing inspects it
+The extension is a label, not a different serialization. Nothing inspects it
 when loading, so a checkpoint under any name loads fine.
 
 ```{note}

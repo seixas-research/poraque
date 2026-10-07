@@ -155,7 +155,7 @@ class TestTheCoreDensityIsReadInTheUnitsItIsStoredIn:
         assert profile["core_electrons"] == pytest.approx(CORE_ELECTRONS,
                                                           rel=1e-4)
 
-    def test_it_is_keyed_and_labelled_as_an_element(self):
+    def test_it_is_keyed_and_labeled_as_an_element(self):
         profile = _entry().core_profile
         assert (profile["element"], profile["atomic_number"]) == ("Si", 14)
         assert profile["titel"] == "PAW_PBE Si 05Jan2001"

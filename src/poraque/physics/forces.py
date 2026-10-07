@@ -38,7 +38,7 @@ between voxels.
 .. warning::
 
    **The predicted density is not variational.** Poraquê's :math:`\rho` comes
-   from an operator, not from minimising this functional, so the term the
+   from an operator, not from minimizing this functional, so the term the
    theorem discards is not exactly zero. What is computed here is the exact
    Hellmann-Feynman force *of the predicted density*, which is the standard
    construction and the one the theorem is named for — but it is not the exact
@@ -113,7 +113,7 @@ def local_potential_forces(density, structure, grid, potcar):
     inverse_g2 = grid.get_inverse_g2(g2)
     nonzero = inverse_g2 > 0
 
-    # rho(G) with the same normalisation the potential uses: V(r) is built as
+    # rho(G) with the same normalization the potential uses: V(r) is built as
     # ifftn(v_G) * npoints, so v_G are coefficients of exp(+i G.r) and the
     # matching density transform is the plain forward FFT.
     rho_g = np.fft.fftn(rho)

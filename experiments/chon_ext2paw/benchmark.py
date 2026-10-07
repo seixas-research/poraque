@@ -32,7 +32,7 @@ from poraque.ml.config import TrainingConfig
 from poraque.ml.data import collate_fields, make_dataloader
 from poraque.ml.training import validate_occupancies
 from poraque.ml.tasks import resolve_task
-from poraque_train import build_operator, cache_tag
+from poraque_train import build_loss, build_operator, cache_tag
 
 ARMS = {
     "baseline": {},
@@ -45,6 +45,9 @@ ARMS = {
     "radial16": {"n_radial": 16},
     "occ1": {"occupancy_weight": 1.0},
     "absolute": {"delta_density": False},
+    # Geometry ablation: preserve ten channels and checkpoint buffer shapes.
+    "short_neighbors": {"neighbor_min": 0.6},
+    "short_neighbors_lr_high": {"neighbor_min": 0.6, "learning_rate": 0.003},
 }
 
 
@@ -97,7 +100,7 @@ def audit(dataset, profiles):
     charge_norm = moment_norm = 0.0
     negative = points = 0
     for i in range(len(dataset)):
-        sites = dataset.site_targets(i)
+        sites = dataset.site_records(i)
         for z, n in zip(sites["species"], sites["lengths"]):
             z, n = int(z), int(n)
             assert n == len(record_layout(layouts[z])), (dataset.materials[i].identifier, z, n)
@@ -114,7 +117,7 @@ def audit(dataset, profiles):
     return {"materials": len(dataset), "atoms_per_element_Z": dict(atoms),
             "lengths": {k: sorted(v) for k, v in lengths.items()},
             "grid_shapes": dict(shapes), "negative_grid_fraction": negative / points,
-            "magnetisation_to_charge_rms": float(np.sqrt(moment_norm / charge_norm)),
+            "magnetization_to_charge_rms": float(np.sqrt(moment_norm / charge_norm)),
             "POTCAR_titles": {str(z): p["titel"] for z, p in profiles.items()}}
 
 
@@ -173,7 +176,7 @@ def measure(operator, dataset):
     pooled = np.sum(list(parts.values()), axis=0)
     density_error = physical_error / len(dataset)
     return {"charge_relative_l2": density_error, "occupancy_relative_rms": rms,
-            "magnetisation_relative_l2_pooled": float(np.sqrt(moment_squared / moment_norm))
+            "magnetization_relative_l2_pooled": float(np.sqrt(moment_squared / moment_norm))
                 if moment_norm > 1e-30 else None,
             "electron_count_relative_error": float(np.mean(
                 [r["electron_count_relative_error"] for r in per_material])),
@@ -187,7 +190,7 @@ def measure(operator, dataset):
 def configure(base, arm, seed, epochs, device):
     config = copy.deepcopy(base)
     for key, value in ARMS[arm].items():
-        if key in ("width", "modes", "n_layers", "occupancy_weight"):
+        if key in ("width", "modes", "n_layers", "occupancy_weight", "neighbor_min"):
             config.model.paw[key] = value
         elif key == "n_radial":
             config.model.equivariant[key] = value
@@ -262,6 +265,7 @@ def main():
             config.task.name = f"chon_{directory.name}"
             signature = hashlib.sha256(json.dumps({"config": config.to_dict(), "split": split,
                                                    "atomic_reference": reference.fingerprint,
+                                                   "arm_settings": ARMS[arm],
                                                    "code_fingerprint": code_fingerprint},
                                                    sort_keys=True).encode()).hexdigest()
             metrics_path = directory / "metrics.json"
@@ -277,6 +281,9 @@ def main():
                     handle.write(message + "\n")
                     handle.flush()
                 operator = build_operator(resolve_task("ext2paw"), subsets["train"], config, log)
+                if "neighbor_min" in ARMS[arm]:
+                    centers = operator.model.neighbors.centers
+                    log(f"      neighbor centers: {centers.tolist()} Ang")
                 config.to_yaml(str(directory / "config.yaml"))
                 start = time.perf_counter()
                 history = train(operator, subsets["train"], validation=subsets["validation"],
@@ -284,6 +291,7 @@ def main():
                                 learning_rate=config.training.learning_rate,
                                 weight_decay=config.training.weight_decay,
                                 optimizer=config.training.optimizer, scheduler=config.training.scheduler,
+                                loss=build_loss(config, "ext2paw"),
                                 occupancy_weight=config.model.paw_settings()["occupancy_weight"],
                                 eval_every=config.training.eval_epoch,
                                 early_stopping=max(args.epochs, config.training.early_stopping),
@@ -297,6 +305,8 @@ def main():
                        "device": str(operator.device), "threads": args.threads,
                        "signature": signature, "history": history, "validation": score,
                        "code_fingerprint": code_fingerprint,
+                       "arm_settings": ARMS[arm],
+                       "neighbor_centers": operator.model.neighbors.centers.cpu().tolist(),
                        "checkpoint": str(checkpoint), "baseline": config.data.delta_density}
                 write_json(metrics_path, row)
                 results.append(row)

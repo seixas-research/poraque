@@ -17,13 +17,13 @@ A \emph{neural operator} instead learns a map between function spaces,
   \qquad
   a(\rr) \longmapsto u(\rr),
 \end{equation}
-and is then discretised only for evaluation. Its parameters describe the
+and is then discretized only for evaluation. Its parameters describe the
 operator, not a particular sampling of it, so one set of weights serves every
 grid.
 
 \section{Kernel integral operators}
 
-The construction generalises the affine layer. Lift the input pointwise to a
+The construction generalizes the affine layer. Lift the input pointwise to a
 higher-dimensional channel space, $v_0(\rr) = P\,a(\rr)$, apply $L$ layers of
 the form
 \begin{equation}
@@ -45,17 +45,17 @@ $\mathcal{K}$ is what makes it an operator.
 
 Restricting the kernel to be translation invariant, $\kappa(\rr,\rr')
 = \kappa(\rr-\rr')$, turns the integral into a convolution, which the
-convolution theorem diagonalises:
+convolution theorem diagonalizes:
 \begin{equation}
   \bigl(\mathcal{K}v\bigr)(\rr)
     = \Fop^{-1}\!\left[ R(\GG)\cdot \Fop[v](\GG) \right](\rr),
   \label{eq:fourierlayer}
 \end{equation}
-where $R(\GG)$ is a learned complex multiplier. Rather than parameterising
-$\kappa$ in real space, the Fourier neural operator parameterises $R$ directly
+where $R(\GG)$ is a learned complex multiplier. Rather than parameterizing
+$\kappa$ in real space, the Fourier neural operator parameterizes $R$ directly
 and \emph{truncates} it to the lowest $M_1{\times}M_2{\times}M_3$ modes.
 
-Truncation does three things at once: it regularises (high frequencies are
+Truncation does three things at once: it regularizes (high frequencies are
 where noise lives), it bounds the parameter count, and --- decisively --- it
 makes the weight tensor independent of the grid. Nothing in $R$ refers to
 $(N_1,N_2,N_3)$.
@@ -69,7 +69,7 @@ Chapters~\ref{ch:ksdft}--\ref{ch:ofdft}.
   \item[Periodicity is exact, not learned.] The FFT imposes Born--von Kármán
     boundary conditions, which a crystal unit cell already obeys. A padded
     convolutional network would have to spend capacity imitating that, and
-    would still produce edge artefacts.
+    would still produce edge artifacts.
   \item[The coupling is global in one layer.] Multiplying in reciprocal space
     is convolving over the whole cell in real space. This directly addresses
     the non-locality of Section~\ref{sec:hk}: the Hartree kernel
@@ -79,11 +79,11 @@ Chapters~\ref{ch:ksdft}--\ref{ch:ofdft}.
     $\nabla \to i\GG$ and $\nabla^2 \to -G^2$ are exact for band-limited
     fields. Since the layer already computes FFTs, the physics-informed terms
     of Chapter~\ref{ch:pifno} cost almost nothing --- and carry no
-    discretisation error that the loss would otherwise misattribute to the
+    discretization error that the loss would otherwise misattribute to the
     network.
 \end{description}
 
-\section{Discretisation invariance}
+\section{Discretization invariance}
 \label{sec:discinv}
 
 For a real input the transform is taken with \texttt{rfftn}, halving the last
@@ -99,7 +99,7 @@ independent of the grid.
 Two further choices are required for weights to be \emph{meaningful} across
 resolutions, not merely applicable.
 
-\subsection{Normalisation}
+\subsection{Normalization}
 
 The discrete transform must approximate the continuous Fourier series. With
 coefficients
@@ -138,14 +138,14 @@ Three mechanisms together deliver true grid independence.
     modes; each forward pass uses
     $\min(M_i, \text{modes available on this grid})$ and leaves the rest
     untouched. A $24^3$ and a $120^3$ sample share the same parameters.
-  \item \textbf{Resolution-invariant normalisation}, as above.
+  \item \textbf{Resolution-invariant normalization}, as above.
   \item \textbf{Shape-bucketed batching.} Samples of different spatial shape
     cannot be stacked. Rather than pad --- which wastes compute and injects
     fictitious vacuum into the FFT --- materials are grouped by
     $(N_1,N_2,N_3)$ and batches drawn within a group.
 \end{enumerate}
 
-Normalisation layers must also be shape-agnostic: \texttt{GroupNorm} is used
+Normalization layers must also be shape-agnostic: \texttt{GroupNorm} is used
 throughout, since batch statistics are meaningless when every sample has a
 different spatial extent.
 
@@ -167,7 +167,7 @@ the grid.
 \toprule
 Stage & Operation \\
 \midrule
-Input & $(B, 1, N_1, N_2, N_3)$, normalised field \\
+Input & $(B, 1, N_1, N_2, N_3)$, normalized field \\
 Coordinates & append 3 fractional-coordinate channels \\
 Lifting & $1\times1\times1$ convolution to width $C$ \\
 Fourier layers ($\times L$) & Eq.~\eqref{eq:fourierlayer} + pointwise + GroupNorm + FiLM, residual \\
@@ -177,7 +177,7 @@ Output & $(B, 1, N_1, N_2, N_3)$ \\
 \end{tabular}
 \end{center}
 
-The residual connection around each Fourier layer stabilises deeper stacks; the
+The residual connection around each Fourier layer stabilizes deeper stacks; the
 pointwise branch supplies the local, high-frequency content that mode
 truncation removes from the spectral branch.
 
@@ -303,7 +303,7 @@ Equations~\eqref{eq:idx-norm}--\eqref{eq:idx-residual} are three steps between
 the inverse transform and the next layer's input, and their \emph{order} is
 load-bearing. The canonical Fourier neural operator has none of them: Li
 \emph{et al.} write $v_{\ell+1} = \sigma(W v_\ell + \mathcal{K}v_\ell)$, the
-activation applied directly to the sum. Poraqu\^e inserts a normalisation and a
+activation applied directly to the sum. Poraqu\^e inserts a normalization and a
 conditioning step in between, and closes with a residual.
 
 \paragraph{GroupNorm --- because the batch is not a population.}
@@ -336,12 +336,12 @@ map per channel, driven by the cell embedding:
 \end{equation}
 which is Eq.~\eqref{eq:idx-film}. It touches no spatial index, so it is
 oblivious to the grid --- and the projection producing $\gamma$ and $\beta$ is
-\textbf{zero-initialised}, so at step zero $\gamma = \beta = 0$ and the whole
+\textbf{zero-initialized}, so at step zero $\gamma = \beta = 0$ and the whole
 modulation is exactly the identity. Conditioning is something the operator
 learns to use, not something imposed on it before it has learned anything.
 
-\paragraph{Why FiLM comes after the normalisation and not before.}
-Because a normalisation removes whatever a modulation just applied, to the
+\paragraph{Why FiLM comes after the normalization and not before.}
+Because a normalization removes whatever a modulation just applied, to the
 extent that the modulation is constant within a group. Applying the same
 $(\gamma, \beta)$ on either side of \texttt{GroupNorm} and measuring the change
 against no modulation at all:
@@ -364,7 +364,7 @@ $8$  & $2$  & $\mathbf{1.16}$ \\
 \end{center}
 
 With one channel per group the modulation is annihilated exactly: the
-normalisation restores the mean and variance the affine map had just changed,
+normalization restores the mean and variance the affine map had just changed,
 and only its \emph{sign} survives. At the shipped eight groups of two, roughly
 a third of it survives, as within-group contrast. Placed after the norm it
 acts in full. The ordering is not a stylistic preference --- it is the
@@ -375,18 +375,18 @@ undone one line later.
 $v^{(\ell)} = v^{(\ell-1)} + \sigma(\cdot)$ means each layer contributes a
 correction rather than replacing the field, which is what makes a deeper stack
 trainable, and it is why the identity is reachable: with FiLM at its
-initialisation and $\sigma$ small, a fresh block is close to a no-op.
+initialization and $\sigma$ small, a fresh block is close to a no-op.
 
 \begin{pnote}
 \textbf{The activation between Fourier layers is \opt{silu} (or \opt{gelu}),
 and it is already there.} $\sigma$ in Eq.~\eqref{eq:idx-residual} \emph{is}
 \opt{model.activation}: one application per block, $L$ in total. What differs
 from the canonical FNO is not whether the nonlinearity is present but where it
-sits --- after the normalisation and the conditioning rather than immediately
+sits --- after the normalization and the conditioning rather than immediately
 after the spectral sum, so that it acts on a signal of controlled scale that
-already knows which cell it belongs to. Applying it first would normalise the
+already knows which cell it belongs to. Applying it first would normalize the
 activation's output instead of its input, which is the arrangement
-normalisation exists to avoid.
+normalization exists to avoid.
 
 The $\sigma$ in the read-out, Eq.~\eqref{eq:idx-read1}, is the same one, so the
 stack contains $L+1$ nonlinearities and \opt{activation} governs all of them:
@@ -460,7 +460,7 @@ which is a statement about old files, not a default for new ones.
   \item[\opt{n\_layers} --- how many times the cycle is applied.] Depth
     composes the learned convolutions. Two layers of $M$ modes reach further
     than one layer of $M$ modes, because the second acts on a field the first
-    has already delocalised --- so depth buys effective range at \emph{linear}
+    has already delocalized --- so depth buys effective range at \emph{linear}
     cost, which \opt{modes} does not.
   \item[\opt{projection\_channels} --- how the result is read out.] The hidden
     width of the two-convolution head that maps the $C$ channels back to
@@ -478,7 +478,7 @@ which is a statement about old files, not a default for new ones.
 The spectral tensor is the model. Counted on the shipped
 \file{platinum\_W16-M8-L3} itself --- its \opt{ext2chg} half, $C=16$, $M=8$,
 $L=3$, $C_P=64$, and $C_{\mathrm{in}}=1$, $C_{\mathrm{out}}=2$ because the
-platinum data is spin-polarised and the density it predicts is
+platinum data is spin-polarized and the density it predicts is
 $(\rho, m)$ --- with a complex weight counted as two parameters, which is what
 \pyclass{FNO3d.n\_parameters} does and therefore what the training log prints:
 
@@ -501,7 +501,7 @@ Total           &                             & $3\,152\,418$ & \\
 \end{center}
 
 One term in one equation is $99.79\%$ of the model. Cell conditioning and
-normalisation together are $0.15\%$, and the read-out --- the whole of
+normalization together are $0.15\%$, and the read-out --- the whole of
 \opt{projection\_channels} --- is $0.04\%$.
 
 The second output channel is almost free, and the table says why: $C_{\rm out}$

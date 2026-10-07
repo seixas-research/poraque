@@ -7,9 +7,9 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-Spin-polarised (``ISPIN = 2``) support, end to end.
+Spin-polarized (``ISPIN = 2``) support, end to end.
 
-No spin-polarised reference calculation ships with this repository — every
+No spin-polarized reference calculation ships with this repository — every
 ``INCAR`` in ``data/vasp`` sets ``ISPIN = 1`` — so the fixtures here build a
 two-block ``CHGCAR`` from known arrays. That is enough to pin everything the
 code path is responsible for:
@@ -54,7 +54,7 @@ def poscar():
 
 @pytest.fixture
 def spin_density(grid, poscar):
-    """A field with a genuinely non-zero, sign-changing magnetisation."""
+    """A field with a genuinely non-zero, sign-changing magnetization."""
     rng = np.random.default_rng(0)
     up = rng.random(grid.shape) + 0.5
     down = rng.random(grid.shape) + 0.5
@@ -63,7 +63,7 @@ def spin_density(grid, poscar):
 
 @pytest.fixture
 def spin_dataset(tmp_path, grid, poscar):
-    """Three synthetic materials with spin-polarised CHGCARs."""
+    """Three synthetic materials with spin-polarized CHGCARs."""
     rng = np.random.default_rng(1)
     for index in range(3):
         directory = tmp_path / f"structure_{index:03d}"
@@ -96,7 +96,7 @@ class TestSpinDensity:
         assert np.allclose(density.magnetization, up - down)
 
     def test_integrals(self, grid, poscar):
-        """Electron count from the total, moment from the magnetisation."""
+        """Electron count from the total, moment from the magnetization."""
         up = np.full(grid.shape, 0.5)
         down = np.full(grid.shape, 0.25)
         density = SpinDensity.from_up_down(up, down, grid, poscar)
@@ -115,24 +115,24 @@ class TestSpinDensity:
         assert np.allclose(back.magnetization, spin_density.magnetization,
                            rtol=1e-9)
 
-    def test_a_collinear_file_is_not_read_as_spin_polarised(self, tmp_path,
+    def test_a_collinear_file_is_not_read_as_spin_polarized(self, tmp_path,
                                                             grid, poscar):
         """
         Refusing is the point.
 
-        Reading a one-block CHGCAR as spin-polarised would hand back a zero
-        magnetisation — a physical claim ("this system is non-magnetic") that
+        Reading a one-block CHGCAR as spin-polarized would hand back a zero
+        magnetization — a physical claim ("this system is non-magnetic") that
         the file never made.
         """
         path = str(tmp_path / "CHGCAR")
         ChargeDensity(np.ones(grid.shape), grid, poscar).write(path)
         assert not is_spin_polarized(path)
-        with pytest.raises(ValueError, match="not a spin-polarised"):
+        with pytest.raises(ValueError, match="not a spin-polarized"):
             SpinDensity.read(path)
 
-    def test_normalization_preserves_local_polarisation(self, spin_density):
+    def test_normalization_preserves_local_polarization(self, spin_density):
         r"""
-        Scaling both channels together is what makes it a *normalisation*.
+        Scaling both channels together is what makes it a *normalization*.
 
         Rescaling :math:`\rho` alone would change :math:`m/\rho` at every
         point, which is a different prediction rather than a repaired one.
@@ -245,7 +245,7 @@ class TestSpinDataset:
         assert len(target_transform.transforms) == 2
 
 
-class TestTheMagnetisationSharesTheChargeScale:
+class TestTheMagnetizationSharesTheChargeScale:
     r"""
     The m channel of a CHGCAR takes the charge channel's Asinh scale.
 
@@ -260,7 +260,7 @@ class TestTheMagnetisationSharesTheChargeScale:
     """
 
     @pytest.fixture
-    def mostly_unpolarised(self, tmp_path, grid, poscar):
+    def mostly_unpolarized(self, tmp_path, grid, poscar):
         rng = np.random.default_rng(3)
         for index in range(4):
             directory = tmp_path / f"structure_{index:03d}"
@@ -280,27 +280,27 @@ class TestTheMagnetisationSharesTheChargeScale:
                                  poscar).write(str(directory / "TAUCAR"))
         return str(tmp_path)
 
-    def test_the_target_magnetisation_is_not_fitted_to_its_noise(
-            self, mostly_unpolarised):
-        dataset = FieldPairDataset(mostly_unpolarised, task="ext2chg")
+    def test_the_target_magnetization_is_not_fitted_to_its_noise(
+            self, mostly_unpolarized):
+        dataset = FieldPairDataset(mostly_unpolarized, task="ext2chg")
         _, target = dataset.fit_transforms()
-        charge, magnetisation = target.transforms
-        assert magnetisation.scale == charge.scale
-        assert magnetisation.scale > 1e-3
+        charge, magnetization = target.transforms
+        assert magnetization.scale == charge.scale
+        assert magnetization.scale > 1e-3
 
     def test_the_gain_of_the_inverse_is_the_charge_channels(
-            self, mostly_unpolarised):
+            self, mostly_unpolarized):
         """
         The quantity that failed: asinh(1/s), how many e-folds m moves per
         unit of network output in the logarithmic regime. The old rule, the
         channel's own median, is fitted alongside to show what it would be.
         """
-        dataset = FieldPairDataset(mostly_unpolarised, task="ext2chg")
+        dataset = FieldPairDataset(mostly_unpolarized, task="ext2chg")
         _, target = dataset.fit_transforms()
-        magnetisation = np.concatenate([
+        magnetization = np.concatenate([
             np.asarray(dataset.target_values(index))[1].ravel()
             for index in range(len(dataset))])
-        own_median = Asinh.fit(magnetisation)
+        own_median = Asinh.fit(magnetization)
 
         def gain(transform):
             return float(np.arcsinh(1.0 / transform.scale))
@@ -309,8 +309,8 @@ class TestTheMagnetisationSharesTheChargeScale:
         assert gain(own_median) > 2 * gain(target.transforms[0])
 
     def test_the_chg2tau_input_follows_the_same_rule(self,
-                                                     mostly_unpolarised):
-        dataset = FieldPairDataset(mostly_unpolarised, task="chg2tau")
+                                                     mostly_unpolarized):
+        dataset = FieldPairDataset(mostly_unpolarized, task="chg2tau")
         source, _ = dataset.fit_transforms()
         assert source.transforms[1].scale == source.transforms[0].scale
 
@@ -337,7 +337,7 @@ class TestTheMagnetisationSharesTheChargeScale:
 
     def test_requesting_the_wrong_spin_is_an_error(self, spin_dataset):
         """A flag must not be able to contradict the data."""
-        with pytest.raises(ValueError, match="spin-polarised"):
+        with pytest.raises(ValueError, match="spin-polarized"):
             FieldPairDataset(spin_dataset, task="ext2chg", spin=False)
 
 
@@ -425,7 +425,7 @@ class TestSpinOperator:
 # Resolving `data.spin: auto` against the data
 # ===================================================================== #
 def _runs(root, grid, poscar, polarized, count=2, start=0):
-    """``count`` calculation directories, spin-polarised or not."""
+    """``count`` calculation directories, spin-polarized or not."""
     rng = np.random.default_rng(7)
     for index in range(start, start + count):
         directory = root / f"structure_{index:03d}"
@@ -447,7 +447,7 @@ class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
     Regression: ``data.spin: auto`` — the default — could never mean spin.
 
     ``poraque-train`` passed ``spin=data.spin is True`` to the cache builder,
-    and ``"auto" is True`` is ``False``. So every ``ISPIN = 2`` magnetisation
+    and ``"auto" is True`` is ``False``. So every ``ISPIN = 2`` magnetization
     block was discarded on the way into the cache, and the dataset's *own*
     auto-detection then reported, correctly, that the cache carried no spin.
     Two layers of detection agreeing, with the first one having thrown the
@@ -458,7 +458,7 @@ class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
     throughout the bug.
     """
 
-    def test_auto_carries_the_magnetisation_of_a_polarised_source(
+    def test_auto_carries_the_magnetization_of_a_polarized_source(
             self, tmp_path, grid, poscar):
         from poraque.data import build_field_cache
 
@@ -472,7 +472,7 @@ class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
             "spin: auto dropped the second block of an ISPIN = 2 source")
         assert SpinDensity.read(cached).magnetic_moment() != 0.0
 
-    def test_auto_on_an_unpolarised_source_stays_single_channel(
+    def test_auto_on_an_unpolarized_source_stays_single_channel(
             self, tmp_path, grid, poscar):
         from poraque.data import build_field_cache
 
@@ -494,13 +494,13 @@ class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
 
         assert not is_spin_polarized(f"{cache}/structure_000/CHGCAR")
 
-    def test_true_on_data_with_no_magnetisation_raises(self, tmp_path, grid,
+    def test_true_on_data_with_no_magnetization_raises(self, tmp_path, grid,
                                                        poscar):
         """Rather than training a channel the data has no values for."""
         from poraque.data import build_field_cache
 
         root = _runs(tmp_path / "runs", grid, poscar, polarized=False)
-        with pytest.raises(ValueError, match="has a magnetisation block"):
+        with pytest.raises(ValueError, match="has a magnetization block"):
             build_field_cache(root, tmp_path / "cache", resolution=8,
                               fields=("CHGCAR",), charges={"Fe": 8.0},
                               spin=True)
@@ -509,7 +509,7 @@ class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
             self, tmp_path, grid, poscar):
         """
         One operator has one channel count, so the decision is taken for the
-        whole dataset. An unpolarised member becomes ``m = 0``, which is a true
+        whole dataset. An unpolarized member becomes ``m = 0``, which is a true
         statement about a non-magnetic calculation rather than a padded one.
         """
         from poraque.data import build_field_cache
@@ -575,7 +575,7 @@ class TestDetectingASecondBlockIsCheap:
         """
         The scan looks for the grid-dimension line repeated *exactly*. PAW
         occupancies sit between the blocks and are full of numbers; a looser
-        test would read them as a magnetisation channel that is not there.
+        test would read them as a magnetization channel that is not there.
         """
         path = str(tmp_path / "CHGCAR")
         ChargeDensity(np.ones(grid.shape), grid, poscar).write(
@@ -586,7 +586,7 @@ class TestDetectingASecondBlockIsCheap:
 
 
 # ===================================================================== #
-# A spin-polarised prediction has to reach an energy
+# A spin-polarized prediction has to reach an energy
 # ===================================================================== #
 class TestASpinDensityCanBeIntegratedIntoAnEnergy:
     """
@@ -647,7 +647,7 @@ class TestTheSpinChannelReachesThePhysicsHelpers:
     `squeeze(1)` is a **no-op** on an axis of width 2, and it was used
     throughout `ml/physics.py` to mean "drop the channel axis". Every helper
     that did so was therefore correct for a one-channel field and wrong for a
-    spin-polarised one -- which, since `data.spin: auto` resolves to True on
+    spin-polarized one -- which, since `data.spin: auto` resolves to True on
     this project's data, is every model it now trains.
 
     Three failure modes, all present at once:
@@ -659,7 +659,7 @@ class TestTheSpinChannelReachesThePhysicsHelpers:
       a ``(B, C, ...)`` field and, at ``C == B``, lined the channel axis up
       with the batch axis and returned finite nonsense;
     * a **meaningless second channel**, where an elementwise functional of rho
-      was evaluated on the magnetisation -- ``(5/3) C_TF m^(2/3)`` and
+      was evaluated on the magnetization -- ``(5/3) C_TF m^(2/3)`` and
       ``v_x(m)`` -- and then broadcast into a residual built from
       single-channel potentials.
     """
@@ -716,10 +716,10 @@ class TestTheSpinChannelReachesThePhysicsHelpers:
                 else lambda f, c: xc_potential(f, name, cell=c))
 
         spin = call(field, cell)
-        assert spin.shape[1] == 1, "the magnetisation is not an argument of it"
+        assert spin.shape[1] == 1, "the magnetization is not an argument of it"
         assert torch.allclose(spin, call(field[:, :1], cell), atol=1e-9)
 
-    def test_the_euler_lagrange_residual_ignores_the_magnetisation(self):
+    def test_the_euler_lagrange_residual_ignores_the_magnetization(self):
         from poraque.ml.physics import euler_lagrange_residual
 
         field, cell = self._fields(batch=2)
@@ -745,7 +745,7 @@ class TestTheSpinChannelReachesThePhysicsHelpers:
         assert torch.isfinite(value)
         assert prediction.grad is not None and torch.isfinite(prediction.grad).all()
 
-    def test_the_sobolev_loss_constrains_the_magnetisation_too(self):
+    def test_the_sobolev_loss_constrains_the_magnetization_too(self):
         """
         It is a *data* term, not a physical constraint: whatever the operator
         predicts is part of the target. Taking channel 0 alone would leave

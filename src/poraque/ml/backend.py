@@ -32,7 +32,7 @@ At the 32³ resolution a training cache is normally built at, the contraction
 what the arithmetic deserves, because the pattern ``bixyz,ioxyz->boxyz``
 reduces to a batched product over a layout whose reduction axis is strided by
 the whole mode block. Reordering the loops so the flattened mode index is
-innermost — contiguous in all three operands — is the whole optimisation, and
+innermost — contiguous in all three operands — is the whole optimization, and
 it is not expressible through ``einsum``.
 
 How it is loaded
@@ -50,7 +50,7 @@ Every failure path falls back to :func:`torch.einsum`:
 * an unsupported dtype, device, or non-contiguous operand,
 * ``PORAQUE_C_BACKEND=0`` in the environment.
 
-So the backend is an optimisation and never a dependency. The one thing it must
+So the backend is an optimization and never a dependency. The one thing it must
 never do is *silently* change a number, which is what :func:`selftest` and
 ``tests/test_backend.py`` exist to prevent.
 
@@ -163,7 +163,7 @@ def _flag_sets():
     Each is attempted in turn and the first that links wins, so a toolchain
     without ``libomp`` or without ``-mcpu=native`` degrades to a slower kernel
     rather than to no kernel. ``-ffast-math`` is deliberately absent: the
-    vectorisation this kernel needs is across independent mode indices and
+    vectorization this kernel needs is across independent mode indices and
     requires no reassociation, so there is nothing to buy with it and it would
     put the C path's arithmetic out of step with PyTorch's.
     """
@@ -534,35 +534,38 @@ def main(argv=None):
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
-    log = (lambda *_: None) if args.quiet else print
+    from ..utils.logging import Logger
 
-    log("=" * 70)
-    log("Poraque C backend")
-    log("=" * 70)
-    log(f"  source    : {SOURCE}")
-    log(f"  compiler  : {compiler() or 'NONE FOUND'}")
-    log(f"  cache dir : {cache_dir()}")
-    log(f"  enabled   : {enabled()}  (PORAQUE_C_BACKEND)")
-    log("")
+    # `--quiet` is a silent Logger rather than a no-op lambda: the same object
+    # either way, so nothing below has to ask which one it was given.
+    log = Logger(silent=args.quiet)
+
+    log.title("Poraque C backend")
+    log.section("configuration")
+    log.fields({"source": SOURCE,
+                "compiler": compiler() or "NONE FOUND",
+                "cache dir": cache_dir(),
+                "enabled": f"{enabled()}  (PORAQUE_C_BACKEND)"})
 
     if args.rebuild:
+        log.section("build")
         reset()
         build(force=True, log=log)
     reset()
 
+    log.section("status")
+    log.text(describe())
     if not available():
-        log(f"  {describe()}")
-        log("")
-        log("  Inference still works — it falls back to torch.einsum, about")
-        log("  2-3x slower at cache resolutions. To enable the backend,")
-        log("  install a C compiler (xcode-select --install on macOS,")
-        log("  build-essential on Debian/Ubuntu) and run this again.")
+        log.section("next steps")
+        log.text("Inference still works — it falls back to torch.einsum, about")
+        log.text("2-3x slower at cache resolutions. To enable the backend,")
+        log.text("install a C compiler (xcode-select --install on macOS,")
+        log.text("build-essential on Debian/Ubuntu) and run this again.")
         return 1
 
-    log(f"  {describe()}")
     report = selftest()
-    log(f"  agreement with torch.einsum: {report['max_relative']:.2e} "
-        f"relative (float32 rounding is ~1e-7)")
+    log.text(f"agreement with torch.einsum: {report['max_relative']:.2e} "
+             f"relative (float32 rounding is ~1e-7)")
 
     if args.benchmark:
         timing = _benchmark()
@@ -573,18 +576,16 @@ def main(argv=None):
             (f"C, {timing['threads']} pthreads", timing["threaded"],
              baseline / timing["threaded"]),
         ]
-        # Padded from the widest label rather than by hand, so the column
-        # cannot drift when the thread count changes the label's length.
-        width = max(len(label) for label, _, _ in rows)
-        log("")
-        log("  one contraction (batch 1, width 32, modes 12^3):")
-        for label, seconds, speedup in rows:
-            gain = "" if speedup is None else f"   {speedup:5.1f}x"
-            log(f"    {label:<{width}s}  {seconds * 1e3:8.3f} ms{gain}")
+        log.section("benchmark")
+        log.text("one contraction (batch 1, width 32, modes 12^3):")
+        log.table(("path", "time", "speedup"),
+                  [(label, f"{seconds * 1e3:.3f} ms",
+                    "" if speedup is None else f"{speedup:.1f}x")
+                   for label, seconds, speedup in rows])
 
-    log("")
-    log("  Ready. Nothing further is needed: inference picks this up")
-    log("  automatically, and poraque-inference prints which path it used.")
+    log.section("next steps")
+    log.text("Ready. Nothing further is needed: inference picks this up")
+    log.text("automatically, and poraque-inference prints which path it used.")
     return 0
 
 

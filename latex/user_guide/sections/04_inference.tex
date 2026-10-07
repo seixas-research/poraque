@@ -146,7 +146,7 @@ poraque-inference struct/ --like struct/CHGCAR --add-paw
 
 A \file{CHGCAR} that VASP will accept for \opt{ICHARG=1} is not just a density
 on a grid. After the grid block it carries one \emph{augmentation occupancies}
-record per atom: the one-centre PAW terms, the part of the density inside the
+record per atom: the one-center PAW terms, the part of the density inside the
 augmentation spheres.
 
 \begin{pwarn}
@@ -160,7 +160,7 @@ model, core-region occupancies from the reference.
 This has a consequence worth stating plainly. \opt{--add-paw} requires a
 converged \file{CHGCAR} for the geometry, and if you already have one you do
 not need a prediction to restart from. The flag earns its place when the
-reference is a \emph{near-neighbour} --- a slightly displaced geometry, a
+reference is a \emph{near-neighbor} --- a slightly displaced geometry, a
 nearby volume --- where the on-site occupancies are a good approximation and
 the interstitial density is what you want the model to supply.
 
@@ -238,9 +238,9 @@ writing a file VASP would reject:
 
 \begin{pnote}
 The predicted density integrates to the electron count only approximately
-(about $1\,\%$ out on the current models). VASP renormalises the charge it
+(about $1\,\%$ out on the current models). VASP renormalizes the charge it
 reads, so this is not fatal for a restart, but a density that far from
-normalised is a poor starting guess and may cost more SCF steps than it saves.
+normalized is a poor starting guess and may cost more SCF steps than it saves.
 \end{pnote}
 
 \section{Sanity checks the script performs}
@@ -255,7 +255,7 @@ normalised is a poor starting guess and may cost more SCF steps than it saves.
 A large electron-count error or a violated bound means the prediction should
 not be trusted, whatever the field looks like.
 
-\section{Visualising}
+\section{Visualizing}
 
 All outputs are \file{CHGCAR}-format. Use
 \opt{--write-chg} for an additional coarse-formatted \file{CHG}.

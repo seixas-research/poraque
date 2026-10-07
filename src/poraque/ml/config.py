@@ -10,7 +10,7 @@ r"""
 YAML configuration for neural-operator training runs.
 
 A training run is defined by four groups of settings — where the data is, how
-the operator is shaped, how it is optimised, and where results go — and
+the operator is shaped, how it is optimized, and where results go — and
 :class:`TrainingConfig` mirrors that structure exactly. Keeping the run
 definition in a file rather than in a shell history makes an experiment
 reproducible and diffable: the config is written next to the results, so a run
@@ -57,12 +57,13 @@ BUNDLE_SUFFIX = ".poraque"
 @dataclass
 class TaskConfig:
     """
-    What is trained, and what the run's artefacts are called.
+    What is trained, and what the run's artifacts are called.
 
     Attributes
     ----------
     type : str
-        ``"ext2chg"``, ``"chg2tau"`` or ``"all"``.
+        ``"ext2chg"``, ``"chg2tau"``, ``"ext2paw"``, ``"paw2tau"`` or
+        ``"all"`` (the chain, ``ext2chg`` then ``chg2tau``).
     name : str
         Identifier for **this run**, and the only thing that separates it from
         another. Everything the run writes goes in one directory named after
@@ -134,7 +135,7 @@ RETIRED_KEYS = {
     # with 200-314 s of cold compilation on top, and a validation error that
     # moved reproducibly in both arms. On four ranks it did not merely lose, it
     # sat eighteen minutes in the first epoch without printing an epoch line
-    # and was cancelled. See CUDA_4.md sections 7 and 8.
+    # and was canceled. See CUDA_4.md sections 7 and 8.
     ("training", "compile"):
         "nothing -- torch.compile was measured on the FNO backbone and "
         "removed; Inductor declines complex codegen, which is the whole of "
@@ -280,7 +281,7 @@ class DataConfig:
     potcar_dir : str or None
         A ``POTCAR`` **library** — one subdirectory per pseudopotential, as
         VASP ships them (``<potcar_dir>/Ag/POTCAR``, optionally ``.gz``/``.Z``;
-        a flat ``POTCAR.Ag`` layout is also recognised).
+        a flat ``POTCAR.Ag`` layout is also recognized).
 
         It matters most for a Materials Project download, which publishes a
         structure and a density and no pseudopotentials. Supply the library and
@@ -332,6 +333,16 @@ class DataConfig:
     resolution : int
         Longest grid axis after spectral downsampling. The reduction is a
         Fourier truncation, exact for band-limited plane-wave fields.
+    target_scale : float or None
+        Fixed ``Asinh`` scale, e/Å³, for the density target of ``ext2chg``
+        and ``ext2paw`` (every channel), instead of the fitted median of
+        :math:`|\delta\rho|`. ``null`` (default) fits it.
+    max_spacing : float or None
+        Largest grid spacing in Å after downsampling. ``resolution`` caps the
+        longest axis, so a long, thin cell keeps a handful of points on its
+        short axes; this refines any axis coarser than ``max_spacing`` (never
+        beyond its native grid). ``null`` (default) is ``resolution`` alone.
+        Part of the cache tag and fingerprint.
     gaussian_blur : float or None
         Width in Å of a Gaussian blur applied to the computed external
         potential. ``null`` disables it.
@@ -341,22 +352,22 @@ class DataConfig:
         blurs along grid axes and is therefore anisotropic in Cartesian space
         unless the cell is orthogonal).
     spin : {"auto", true, false}
-        Whether the densities are spin-polarised (``ISPIN = 2``), in which case
+        Whether the densities are spin-polarized (``ISPIN = 2``), in which case
         a ``CHGCAR`` carries two channels — the total density and the
-        magnetisation density — and the operator is built with two channels to
+        magnetization density — and the operator is built with two channels to
         match. ``"auto"`` (the default) reads the answer off the data, since a
-        spin-polarised ``CHGCAR`` has a second grid block and a collinear one
+        spin-polarized ``CHGCAR`` has a second grid block and a collinear one
         does not.
 
         ``"auto"`` is resolved against the **sources**, before anything is
         written, and for the dataset as a whole — one operator has one channel
         count, so a cache with two blocks for some materials and one for others
         could not be trained from. A mixture therefore resolves to spin and its
-        unpolarised members carry ``m = 0``, which is a true statement about a
+        unpolarized members carry ``m = 0``, which is a true statement about a
         non-magnetic calculation and is what makes an ``ISPIN = 2`` operator a
-        strict generalisation of an ``ISPIN = 1`` one.
+        strict generalization of an ``ISPIN = 1`` one.
 
-        ``false`` is a deliberate opt-out that discards the magnetisation, and
+        ``false`` is a deliberate opt-out that discards the magnetization, and
         says so in the build log; ``true`` demands it and **raises** on data
         that has none, rather than fitting a channel to zeros. The resolved
         value names the cache directory, so the two layouts never share one.
@@ -365,9 +376,9 @@ class DataConfig:
 
            Until 2026-08-27 this key was flattened to ``spin is True`` before
            it reached the cache builder, so the default ``"auto"`` meant *no
-           spin*: every ``ISPIN = 2`` magnetisation block was discarded on the
+           spin*: every ``ISPIN = 2`` magnetization block was discarded on the
            way in, and the dataset's own auto-detection then reported the cache
-           as unpolarised — which it was, by then. A cache built before that
+           as unpolarized — which it was, by then. A cache built before that
            date holds one channel whatever its config said.
     precision : str
         Dtype the volumetric fields are **held in**: ``float64`` (the default,
@@ -394,7 +405,7 @@ class DataConfig:
         This is a statement about the *data*, not a choice about the model.
         **The training loop does not yet consult it**: the Euler-Lagrange
         penalty (``euler_lagrange_weight``) is evaluated without
-        :math:`v_{\\rm xc}` and warns to that effect. The setting is honoured
+        :math:`v_{\\rm xc}` and warns to that effect. The setting is honored
         by the post-training analyses that evaluate the full residual — the
         ``experiments/euler_lagrange`` scripts and
         :func:`~poraque.fields.io.resolve_xc` — where getting it wrong does
@@ -440,7 +451,7 @@ class DataConfig:
         :math:`\delta\rho` is **signed**, so positivity and the electron count
         are statements about :math:`\delta\rho + \rho_{\rm sup}`; the training
         loop restores the baseline before every physics term, and inference
-        does it before clipping or normalising — see
+        does it before clipping or normalizing — see
         :meth:`poraque.ml.training.FieldOperator.predict`, which fixes that
         order. And the reported relative :math:`L^2` is always
         quoted **on the absolute density**, so a delta-mode run is directly
@@ -461,7 +472,7 @@ class DataConfig:
           ``Pt/`` inside it, which is the default and the layout to write new
           references in. A single atom directory is also accepted, but only
           the parent form grows to a second element without editing a config.
-          Either is ingested on the spot and memoised into the cache as
+          Either is ingested on the spot and memoized into the cache as
           ``atomic_reference.json``, so the reduction happens once;
         - a directory that already holds a database, which then wins.
 
@@ -479,10 +490,10 @@ class DataConfig:
         particular superposition they were fitted to, so a database that
         changed afterwards would silently bias every prediction.
     paw_source : str
-        Which one-centre PAW augmentation occupancies a predicted ``CHGCAR``
+        Which one-center PAW augmentation occupancies a predicted ``CHGCAR``
         carries. ``"atomic"`` (**the default as of 2026-08-26**) takes them
         from the isolated-atom database named by ``atomic_reference``;
-        ``"material"`` restores the previous behaviour of averaging the
+        ``"material"`` restores the previous behavior of averaging the
         *training set's* records per element.
 
         The occupancies are contractions over converged wavefunctions living
@@ -541,7 +552,7 @@ class DataConfig:
         ``lzf`` 1.21x at 0.06 s, ``gzip-1`` 1.36x at 0.24 s, ``gzip-4`` 1.38x
         at 0.31 s, ``gzip-9`` 1.39x at 0.39 s. The ratios are larger on the
         downsampled fields a cache actually holds (2.1x at 32³), where
-        neighbouring points are more strongly correlated. ``lzf`` is the choice
+        neighboring points are more strongly correlated. ``lzf`` is the choice
         when build time matters, ``gzip`` when the archive is written once and
         read for months.
 
@@ -559,12 +570,12 @@ class DataConfig:
         reason is that without it **every epoch re-reads, decompresses and
         re-parses every field from disk**. Measured on a V100 with 115 cached
         structures at 32³: ``__getitem__`` was 59 % of ``train()``, 78.9 s over
-        483 calls, and the GPU sat at 2-4 % utilisation because it was waiting
+        483 calls, and the GPU sat at 2-4 % utilization because it was waiting
         on ``zlib`` and ``numpy.array`` over a text generator. Turning the cache
         on took twenty epochs from **168.0 s to 16.3 s — 10.3x** — with the
-        validation error identical to five decimals, and utilisation from 1.9 %
+        validation error identical to five decimals, and utilization from 1.9 %
         to 12.1 % (28.2 % on a 300-epoch run, where the fixed start-up cost is
-        amortised).
+        amortized).
 
         It is not a CUDA setting. The parse is the same on MPS and on the CPU;
         what CUDA adds is a fast device left idle by it.
@@ -588,6 +599,8 @@ class DataConfig:
     pattern: str = ""
     format: str = "auto"
     resolution: int = 32
+    max_spacing: float = None
+    target_scale: float = None
     potcar_dir: str = None
     strict_potcar: bool = False
     sigma: float = None
@@ -626,11 +639,11 @@ class DataConfig:
 
 #: The learnable activations ``model.kan_setup.variant`` chooses between. Each
 #: is one learned function *per channel*, applied elementwise; see
-#: :mod:`poraque.ml.kan` for what each parameterises that function with.
+#: :mod:`poraque.ml.kan` for what each parameterizes that function with.
 KAN_VARIANTS = ("bspline", "chebyshev", "rbf", "rational")
 
 #: Assumed when ``activation: kan`` is given with no ``variant``: the original
-#: KAN paper's own parameterisation, so the unqualified word means what the
+#: KAN paper's own parameterization, so the unqualified word means what the
 #: literature means by it — not the cheapest variant, which would be a
 #: performance decision made silently on the user's behalf.
 DEFAULT_KAN_VARIANT = "bspline"
@@ -664,8 +677,15 @@ EQUIVARIANT_SETUP_KEYS = {
 #: names for the same three decisions, so they mean one thing everywhere in this
 #: schema; the other two belong to the occupancy head alone.
 PAW_DEFAULTS = {"width": 64, "modes": 16, "n_layers": 4,
-                "readout_g_max": "auto", "occupancy_weight": 1.0}
+                "readout_g_max": "auto", "occupancy_weight": 1.0,
+                "neighbor_min": 2.2, "magnetization_weight": 1.0,
+                "readout_cache_mib": 1024}
 PAW_SETUP_KEYS = tuple(PAW_DEFAULTS)
+
+#: ``model.structure_input`` settings: input channels describing the structure,
+#: appended after the potential (``poraque.fields.atomic.structure_channels``).
+STRUCTURE_INPUT_DEFAULTS = {"superposition": True, "elements": "auto"}
+STRUCTURE_INPUT_KEYS = tuple(STRUCTURE_INPUT_DEFAULTS)
 
 #: ``training.physics_informed`` settings: the weight of each constraint on the
 #: **neural operator**. Not :attr:`SymbolicConfig.physics`, which constrains a
@@ -921,11 +941,11 @@ class ModelConfig:
 
     :class:`torch.nn.GroupNorm` splits the :math:`C` channels into :math:`G`
     groups and, for each *(sample, group)* pair, takes a mean and variance over
-    **both the channels of that group and every voxel** — then normalises and
+    **both the channels of that group and every voxel** — then normalizes and
     applies a learned per-channel scale and shift. At ``width: 16`` that is 8
     groups of 2.
 
-    Why this normaliser and not another, here specifically:
+    Why this normalizer and not another, here specifically:
 
     * **BatchNorm would be wrong twice over.** Batches are small
       (``batch_size: 4``, and bucketed by grid shape so often smaller) and
@@ -943,7 +963,7 @@ class ModelConfig:
 
     What it is *for*: the spectral branch multiplies Fourier coefficients by
     learned complex weights and adds a pointwise branch, once per layer, in a
-    residual stack. Without renormalisation the activation scale drifts with
+    residual stack. Without renormalization the activation scale drifts with
     depth.
 
     :func:`~poraque.ml.fno._group_count` exists because ``GroupNorm`` requires
@@ -986,17 +1006,17 @@ class ModelConfig:
     .. note::
        The zero-init is deliberate. Both the projection weight and its bias are
        zeroed, and the form is :math:`(1 + \gamma)`, not :math:`\gamma`. At
-       initialisation :math:`\gamma = \beta = 0`, so FiLM is *exactly the
+       initialization :math:`\gamma = \beta = 0`, so FiLM is *exactly the
        identity*: the model starts as the unconditioned operator and learns to
        use the cell only where it earns its place. Written as
        :math:`\gamma \cdot x` with the same init it would annihilate the signal
        instead.
 
     **Why they are adjacent, in that order.** This is the
-    conditional-normalisation pattern (cf. conditional BatchNorm, AdaIN):
+    conditional-normalization pattern (cf. conditional BatchNorm, AdaIN):
     GroupNorm strips each sample's own scale and offset, and FiLM puts back a
     scale and offset that are a learned function of the cell. Put FiLM first
-    and the normaliser would erase it on the next line.
+    and the normalizer would erase it on the next line.
 
     .. warning::
        FiLM's :math:`\gamma, \beta` are **not** GroupNorm's affine parameters,
@@ -1016,7 +1036,7 @@ class ModelConfig:
         GroupNorm affine           96    0.00%
         TOTAL               3,152,353
 
-    Conditioning and normalisation together are 0.15% of the parameters. The
+    Conditioning and normalization together are 0.15% of the parameters. The
     spectral tensor is the model.
 
     Attributes
@@ -1041,10 +1061,10 @@ class ModelConfig:
         ``relu``, ``tanh`` — stateless, parameter-free — or ``kan``: a
         Kolmogorov-Arnold Network-style *learnable* activation, one function
         per channel, applied elementwise, whose variant and hyperparameters
-        come from ``kan_setup`` below. Every learnable variant is initialised
+        come from ``kan_setup`` below. Every learnable variant is initialized
         close to ``silu`` (a small learnable perturbation on top of it,
         matching the base term the original KAN paper itself uses), so
-        switching to one does not destabilise training at step 0.
+        switching to one does not destabilize training at step 0.
     projection_activation : str or None
         Nonlinearity of the read-out head. ``null`` (the default) follows
         ``activation``, which is what "the activation" means unless something
@@ -1143,7 +1163,7 @@ class ModelConfig:
         ``float64``.
 
         ``float64`` roughly doubles time and memory, and is for checking that a
-        physical result is not a single-precision artefact — an energy
+        physical result is not a single-precision artifact — an energy
         difference of a few meV assembled from N³ voxel sums has no obvious
         margin in float32. Conversion goes through
         :func:`~poraque.ml.fno.set_precision`, because an FNO carries complex
@@ -1152,7 +1172,7 @@ class ModelConfig:
 
         Distinct from ``data.precision``, which is how the fields are *stored*.
     learn_pauli_scale : bool
-        Optimise the scale alongside the backbone.
+        Optimize the scale alongside the backbone.
     equivariant : dict
         Constrain the Fourier multiplier to a real function of
         :math:`|\mathbf{G}|` alone, which makes the operator commute with
@@ -1235,10 +1255,62 @@ class ModelConfig:
             validation score the best epoch is chosen on is the same sum on
             the held-out split, so one number means one thing. 1.0 by
             default.
+        ``neighbor_min``
+            First of ten geometric neighbor-kernel centers, in Å; the last
+            stays at 5.8 Å. Default 2.2 preserves the Pt basis. Smaller values
+            such as 0.6 resolve short covalent bonds in CHON. Must be at least
+            zero and below 5.8. The checkpoint preserves the actual centers.
+        ``readout_cache_mib``
+            Device memory, in MiB, for the occupancy readout's spectral
+            kernels (one per cell and grid, built on the CPU). Once a
+            training split's kernels exceed it they are evicted and rebuilt
+            every epoch, which is slow; 1024 (the default) held all 785
+            CHONPS geometries at a 6 1/Ang band (~360 MB). A runtime setting:
+            it changes no result and is not in the checkpoint.
+        ``magnetization_weight``
+            Weight of the magnetization record set (the second set of a
+            spin-polarized density) in the occupancy loss, relative to the
+            charge set; 1.0 (the default) weighs every (set, L) block alike,
+            as before. Its L > 0 blocks are as unpredictable from the
+            potential as the field magnetization, so at 1.0 they dominate the
+            occupancy loss and the score the best epoch is chosen on.
 
         See :mod:`poraque.ml.paw` for the operator, and
         ``experiments/paw_occupancies`` for the measurements it was designed
         from.
+    occupancy_channels : int
+        ``paw2tau`` only: the field channels every atom's PAW occupancies are
+        written into, beside the input density, by an equivariant
+        :class:`~poraque.ml.paw.SiteWriter` (atom-centered solid-harmonic
+        Gaussians, one learned map per element and L, shared across M).
+        8 by default; ignored by every other task.
+    structure_input : dict
+        Input channels that describe the structure, appended after
+        :math:`v_{\rm ext}` for ``ext2chg`` and ``ext2paw``:
+
+        .. code-block:: yaml
+
+           model:
+             structure_input:
+               enable: true
+               superposition: true    # rho_sup, the delta-density baseline
+               elements: auto         # one superposition per element
+
+        ``enable``
+            Off by default, which is the potential alone, as before.
+        ``superposition``
+            Lead with :math:`\rho_{\rm sup}`.
+        ``elements``
+            ``auto`` gives one channel per element of the training data, a
+            list names them, and ``[]`` gives none. Each is that element's
+            atoms alone, superposed; the checkpoint records the list, and a
+            structure holding an element outside it is refused at inference.
+
+        Every channel is a scalar field built from the isolated-atom library
+        (``data.atomic_reference``, which is therefore required) and is a
+        function of the geometry alone, so equivariance is untouched and the
+        channels are rebuilt from the structure at inference. Measured on 785
+        CHONPS cells: see ``poraque_modifications.md`` in the run directory.
     """
 
     width: int = 16
@@ -1255,6 +1327,8 @@ class ModelConfig:
     g_max: float = None
     equivariant: dict = field(default_factory=lambda: {"enable": False})
     paw: dict = field(default_factory=lambda: {"enable": False})
+    structure_input: dict = field(default_factory=lambda: {"enable": False})
+    occupancy_channels: int = 8
     pauli_residual: bool = False
     pauli_scale: float = None
     learn_pauli_scale: bool = True
@@ -1391,7 +1465,86 @@ class ModelConfig:
             raise ValueError(
                 f"model.paw.occupancy_weight is {weight!r}; expected a "
                 f"non-negative number.")
+        budget = settings["readout_cache_mib"]
+        if isinstance(budget, bool) or not isinstance(budget, (int, float)) \
+                or budget < 0:
+            raise ValueError(
+                f"model.paw.readout_cache_mib is {budget!r}; expected a "
+                f"non-negative number of MiB.")
+        magnetization = settings["magnetization_weight"]
+        if isinstance(magnetization, bool) \
+                or not isinstance(magnetization, (int, float)) \
+                or magnetization < 0:
+            raise ValueError(
+                f"model.paw.magnetization_weight is {magnetization!r}; "
+                f"expected a non-negative number.")
+        minimum = settings["neighbor_min"]
+        if isinstance(minimum, bool) or not isinstance(minimum, (int, float)) \
+                or not 0 <= minimum < 5.8:
+            raise ValueError(
+                f"model.paw.neighbor_min is {minimum!r}; expected a number "
+                f"from 0 (inclusive) to 5.8 (exclusive), in Ang.")
         return settings
+
+    @property
+    def structure_input_enabled(self):
+        """Whether ``model.structure_input.enable`` is on."""
+        enable, _ = split_enable_block(self.structure_input,
+                                       "model.structure_input",
+                                       STRUCTURE_INPUT_KEYS)
+        return bool(enable)
+
+    def structure_input_settings(self, elements=None):
+        """
+        The structure channels to build, or ``None`` when the block is off.
+
+        Parameters
+        ----------
+        elements : sequence of str, optional
+            The training data's elements, which ``elements: auto`` resolves
+            to.
+
+        Returns
+        -------
+        dict or None
+            ``{"superposition": bool, "elements": [str, ...]}``.
+        """
+        enable, stated = split_enable_block(self.structure_input,
+                                            "model.structure_input",
+                                            STRUCTURE_INPUT_KEYS)
+        if not enable:
+            if stated:
+                import warnings
+
+                warnings.warn(
+                    f"model.structure_input names {sorted(stated)} with "
+                    f"enable false, so the block is ignored. Set enable: "
+                    f"true, or drop them.", RuntimeWarning, stacklevel=2)
+            return None
+        settings = dict(STRUCTURE_INPUT_DEFAULTS, **stated)
+        if not isinstance(settings["superposition"], bool):
+            raise ValueError(
+                f"model.structure_input.superposition is "
+                f"{settings['superposition']!r}; expected true or false.")
+        chosen = settings["elements"]
+        if chosen == "auto":
+            if elements is None:
+                raise ValueError("model.structure_input.elements: auto needs "
+                                 "the training data's elements to resolve.")
+            chosen = list(elements)
+        elif chosen is None:
+            chosen = []
+        elif not isinstance(chosen, (list, tuple)) or not all(
+                isinstance(element, str) for element in chosen):
+            raise ValueError(
+                f"model.structure_input.elements is {chosen!r}; expected "
+                f"'auto' or a list of element symbols.")
+        if not settings["superposition"] and not chosen:
+            raise ValueError(
+                "model.structure_input is enabled with superposition false "
+                "and no elements: that is no channel at all.")
+        return {"superposition": settings["superposition"],
+                "elements": [str(element) for element in chosen]}
 
     def activation_kwargs(self):
         """
@@ -1460,7 +1613,7 @@ class ModelConfig:
 @dataclass
 class TrainingConfig_:
     r"""
-    Optimisation settings.
+    Optimization settings.
 
     Attributes
     ----------
@@ -1469,6 +1622,12 @@ class TrainingConfig_:
     batch_size : int
         Maximum samples per batch *within one grid-shape bucket*; materials of
         different shape are never mixed.
+    samples_per_step : int
+        Structures per optimizer step, accumulated over consecutive bucketed
+        batches, each batch's loss weighted by its size. ``0`` (default) steps
+        once per batch, which weighs a structure by the inverse of its
+        bucket's batch size --- on a set of mostly unique grid shapes, a
+        structure alone in its bucket counts four times one in the commonest.
     learning_rate, weight_decay : float
         AdamW hyper-parameters.
     scheduler : str or None
@@ -1482,8 +1641,8 @@ class TrainingConfig_:
         ``early_stopping`` has something to watch.
 
         Set it to ``0`` to train on **every** structure. That is the right
-        choice for the final deployable artefact — it uses all the data — but
-        its metrics are then a training fit and carry no generalisation claim,
+        choice for the final deployable artifact — it uses all the data — but
+        its metrics are then a training fit and carry no generalization claim,
         and early stopping cannot act.
 
         The split is at the **structure level**, like ``k_folds``: whole
@@ -1514,7 +1673,7 @@ class TrainingConfig_:
         variation on the training protocol: every other run trains once on the
         ``valid_fraction`` split.
 
-        It answers a different question — whether the architecture generalises
+        It answers a different question — whether the architecture generalizes
         — and produces *K* models rather than one to deploy.
     k_folds : int
         Number of folds. Splitting is at the **structure level**: each fold
@@ -1528,23 +1687,23 @@ class TrainingConfig_:
         leave-one-out.
     seed : int
         Seed for the data pipeline: the validation draw, the fold partition and
-        the batch order. Also seeds the weight initialisation unless
+        the batch order. Also seeds the weight initialization unless
         ``init_seed`` overrides it.
     init_seed : int or None
-        Seed for the **weight initialisation only**, leaving everything else on
+        Seed for the **weight initialization only**, leaving everything else on
         ``seed``. ``null`` means "use ``seed``".
 
         Separating the two is what makes a *query-by-committee* ensemble
         interpretable: train N models that share ``seed`` and differ only in
         ``init_seed``, and their disagreement isolates the spread of
-        optimisation outcomes instead of confounding it with a reshuffled
+        optimization outcomes instead of confounding it with a reshuffled
         dataset.
     device : str
         ``"auto"`` (CUDA, then Apple MPS, then CPU), or an explicit backend.
     strict_device : bool
-        Abort when ``device`` cannot be honoured, instead of falling back to
+        Abort when ``device`` cannot be honored, instead of falling back to
         the CPU with a warning. Default ``false``, so nothing changes for a
-        workstation — where the fallback is the right behaviour, since a
+        workstation — where the fallback is the right behavior, since a
         configuration written on a machine with a GPU should still run on a
         laptop.
 
@@ -1579,7 +1738,7 @@ class TrainingConfig_:
 
         Rank 0 alone prints and writes the checkpoint, the metrics, the figures
         and the PDF. The **effective batch size is** ``batch_size`` **times the
-        world size**, so a four-rank run is not the same optimiser as the
+        world size**, so a four-rank run is not the same optimizer as the
         one-rank run it is compared against.
 
         There is deliberately no ``DataParallel`` fallback. Single-process
@@ -1616,7 +1775,7 @@ class TrainingConfig_:
         Page-locked host staging buffers for the host-to-device copy.
         ``"auto"`` (the default) means ``true`` on CUDA and ``false``
         everywhere else, which is the whole of the decision: pinning is a CUDA
-        transfer optimisation, it does nothing on MPS, and some PyTorch
+        transfer optimization, it does nothing on MPS, and some PyTorch
         versions warn when asked for it there.
     tf32 : bool
         Allow TensorFloat-32 matmuls and convolutions. Ignored off CUDA, and a
@@ -1627,7 +1786,7 @@ class TrainingConfig_:
         The data-fidelity objective. Four names, on two named axes:
 
         ==================  ==========  ==========================
-        ``loss``            normalised  gradients in the objective
+        ``loss``            normalized  gradients in the objective
         ==================  ==========  ==========================
         ``absolute_l2``     no          no
         ``relative_l2``     yes         no
@@ -1653,7 +1812,7 @@ class TrainingConfig_:
         objective was, so two runs remain comparable.
 
         Replaces ``"sobolev"`` (2026-08-31), which named the gradient term and
-        left the norm implicit, and offered no unnormalised form at all.
+        left the norm implicit, and offered no unnormalized form at all.
     optimizer : str
         ``adamw`` (default), ``adam`` or ``sgd``.
 
@@ -1714,7 +1873,7 @@ class TrainingConfig_:
         nothing changes for one.
 
         ``true`` **raises** when no weight is set. A run that declares
-        physics-informed training and silently optimises the supervised
+        physics-informed training and silently optimizes the supervised
         baseline is the failure the flag exists to prevent — its loss curve is
         entirely ordinary and its report says "physics-informed".
 
@@ -1741,32 +1900,31 @@ class TrainingConfig_:
 
         and two structural decisions matter more than the individual terms.
 
-        *The data term acts on normalised fields; every physics term acts on
+        *The data term acts on normalized fields; every physics term acts on
         decoded ones.* A density is ``Asinh``- or ``Log``-transformed for the
         fit, and :math:`\int\rho\,d^3r = N` is simply not true of the
         transform's output. Constraints are statements about physics, not
-        about whatever normalisation the training happens to use.
+        about whatever normalization the training happens to use.
 
         *Every term is dimensionless by construction* — each is divided by its
         own scale. Without that, one weight could not serve a dataset spanning
         a light semiconductor and a transition-metal oxide, whose raw
         penalties differ by orders of magnitude.
 
-        The loss returns a dict rather than a scalar, but only the ``total``
-        is reported: the components are unweighted, so they never summed to
-        the number the optimiser stepped on and were not comparable with
-        another run's.
+        The loss returns a dict rather than a scalar. ``total`` reports the
+        number the optimizer stepped on; the electron-count component is also
+        recorded separately as an unweighted diagnostic.
 
         **Which term applies to which model.** They are not all available to
-        both operators, and a weight set for the wrong task is silently inert:
+        every operator, and a weight set for the wrong task is silently inert:
 
         .. code-block:: text
 
-            weight                   ext2chg  chg2tau  needs
-            positivity_weight           x        x     nothing
-            electron_count_weight       x        -     N, or a reference rho
-            euler_lagrange_weight       x        -     v_ext (the input)
-            von_weizsacker_weight       -        x     rho   (the input)
+            weight                   ext2chg  ext2paw  chg2tau  paw2tau  needs
+            positivity_weight           x        -        x        x     nothing
+            electron_count_weight       x        x        -        -     N, or a reference rho
+            euler_lagrange_weight       x        -        -        -     v_ext (the input)
+            von_weizsacker_weight       -        -        x        -     rho   (the input)
 
         ``positivity_weight`` — *both models.*
 
@@ -1778,12 +1936,12 @@ class TrainingConfig_:
         Both :math:`\rho` and :math:`\tau` are non-negative *by definition*. An
         unconstrained head can ring below zero near a nucleus, and a negative
         density is not a small error but a meaningless one that propagates into
-        every energy integral. Prefer a ``Log`` output parameterisation where
-        you can: it makes positivity **structural rather than penalised**, and
+        every energy integral. Prefer a ``Log`` output parameterization where
+        you can: it makes positivity **structural rather than penalized**, and
         a constraint that cannot be violated beats one that is merely
         expensive to violate.
 
-        ``electron_count_weight`` — *``ext2chg`` only.*
+        ``electron_count_weight`` — *``ext2chg`` and ``ext2paw``.*
 
         .. math::
 
@@ -1803,6 +1961,13 @@ class TrainingConfig_:
         fallback is what keeps the term active on an archive that ships
         densities and no valence table — which is every public one.
 
+        With residual targets, both densities are decoded and the atomic
+        superposition is restored before integration. Only the total-charge
+        channel is constrained, never magnetization or PAW occupancy records.
+        This is a soft penalty; it does not impose an exact integral. The
+        validation score includes the weighted squared count error, and the
+        history records the mean absolute relative count error separately.
+
         ``von_weizsacker_weight`` — *``chg2tau`` only.*
 
         .. math::
@@ -1815,7 +1980,7 @@ class TrainingConfig_:
         The Hoffmann-Ostenhof bound :math:`\tau \ge \tau_{\rm vW}[\rho]` is a
         **theorem**, not a heuristic, which is why it can be weighted
         aggressively. It is **one-sided**: a prediction above the bound is
-        free, one below is penalised quadratically. And :math:`\tau_{\rm vW}`
+        free, one below is penalized quadratically. And :math:`\tau_{\rm vW}`
         is built from the network's own *input*, so it needs no extra labels.
 
         This is the same physics as the Pauli enhancement factor
@@ -1868,6 +2033,7 @@ class TrainingConfig_:
 
     epochs: int = 500
     batch_size: int = 4
+    samples_per_step: int = 0
     learning_rate: float = 2e-3
     weight_decay: float = 1e-4
     optimizer: str = "adamw"
@@ -1937,7 +2103,7 @@ class TrainingConfig_:
 @dataclass
 class OutputConfig:
     """
-    Where a run's artefacts go, and which of them are produced.
+    Where a run's artifacts go, and which of them are produced.
 
     One directory per model
     -----------------------
@@ -2086,7 +2252,7 @@ class SymbolicConfig:
         ``template: pauli``, and **overrides** whatever ``template`` is set
         beside it. Prefer the explicit pair in a new config.
     template : str
-        Factorisation of the target before the search sees it.
+        Factorization of the target before the search sees it.
 
         ``"pauli"`` fits the **Pauli enhancement factor**
 
@@ -2144,7 +2310,7 @@ class SymbolicConfig:
            separate blocks rather than sharing a prefix.
 
         ``enable``
-            Penalise violations **inside** the evolutionary loop rather than
+            Penalize violations **inside** the evolutionary loop rather than
             filtering the front afterwards. On by default.
 
         Filtering after a run only measures how few candidates were physical;
@@ -2184,7 +2350,7 @@ class SymbolicConfig:
 
         ``positivity_weight``, ``thomas_fermi_weight``, ``von_weizsacker_weight``
             Penalty weights, four orders of magnitude above a converged data
-            term by default. These are constraints, not regularisers: the
+            term by default. These are constraints, not regularizers: the
             intent is that no accuracy gain can buy a violation. Each limit
             carries its weight once, however many probe points express it.
 
@@ -2195,7 +2361,7 @@ class SymbolicConfig:
             :math:`p^{8/3}` stays far inside the range of the 32-bit float the
             engine searches in.
     data_loss : {"mse", "mae"}
-        The unpenalised part of that objective — the data term, not a
+        The unpenalized part of that objective — the data term, not a
         constraint, which is why it stays here rather than under ``physics``.
         ``mae`` is the more robust choice on a density whose tails span orders
         of magnitude.
@@ -2273,7 +2439,7 @@ class FineTuningConfig:
     A model fitted across a broad dataset is a good *starting point* for a
     specific family, and a poor substitute for one. Fine-tuning continues that
     fit on the smaller set at a much lower learning rate, keeping what the base
-    model learned about the general map while letting it specialise.
+    model learned about the general map while letting it specialize.
 
     .. important::
        The **normalizations come from the checkpoint**, not from the new
@@ -2287,14 +2453,14 @@ class FineTuningConfig:
     ----------
     enable : bool
         Start from ``pretrained_checkpoint`` instead of a fresh
-        initialisation.
+        initialization.
     pretrained_checkpoint : str
         Bundle to start from. The **architecture is read from its tensors**,
         so the ``model`` section of this config is ignored for the shape of
         the network — a remembered hyper-parameter that disagreed with the
         weights could only load mismatched tensors.
     learning_rate : float
-        Optimiser step for the fine-tune, replacing ``training.learning_rate``.
+        Optimizer step for the fine-tune, replacing ``training.learning_rate``.
         Much smaller by default: the base learning rate would walk the weights
         away from the solution being adapted before the small dataset could
         constrain them.
@@ -2302,7 +2468,7 @@ class FineTuningConfig:
         Hold the input lifting layer fixed and train the rest. The lifting map
         is the most general part of the network — it embeds the input field
         before any operator acts — so it is the part least in need of
-        specialisation, and freezing it leaves fewer parameters for a small
+        specialization, and freezing it leaves fewer parameters for a small
         dataset to overfit.
 
         The projection head is deliberately *not* frozen: it decodes to
@@ -2317,7 +2483,7 @@ class FineTuningConfig:
         convolutions.
 
         On this project's shipped model that is **1 320 trainable parameters
-        against 3 152 353 frozen — 0.042 %** — so the optimiser state and the
+        against 3 152 353 frozen — 0.042 %** — so the optimizer state and the
         saved file shrink by three orders of magnitude (12.0 MB to 7.6 kB) and
         the fine-tune fits where a full one does not.
 
@@ -2328,7 +2494,7 @@ class FineTuningConfig:
         .. warning::
 
            The spectral weights are **not** adapted. They hold ~99.8 % of the
-           parameters, but a rank-:math:`r` factorisation of a 5-index complex
+           parameters, but a rank-:math:`r` factorization of a 5-index complex
            kernel is a choice of which axes to pair rather than one
            decomposition, and adapting them would also stop being cheap. What
            LoRA says here is *keep the learned operator, re-fit how fields
@@ -2474,6 +2640,7 @@ class TrainingConfig:
     ENABLE_BLOCKS = (
         ("model", "equivariant", EQUIVARIANT_SETUP_KEYS, (True, False)),
         ("model", "paw", PAW_SETUP_KEYS, (True, False)),
+        ("model", "structure_input", STRUCTURE_INPUT_KEYS, (True, False)),
         ("training", "physics_informed", PHYSICS_INFORMED_KEYS,
          ("auto", True, False)),
         ("symbolic", "physics", SYMBOLIC_PHYSICS_KEYS, (True, False)),
@@ -2565,7 +2732,7 @@ class TrainingConfig:
 
     def to_yaml(self, path=None, minimal=False):
         """
-        Serialise to YAML.
+        Serialize to YAML.
 
         Parameters
         ----------
@@ -2709,7 +2876,7 @@ class TrainingConfig:
         """
         ``<run>/<name>.poraque``, or ``None`` when checkpointing is off.
 
-        A fine-tune gets its own stem. It is a specialisation, usually onto a
+        A fine-tune gets its own stem. It is a specialization, usually onto a
         narrower set of materials, and writing it over the general model would
         replace something broad with something narrow, silently and by default.
 
@@ -2735,7 +2902,7 @@ class TrainingConfig:
         -------
         str or None
         """
-        return self._log_artefact(self.output.log, ".log")
+        return self._log_artifact(self.output.log, ".log")
 
     def json_path(self):
         """
@@ -2745,13 +2912,13 @@ class TrainingConfig:
         -------
         str or None
         """
-        return self._log_artefact(self.output.json, ".json")
+        return self._log_artifact(self.output.json, ".json")
 
-    def _log_artefact(self, explicit, suffix):
+    def _log_artifact(self, explicit, suffix):
         """
         An explicit path, or one inside the run's ``log/`` directory.
 
-        Deriving is what lets a config name a run once. Every artefact comes
+        Deriving is what lets a config name a run once. Every artifact comes
         from ``task.name``; the log and the metrics were the two a user had to
         repeat, and the only two that two different runs could end up sharing
         while writing separate weights.
@@ -2808,7 +2975,7 @@ class TrainingConfig:
         """
         excluded = {"pauli_residual", "pauli_scale", "learn_pauli_scale",
                     "precision", "activation", "kan_setup", "equivariant",
-                    "paw"}
+                    "paw", "structure_input", "occupancy_channels"}
         kwargs = {f.name: getattr(self.model, f.name)
                   for f in fields(self.model) if f.name not in excluded}
         # `activation` and `kan_setup` are one setting in the file and two in

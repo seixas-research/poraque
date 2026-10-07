@@ -79,7 +79,7 @@ carries an index of a set it does not hold.
 
 Sizing the whole database exactly would mean one S3 ``HEAD`` per object, tens
 of thousands of them, so a sampled estimate also **projects**: the sample mean
-times the number the index advertises, reported on its own line and labelled as
+times the number the index advertises, reported on its own line and labeled as
 a projection. Both numbers are in the report because they answer different
 questions --- "what will this fetch" and "what would all of it cost" --- and an
 estimate that stated only one of them would be read as the other.
@@ -193,7 +193,7 @@ as normal:
 * **Resume** from ``manifest.json``, rewritten after every single file.
   An entry marked ``downloaded`` or ``cached`` is settled; a ``failed`` one is
   retried, since that is the only way the set ever reaches completeness. A file
-  on disk with no manifest entry is honoured too, so the two mechanisms overlap
+  on disk with no manifest entry is honored too, so the two mechanisms overlap
   rather than depending on each other.
 * **Backoff** on rate limits and dropped connections — exponential, with jitter
   so throttled workers do not all return together. A *permanent* failure is
@@ -211,7 +211,7 @@ the store keeps, so it is a re-encoding and not a conversion.
 
 **Nothing is lost in it**, which was not true before 2026-09-01: the store took
 ``data["total"]`` and wrote no augmentation, so one download produced two
-different datasets depending on the flag. The magnetisation block reached
+different datasets depending on the flag. The magnetization block reached
 training — ``data.spin: auto`` resolves against what is on disk, so the same
 materials trained a two-channel operator as ``CHGCAR``\ s and a one-channel one
 as stores — and the PAW records reached VASP, or rather did not: no store could
@@ -237,7 +237,7 @@ import time
 import numpy as np
 from datetime import datetime, UTC
 
-from .. import banner
+from ..utils.logging import Logger, field_lines, header
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from itertools import combinations
@@ -472,13 +472,18 @@ class _Progress:
     ``print`` into the same line would not.
     """
 
+    #: Where a line goes; the fetcher replaces it with its own ``log``.
+    #: A class attribute, so a bar built without one --- or by a test that
+    #: replaces ``__init__`` --- still has somewhere to write.
+    log = print
+
     def __init__(self, total, description, unit="file"):
         self.total = int(total)
         try:
             from tqdm.auto import tqdm
         except ImportError:                                     # pragma: no cover
             self._bar = None
-            print(f"{description}: {self.total} {unit}(s)")
+            self.log(f"  {description}: {self.total} {unit}(s)")
         else:
             self._bar = tqdm(total=self.total, desc=description, unit=unit,
                              dynamic_ncols=True)
@@ -496,11 +501,17 @@ class _Progress:
         self._bar.update(1)
 
     def write(self, message):
-        """Print a line that must survive the bar overwriting itself."""
+        """
+        Print a line that must survive the bar overwriting itself.
+
+        Through :attr:`log`, so the line reaches whatever the command writes
+        to, with the bar cleared around it rather than written into.
+        """
         if self._bar is None:                                   # pragma: no cover
-            print(message)
+            self.log(message)
         else:
-            self._bar.write(message)
+            with self._bar.external_write_mode():
+                self.log(message)
 
     def close(self):
         if self._bar is not None:
@@ -657,74 +668,79 @@ class Estimate:
         return len(kept), sum(kept)
 
     def __str__(self):
+        """
+        The estimate as blocks, each opened by its ``[NAME]`` header.
+
+        Library code, so the headers are plain :func:`~poraque.utils.logging.
+        header` lines rather than a :class:`~poraque.utils.logging.Logger`'s:
+        the text reads the same printed on its own or written into a
+        command's log.
+        """
         good = sorted(size for size in self.sizes.values() if size > 0)
         if not good:
-            return "Estimate: no charge densities available"
+            return "\n".join([header("estimate"),
+                              f"  {self.label}: no charge densities available"])
 
         def percentile(fraction):
             return good[min(int(len(good) * fraction), len(good) - 1)]
 
-        rule = "=" * 66
-        lines = [
-            rule,
-            f"  CHGCAR ESTIMATE - {self.label}",
-            rule,
-            f"  Materials matched            : {self.n_materials}",
-            f"  Advertising a charge density : {self.n_advertised}",
-        ]
+        def block(name, lines):
+            return [header(name)] + lines
+
+        selection = {"Selection": self.label,
+                     "Materials matched": self.n_materials,
+                     "Advertising a charge density": self.n_advertised}
         if self.is_sampled:
             share = 100 * self.sampled / max(self.n_advertised, 1)
+            selection["SAMPLED AT RANDOM"] = (f"{self.sampled} "
+                                              f"({share:.1f}%, seed {self.seed})")
+        selection["FILES TO DOWNLOAD"] = self.n_available
+        selection["TOTAL DOWNLOAD"] = _format_bytes(self.download_bytes)
+        lines = block("estimate", field_lines(selection))
+        if self.is_sampled:
             lines += [
-                f"  SAMPLED AT RANDOM            : {self.sampled} "
-                f"({share:.1f}%, seed {self.seed})",
-                f"  FILES TO DOWNLOAD            : {self.n_available}",
-                f"  TOTAL DOWNLOAD               : "
-                f"{_format_bytes(self.download_bytes)}",
                 "  method: every sampled object measured exactly with an S3 "
                 "HEAD request.",
                 "          The figures below describe the sample, which is "
                 "what a",
                 "          download would fetch -- not the whole matching set.",
-                "-" * 66,
-                f"  Mean measured object         : "
-                f"{_format_bytes(self.mean_bytes)}",
-                f"  Whole set, if it were fetched: ~"
-                f"{_format_bytes(self.projected_bytes)}  "
-                f"(mean x {self.n_advertised})",
+                "",
             ]
+            lines += block("projection", field_lines({
+                "Mean measured object": _format_bytes(self.mean_bytes),
+                "Whole set, if it were fetched":
+                    f"~{_format_bytes(self.projected_bytes)}  "
+                    f"(mean x {self.n_advertised})"}))
         else:
-            lines += [
-                f"  FILES TO DOWNLOAD            : {self.n_available}",
-                f"  TOTAL DOWNLOAD               : "
-                f"{_format_bytes(self.download_bytes)}",
-                "  method: every object measured exactly with an S3 HEAD "
-                "request.",
-            ]
-        lines += ["-" * 66,
-            f"  Storage if kept gzipped      : {_format_bytes(self.gz_disk_bytes)}",
-            f"  Storage if UNZIPPED (x{UNZIP_EXPANSION})   : "
-            f"{_format_bytes(self.unzipped_bytes)}",
-            "-" * 66,
-            f"  smallest / median / largest  : {_format_bytes(good[0])} / "
-            f"{_format_bytes(percentile(0.5))} / {_format_bytes(good[-1])}",
-            f"  90th percentile              : {_format_bytes(percentile(0.9))}",
-        ]
+            lines.append("  method: every object measured exactly with an S3 "
+                         "HEAD request.")
+        lines.append("")
+        lines += block("storage", field_lines({
+            "Storage if kept gzipped": _format_bytes(self.gz_disk_bytes),
+            f"Storage if UNZIPPED (x{UNZIP_EXPANSION})":
+                _format_bytes(self.unzipped_bytes)}))
+        lines.append("")
+        sizes = {"smallest / median / largest":
+                 f"{_format_bytes(good[0])} / {_format_bytes(percentile(0.5))}"
+                 f" / {_format_bytes(good[-1])}",
+                 "90th percentile": _format_bytes(percentile(0.9))}
         if self.n_missing > 0:
-            lines.append(f"  Advertised but unavailable   : {self.n_missing}")
-        lines.append("-" * 66)
-        lines.append("  If you cap file size (--max-size-mb / --max-size-gb):")
+            sizes["Advertised but unavailable"] = self.n_missing
+        lines += block("file sizes", field_lines(sizes))
+        lines.append("")
+        lines += block("size caps", [
+            "  If you cap file size (--max-size-mb / --max-size-gb):"])
         for cap in (5, 10, 20, 50, 100, 200):
             count, total = self.files_under(cap)
             if count:
                 expanded = _format_bytes(total * DISK_PER_DOWNLOAD * UNZIP_EXPANSION)
                 lines.append(f"    <= {cap:4d} MB : {count:5d} files, "
                              f"{_format_bytes(total):>9}  (unzipped {expanded})")
-        lines.append("-" * 66)
-        lines.append("  10 largest:")
+        lines.append("")
+        lines += block("largest files", ["  10 largest:"])
         for row in self.rows[:10]:
             lines.append(f"    {row['material_id']:<14} {row['formula_pretty']:<14} "
                          f"{row['nsites']:>4} sites {row['size_mb']:>8.1f} MB")
-        lines.append(rule)
         return "\n".join(lines)
 
 
@@ -762,6 +778,10 @@ class MPDataFetcher:
         cell.
     exclude_deprecated : bool, optional
         Drop entries MP has marked deprecated. On by default.
+    log : callable, optional
+        Where every line of progress goes; :func:`print` by default.
+        ``poraque-mp`` passes its :class:`~poraque.utils.logging.Logger`, and
+        each stage opens its own ``[NAME]`` block through it.
 
     Notes
     -----
@@ -780,7 +800,7 @@ class MPDataFetcher:
     def __init__(self, elements=None, api_key=None, outdir=".", compress=True,
                  workers=16, band_gap=None, crystal_system=None,
                  is_stable=None, num_sites=None, exclude_deprecated=True,
-                 retries=4, retry_delay=2.0):
+                 retries=4, retry_delay=2.0, log=print):
         if isinstance(elements, str):
             elements = elements.replace("-", " ").split()
         # No elements is not an error any more: it means *every* material the
@@ -789,11 +809,12 @@ class MPDataFetcher:
         self.elements = sorted(set(elements)) if elements else []
         # Set by `estimate(sample=N)`: the material ids this run is about, or
         # None for "everything that matched". Everything written into `outdir`
-        # honours it, so a sampled directory never carries a summary of a set
+        # honors it, so a sampled directory never carries a summary of a set
         # it does not hold.
         self._selected = None
         self.retries = int(retries)
         self.retry_delay = float(retry_delay)
+        self.log = log
 
         self._api_key = api_key or load_api_key()
 
@@ -857,6 +878,18 @@ class MPDataFetcher:
         count = len(self._documents) if self._documents is not None else "?"
         return (f"{type(self).__name__}({self.label}, "
                 f"materials={count}, outdir='{self.outdir}')")
+
+    def _section(self, name):
+        """
+        Open the block ``name``: through the Logger when there is one, and as
+        the same two plain lines --- a blank one and the header --- when
+        :attr:`log` is any other callable.
+        """
+        if isinstance(self.log, Logger):
+            self.log.section(name)
+        else:
+            self.log("")
+            self.log(header(name))
 
     # ------------------------------------------------------------------ #
     # Layout
@@ -924,7 +957,7 @@ class MPDataFetcher:
             ``structure`` is the heaviest field there is, and an estimate never
             looks at one. A cached light result is re-queried automatically if
             something later asks for a field it does not carry, so this is an
-            optimisation and never a trap.
+            optimization and never a trap.
 
         Returns
         -------
@@ -940,19 +973,22 @@ class MPDataFetcher:
             missing = set(fields) - set(self._fields) if self._fields else set()
             if not missing:
                 return self._documents
-            print(f"  re-querying: the cached documents were fetched without "
-                  f"{sorted(missing)}")
+            self._section("search")
+            self.log(f"  re-querying: the cached documents were fetched "
+                     f"without {sorted(missing)}")
             refresh = True
+        else:
+            self._section("search")
 
         rester = self._connect()
         filters = self._query_filters()
 
         if self.elements:
             systems = self.chemical_systems
-            print(f"Searching {len(systems)} chemical systems in the "
-                  f"{'-'.join(self.elements)} space ...")
+            self.log(f"  Searching {len(systems)} chemical systems in the "
+                     f"{'-'.join(self.elements)} space ...")
             if filters:
-                print(f"  filters: {filters}")
+                self.log(f"  filters: {filters}")
             documents = rester.materials.summary.search(
                 chemsys=systems, fields=fields, **filters)
         else:
@@ -960,25 +996,25 @@ class MPDataFetcher:
             # actually have a density. `has_props` is what makes this a
             # question the API answers rather than one answered by downloading
             # every summary document and discarding 90 % of them.
-            print("Searching the whole database for materials with a charge "
-                  "density ...")
+            self.log("  Searching the whole database for materials with a "
+                     "charge density ...")
             if filters:
-                print(f"  filters: {filters}")
+                self.log(f"  filters: {filters}")
             documents, _ = with_retries(
                 lambda: rester.materials.summary.search(
                     has_props=["charge_density"], fields=fields,
                     **filters),
                 attempts=self.retries, base_delay=self.retry_delay,
-                label="  ")
+                label="  ", log=self.log)
 
         kept = [d for d in documents if self._passes_local_filters(d)]
         if len(kept) != len(documents):
-            print(f"  -> {len(documents) - len(kept)} dropped by "
-                  f"crystal-system / deprecation filters")
+            self.log(f"  -> {len(documents) - len(kept)} dropped by "
+                     f"crystal-system / deprecation filters")
         kept.sort(key=lambda d: (d.nelements, d.chemsys, d.formula_pretty,
                                  str(d.material_id)))
         self._searched_all = not self.elements
-        print(f"  -> {len(kept)} materials found")
+        self.log(f"  -> {len(kept)} materials found")
         self._documents = kept
         self._fields = fields
         # The resolved keys, sizes and selection belong to the previous
@@ -1070,8 +1106,9 @@ class MPDataFetcher:
         if identifiers is None:
             identifiers = [str(d.material_id) for d in self.with_charge_density]
         identifiers = [str(i) for i in identifiers]
-        print(f"Resolving charge-density tasks for {len(identifiers)} "
-              f"materials ...")
+        self._section("tasks")
+        self.log(f"  Resolving charge-density tasks for {len(identifiers)} "
+                 f"materials ...")
 
         candidates = {}
         for document in self._batched_search(
@@ -1083,7 +1120,7 @@ class MPDataFetcher:
                 candidates[str(document["material_id"])] = static
 
         tasks = sorted({task for group in candidates.values() for task in group})
-        print(f"  -> {len(tasks)} candidate static tasks ...")
+        self.log(f"  -> {len(tasks)} candidate static tasks ...")
         task_docs = self._batched_search(
             rester.materials.tasks.search, "task_ids", tasks,
             fields=["task_id", "last_updated"])
@@ -1103,7 +1140,7 @@ class MPDataFetcher:
             alpha = AlphaID(validate_ids([newest])[0].split("-")[-1], prefix="mp")
             keys[identifier] = f"{CHGCAR_PREFIX}/{alpha.string}.json.gz"
 
-        print(f"  -> resolved {len(keys)} objects")
+        self.log(f"  -> resolved {len(keys)} objects")
         if len(identifiers) == len(self.with_charge_density):
             self._keys = keys
         return keys
@@ -1122,12 +1159,12 @@ class MPDataFetcher:
         for position, start in enumerate(batches, 1):
             chunk = values[start:start + ID_BATCH]
             if len(values) > ID_BATCH:
-                print(f"    batch {position}/{len(batches)} "
-                      f"({len(chunk)} ids) ...")
+                self.log(f"    batch {position}/{len(batches)} "
+                         f"({len(chunk)} ids) ...")
             found, _ = with_retries(
                 lambda: search(**{argument: chunk}, **kwargs),
                 attempts=self.retries, base_delay=self.retry_delay,
-                label="    ")
+                label="    ", log=self.log)
             results.extend(found)
         return results
 
@@ -1149,7 +1186,8 @@ class MPDataFetcher:
             except ClientError:
                 return identifier, -1       # advertised but absent
 
-        print(f"Reading exact sizes ({len(keys)} HEAD requests) ...")
+        self._section("sizes")
+        self.log(f"  Reading exact sizes ({len(keys)} HEAD requests) ...")
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             return dict(pool.map(head, keys.items()))
 
@@ -1210,8 +1248,9 @@ class MPDataFetcher:
             # the API refuses outright past a few thousand ids.
             method = "sampled"
             picked = random.Random(seed).sample(sorted(advertised), int(sample))
-            print(f"Sampling {len(picked)} of {len(advertised)} materials "
-                  f"(seed {seed}) ...")
+            self._section("sample")
+            self.log(f"  Sampling {len(picked)} of {len(advertised)} "
+                     f"materials (seed {seed}) ...")
             chosen = self._resolve_keys(refresh=refresh, identifiers=picked)
             # The selection, not just a sizing trick: everything this run
             # writes into `outdir` -- the summary, the CIFs, the densities --
@@ -1266,7 +1305,7 @@ class MPDataFetcher:
             writer = csv.DictWriter(handle, fieldnames=list(estimate.rows[0].keys()))
             writer.writeheader()
             writer.writerows(estimate.rows)
-        print(f"  -> wrote {path}")
+        self.log(f"  -> wrote {path}")
         return path
 
     # ------------------------------------------------------------------ #
@@ -1319,8 +1358,8 @@ class MPDataFetcher:
             writer.writerows(records)
         with (self.outdir / f"{basename}.json").open("w") as handle:
             json.dump(records, handle, indent=2)
-        print(f"  -> wrote {basename}.csv and {basename}.json "
-              f"({len(records)} rows)")
+        self.log(f"  -> wrote {basename}.csv and {basename}.json "
+                 f"({len(records)} rows)")
         return csv_path
 
     def write_structures(self):
@@ -1338,7 +1377,8 @@ class MPDataFetcher:
                 document.structure.to(filename=str(
                     self.structure_dir / f"{document.material_id}.cif"))
                 written += 1
-        print(f"  -> wrote {written} CIF files to {self.structure_dir.name}/")
+        self.log(f"  -> wrote {written} CIF files to "
+                 f"{self.structure_dir.name}/")
         return written
 
     # ------------------------------------------------------------------ #
@@ -1406,7 +1446,7 @@ class MPDataFetcher:
         a run that is interrupted after 900 of 3000 objects re-reads that file
         and starts at 901 without stat-ing, re-resolving or re-heading the
         first 900. A file on disk with no manifest entry — a manifest lost, or
-        a directory assembled by hand — is still honoured, so the two
+        a directory assembled by hand — is still honored, so the two
         mechanisms overlap rather than depending on each other.
 
         **Rate limits and dropped connections** are retried with exponential
@@ -1484,17 +1524,20 @@ class MPDataFetcher:
         planned = sum(estimate.sizes[str(d.material_id)] for d in targets)
         on_disk = planned * DISK_PER_DOWNLOAD * (1 if compress else UNZIP_EXPANSION)
         store = "HDF5 stores" if hdf5 else "CHGCARs"
+        self._section("download")
         if estimate.is_sampled:
-            print(f"Sampled run: {estimate.sampled} of "
-                  f"{estimate.n_advertised} materials (seed {estimate.seed}).")
-        print(f"Downloading {len(targets)} {store} "
-              f"(~{_format_bytes(planned)} transfer, ~{_format_bytes(on_disk)} "
-              f"on disk {'gzipped' if compress else 'unzipped'}) ...")
+            self.log(f"  Sampled run: {estimate.sampled} of "
+                     f"{estimate.n_advertised} materials "
+                     f"(seed {estimate.seed}).")
+        self.log(f"  Downloading {len(targets)} {store} "
+                 f"(~{_format_bytes(planned)} transfer, "
+                 f"~{_format_bytes(on_disk)} on disk "
+                 f"{'gzipped' if compress else 'unzipped'}) ...")
 
         done = self.load_manifest() if skip_existing else {}
         if done:
-            print(f"  resuming: {len(done)} entries already in "
-                  f"{MANIFEST_JSON}")
+            self.log(f"  resuming: {len(done)} entries already in "
+                     f"{MANIFEST_JSON}")
         provenance = retrieval_provenance()
         started = time.time()
         remaining = [d for d in targets
@@ -1508,8 +1551,8 @@ class MPDataFetcher:
         manifest = [row for identifier, row in done.items()
                     if identifier not in retrying]
         if len(remaining) != len(targets):
-            print(f"  {len(targets) - len(remaining)} already done, "
-                  f"{len(remaining)} to fetch")
+            self.log(f"  {len(targets) - len(remaining)} already done, "
+                     f"{len(remaining)} to fetch")
 
         # Everything that needs a deck: what is about to be fetched, plus
         # anything already settled whose directory has no marker yet -- which
@@ -1529,8 +1572,8 @@ class MPDataFetcher:
         inputs = (self.task_inputs(needing) if vasp_inputs and needing else {})
 
         if backfill:
-            print(f"  writing VASP inputs for {len(backfill)} material(s) "
-                  f"already on disk")
+            self.log(f"  writing VASP inputs for {len(backfill)} material(s) "
+                     f"already on disk")
             for row in backfill:
                 identifier = str(row["material_id"])
                 stored = self.outdir / str(row.get("file") or "")
@@ -1546,6 +1589,7 @@ class MPDataFetcher:
         # both easier and possible after the run. What still goes to the
         # screen is what the manifest cannot make good: a failure.
         bar = _Progress(len(remaining), f"Fetching {store}")
+        bar.log = self.log
         fetched_bytes = 0
 
         for document in remaining:
@@ -1624,12 +1668,12 @@ class MPDataFetcher:
         # what it carries. Losing the summary line to a KeyError at the end of
         # a three-hour run is not a trade worth making for strictness.
         total = sum(float(row.get("size_mb") or 0.0) for row in manifest)
-        print(f"  -> {succeeded}/{len(targets)} on disk, {total:.0f} MB, "
-              f"elapsed {(time.time() - started) / 60:.1f} min")
+        self.log(f"  -> {succeeded}/{len(targets)} on disk, {total:.0f} MB, "
+                 f"elapsed {(time.time() - started) / 60:.1f} min")
         failed = [row for row in manifest if row["status"] == "failed"]
         if failed:
-            print(f"  -> {len(failed)} failed; re-running this command retries "
-                  f"only those.")
+            self.log(f"  -> {len(failed)} failed; re-running this command "
+                     f"retries only those.")
         return manifest
 
     # ------------------------------------------------------------------ #
@@ -1667,7 +1711,7 @@ class MPDataFetcher:
             return {}
 
         rester = self._connect()
-        print(f"Reading VASP inputs for {len(tasks)} tasks ...")
+        self.log(f"  Reading VASP inputs for {len(tasks)} tasks ...")
         found = {}
         try:
             documents = self._batched_search(
@@ -1676,8 +1720,9 @@ class MPDataFetcher:
         except Exception as error:                              # noqa: BLE001
             # Inputs are a convenience beside the data, never the data. A
             # failure here must not cost the densities the run came for.
-            print(f"  could not read task inputs ({type(error).__name__}: "
-                  f"{error}); falling back to MP's standard input set")
+            self.log(f"  could not read task inputs "
+                     f"({type(error).__name__}: {error}); falling back to "
+                     f"MP's standard input set")
             return {}
 
         for document in documents:
@@ -1685,7 +1730,7 @@ class MPDataFetcher:
             inputs = _field(document, "orig_inputs")
             if identifier and inputs is not None:
                 found[identifier] = inputs
-        print(f"  -> {len(found)}/{len(tasks)} tasks carry their inputs")
+        self.log(f"  -> {len(found)}/{len(tasks)} tasks carry their inputs")
         return found
 
     def write_vasp_inputs(self, identifier, structure, inputs=None):
@@ -1727,7 +1772,8 @@ class MPDataFetcher:
         directory.mkdir(parents=True, exist_ok=True)
         structure.write(str(directory / "POSCAR"))
 
-        incar, kpoints, origin = self._incar_and_kpoints(structure, inputs)
+        incar, kpoints, origin = self._incar_and_kpoints(structure, inputs,
+                                                         log=self.log)
         provenance = ("the task record this density came from" if origin == "task"
                       else "MPStaticSet -- MP's standard set, NOT this run")
         (directory / "INCAR").write_text(
@@ -1739,7 +1785,7 @@ class MPDataFetcher:
         return origin
 
     @staticmethod
-    def _incar_and_kpoints(structure, inputs):
+    def _incar_and_kpoints(structure, inputs, log=print):
         """
         The two decks and where they came from, as ``(incar, kpoints, origin)``.
 
@@ -1762,7 +1808,7 @@ class MPDataFetcher:
             kpoints = str(recorded_kpoints)
 
         if incar is None or kpoints is None:
-            standard = _standard_input_set(structure)
+            standard = _standard_input_set(structure, log=log)
             if incar is None and standard is not None:
                 incar = str(standard.incar)
             if kpoints is None and standard is not None:
@@ -1807,8 +1853,8 @@ class MPDataFetcher:
                                            os.path.basename(str(density_path))))
             return origin
         except Exception as error:                              # noqa: BLE001
-            print(f"  {identifier}: could not write VASP inputs "
-                  f"({type(error).__name__}: {error})")
+            self.log(f"  {identifier}: could not write VASP inputs "
+                     f"({type(error).__name__}: {error})")
             return f"failed: {type(error).__name__}"
 
     @staticmethod
@@ -1866,7 +1912,7 @@ class MPDataFetcher:
         structure = poscar_from_pymatgen(chgcar.structure)
         grid = FieldGrid(values.shape, structure.cell)
 
-        # An ISPIN = 2 download carries a magnetisation block, and the text
+        # An ISPIN = 2 download carries a magnetization block, and the text
         # path keeps it because pymatgen writes the whole object. Dropping it
         # here would make the two formats different datasets from one
         # download -- `data.spin: auto` resolves against what is on disk, so
@@ -1903,7 +1949,8 @@ class MPDataFetcher:
             with path.open() as handle:
                 rows = json.load(handle)
         except (OSError, ValueError):
-            print(f"  {path} is unreadable; starting without a resume point")
+            self.log(f"  {path} is unreadable; starting without a resume "
+                     f"point")
             return {}
         if isinstance(rows, dict):
             rows = rows.get("entries", [])
@@ -1989,8 +2036,9 @@ class MPDataFetcher:
         """
         files = [path for path in self._downloaded()
                  if path.suffix == ".gz"]
+        self._section("decompress")
         if not files:
-            print(f"No gzipped CHGCARs under {self.outdir}")
+            self.log(f"  No gzipped CHGCARs under {self.outdir}")
             return {"n": 0, "before": 0, "after": 0}
 
         before = sum(path.stat().st_size for path in files)
@@ -1998,13 +2046,13 @@ class MPDataFetcher:
         projected = before * UNZIP_EXPANSION
         needed = projected + before if keep_original else projected
 
-        print(f"{len(files)} gzipped CHGCARs, {_format_bytes(before)}")
-        print(f"  projected unzipped : {_format_bytes(projected)} "
-              f"(x{UNZIP_EXPANSION})")
-        print(f"  free on volume     : {_format_bytes(free)}")
+        self.log(f"  {len(files)} gzipped CHGCARs, {_format_bytes(before)}")
+        self.log(f"  projected unzipped : {_format_bytes(projected)} "
+                 f"(x{UNZIP_EXPANSION})")
+        self.log(f"  free on volume     : {_format_bytes(free)}")
 
         if dry_run:
-            print("  (dry run - nothing written)")
+            self.log("  (dry run - nothing written)")
             return {"n": len(files), "before": before, "after": projected}
 
         extra = needed - (0 if keep_original else before)
@@ -2026,17 +2074,19 @@ class MPDataFetcher:
             if not keep_original:
                 archive.unlink()
             if position % 25 == 0 or position == len(files):
-                print(f"  [{position}/{len(files)}] {_format_bytes(after)} written")
-        print(f"  -> expanded {len(files)} files: {_format_bytes(before)} -> "
-              f"{_format_bytes(after)} (x{after / before:.2f})")
+                self.log(f"  [{position}/{len(files)}] "
+                         f"{_format_bytes(after)} written")
+        self.log(f"  -> expanded {len(files)} files: {_format_bytes(before)} "
+                 f"-> {_format_bytes(after)} (x{after / before:.2f})")
         return {"n": len(files), "before": before, "after": after}
 
     def recompress(self, level=6):
         """Re-gzip expanded CHGCARs, reclaiming the space :meth:`decompress` cost."""
         files = [path for path in self._downloaded()
                  if path.suffix not in (".gz", ".h5")]
+        self._section("recompress")
         if not files:
-            print(f"No expanded CHGCARs under {self.outdir}")
+            self.log(f"  No expanded CHGCARs under {self.outdir}")
             return {"n": 0, "before": 0, "after": 0}
 
         before = sum(path.stat().st_size for path in files)
@@ -2049,9 +2099,10 @@ class MPDataFetcher:
             after += archive.stat().st_size
             plain.unlink()
             if position % 25 == 0 or position == len(files):
-                print(f"  [{position}/{len(files)}] {_format_bytes(after)} written")
-        print(f"  -> recompressed {len(files)} files: {_format_bytes(before)} -> "
-              f"{_format_bytes(after)}")
+                self.log(f"  [{position}/{len(files)}] "
+                         f"{_format_bytes(after)} written")
+        self.log(f"  -> recompressed {len(files)} files: "
+                 f"{_format_bytes(before)} -> {_format_bytes(after)}")
         return {"n": len(files), "before": before, "after": after}
 
     # ------------------------------------------------------------------ #
@@ -2073,14 +2124,16 @@ class MPDataFetcher:
         # No geometry is written by a dry run, so none is fetched.
         self.search(fields=ESTIMATE_FIELDS)
         estimate = self.estimate(sample=sample, seed=seed)
-        print("\n" + str(estimate) + "\n")
-        print(f"  {estimate.n_available} file(s) to download, "
-              f"{_format_bytes(estimate.download_bytes)} total "
-              f"({_format_bytes(estimate.gz_disk_bytes)} on disk gzipped).")
+        self.log("")
+        self.log(str(estimate))
+        self._section("dry run")
+        self.log(f"  {estimate.n_available} file(s) to download, "
+                 f"{_format_bytes(estimate.download_bytes)} total "
+                 f"({_format_bytes(estimate.gz_disk_bytes)} on disk gzipped).")
         if estimate.is_sampled:
-            print(f"  That is the sample. All {estimate.n_advertised} would be "
-                  f"~{_format_bytes(estimate.projected_bytes)}.")
-        print("  Dry run: nothing downloaded, nothing written.")
+            self.log(f"  That is the sample. All {estimate.n_advertised} "
+                     f"would be ~{_format_bytes(estimate.projected_bytes)}.")
+        self.log("  Dry run: nothing downloaded, nothing written.")
         return estimate
 
     def run(self, estimate_only=False, skip_chgcar=False, decompress=False,
@@ -2124,15 +2177,17 @@ class MPDataFetcher:
         estimate = self.estimate(sample=sample, seed=seed)
         # After the estimate, never before: the sample is drawn there, and a
         # summary written first would be a summary of the whole matching set.
+        self._section("summary files")
         self.write_summary()
         self.write_estimate()
-        print("\n" + str(estimate) + "\n")
+        self.log("")
+        self.log(str(estimate))
 
+        self._section("structures")
         self.write_structures()
         if not skip_chgcar:
             self.download(**download_kwargs)
             if decompress:
-                print()
                 self.decompress()
         return estimate
 
@@ -2150,7 +2205,7 @@ def augmentation_records(chgcar):
     than pymatgen's wider writer.
 
     One block per spin channel, in file order, because that is the order a
-    spin-polarised ``CHGCAR`` carries them in and the order
+    spin-polarized ``CHGCAR`` carries them in and the order
     :meth:`~poraque.fields.spin.SpinDensity.write` writes them back.
 
     Parameters
@@ -2161,7 +2216,7 @@ def augmentation_records(chgcar):
     -------
     list of list of str
         Empty when the object carries none --- a norm-conserving calculation
-        has no one-centre terms, and neither has anything reconstructed from a
+        has no one-center terms, and neither has anything reconstructed from a
         grid alone.
     """
     from ..fields.vasp.augmentation import format_augmentation
@@ -2211,12 +2266,12 @@ def _field(document, name):
     return getattr(document, name, None)
 
 
-def _standard_input_set(structure):
+def _standard_input_set(structure, log=print):
     """
     MP's own static input set for a structure, or ``None``.
 
     The fallback when a task's recorded inputs cannot be read. It is a weaker
-    answer and is labelled as one wherever it is used: an input set says what
+    answer and is labeled as one wherever it is used: an input set says what
     MP *would* choose for this structure today, which is not necessarily what
     the calculation behind the density was run with.
 
@@ -2236,8 +2291,8 @@ def _standard_input_set(structure):
                          np.asarray(structure.scaled_positions, dtype=float))
         return MPStaticSet(cell)
     except Exception as error:                                  # noqa: BLE001
-        print(f"  could not build a standard input set "
-              f"({type(error).__name__}: {error})")
+        log(f"  could not build a standard input set "
+            f"({type(error).__name__}: {error})")
         return None
 
 
@@ -2495,7 +2550,8 @@ def resolve_max_size_mb(args):
 
 def main(argv=None):
     """Console entry point for ``poraque-mp``."""
-    banner()
+    log = Logger()
+    log.banner()
     args = build_parser().parse_args(argv)
 
     elements = None if args.all else args.elements
@@ -2515,11 +2571,24 @@ def main(argv=None):
             crystal_system=args.crystal_system,
             is_stable=True if args.stable_only else None,
             num_sites=args.num_sites, retries=args.retries,
-            retry_delay=args.retry_delay,
+            retry_delay=args.retry_delay, log=log,
         )
     except ValueError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
+
+    action = ("decompress" if args.decompress
+              else "recompress" if args.recompress
+              else "estimate" if args.estimate
+              else "metadata and structures" if args.skip_chgcar
+              else "download")
+    log.title(f"Materials Project charge densities: {action}, "
+              f"{fetcher.label}")
+    log.section("selection")
+    log.fields({"elements": fetcher.label,
+                "output directory": fetcher.outdir,
+                "sample": (f"{args.sample} (seed {args.seed})"
+                           if args.sample else None)})
 
     with fetcher:
         if args.decompress:
@@ -2537,7 +2606,8 @@ def main(argv=None):
                                  else args.compression),
                     compression_level=args.compression_level,
                     vasp_inputs=not args.no_vasp_inputs)
-    print("\nDone.")
+    log.section("done")
+    log.text(f"Done. Everything is under {fetcher.outdir}.")
     return 0
 
 

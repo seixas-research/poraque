@@ -5,8 +5,8 @@
 \label{ch:ofdft}
 
 Kohn--Sham theory buys an exact kinetic energy at the price of reintroducing
-$N$ orbitals, and with them the $\mathcal{O}(N^3)$ cost of orthogonalising and
-diagonalising. Orbital-free DFT removes the orbitals again. It is the reason
+$N$ orbitals, and with them the $\mathcal{O}(N^3)$ cost of orthogonalizing and
+diagonalizing. Orbital-free DFT removes the orbitals again. It is the reason
 the second learned map matters.
 
 \section{The variational problem}
@@ -20,7 +20,7 @@ functional of the density,
           + E_{\mathrm{xc}}[\rho] .
   \label{eq:oftotal}
 \end{equation}
-Minimising under the constraint $\int\rho\,\mathrm{d}\rr = N$ with a Lagrange
+Minimizing under the constraint $\int\rho\,\mathrm{d}\rr = N$ with a Lagrange
 multiplier $\mu$ gives the Euler--Lagrange equation
 \begin{equation}
   \boxed{\;
@@ -93,7 +93,7 @@ $\delta\Ts/\delta\rho$. For the two classical forms,
 \begin{pwarn}
 A model with small error in $\tau$ may still have a poor functional derivative,
 because differentiation amplifies high-frequency error. Training on $\tau$ alone
-therefore optimises a proxy for the quantity that is used. Chapter~\ref{ch:pifno}
+therefore optimizes a proxy for the quantity that is used. Chapter~\ref{ch:pifno}
 describes training \emph{through} the derivative to remove this mismatch.
 \end{pwarn}
 
@@ -114,7 +114,7 @@ crystal this divergence cancels exactly between the electron--electron,
 electron--ion and ion--ion terms, provided the cell is neutral overall. The
 standard convention --- adopted here and by VASP --- is to set the $\GG=0$
 component of \emph{each} Coulomb term to zero individually, which amounts to
-adding a uniform neutralising background. The consequence is that potentials are
+adding a uniform neutralizing background. The consequence is that potentials are
 defined only up to a constant, and their cell average vanishes.
 
 \section{The external potential of pseudo-ions}
@@ -133,7 +133,7 @@ with $\vext(\GG=0)\equiv 0$ and $\Omega$ the cell volume. The real-space field
 follows from one inverse FFT. The construction is $\mathcal{O}(N\log N)$,
 exactly periodic, and free of any real-space cutoff or Ewald parameter.
 
-The form factor $f_s(G)$ encodes the pseudisation:
+The form factor $f_s(G)$ encodes the pseudization:
 \begin{description}
   \item[$f_s = 1$] bare point ions --- the exact long-range limit, but its
     $1/G^2$ tail is truncated at the Nyquist frequency of any finite grid,

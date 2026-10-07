@@ -1,0 +1,96 @@
+{
+  "python": "3.12.7 | packaged by conda-forge | (main, Oct  4 2024, 15:57:01) [Clang 17.0.6 ]",
+  "torch": "2.5.1",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "runs": [
+    {
+      "scope": "readout e gradientes; CPU/Metal",
+      "summary": "14 passed, 25 deselected in 2.91s",
+      "failures": []
+    },
+    {
+      "scope": "PAW, dispositivos, IO, equivari\u00e2ncia, infer\u00eancia",
+      "summary": "340 passed, 8 skipped in 26.55s",
+      "failures": []
+    },
+    {
+      "scope": "su\u00edte geral sem marcadores GPU",
+      "summary": "16 failed, 2228 passed, 101 skipped, 27 deselected, 3 warnings in 132.98s (0:02:12)",
+      "failures": [
+        "FAILED tests/test_badges.py::TestTheTwoBadgeRowsAgree::test_they_are_identical_in_content_and_order",
+        "FAILED tests/test_badges.py::TestTheVersionBearingBadgesAreTruthful::test_the_pytorch_badge_matches_the_dependency_pin",
+        "FAILED tests/test_badges.py::TestTheVersionBearingBadgesAreTruthful::test_the_python_badge_is_read_from_pypi_not_typed_in",
+        "FAILED tests/test_badges.py::TestTheVersionBearingBadgesAreTruthful::test_the_license_badge_is_read_from_the_repository",
+        "FAILED tests/test_badges.py::TestTheDependencyBadgesNameRealDependencies::test_the_badge_is_in_the_row[ASE]",
+        "FAILED tests/test_badges.py::TestTheDependencyBadgesNameRealDependencies::test_the_badge_is_in_the_row[PyTorch]",
+        "FAILED tests/test_badges.py::TestTheDependencyBadgesNameRealDependencies::test_the_badge_is_in_the_row[h5py]",
+        "FAILED tests/test_badges.py::TestTheDependencyBadgesNameRealDependencies::test_the_badge_is_in_the_row[mp--api]",
+        "FAILED tests/test_badges.py::TestTheDependencyBadgesNameRealDependencies::test_h5py_is_there_because_the_cache_format_is",
+        "FAILED tests/test_badges.py::TestEveryBadgeIsALink::test_a_stack_badge_points_at_that_project[PyTorch-https://pytorch.org/]",
+        "FAILED tests/test_badges.py::TestEveryBadgeIsALink::test_a_stack_badge_points_at_that_project[ASE-https://wiki.fysik.dtu.dk/ase/]",
+        "FAILED tests/test_badges.py::TestEveryBadgeIsALink::test_a_stack_badge_points_at_that_project[h5py-https://www.h5py.org/]",
+        "FAILED tests/test_badges.py::TestEveryBadgeIsALink::test_a_stack_badge_points_at_that_project[mp--api-https://pypi.org/project/mp-api/]",
+        "FAILED tests/test_badges.py::TestEveryBadgeIsALink::test_the_python_badge_points_at_python",
+        "FAILED tests/test_badges.py::TestTheDocumentationBadge::test_it_is_labeled_manual",
+        "FAILED tests/test_vis.py::TestLogTickLabels::test_thins_the_minor_labels - as..."
+      ]
+    },
+    {
+      "scope": "API neighbor_min, treino, infer\u00eancia, checkpoints novos e antigos",
+      "summary": "262 passed, 7 skipped in 39.41s",
+      "failures": []
+    },
+    {
+      "scope": "su\u00edte geral final sem marcadores GPU",
+      "summary": "16 failed, 2231 passed, 101 skipped, 27 deselected, 3 warnings in 233.99s (0:03:53)",
+      "failures": [
+        "FAILED tests/test_badges.py::TestTheTwoBadgeRowsAgree::test_they_are_identical_in_content_and_order",
+        "FAILED tests/test_badges.py::TestTheVersionBearingBadgesAreTruthful::test_the_pytorch_badge_matches_the_dependency_pin",
+        "FAILED tests/test_badges.py::TestTheVersionBearingBadgesAreTruthful::test_the_python_badge_is_read_from_pypi_not_typed_in",
+        "FAILED tests/test_badges.py::TestTheVersionBearingBadgesAreTruthful::test_the_license_badge_is_read_from_the_repository",
+        "FAILED tests/test_badges.py::TestTheDependencyBadgesNameRealDependencies::test_the_badge_is_in_the_row[ASE]",
+        "FAILED tests/test_badges.py::TestTheDependencyBadgesNameRealDependencies::test_the_badge_is_in_the_row[PyTorch]",
+        "FAILED tests/test_badges.py::TestTheDependencyBadgesNameRealDependencies::test_the_badge_is_in_the_row[h5py]",
+        "FAILED tests/test_badges.py::TestTheDependencyBadgesNameRealDependencies::test_the_badge_is_in_the_row[mp--api]",
+        "FAILED tests/test_badges.py::TestTheDependencyBadgesNameRealDependencies::test_h5py_is_there_because_the_cache_format_is",
+        "FAILED tests/test_badges.py::TestEveryBadgeIsALink::test_a_stack_badge_points_at_that_project[PyTorch-https://pytorch.org/]",
+        "FAILED tests/test_badges.py::TestEveryBadgeIsALink::test_a_stack_badge_points_at_that_project[ASE-https://wiki.fysik.dtu.dk/ase/]",
+        "FAILED tests/test_badges.py::TestEveryBadgeIsALink::test_a_stack_badge_points_at_that_project[h5py-https://www.h5py.org/]",
+        "FAILED tests/test_badges.py::TestEveryBadgeIsALink::test_a_stack_badge_points_at_that_project[mp--api-https://pypi.org/project/mp-api/]",
+        "FAILED tests/test_badges.py::TestEveryBadgeIsALink::test_the_python_badge_points_at_python",
+        "FAILED tests/test_badges.py::TestTheDocumentationBadge::test_it_is_labeled_manual",
+        "FAILED tests/test_vis.py::TestLogTickLabels::test_thins_the_minor_labels - as..."
+      ]
+    },
+    {
+      "scope": "schema de todas as configura\u00e7\u00f5es, incluindo CHON recomendado",
+      "summary": "109 passed in 0.27s",
+      "failures": []
+    }
+  ],
+  "notes": "As 15 falhas de badges acompanham a edi\u00e7\u00e3o de README no commit 8e1c2b8; a falha Matplotlib j\u00e1 ocorria antes das corre\u00e7\u00f5es PAW.",
+  "inference_final": {
+    "passed": true,
+    "material": "mp-1212522",
+    "elements": [
+      "C",
+      "H",
+      "N",
+      "O"
+    ],
+    "grid": [
+      8,
+      10,
+      24
+    ],
+    "atoms": 26,
+    "record_sets": 2,
+    "record_lengths": {
+      "H": 15,
+      "C/N/O": 33
+    },
+    "normalized": false,
+    "paw_source": "model",
+    "artifact": "experiments/chon_ext2paw/results/final/inference_smoke/verification.json"
+  }
+}

@@ -1,0 +1,3037 @@
+{
+  "valence_charges": {
+    "1": 1.0000002300306312,
+    "6": 4.000000041837487,
+    "7": 4.999999930334189,
+    "8": 6.000001059836745
+  },
+  "materials": 432,
+  "max_absolute_difference": 5.460244000232706e-05,
+  "max_relative_difference": 2.8776943814105784e-07,
+  "per_material": [
+    {
+      "id": "mp-1001080",
+      "target_electron_count": 47.99999995238747,
+      "reference_valence_count": 48.00000736281797,
+      "absolute_difference": 7.410430498566711e-06,
+      "relative_difference": 1.543839450388714e-07
+    },
+    {
+      "id": "mp-1008374",
+      "target_electron_count": 16.000000006524044,
+      "reference_valence_count": 16.00000016734995,
+      "absolute_difference": 1.6082590548194275e-07,
+      "relative_difference": 1.0051618987487802e-08
+    },
+    {
+      "id": "mp-1008395",
+      "target_electron_count": 16.00000000287356,
+      "reference_valence_count": 16.00000016734995,
+      "absolute_difference": 1.6447638984118385e-07,
+      "relative_difference": 1.0279774257554009e-08
+    },
+    {
+      "id": "mp-1009490",
+      "target_electron_count": 12.000000003897966,
+      "reference_valence_count": 12.00000211967349,
+      "absolute_difference": 2.1157755227818598e-06,
+      "relative_difference": 1.7631459575437378e-07
+    },
+    {
+      "id": "mp-1009818",
+      "target_electron_count": 14.000000007018095,
+      "reference_valence_count": 13.999999902505866,
+      "absolute_difference": 1.04512228205067e-07,
+      "relative_difference": 7.46515920949116e-09
+    },
+    {
+      "id": "mp-1014214",
+      "target_electron_count": 16.999999997438724,
+      "reference_valence_count": 17.00000005584665,
+      "absolute_difference": 5.840792738354139e-08,
+      "relative_difference": 3.4357604230391575e-09
+    },
+    {
+      "id": "mp-1014281",
+      "target_electron_count": 17.00000000608345,
+      "reference_valence_count": 17.00000005584665,
+      "absolute_difference": 4.976320155947178e-08,
+      "relative_difference": 2.9272471409408723e-09
+    },
+    {
+      "id": "mp-1014286",
+      "target_electron_count": 34.00000000016299,
+      "reference_valence_count": 34.0000001116933,
+      "absolute_difference": 1.115303120968747e-07,
+      "relative_difference": 3.2803032861907877e-09
+    },
+    {
+      "id": "mp-1014287",
+      "target_electron_count": 34.000000010103655,
+      "reference_valence_count": 34.0000001116933,
+      "absolute_difference": 1.0158964869333431e-07,
+      "relative_difference": 2.9879308341059544e-09
+    },
+    {
+      "id": "mp-1014296",
+      "target_electron_count": 33.99999998635115,
+      "reference_valence_count": 34.0000001116933,
+      "absolute_difference": 1.2534215443338326e-07,
+      "relative_difference": 3.6865339418124146e-09
+    },
+    {
+      "id": "mp-1014297",
+      "target_electron_count": 68.00000056290573,
+      "reference_valence_count": 68.0000002233866,
+      "absolute_difference": 3.39519118597309e-07,
+      "relative_difference": 4.992928198264055e-09
+    },
+    {
+      "id": "mp-1014298",
+      "target_electron_count": 17.000000008457288,
+      "reference_valence_count": 17.00000005584665,
+      "absolute_difference": 4.738936354442558e-08,
+      "relative_difference": 2.7876096111027597e-09
+    },
+    {
+      "id": "mp-1014311",
+      "target_electron_count": 16.99999999948651,
+      "reference_valence_count": 17.00000005584665,
+      "absolute_difference": 5.636014321908078e-08,
+      "relative_difference": 3.3153025314077785e-09
+    },
+    {
+      "id": "mp-1014316",
+      "target_electron_count": 16.999999996307846,
+      "reference_valence_count": 17.00000005584665,
+      "absolute_difference": 5.9538805885495094e-08,
+      "relative_difference": 3.502282687641431e-09
+    },
+    {
+      "id": "mp-1014324",
+      "target_electron_count": 34.00000002244017,
+      "reference_valence_count": 34.0000001116933,
+      "absolute_difference": 8.925313466079388e-08,
+      "relative_difference": 2.6250921872820195e-09
+    },
+    {
+      "id": "mp-1014332",
+      "target_electron_count": 135.9999991239323,
+      "reference_valence_count": 136.0000004467732,
+      "absolute_difference": 1.3228409159182775e-06,
+      "relative_difference": 9.72677140862218e-09
+    },
+    {
+      "id": "mp-1014333",
+      "target_electron_count": 67.99999903933016,
+      "reference_valence_count": 68.0000002233866,
+      "absolute_difference": 1.184056444003545e-06,
+      "relative_difference": 1.741259470755595e-08
+    },
+    {
+      "id": "mp-1018088",
+      "target_electron_count": 15.999999991782166,
+      "reference_valence_count": 16.00000016734995,
+      "absolute_difference": 1.7556778253435823e-07,
+      "relative_difference": 1.0972986293626845e-08
+    },
+    {
+      "id": "mp-1018655",
+      "target_electron_count": 28.000000001196867,
+      "reference_valence_count": 27.999999805011733,
+      "absolute_difference": 1.961851339160603e-07,
+      "relative_difference": 7.0066119743666934e-09
+    },
+    {
+      "id": "mp-1019086",
+      "target_electron_count": 27.99999999982153,
+      "reference_valence_count": 27.999999805011733,
+      "absolute_difference": 1.94809796738582e-07,
+      "relative_difference": 6.957492789114696e-09
+    },
+    {
+      "id": "mp-1021328",
+      "target_electron_count": 8.00000000327146,
+      "reference_valence_count": 8.000000961960012,
+      "absolute_difference": 9.586885525436628e-07,
+      "relative_difference": 1.1983605465827128e-07
+    },
+    {
+      "id": "mp-1023923",
+      "target_electron_count": 36.00000004449281,
+      "reference_valence_count": 36.00000635902047,
+      "absolute_difference": 6.314527659867508e-06,
+      "relative_difference": 1.7540351512424903e-07
+    },
+    {
+      "id": "mp-1040425",
+      "target_electron_count": 7.9999999967853865,
+      "reference_valence_count": 8.000000083674975,
+      "absolute_difference": 8.688958796909674e-08,
+      "relative_difference": 1.086119838253578e-08
+    },
+    {
+      "id": "mp-1056059",
+      "target_electron_count": 5.999999999498063,
+      "reference_valence_count": 6.000001059836745,
+      "absolute_difference": 1.0603386817464866e-06,
+      "relative_difference": 1.7672308240814504e-07
+    },
+    {
+      "id": "mp-1056831",
+      "target_electron_count": 5.999999996214785,
+      "reference_valence_count": 6.000001059836745,
+      "absolute_difference": 1.0636219593962437e-06,
+      "relative_difference": 1.7727029525311185e-07
+    },
+    {
+      "id": "mp-1056957",
+      "target_electron_count": 7.999999995148396,
+      "reference_valence_count": 8.000000083674975,
+      "absolute_difference": 8.852657806812658e-08,
+      "relative_difference": 1.1065822142774275e-08
+    },
+    {
+      "id": "mp-1057818",
+      "target_electron_count": 12.000000068327969,
+      "reference_valence_count": 12.00000211967349,
+      "absolute_difference": 2.051345520115433e-06,
+      "relative_difference": 1.7094542981391144e-07
+    },
+    {
+      "id": "mp-1058623",
+      "target_electron_count": 12.00000002466584,
+      "reference_valence_count": 12.00000211967349,
+      "absolute_difference": 2.0950076500270143e-06,
+      "relative_difference": 1.745839399971721e-07
+    },
+    {
+      "id": "mp-1061298",
+      "target_electron_count": 10.000000056012352,
+      "reference_valence_count": 9.999999860668378,
+      "absolute_difference": 1.9534397388554225e-07,
+      "relative_difference": 1.9534397660730157e-08
+    },
+    {
+      "id": "mp-1065697",
+      "target_electron_count": 6.0000000211688365,
+      "reference_valence_count": 6.000001059836745,
+      "absolute_difference": 1.038667908126456e-06,
+      "relative_difference": 1.7311128744279211e-07
+    },
+    {
+      "id": "mp-1066100",
+      "target_electron_count": 24.000000039547437,
+      "reference_valence_count": 24.00000423934698,
+      "absolute_difference": 4.199799541027005e-06,
+      "relative_difference": 1.7499161663236766e-07
+    },
+    {
+      "id": "mp-1066989",
+      "target_electron_count": 1.9999999958518113,
+      "reference_valence_count": 2.0000004600612624,
+      "absolute_difference": 4.642094511009276e-07,
+      "relative_difference": 2.3210467215927954e-07
+    },
+    {
+      "id": "mp-1077316",
+      "target_electron_count": 32.00000026466916,
+      "reference_valence_count": 32.000004323021955,
+      "absolute_difference": 4.058352793379072e-06,
+      "relative_difference": 1.2682350765994575e-07
+    },
+    {
+      "id": "mp-1077595",
+      "target_electron_count": 28.000000013313613,
+      "reference_valence_count": 27.999999805011733,
+      "absolute_difference": 2.083018806331438e-07,
+      "relative_difference": 7.439352931561798e-09
+    },
+    {
+      "id": "mp-1077906",
+      "target_electron_count": 31.999999968821538,
+      "reference_valence_count": 32.000004323021955,
+      "absolute_difference": 4.354200417111542e-06,
+      "relative_difference": 1.3606874465260537e-07
+    },
+    {
+      "id": "mp-1078219",
+      "target_electron_count": 31.999999728409996,
+      "reference_valence_count": 31.999999846849217,
+      "absolute_difference": 1.1843922109733285e-07,
+      "relative_difference": 3.7012256770055766e-09
+    },
+    {
+      "id": "mp-1078789",
+      "target_electron_count": 39.99999987362664,
+      "reference_valence_count": 40.00000192468522,
+      "absolute_difference": 2.051058579866094e-06,
+      "relative_difference": 5.127646202937613e-08
+    },
+    {
+      "id": "mp-1078791",
+      "target_electron_count": 46.00000059615421,
+      "reference_valence_count": 45.999999749355084,
+      "absolute_difference": 8.467991250427076e-07,
+      "relative_difference": 1.8408676731668452e-08
+    },
+    {
+      "id": "mp-1078845",
+      "target_electron_count": 32.00000000955641,
+      "reference_valence_count": 32.0000003346999,
+      "absolute_difference": 3.251434890216842e-07,
+      "relative_difference": 1.0160733925652737e-08
+    },
+    {
+      "id": "mp-1079612",
+      "target_electron_count": 20.000000002635613,
+      "reference_valence_count": 20.000001087472473,
+      "absolute_difference": 1.08483686034333e-06,
+      "relative_difference": 5.4241840067841104e-08
+    },
+    {
+      "id": "mp-1079684",
+      "target_electron_count": 44.000000016545435,
+      "reference_valence_count": 44.000003960683735,
+      "absolute_difference": 3.944138299516453e-06,
+      "relative_difference": 8.963949873824429e-08
+    },
+    {
+      "id": "mp-1080711",
+      "target_electron_count": 50.00000000165857,
+      "reference_valence_count": 49.999999303341895,
+      "absolute_difference": 6.983166755958337e-07,
+      "relative_difference": 1.3966333706511865e-08
+    },
+    {
+      "id": "mp-1080826",
+      "target_electron_count": 32.000000006509126,
+      "reference_valence_count": 32.0000003346999,
+      "absolute_difference": 3.281907723362565e-07,
+      "relative_difference": 1.0255961528237101e-08
+    },
+    {
+      "id": "mp-1087546",
+      "target_electron_count": 48.00000003586912,
+      "reference_valence_count": 48.00000847869396,
+      "absolute_difference": 8.442824835697138e-06,
+      "relative_difference": 1.7589215300752925e-07
+    },
+    {
+      "id": "mp-1095534",
+      "target_electron_count": 48.0000000081315,
+      "reference_valence_count": 48.00000050204984,
+      "absolute_difference": 4.939183426699856e-07,
+      "relative_difference": 1.0289965364664793e-08
+    },
+    {
+      "id": "mp-1095633",
+      "target_electron_count": 47.99999996736609,
+      "reference_valence_count": 48.00000050204984,
+      "absolute_difference": 5.346837568254159e-07,
+      "relative_difference": 1.113924481735333e-08
+    },
+    {
+      "id": "mp-1096864",
+      "target_electron_count": 68.00000000223301,
+      "reference_valence_count": 68.0000002233866,
+      "absolute_difference": 2.2115359854524286e-07,
+      "relative_difference": 3.2522587914519384e-09
+    },
+    {
+      "id": "mp-1096892",
+      "target_electron_count": 135.99999981283395,
+      "reference_valence_count": 136.0000004467732,
+      "absolute_difference": 6.339392655263509e-07,
+      "relative_difference": 4.661318113557345e-09
+    },
+    {
+      "id": "mp-1096977",
+      "target_electron_count": 0.9999999990388427,
+      "reference_valence_count": 1.0000002300306312,
+      "absolute_difference": 2.3099178847463264e-07,
+      "relative_difference": 2.3099173533945796e-07
+    },
+    {
+      "id": "mp-1096984",
+      "target_electron_count": 48.00000002204582,
+      "reference_valence_count": 48.00000624694198,
+      "absolute_difference": 6.224896161199922e-06,
+      "relative_difference": 1.2968531981381777e-07
+    },
+    {
+      "id": "mp-1096986",
+      "target_electron_count": 10.000000001483562,
+      "reference_valence_count": 10.000000543736236,
+      "absolute_difference": 5.422526747622669e-07,
+      "relative_difference": 5.4225264527802564e-08
+    },
+    {
+      "id": "mp-1097832",
+      "target_electron_count": 7.999999998011722,
+      "reference_valence_count": 8.000000083674975,
+      "absolute_difference": 8.566325249148576e-08,
+      "relative_difference": 1.0707906449437745e-08
+    },
+    {
+      "id": "mp-1102227",
+      "target_electron_count": 64.00000102201385,
+      "reference_valence_count": 64.00000864604391,
+      "absolute_difference": 7.624030061492704e-06,
+      "relative_difference": 1.1912545361763752e-07
+    },
+    {
+      "id": "mp-1102232",
+      "target_electron_count": 39.99999994521309,
+      "reference_valence_count": 40.00000080880923,
+      "absolute_difference": 8.635961421532556e-07,
+      "relative_difference": 2.1589903117278566e-08
+    },
+    {
+      "id": "mp-1102442",
+      "target_electron_count": 72.00000006823264,
+      "reference_valence_count": 72.00001271804094,
+      "absolute_difference": 1.2649808297737763e-05,
+      "relative_difference": 1.7569175087892895e-07
+    },
+    {
+      "id": "mp-1102681",
+      "target_electron_count": 56.00000005256105,
+      "reference_valence_count": 55.999999610023465,
+      "absolute_difference": 4.4253758346712857e-07,
+      "relative_difference": 7.902456902658953e-09
+    },
+    {
+      "id": "mp-1103367",
+      "target_electron_count": 59.999999422732536,
+      "reference_valence_count": 60.00000412803368,
+      "absolute_difference": 4.705301144269924e-06,
+      "relative_difference": 7.842168034237645e-08
+    },
+    {
+      "id": "mp-1103408",
+      "target_electron_count": 48.00000001073543,
+      "reference_valence_count": 48.00000020941635,
+      "absolute_difference": 1.98680922380845e-07,
+      "relative_difference": 4.1391858648756625e-09
+    },
+    {
+      "id": "mp-1104073",
+      "target_electron_count": 63.99999999055337,
+      "reference_valence_count": 64.00000018154911,
+      "absolute_difference": 1.9099574188885526e-07,
+      "relative_difference": 2.9843084585477614e-09
+    },
+    {
+      "id": "mp-1104403",
+      "target_electron_count": 63.999999846354704,
+      "reference_valence_count": 63.999999693698435,
+      "absolute_difference": 1.5265626984728442e-07,
+      "relative_difference": 2.385254227779555e-09
+    },
+    {
+      "id": "mp-1104513",
+      "target_electron_count": 64.0000000388528,
+      "reference_valence_count": 64.00000018154911,
+      "absolute_difference": 1.426963081030408e-07,
+      "relative_difference": 2.2296298077852107e-09
+    },
+    {
+      "id": "mp-1105655",
+      "target_electron_count": 87.999997437565,
+      "reference_valence_count": 87.99999994472336,
+      "absolute_difference": 2.507158356479522e-06,
+      "relative_difference": 2.8490435886981564e-08
+    },
+    {
+      "id": "mp-11725",
+      "target_electron_count": 32.00000060810496,
+      "reference_valence_count": 32.000004323021955,
+      "absolute_difference": 3.7149169926919967e-06,
+      "relative_difference": 1.1609114033835776e-07
+    },
+    {
+      "id": "mp-1176403",
+      "target_electron_count": 19.999999998892132,
+      "reference_valence_count": 19.999999721336756,
+      "absolute_difference": 2.775553760159255e-07,
+      "relative_difference": 1.387776899415748e-08
+    },
+    {
+      "id": "mp-1180008",
+      "target_electron_count": 71.99999999561877,
+      "reference_valence_count": 72.00001271804094,
+      "absolute_difference": 1.2722422169986203e-05,
+      "relative_difference": 1.7670027670423403e-07
+    },
+    {
+      "id": "mp-1180036",
+      "target_electron_count": 23.999999996545238,
+      "reference_valence_count": 24.00000423934698,
+      "absolute_difference": 4.2428017401618945e-06,
+      "relative_difference": 1.7678337461315956e-07
+    },
+    {
+      "id": "mp-1180050",
+      "target_electron_count": 48.000000032836724,
+      "reference_valence_count": 48.00000847869396,
+      "absolute_difference": 8.445857233141396e-06,
+      "relative_difference": 1.7595532794312543e-07
+    },
+    {
+      "id": "mp-1180064",
+      "target_electron_count": 60.00000053128209,
+      "reference_valence_count": 60.000010598367446,
+      "absolute_difference": 1.0067085355558447e-05,
+      "relative_difference": 1.677847262885711e-07
+    },
+    {
+      "id": "mp-1180220",
+      "target_electron_count": 43.999999960563215,
+      "reference_valence_count": 44.000003960683735,
+      "absolute_difference": 4.000120519265238e-06,
+      "relative_difference": 9.091182179982417e-08
+    },
+    {
+      "id": "mp-1180282",
+      "target_electron_count": 44.00000001955931,
+      "reference_valence_count": 44.000003960683735,
+      "absolute_difference": 3.941124425921316e-06,
+      "relative_difference": 8.957100161724788e-08
+    },
+    {
+      "id": "mp-1180334",
+      "target_electron_count": 44.00000002773179,
+      "reference_valence_count": 44.000003960683735,
+      "absolute_difference": 3.932951948115715e-06,
+      "relative_difference": 8.938526350202171e-08
+    },
+    {
+      "id": "mp-1180345",
+      "target_electron_count": 116.00000012724503,
+      "reference_valence_count": 116.00001667872468,
+      "absolute_difference": 1.655147964640946e-05,
+      "relative_difference": 1.4268514885002715e-07
+    },
+    {
+      "id": "mp-1180438",
+      "target_electron_count": 164.0000004033654,
+      "reference_valence_count": 164.00002515741863,
+      "absolute_difference": 2.4754053242759255e-05,
+      "relative_difference": 1.5093932588728931e-07
+    },
+    {
+      "id": "mp-1180473",
+      "target_electron_count": 64.00000066202142,
+      "reference_valence_count": 64.00000368202049,
+      "absolute_difference": 3.019999070374979e-06,
+      "relative_difference": 4.718748275983907e-08
+    },
+    {
+      "id": "mp-1180500",
+      "target_electron_count": 68.00000033149945,
+      "reference_valence_count": 68.00000820003072,
+      "absolute_difference": 7.86853127010545e-06,
+      "relative_difference": 1.1571368119484867e-07
+    },
+    {
+      "id": "mp-1180808",
+      "target_electron_count": 147.9999985985682,
+      "reference_valence_count": 148.0000185197349,
+      "absolute_difference": 1.992116671090116e-05,
+      "relative_difference": 1.3460246093310315e-07
+    },
+    {
+      "id": "mp-1180988",
+      "target_electron_count": 160.0000010472686,
+      "reference_valence_count": 160.0000212801025,
+      "absolute_difference": 2.0232833890077018e-05,
+      "relative_difference": 1.2645519499435942e-07
+    },
+    {
+      "id": "mp-1181087",
+      "target_electron_count": 95.99999861095058,
+      "reference_valence_count": 96.00001823877608,
+      "absolute_difference": 1.9627825494694662e-05,
+      "relative_difference": 2.0445647672561214e-07
+    },
+    {
+      "id": "mp-1181093",
+      "target_electron_count": 159.9999999265986,
+      "reference_valence_count": 160.0000212801025,
+      "absolute_difference": 2.1353503882437508e-05,
+      "relative_difference": 1.334593815150512e-07
+    },
+    {
+      "id": "mp-1181155",
+      "target_electron_count": 48.00000034091075,
+      "reference_valence_count": 48.00000488080626,
+      "absolute_difference": 4.5398955066389135e-06,
+      "relative_difference": 9.45811467709721e-08
+    },
+    {
+      "id": "mp-1181214",
+      "target_electron_count": 100.00000009215627,
+      "reference_valence_count": 100.00001564575845,
+      "absolute_difference": 1.555360218219448e-05,
+      "relative_difference": 1.5553599748715833e-07
+    },
+    {
+      "id": "mp-1181265",
+      "target_electron_count": 16.00000031022261,
+      "reference_valence_count": 16.0000036804901,
+      "absolute_difference": 3.370267489088974e-06,
+      "relative_difference": 2.1064166961402464e-07
+    },
+    {
+      "id": "mp-1181328",
+      "target_electron_count": 159.99999721447355,
+      "reference_valence_count": 160.0000212801025,
+      "absolute_difference": 2.4065628934977212e-05,
+      "relative_difference": 1.5041016083895983e-07
+    },
+    {
+      "id": "mp-1181348",
+      "target_electron_count": 71.99999921302503,
+      "reference_valence_count": 72.00001048628896,
+      "absolute_difference": 1.1273263922362275e-05,
+      "relative_difference": 1.5657308722905055e-07
+    },
+    {
+      "id": "mp-1181349",
+      "target_electron_count": 99.99999769156862,
+      "reference_valence_count": 100.00001564575845,
+      "absolute_difference": 1.795418982908359e-05,
+      "relative_difference": 1.7954187020014855e-07
+    },
+    {
+      "id": "mp-1181373",
+      "target_electron_count": 159.99999926470718,
+      "reference_valence_count": 160.0000212801025,
+      "absolute_difference": 2.2015395302332763e-05,
+      "relative_difference": 1.3759620233919673e-07
+    },
+    {
+      "id": "mp-1181376",
+      "target_electron_count": 72.00000012566021,
+      "reference_valence_count": 72.00000577252527,
+      "absolute_difference": 5.646865062658435e-06,
+      "relative_difference": 7.842867513787397e-08
+    },
+    {
+      "id": "mp-1181417",
+      "target_electron_count": 128.00000143923228,
+      "reference_valence_count": 128.00001584120454,
+      "absolute_difference": 1.440197226543205e-05,
+      "relative_difference": 1.1251539439884901e-07
+    },
+    {
+      "id": "mp-1181419",
+      "target_electron_count": 159.99999954169954,
+      "reference_valence_count": 160.0000212801025,
+      "absolute_difference": 2.1738402949722513e-05,
+      "relative_difference": 1.3586500036563364e-07
+    },
+    {
+      "id": "mp-1181430",
+      "target_electron_count": 128.00000014654117,
+      "reference_valence_count": 128.00001584120454,
+      "absolute_difference": 1.5694663375143136e-05,
+      "relative_difference": 1.2261454244360227e-07
+    },
+    {
+      "id": "mp-1181505",
+      "target_electron_count": 128.00000024273393,
+      "reference_valence_count": 128.00001584120454,
+      "absolute_difference": 1.5598470611166704e-05,
+      "relative_difference": 1.218630365680423e-07
+    },
+    {
+      "id": "mp-1181559",
+      "target_electron_count": 255.99999812915377,
+      "reference_valence_count": 256.0000342451854,
+      "absolute_difference": 3.61160316515452e-05,
+      "relative_difference": 1.4107822976677758e-07
+    },
+    {
+      "id": "mp-1181584",
+      "target_electron_count": 159.9999999886233,
+      "reference_valence_count": 160.00001121188103,
+      "absolute_difference": 1.1223257729398028e-05,
+      "relative_difference": 7.014535589335402e-08
+    },
+    {
+      "id": "mp-1181677",
+      "target_electron_count": 127.99999795700398,
+      "reference_valence_count": 128.00001584120454,
+      "absolute_difference": 1.78842005595925e-05,
+      "relative_difference": 1.397202995801145e-07
+    },
+    {
+      "id": "mp-1181996",
+      "target_electron_count": 4.000000000271884,
+      "reference_valence_count": 4.000000041837487,
+      "absolute_difference": 4.156560340362603e-08,
+      "relative_difference": 1.0391400742218983e-08
+    },
+    {
+      "id": "mp-1182019",
+      "target_electron_count": 96.00000015382162,
+      "reference_valence_count": 96.00001823877608,
+      "absolute_difference": 1.8084954461983216e-05,
+      "relative_difference": 1.883849065215947e-07
+    },
+    {
+      "id": "mp-1182029",
+      "target_electron_count": 4.000000000013399,
+      "reference_valence_count": 4.000000041837487,
+      "absolute_difference": 4.1824088192754516e-08,
+      "relative_difference": 1.0456021938825207e-08
+    },
+    {
+      "id": "mp-1182145",
+      "target_electron_count": 80.00000040614852,
+      "reference_valence_count": 80.00000384937044,
+      "absolute_difference": 3.4432219280233767e-06,
+      "relative_difference": 4.304027202931782e-08
+    },
+    {
+      "id": "mp-1182172",
+      "target_electron_count": 32.0000000053252,
+      "reference_valence_count": 31.999999846849217,
+      "absolute_difference": 1.5847598078266856e-07,
+      "relative_difference": 4.952374423160268e-09
+    },
+    {
+      "id": "mp-1182484",
+      "target_electron_count": 63.999999408361084,
+      "reference_valence_count": 63.999999693698435,
+      "absolute_difference": 2.8533735019209416e-07,
+      "relative_difference": 4.458396118089186e-09
+    },
+    {
+      "id": "mp-11875",
+      "target_electron_count": 39.999999922054386,
+      "reference_valence_count": 40.00000440669693,
+      "absolute_difference": 4.484642545321549e-06,
+      "relative_difference": 1.1211605128150224e-07
+    },
+    {
+      "id": "mp-1188168",
+      "target_electron_count": 96.00000208912502,
+      "reference_valence_count": 96.00001048705415,
+      "absolute_difference": 8.397929136094717e-06,
+      "relative_difference": 8.747841894483126e-08
+    },
+    {
+      "id": "mp-1188177",
+      "target_electron_count": 15.99999992970459,
+      "reference_valence_count": 16.0000036804901,
+      "absolute_difference": 3.7507855097373977e-06,
+      "relative_difference": 2.3442404043387735e-07
+    },
+    {
+      "id": "mp-1188347",
+      "target_electron_count": 88.00000004133467,
+      "reference_valence_count": 87.99999994472336,
+      "absolute_difference": 9.661131628035946e-08,
+      "relative_difference": 1.097855867511878e-09
+    },
+    {
+      "id": "mp-1188817",
+      "target_electron_count": 79.99999806096682,
+      "reference_valence_count": 80.00000083674975,
+      "absolute_difference": 2.7757829315078197e-06,
+      "relative_difference": 3.469728628093593e-08
+    },
+    {
+      "id": "mp-1189505",
+      "target_electron_count": 79.9999983329971,
+      "reference_valence_count": 79.99999888534703,
+      "absolute_difference": 5.523499311266278e-07,
+      "relative_difference": 6.9043742352826135e-09
+    },
+    {
+      "id": "mp-1189886",
+      "target_electron_count": 58.000001441631184,
+      "reference_valence_count": 58.00000610761035,
+      "absolute_difference": 4.665979169260481e-06,
+      "relative_difference": 8.04479082399311e-08
+    },
+    {
+      "id": "mp-1190171",
+      "target_electron_count": 64.00000002718546,
+      "reference_valence_count": 64.0000006693998,
+      "absolute_difference": 6.422143314921414e-07,
+      "relative_difference": 1.003459882460911e-08
+    },
+    {
+      "id": "mp-1190216",
+      "target_electron_count": 95.9999997684269,
+      "reference_valence_count": 96.00000757223431,
+      "absolute_difference": 7.803807406503438e-06,
+      "relative_difference": 8.128965407249094e-08
+    },
+    {
+      "id": "mp-1190685",
+      "target_electron_count": 127.99999954826536,
+      "reference_valence_count": 128.00001729208782,
+      "absolute_difference": 1.7743822454008296e-05,
+      "relative_difference": 1.3862359419466352e-07
+    },
+    {
+      "id": "mp-1190699",
+      "target_electron_count": 128.00000462219364,
+      "reference_valence_count": 128.00001729208782,
+      "absolute_difference": 1.2669894175587615e-05,
+      "relative_difference": 9.898353487465342e-08
+    },
+    {
+      "id": "mp-1192619",
+      "target_electron_count": 116.00000047572141,
+      "reference_valence_count": 116.00000121328713,
+      "absolute_difference": 7.375657276043057e-07,
+      "relative_difference": 6.3583251714640655e-09
+    },
+    {
+      "id": "mp-1193580",
+      "target_electron_count": 127.999998934091,
+      "reference_valence_count": 127.99999938739687,
+      "absolute_difference": 4.533058728384276e-07,
+      "relative_difference": 3.541452148499471e-09
+    },
+    {
+      "id": "mp-1194028",
+      "target_electron_count": 144.00000007511358,
+      "reference_valence_count": 144.00000753139093,
+      "absolute_difference": 7.45627735909693e-06,
+      "relative_difference": 5.177970117447054e-08
+    },
+    {
+      "id": "mp-1194227",
+      "target_electron_count": 100.00000011789454,
+      "reference_valence_count": 100.00001564575845,
+      "absolute_difference": 1.552786390845995e-05,
+      "relative_difference": 1.552786147900825e-07
+    },
+    {
+      "id": "mp-1195106",
+      "target_electron_count": 111.99999976212669,
+      "reference_valence_count": 112.00000819772994,
+      "absolute_difference": 8.435603248813095e-06,
+      "relative_difference": 7.531788063729866e-08
+    },
+    {
+      "id": "mp-1196253",
+      "target_electron_count": 264.0000031015261,
+      "reference_valence_count": 264.0000192158509,
+      "absolute_difference": 1.6114324807858793e-05,
+      "relative_difference": 6.103910467780477e-08
+    },
+    {
+      "id": "mp-1197051",
+      "target_electron_count": 207.99999948577417,
+      "reference_valence_count": 208.00001617743484,
+      "absolute_difference": 1.6691660675860476e-05,
+      "relative_difference": 8.02483623925376e-08
+    },
+    {
+      "id": "mp-1197148",
+      "target_electron_count": 175.99999937262243,
+      "reference_valence_count": 176.00001784956476,
+      "absolute_difference": 1.8476942329925805e-05,
+      "relative_difference": 1.049826162274534e-07
+    },
+    {
+      "id": "mp-1197543",
+      "target_electron_count": 159.99999760068198,
+      "reference_valence_count": 160.00000273471747,
+      "absolute_difference": 5.1340354900730745e-06,
+      "relative_difference": 3.2087721264513894e-08
+    },
+    {
+      "id": "mp-1197681",
+      "target_electron_count": 287.9999996461687,
+      "reference_valence_count": 288.0000012564981,
+      "absolute_difference": 1.6103293773994665e-06,
+      "relative_difference": 5.591421424909223e-09
+    },
+    {
+      "id": "mp-1198447",
+      "target_electron_count": 200.00000091348895,
+      "reference_valence_count": 200.0000121054378,
+      "absolute_difference": 1.1191948857458556e-05,
+      "relative_difference": 5.5959740900206965e-08
+    },
+    {
+      "id": "mp-1198679",
+      "target_electron_count": 285.9999996864723,
+      "reference_valence_count": 286.00000079643684,
+      "absolute_difference": 1.1099645575995964e-06,
+      "relative_difference": 3.8809949458343674e-09
+    },
+    {
+      "id": "mp-1198776",
+      "target_electron_count": 288.00000052569544,
+      "reference_valence_count": 288.0000012564981,
+      "absolute_difference": 7.308026397367939e-07,
+      "relative_difference": 2.537509154682009e-09
+    },
+    {
+      "id": "mp-1199197",
+      "target_electron_count": 287.99999747090754,
+      "reference_valence_count": 288.0000012564981,
+      "absolute_difference": 3.7855905361539044e-06,
+      "relative_difference": 1.3144411526520751e-08
+    },
+    {
+      "id": "mp-1199386",
+      "target_electron_count": 196.00000043826557,
+      "reference_valence_count": 196.00001577195766,
+      "absolute_difference": 1.5333692090280238e-05,
+      "relative_difference": 7.823311661423895e-08
+    },
+    {
+      "id": "mp-1200465",
+      "target_electron_count": 224.00000230747415,
+      "reference_valence_count": 224.00001985792494,
+      "absolute_difference": 1.755045079221418e-05,
+      "relative_difference": 7.835021980509551e-08
+    },
+    {
+      "id": "mp-1200473",
+      "target_electron_count": 288.00000061576395,
+      "reference_valence_count": 288.0000012564981,
+      "absolute_difference": 6.407341288650059e-07,
+      "relative_difference": 2.224771271074948e-09
+    },
+    {
+      "id": "mp-1200776",
+      "target_electron_count": 172.00000074628602,
+      "reference_valence_count": 172.00001513049835,
+      "absolute_difference": 1.4384212335016855e-05,
+      "relative_difference": 8.362913412596732e-08
+    },
+    {
+      "id": "mp-1200980",
+      "target_electron_count": 287.9999996728323,
+      "reference_valence_count": 288.0000012564981,
+      "absolute_difference": 1.5836657780710084e-06,
+      "relative_difference": 5.498839483200442e-09
+    },
+    {
+      "id": "mp-1201465",
+      "target_electron_count": 368.0000021594268,
+      "reference_valence_count": 368.00003090245605,
+      "absolute_difference": 2.8743029247380036e-05,
+      "relative_difference": 7.81060511785631e-08
+    },
+    {
+      "id": "mp-1201974",
+      "target_electron_count": 288.00000054951,
+      "reference_valence_count": 288.0000012564981,
+      "absolute_difference": 7.069880894050584e-07,
+      "relative_difference": 2.454819744168688e-09
+    },
+    {
+      "id": "mp-1202134",
+      "target_electron_count": 285.99999862901484,
+      "reference_valence_count": 286.00000079643684,
+      "absolute_difference": 2.1674219965461816e-06,
+      "relative_difference": 7.578398568218412e-09
+    },
+    {
+      "id": "mp-1202251",
+      "target_electron_count": 287.9999945973844,
+      "reference_valence_count": 288.0000012564981,
+      "absolute_difference": 6.659113694240659e-06,
+      "relative_difference": 2.3121922448569473e-08
+    },
+    {
+      "id": "mp-1203058",
+      "target_electron_count": 128.0000004499638,
+      "reference_valence_count": 128.00001360945257,
+      "absolute_difference": 1.315948875912909e-05,
+      "relative_difference": 1.0280849499970121e-07
+    },
+    {
+      "id": "mp-1203308",
+      "target_electron_count": 203.9999999065837,
+      "reference_valence_count": 204.00001674658643,
+      "absolute_difference": 1.684000272916819e-05,
+      "relative_difference": 8.25490262095774e-08
+    },
+    {
+      "id": "mp-1204579",
+      "target_electron_count": 367.99999850410956,
+      "reference_valence_count": 368.00004975751074,
+      "absolute_difference": 5.1253401181838854e-05,
+      "relative_difference": 1.3927552785824805e-07
+    },
+    {
+      "id": "mp-1204989",
+      "target_electron_count": 160.0000000515875,
+      "reference_valence_count": 160.00001121188103,
+      "absolute_difference": 1.1160293524881126e-05,
+      "relative_difference": 6.975182964269945e-08
+    },
+    {
+      "id": "mp-1205283",
+      "target_electron_count": 479.9999975533708,
+      "reference_valence_count": 480.00000502049846,
+      "absolute_difference": 7.4671276593107905e-06,
+      "relative_difference": 1.5556515794186098e-08
+    },
+    {
+      "id": "mp-1205417",
+      "target_electron_count": 79.99999931159091,
+      "reference_valence_count": 80.00000083674975,
+      "absolute_difference": 1.5251588365572388e-06,
+      "relative_difference": 1.9064485257562943e-08
+    },
+    {
+      "id": "mp-12103",
+      "target_electron_count": 9.999999938182468,
+      "reference_valence_count": 9.999999860668378,
+      "absolute_difference": 7.751408936940152e-08,
+      "relative_difference": 7.75140904494179e-09
+    },
+    {
+      "id": "mp-1212478",
+      "target_electron_count": 60.00000022760385,
+      "reference_valence_count": 60.00001123906153,
+      "absolute_difference": 1.1011457679899195e-05,
+      "relative_difference": 1.8352426028764568e-07
+    },
+    {
+      "id": "mp-1212506",
+      "target_electron_count": 85.99999800980417,
+      "reference_valence_count": 86.00000882744193,
+      "absolute_difference": 1.0817637758009369e-05,
+      "relative_difference": 1.2578647264693703e-07
+    },
+    {
+      "id": "mp-1212515",
+      "target_electron_count": 168.00000092329012,
+      "reference_valence_count": 168.00001450300934,
+      "absolute_difference": 1.3579719222889253e-05,
+      "relative_difference": 8.083165506301789e-08
+    },
+    {
+      "id": "mp-1212522",
+      "target_electron_count": 92.0000017410072,
+      "reference_valence_count": 92.00000840868186,
+      "absolute_difference": 6.667674668392465e-06,
+      "relative_difference": 7.247471803234368e-08
+    },
+    {
+      "id": "mp-1212532",
+      "target_electron_count": 131.99999972227724,
+      "reference_valence_count": 132.00000605241152,
+      "absolute_difference": 6.330134283416555e-06,
+      "relative_difference": 4.795556055431643e-08
+    },
+    {
+      "id": "mp-1212539",
+      "target_electron_count": 207.99999920445126,
+      "reference_valence_count": 208.0000124947996,
+      "absolute_difference": 1.329034833474907e-05,
+      "relative_difference": 6.389590161722397e-08
+    },
+    {
+      "id": "mp-1212551",
+      "target_electron_count": 135.99999988713247,
+      "reference_valence_count": 136.00000697253404,
+      "absolute_difference": 7.085401563244886e-06,
+      "relative_difference": 5.209853823519158e-08
+    },
+    {
+      "id": "mp-1212560",
+      "target_electron_count": 223.99999897311338,
+      "reference_valence_count": 224.00001129601384,
+      "absolute_difference": 1.2322900460048913e-05,
+      "relative_difference": 5.501294570813356e-08
+    },
+    {
+      "id": "mp-1212563",
+      "target_electron_count": 123.99999981781923,
+      "reference_valence_count": 124.00000061427878,
+      "absolute_difference": 7.964595454268419e-07,
+      "relative_difference": 6.423060818397516e-09
+    },
+    {
+      "id": "mp-1212577",
+      "target_electron_count": 144.00000008454936,
+      "reference_valence_count": 144.000009287961,
+      "absolute_difference": 9.203411650560156e-06,
+      "relative_difference": 6.391257678432385e-08
+    },
+    {
+      "id": "mp-1212579",
+      "target_electron_count": 319.9999994073184,
+      "reference_valence_count": 320.0000037382024,
+      "absolute_difference": 4.330883996317425e-06,
+      "relative_difference": 1.3534012330389212e-08
+    },
+    {
+      "id": "mp-1212581",
+      "target_electron_count": 336.0000074835511,
+      "reference_valence_count": 336.00002114022874,
+      "absolute_difference": 1.3656677651852078e-05,
+      "relative_difference": 4.064487140657798e-08
+    },
+    {
+      "id": "mp-1212607",
+      "target_electron_count": 199.99999911760682,
+      "reference_valence_count": 200.00001065455456,
+      "absolute_difference": 1.1536947738477465e-05,
+      "relative_difference": 5.768473561936151e-08
+    },
+    {
+      "id": "mp-1212613",
+      "target_electron_count": 216.00000305554963,
+      "reference_valence_count": 216.00001369435057,
+      "absolute_difference": 1.0638800944207105e-05,
+      "relative_difference": 4.9253704952359275e-08
+    },
+    {
+      "id": "mp-1212626",
+      "target_electron_count": 200.00000011708877,
+      "reference_valence_count": 200.00000267791043,
+      "absolute_difference": 2.5608216560613073e-06,
+      "relative_difference": 1.2804108108865263e-08
+    },
+    {
+      "id": "mp-1212629",
+      "target_electron_count": 183.99999732138414,
+      "reference_valence_count": 184.00001005439645,
+      "absolute_difference": 1.2733012312082792e-05,
+      "relative_difference": 6.920115008862496e-08
+    },
+    {
+      "id": "mp-1212645",
+      "target_electron_count": 160.00000452355565,
+      "reference_valence_count": 160.00001232775702,
+      "absolute_difference": 7.804201374028708e-06,
+      "relative_difference": 4.877625482954306e-08
+    },
+    {
+      "id": "mp-1212710",
+      "target_electron_count": 288.0000000707704,
+      "reference_valence_count": 288.0000127462823,
+      "absolute_difference": 1.26755119254085e-05,
+      "relative_difference": 4.401219223755789e-08
+    },
+    {
+      "id": "mp-1212762",
+      "target_electron_count": 336.0000007352214,
+      "reference_valence_count": 336.0000140292009,
+      "absolute_difference": 1.3293979463924188e-05,
+      "relative_difference": 3.956541341920552e-08
+    },
+    {
+      "id": "mp-1212804",
+      "target_electron_count": 416.0000009268171,
+      "reference_valence_count": 416.00003003837014,
+      "absolute_difference": 2.9111553033089876e-05,
+      "relative_difference": 6.997968973801456e-08
+    },
+    {
+      "id": "mp-1212807",
+      "target_electron_count": 312.0000020595445,
+      "reference_valence_count": 312.0000133877416,
+      "absolute_difference": 1.1328197103921411e-05,
+      "relative_difference": 3.630832249306081e-08
+    },
+    {
+      "id": "mp-1212918",
+      "target_electron_count": 416.00000184843975,
+      "reference_valence_count": 416.00003003837014,
+      "absolute_difference": 2.8189930389999063e-05,
+      "relative_difference": 6.776425085209474e-08
+    },
+    {
+      "id": "mp-1212999",
+      "target_electron_count": 256.0000000705964,
+      "reference_valence_count": 256.00002721890513,
+      "absolute_difference": 2.7148308731739235e-05,
+      "relative_difference": 1.0604806970791752e-07
+    },
+    {
+      "id": "mp-1214163",
+      "target_electron_count": 111.99999877470567,
+      "reference_valence_count": 111.99999922004693,
+      "absolute_difference": 4.453412572047455e-07,
+      "relative_difference": 3.976261252732523e-09
+    },
+    {
+      "id": "mp-1214250",
+      "target_electron_count": 144.00000066843467,
+      "reference_valence_count": 144.00000602508058,
+      "absolute_difference": 5.356645914389446e-06,
+      "relative_difference": 3.719892840460351e-08
+    },
+    {
+      "id": "mp-1214309",
+      "target_electron_count": 336.00000095699113,
+      "reference_valence_count": 336.00003346952263,
+      "absolute_difference": 3.2512531504380604e-05,
+      "relative_difference": 9.67634769814084e-08
+    },
+    {
+      "id": "mp-1214325",
+      "target_electron_count": 207.99999567404674,
+      "reference_valence_count": 208.00001617743484,
+      "absolute_difference": 2.0503388100223674e-05,
+      "relative_difference": 9.857397358437326e-08
+    },
+    {
+      "id": "mp-1221446",
+      "target_electron_count": 64.00000003872712,
+      "reference_valence_count": 64.00000368202049,
+      "absolute_difference": 3.6432933683272495e-06,
+      "relative_difference": 5.69264556050449e-08
+    },
+    {
+      "id": "mp-1224501",
+      "target_electron_count": 95.99999930327569,
+      "reference_valence_count": 96.00000256583712,
+      "absolute_difference": 3.2625614352355115e-06,
+      "relative_difference": 3.3985014042036466e-08
+    },
+    {
+      "id": "mp-1224588",
+      "target_electron_count": 95.99999959580944,
+      "reference_valence_count": 96.00001112774824,
+      "absolute_difference": 1.1531938795883434e-05,
+      "relative_difference": 1.2012434853302006e-07
+    },
+    {
+      "id": "mp-1224772",
+      "target_electron_count": 384.000001566341,
+      "reference_valence_count": 384.00005343800086,
+      "absolute_difference": 5.187165987763365e-05,
+      "relative_difference": 1.350824287997362e-07
+    },
+    {
+      "id": "mp-1225107",
+      "target_electron_count": 83.99999918064005,
+      "reference_valence_count": 84.00000566044677,
+      "absolute_difference": 6.479806728520998e-06,
+      "relative_difference": 7.714055109370256e-08
+    },
+    {
+      "id": "mp-1225208",
+      "target_electron_count": 368.0000026900198,
+      "reference_valence_count": 368.0000493076664,
+      "absolute_difference": 4.66176466034085e-05,
+      "relative_difference": 1.2667837053585235e-07
+    },
+    {
+      "id": "mp-1237215",
+      "target_electron_count": 136.0000000044707,
+      "reference_valence_count": 136.00000697253404,
+      "absolute_difference": 6.9680633316693275e-06,
+      "relative_difference": 5.123575716489902e-08
+    },
+    {
+      "id": "mp-1237354",
+      "target_electron_count": 172.0000014436979,
+      "reference_valence_count": 172.00001513049835,
+      "absolute_difference": 1.368680045743531e-05,
+      "relative_difference": 7.957441426415562e-08
+    },
+    {
+      "id": "mp-1238814",
+      "target_electron_count": 9.0000000070884,
+      "reference_valence_count": 9.000000850456715,
+      "absolute_difference": 8.433683156283678e-07,
+      "relative_difference": 9.37075817704584e-08
+    },
+    {
+      "id": "mp-1244913",
+      "target_electron_count": 399.999999858769,
+      "reference_valence_count": 400.00000418374873,
+      "absolute_difference": 4.324979727243772e-06,
+      "relative_difference": 1.0812449205018002e-08
+    },
+    {
+      "id": "mp-1244964",
+      "target_electron_count": 399.99999975128037,
+      "reference_valence_count": 400.00000418374873,
+      "absolute_difference": 4.432468358572805e-06,
+      "relative_difference": 1.1081170780529929e-08
+    },
+    {
+      "id": "mp-1245190",
+      "target_electron_count": 400.0000008008305,
+      "reference_valence_count": 400.00000418374873,
+      "absolute_difference": 3.3829182370936905e-06,
+      "relative_difference": 8.457295504276228e-09
+    },
+    {
+      "id": "mp-12957",
+      "target_electron_count": 47.999999103587044,
+      "reference_valence_count": 48.00000847869396,
+      "absolute_difference": 9.375106913012132e-06,
+      "relative_difference": 1.9531469285413804e-07
+    },
+    {
+      "id": "mp-154",
+      "target_electron_count": 40.000000000900116,
+      "reference_valence_count": 39.99999944267351,
+      "absolute_difference": 5.582266027204241e-07,
+      "relative_difference": 1.395566526245715e-08
+    },
+    {
+      "id": "mp-169",
+      "target_electron_count": 8.000000001355817,
+      "reference_valence_count": 8.000000083674975,
+      "absolute_difference": 8.231915771261811e-08,
+      "relative_difference": 1.0289894606451429e-08
+    },
+    {
+      "id": "mp-1771",
+      "target_electron_count": 67.99999997256838,
+      "reference_valence_count": 68.00000820003072,
+      "absolute_difference": 8.227462345189451e-06,
+      "relative_difference": 1.2099207872133365e-07
+    },
+    {
+      "id": "mp-1985",
+      "target_electron_count": 64.0000000324052,
+      "reference_valence_count": 63.999999693698435,
+      "absolute_difference": 3.387067621929418e-07,
+      "relative_difference": 5.29229318459343e-09
+    },
+    {
+      "id": "mp-20066",
+      "target_electron_count": 64.00000007199127,
+      "reference_valence_count": 64.00000864604391,
+      "absolute_difference": 8.574052642984498e-06,
+      "relative_difference": 1.3396955444809136e-07
+    },
+    {
+      "id": "mp-23668",
+      "target_electron_count": 216.0000000142205,
+      "reference_valence_count": 216.0000256292272,
+      "absolute_difference": 2.5615006705947962e-05,
+      "relative_difference": 1.1858797993810038e-07
+    },
+    {
+      "id": "mp-23680",
+      "target_electron_count": 84.00000074554048,
+      "reference_valence_count": 84.00000973351638,
+      "absolute_difference": 8.987975903096412e-06,
+      "relative_difference": 1.0699970073348896e-07
+    },
+    {
+      "id": "mp-23683",
+      "target_electron_count": 71.99999999734378,
+      "reference_valence_count": 72.00000937041297,
+      "absolute_difference": 9.37306919013281e-06,
+      "relative_difference": 1.3018149958719998e-07
+    },
+    {
+      "id": "mp-23778",
+      "target_electron_count": 48.00000002216654,
+      "reference_valence_count": 48.00000376493027,
+      "absolute_difference": 3.7427637309406236e-06,
+      "relative_difference": 7.797423827860528e-08
+    },
+    {
+      "id": "mp-23790",
+      "target_electron_count": 63.99999739130437,
+      "reference_valence_count": 64.00000792060227,
+      "absolute_difference": 1.052929790290591e-05,
+      "relative_difference": 1.6452025937197453e-07
+    },
+    {
+      "id": "mp-23907",
+      "target_electron_count": 2.0000000865443286,
+      "reference_valence_count": 2.0000004600612624,
+      "absolute_difference": 3.735169338270339e-07,
+      "relative_difference": 1.867584239533588e-07
+    },
+    {
+      "id": "mp-23922",
+      "target_electron_count": 96.00000249326378,
+      "reference_valence_count": 96.00000256583712,
+      "absolute_difference": 7.257334289079154e-08,
+      "relative_difference": 7.559723015738515e-10
+    },
+    {
+      "id": "mp-23939",
+      "target_electron_count": 56.00000004257317,
+      "reference_valence_count": 56.000010318939005,
+      "absolute_difference": 1.027636583472713e-05,
+      "relative_difference": 1.8350649894883501e-07
+    },
+    {
+      "id": "mp-24",
+      "target_electron_count": 32.000000003694566,
+      "reference_valence_count": 32.0000003346999,
+      "absolute_difference": 3.3100533158858525e-07,
+      "relative_difference": 1.0343916503952421e-08
+    },
+    {
+      "id": "mp-24043",
+      "target_electron_count": 96.00000056464148,
+      "reference_valence_count": 96.00001823877608,
+      "absolute_difference": 1.7674134596745716e-05,
+      "relative_difference": 1.84105533738397e-07
+    },
+    {
+      "id": "mp-24207",
+      "target_electron_count": 144.0000013397612,
+      "reference_valence_count": 144.0000088127791,
+      "absolute_difference": 7.473017888059985e-06,
+      "relative_difference": 5.1895954379947245e-08
+    },
+    {
+      "id": "mp-24230",
+      "target_electron_count": 95.99999972510196,
+      "reference_valence_count": 96.00000757223431,
+      "absolute_difference": 7.847132351912478e-06,
+      "relative_difference": 8.174095555157094e-08
+    },
+    {
+      "id": "mp-24232",
+      "target_electron_count": 192.0000017214766,
+      "reference_valence_count": 192.00002088936077,
+      "absolute_difference": 1.9167884175885774e-05,
+      "relative_difference": 9.983271922106295e-08
+    },
+    {
+      "id": "mp-24332",
+      "target_electron_count": 224.00000218604276,
+      "reference_valence_count": 224.00001985792494,
+      "absolute_difference": 1.7671882176273357e-05,
+      "relative_difference": 7.889232415015851e-08
+    },
+    {
+      "id": "mp-24504",
+      "target_electron_count": 4.000000002605839,
+      "reference_valence_count": 4.000000920122525,
+      "absolute_difference": 9.175166857389172e-07,
+      "relative_difference": 2.2937911867050584e-07
+    },
+    {
+      "id": "mp-24834",
+      "target_electron_count": 255.99999223876273,
+      "reference_valence_count": 256.0000316824091,
+      "absolute_difference": 3.944364635799502e-05,
+      "relative_difference": 1.5407672451747346e-07
+    },
+    {
+      "id": "mp-25",
+      "target_electron_count": 39.999999905888835,
+      "reference_valence_count": 39.99999944267351,
+      "absolute_difference": 4.6321532209958605e-07,
+      "relative_difference": 1.1580383213841008e-08
+    },
+    {
+      "id": "mp-2646980",
+      "target_electron_count": 23.999999723285566,
+      "reference_valence_count": 24.00000025102492,
+      "absolute_difference": 5.277393562153065e-07,
+      "relative_difference": 2.1989139612311853e-08
+    },
+    {
+      "id": "mp-2647017",
+      "target_electron_count": 80.00000183852713,
+      "reference_valence_count": 80.00000083674975,
+      "absolute_difference": 1.0017773774961825e-06,
+      "relative_difference": 1.2522217087727756e-08
+    },
+    {
+      "id": "mp-2647151",
+      "target_electron_count": 235.0000003481878,
+      "reference_valence_count": 235.00000455288918,
+      "absolute_difference": 4.204701383514475e-06,
+      "relative_difference": 1.7892345966181306e-08
+    },
+    {
+      "id": "mp-27461",
+      "target_electron_count": 72.00000038802126,
+      "reference_valence_count": 71.9999997773734,
+      "absolute_difference": 6.106478593892462e-07,
+      "relative_difference": 8.481220295519324e-09
+    },
+    {
+      "id": "mp-2789",
+      "target_electron_count": 102.00000037075222,
+      "reference_valence_count": 102.00001230004607,
+      "absolute_difference": 1.192929384785657e-05,
+      "relative_difference": 1.1695384715018493e-07
+    },
+    {
+      "id": "mp-28015",
+      "target_electron_count": 55.9999999529222,
+      "reference_valence_count": 56.000010318939005,
+      "absolute_difference": 1.0366016802265676e-05,
+      "relative_difference": 1.8510740878845743e-07
+    },
+    {
+      "id": "mp-28349",
+      "target_electron_count": 151.99999552053228,
+      "reference_valence_count": 152.00002008055154,
+      "absolute_difference": 2.4560019255659427e-05,
+      "relative_difference": 1.615790527043614e-07
+    },
+    {
+      "id": "mp-2852",
+      "target_electron_count": 64.000000032663,
+      "reference_valence_count": 63.999999693698435,
+      "absolute_difference": 3.389645613083303e-07,
+      "relative_difference": 5.296321295790653e-09
+    },
+    {
+      "id": "mp-28551",
+      "target_electron_count": 168.00000049300917,
+      "reference_valence_count": 168.0000058563507,
+      "absolute_difference": 5.36334152911877e-06,
+      "relative_difference": 3.1924650846171545e-08
+    },
+    {
+      "id": "mp-28643",
+      "target_electron_count": 231.99999607693158,
+      "reference_valence_count": 232.00000594048348,
+      "absolute_difference": 9.863551895250566e-06,
+      "relative_difference": 4.2515308804694296e-08
+    },
+    {
+      "id": "mp-29145",
+      "target_electron_count": 32.00000063607353,
+      "reference_valence_count": 32.00000248170433,
+      "absolute_difference": 1.845630798413822e-06,
+      "relative_difference": 5.767595797747336e-08
+    },
+    {
+      "id": "mp-29943",
+      "target_electron_count": 320.00000433544034,
+      "reference_valence_count": 320.00005103736856,
+      "absolute_difference": 4.6701928226866585e-05,
+      "relative_difference": 1.4594350243216957e-07
+    },
+    {
+      "id": "mp-30094",
+      "target_electron_count": 127.99999901513713,
+      "reference_valence_count": 128.00000290053703,
+      "absolute_difference": 3.885399891601082e-06,
+      "relative_difference": 3.035468596528275e-08
+    },
+    {
+      "id": "mp-30168",
+      "target_electron_count": 219.99999952366394,
+      "reference_valence_count": 220.00001723190744,
+      "absolute_difference": 1.7708243490233144e-05,
+      "relative_difference": 8.049200956001039e-08
+    },
+    {
+      "id": "mp-30184",
+      "target_electron_count": 152.0000028566385,
+      "reference_valence_count": 152.00000909128673,
+      "absolute_difference": 6.23464822524511e-06,
+      "relative_difference": 4.101742008121041e-08
+    },
+    {
+      "id": "mp-31000",
+      "target_electron_count": 44.000000035787416,
+      "reference_valence_count": 44.000003960683735,
+      "absolute_difference": 3.924896319063009e-06,
+      "relative_difference": 8.92021810400314e-08
+    },
+    {
+      "id": "mp-32854",
+      "target_electron_count": 58.99999969988959,
+      "reference_valence_count": 59.0000110090309,
+      "absolute_difference": 1.1309141306981019e-05,
+      "relative_difference": 1.9168032536892194e-07
+    },
+    {
+      "id": "mp-32959",
+      "target_electron_count": 15.999999991985474,
+      "reference_valence_count": 16.000003039796013,
+      "absolute_difference": 3.0478105390585597e-06,
+      "relative_difference": 1.9048812250084529e-07
+    },
+    {
+      "id": "mp-47",
+      "target_electron_count": 15.99999999507667,
+      "reference_valence_count": 16.00000016734995,
+      "absolute_difference": 1.722732783093761e-07,
+      "relative_difference": 1.0767079781719117e-08
+    },
+    {
+      "id": "mp-48",
+      "target_electron_count": 15.999999777537177,
+      "reference_valence_count": 16.00000016734995,
+      "absolute_difference": 3.898127722834488e-07,
+      "relative_difference": 2.4363298012890756e-08
+    },
+    {
+      "id": "mp-504422",
+      "target_electron_count": 192.00000037735126,
+      "reference_valence_count": 192.0000315982763,
+      "absolute_difference": 3.122092505236651e-05,
+      "relative_difference": 1.6260895788647776e-07
+    },
+    {
+      "id": "mp-504769",
+      "target_electron_count": 80.00000007659258,
+      "reference_valence_count": 80.0000103197042,
+      "absolute_difference": 1.0243111617569411e-05,
+      "relative_difference": 1.280388787030757e-07
+    },
+    {
+      "id": "mp-510458",
+      "target_electron_count": 159.9999986657141,
+      "reference_valence_count": 160.00000323523693,
+      "absolute_difference": 4.569522843667073e-06,
+      "relative_difference": 2.8559517195439178e-08
+    },
+    {
+      "id": "mp-542782",
+      "target_electron_count": 212.00000231754802,
+      "reference_valence_count": 212.00001974508126,
+      "absolute_difference": 1.7427533236968884e-05,
+      "relative_difference": 8.22053378010274e-08
+    },
+    {
+      "id": "mp-554659",
+      "target_electron_count": 95.99999869556862,
+      "reference_valence_count": 96.00000778012027,
+      "absolute_difference": 9.08455164960742e-06,
+      "relative_difference": 9.463073868092595e-08
+    },
+    {
+      "id": "mp-555128",
+      "target_electron_count": 127.99999831192535,
+      "reference_valence_count": 128.000016341724,
+      "absolute_difference": 1.802979865317411e-05,
+      "relative_difference": 1.4085778399464907e-07
+    },
+    {
+      "id": "mp-555229",
+      "target_electron_count": 51.99999935514896,
+      "reference_valence_count": 52.00000648399664,
+      "absolute_difference": 7.128847684612083e-06,
+      "relative_difference": 1.3709320760961893e-07
+    },
+    {
+      "id": "mp-555516",
+      "target_electron_count": 151.99999968583037,
+      "reference_valence_count": 152.00001648266382,
+      "absolute_difference": 1.67968334494617e-05,
+      "relative_difference": 1.1050547123708664e-07
+    },
+    {
+      "id": "mp-555711",
+      "target_electron_count": 239.99999846045344,
+      "reference_valence_count": 240.0000312347099,
+      "absolute_difference": 3.2774256453649286e-05,
+      "relative_difference": 1.3655938411773558e-07
+    },
+    {
+      "id": "mp-556034",
+      "target_electron_count": 64.0000000398875,
+      "reference_valence_count": 64.00000864604391,
+      "absolute_difference": 8.60615641329332e-06,
+      "relative_difference": 1.3447117579140047e-07
+    },
+    {
+      "id": "mp-556151",
+      "target_electron_count": 192.0000033302134,
+      "reference_valence_count": 192.00001642585678,
+      "absolute_difference": 1.3095643396354717e-05,
+      "relative_difference": 6.820647018752607e-08
+    },
+    {
+      "id": "mp-556451",
+      "target_electron_count": 223.9999980667119,
+      "reference_valence_count": 224.00002163983257,
+      "absolute_difference": 2.357312067147177e-05,
+      "relative_difference": 1.0523713568820435e-07
+    },
+    {
+      "id": "mp-556660",
+      "target_electron_count": 80.00000029292255,
+      "reference_valence_count": 80.00000881339386,
+      "absolute_difference": 8.52047131161271e-06,
+      "relative_difference": 1.0650587966168054e-07
+    },
+    {
+      "id": "mp-557248",
+      "target_electron_count": 176.00000030883018,
+      "reference_valence_count": 176.00001849025884,
+      "absolute_difference": 1.818142865772643e-05,
+      "relative_difference": 1.033035610660048e-07
+    },
+    {
+      "id": "mp-557263",
+      "target_electron_count": 151.99999351121122,
+      "reference_valence_count": 152.00001784879956,
+      "absolute_difference": 2.4337588342859817e-05,
+      "relative_difference": 1.601156939801769e-07
+    },
+    {
+      "id": "mp-557825",
+      "target_electron_count": 48.00000053703811,
+      "reference_valence_count": 48.00000376493027,
+      "absolute_difference": 3.2278921580086717e-06,
+      "relative_difference": 6.724774801719978e-08
+    },
+    {
+      "id": "mp-557865",
+      "target_electron_count": 101.99999843427776,
+      "reference_valence_count": 102.00001230004607,
+      "absolute_difference": 1.3865768309528903e-05,
+      "relative_difference": 1.3593888860268933e-07
+    },
+    {
+      "id": "mp-558226",
+      "target_electron_count": 96.00000217928607,
+      "reference_valence_count": 96.00001823877608,
+      "absolute_difference": 1.605949000804685e-05,
+      "relative_difference": 1.6728632246821952e-07
+    },
+    {
+      "id": "mp-558412",
+      "target_electron_count": 72.0000000400391,
+      "reference_valence_count": 72.00001048628896,
+      "absolute_difference": 1.0446249859796808e-05,
+      "relative_difference": 1.4508678247742894e-07
+    },
+    {
+      "id": "mp-558863",
+      "target_electron_count": 256.00000000622975,
+      "reference_valence_count": 256.0000300359241,
+      "absolute_difference": 3.002969435783598e-05,
+      "relative_difference": 1.1730347982233423e-07
+    },
+    {
+      "id": "mp-559139",
+      "target_electron_count": 144.00000101968965,
+      "reference_valence_count": 144.00001154505054,
+      "absolute_difference": 1.0525360892188473e-05,
+      "relative_difference": 7.309277811339345e-08
+    },
+    {
+      "id": "mp-560121",
+      "target_electron_count": 256.0000009056654,
+      "reference_valence_count": 256.00003441468056,
+      "absolute_difference": 3.350901516796512e-05,
+      "relative_difference": 1.3089457290339922e-07
+    },
+    {
+      "id": "mp-560323",
+      "target_electron_count": 183.999999384348,
+      "reference_valence_count": 184.00002645277706,
+      "absolute_difference": 2.7068429062637733e-05,
+      "relative_difference": 1.4711100636490804e-07
+    },
+    {
+      "id": "mp-560602",
+      "target_electron_count": 144.00000049833696,
+      "reference_valence_count": 144.00002543608187,
+      "absolute_difference": 2.4937744910857873e-05,
+      "relative_difference": 1.731787535129786e-07
+    },
+    {
+      "id": "mp-560961",
+      "target_electron_count": 416.00000656479006,
+      "reference_valence_count": 416.00004543095986,
+      "absolute_difference": 3.886616980253166e-05,
+      "relative_difference": 9.342828259133439e-08
+    },
+    {
+      "id": "mp-561848",
+      "target_electron_count": 191.99999472284662,
+      "reference_valence_count": 192.0000179614876,
+      "absolute_difference": 2.3238640977751857e-05,
+      "relative_difference": 1.2103457710307708e-07
+    },
+    {
+      "id": "mp-563",
+      "target_electron_count": 63.99999999866876,
+      "reference_valence_count": 63.999999693698435,
+      "absolute_difference": 3.0497032810217206e-07,
+      "relative_difference": 4.76516139940232e-09
+    },
+    {
+      "id": "mp-567885",
+      "target_electron_count": 63.999998516269635,
+      "reference_valence_count": 63.999999693698435,
+      "absolute_difference": 1.1774287997923238e-06,
+      "relative_difference": 1.839732508480396e-08
+    },
+    {
+      "id": "mp-568028",
+      "target_electron_count": 480.0000000479754,
+      "reference_valence_count": 480.00000502049846,
+      "absolute_difference": 4.972523072410695e-06,
+      "relative_difference": 1.0359422959169225e-08
+    },
+    {
+      "id": "mp-568286",
+      "target_electron_count": 15.999999998759964,
+      "reference_valence_count": 16.00000016734995,
+      "absolute_difference": 1.685899846393113e-07,
+      "relative_difference": 1.0536873929747873e-08
+    },
+    {
+      "id": "mp-568363",
+      "target_electron_count": 16.00000000041667,
+      "reference_valence_count": 16.00000016734995,
+      "absolute_difference": 1.6693327964389937e-07,
+      "relative_difference": 1.0433329868617634e-08
+    },
+    {
+      "id": "mp-568410",
+      "target_electron_count": 32.00000000702908,
+      "reference_valence_count": 32.0000003346999,
+      "absolute_difference": 3.276708184785093e-07,
+      "relative_difference": 1.0239712970352451e-08
+    },
+    {
+      "id": "mp-568584",
+      "target_electron_count": 79.99999952037705,
+      "reference_valence_count": 79.99999888534703,
+      "absolute_difference": 6.350300196800163e-07,
+      "relative_difference": 7.937875356599907e-09
+    },
+    {
+      "id": "mp-568806",
+      "target_electron_count": 8.000000001132994,
+      "reference_valence_count": 8.000000083674975,
+      "absolute_difference": 8.25419803618388e-08,
+      "relative_difference": 1.0317747437312692e-08
+    },
+    {
+      "id": "mp-569304",
+      "target_electron_count": 16.00000000150118,
+      "reference_valence_count": 16.00000016734995,
+      "absolute_difference": 1.658487676081677e-07,
+      "relative_difference": 1.0365547867093362e-08
+    },
+    {
+      "id": "mp-569416",
+      "target_electron_count": 32.00000000879551,
+      "reference_valence_count": 32.0000003346999,
+      "absolute_difference": 3.2590438792112764e-07,
+      "relative_difference": 1.018451201601164e-08
+    },
+    {
+      "id": "mp-569517",
+      "target_electron_count": 40.00000000668224,
+      "reference_valence_count": 40.000000418374874,
+      "absolute_difference": 4.1169263198526096e-07,
+      "relative_difference": 1.0292315691980367e-08
+    },
+    {
+      "id": "mp-569567",
+      "target_electron_count": 56.00000000374336,
+      "reference_valence_count": 56.00000058572482,
+      "absolute_difference": 5.819814603569284e-07,
+      "relative_difference": 1.0392525969103001e-08
+    },
+    {
+      "id": "mp-570002",
+      "target_electron_count": 31.999999936029738,
+      "reference_valence_count": 32.0000003346999,
+      "absolute_difference": 3.986701599956177e-07,
+      "relative_difference": 1.2458442369555573e-08
+    },
+    {
+      "id": "mp-570572",
+      "target_electron_count": 32.00000000594884,
+      "reference_valence_count": 31.999999846849217,
+      "absolute_difference": 1.590996241418452e-07,
+      "relative_difference": 4.9718632782278106e-09
+    },
+    {
+      "id": "mp-570747",
+      "target_electron_count": 20.000000026665003,
+      "reference_valence_count": 19.999999721336756,
+      "absolute_difference": 3.053282462417428e-07,
+      "relative_difference": 1.5266412524796542e-08
+    },
+    {
+      "id": "mp-570752",
+      "target_electron_count": 1.9999998845222537,
+      "reference_valence_count": 2.0000004600612624,
+      "absolute_difference": 5.755390086736867e-07,
+      "relative_difference": 2.8776943814105784e-07
+    },
+    {
+      "id": "mp-571653",
+      "target_electron_count": 32.0000001690337,
+      "reference_valence_count": 31.999999846849217,
+      "absolute_difference": 3.221844799838891e-07,
+      "relative_difference": 1.0068265047682867e-08
+    },
+    {
+      "id": "mp-579909",
+      "target_electron_count": 32.00000001919791,
+      "reference_valence_count": 32.0000003346999,
+      "absolute_difference": 3.155019854261809e-07,
+      "relative_difference": 9.859436941444637e-09
+    },
+    {
+      "id": "mp-583606",
+      "target_electron_count": 200.00000061493677,
+      "reference_valence_count": 200.00002049785382,
+      "absolute_difference": 1.9882917058566818e-05,
+      "relative_difference": 9.941457510390695e-08
+    },
+    {
+      "id": "mp-601178",
+      "target_electron_count": 100.00000059207467,
+      "reference_valence_count": 100.00000981611878,
+      "absolute_difference": 9.224044106304063e-06,
+      "relative_difference": 9.224043200861026e-08
+    },
+    {
+      "id": "mp-601210",
+      "target_electron_count": 167.99999903704202,
+      "reference_valence_count": 168.0000216140372,
+      "absolute_difference": 2.25769951782695e-05,
+      "relative_difference": 1.343868587715889e-07
+    },
+    {
+      "id": "mp-603334",
+      "target_electron_count": 216.00000050213305,
+      "reference_valence_count": 216.00000752893453,
+      "absolute_difference": 7.026801483789313e-06,
+      "relative_difference": 3.253148721695313e-08
+    },
+    {
+      "id": "mp-606949",
+      "target_electron_count": 47.999998053249605,
+      "reference_valence_count": 48.00000050204984,
+      "absolute_difference": 2.4488002381417573e-06,
+      "relative_difference": 5.101667109435095e-08
+    },
+    {
+      "id": "mp-607540",
+      "target_electron_count": 11.999999562506517,
+      "reference_valence_count": 12.00000211967349,
+      "absolute_difference": 2.557166972394498e-06,
+      "relative_difference": 2.1309721005816592e-07
+    },
+    {
+      "id": "mp-608071",
+      "target_electron_count": 102.00000107444836,
+      "reference_valence_count": 102.00001230004607,
+      "absolute_difference": 1.1225597702946288e-05,
+      "relative_difference": 1.1005486616927808e-07
+    },
+    {
+      "id": "mp-610917",
+      "target_electron_count": 11.999999996827775,
+      "reference_valence_count": 12.00000211967349,
+      "absolute_difference": 2.1228457143251944e-06,
+      "relative_difference": 1.7690377827891212e-07
+    },
+    {
+      "id": "mp-611426",
+      "target_electron_count": 32.0000000007147,
+      "reference_valence_count": 32.0000003346999,
+      "absolute_difference": 3.339851986083886e-07,
+      "relative_difference": 1.043703734734729e-08
+    },
+    {
+      "id": "mp-611448",
+      "target_electron_count": 48.00000000383471,
+      "reference_valence_count": 48.00000050204984,
+      "absolute_difference": 4.982151367016741e-07,
+      "relative_difference": 1.037948190605535e-08
+    },
+    {
+      "id": "mp-611836",
+      "target_electron_count": 11.999999761303416,
+      "reference_valence_count": 12.00000211967349,
+      "absolute_difference": 2.3583700734519653e-06,
+      "relative_difference": 1.9653080473923573e-07
+    },
+    {
+      "id": "mp-616407",
+      "target_electron_count": 111.99999960944608,
+      "reference_valence_count": 112.00001216071445,
+      "absolute_difference": 1.2551268369520585e-05,
+      "relative_difference": 1.1206488398867438e-07
+    },
+    {
+      "id": "mp-616440",
+      "target_electron_count": 64.00000000061465,
+      "reference_valence_count": 64.0000006693998,
+      "absolute_difference": 6.687851481501639e-07,
+      "relative_difference": 1.0449767830548304e-08
+    },
+    {
+      "id": "mp-624889",
+      "target_electron_count": 32.00000000795112,
+      "reference_valence_count": 32.0000003346999,
+      "absolute_difference": 3.2674877559202287e-07,
+      "relative_difference": 1.0210899130451124e-08
+    },
+    {
+      "id": "mp-625082",
+      "target_electron_count": 48.000000056308096,
+      "reference_valence_count": 48.00000624694198,
+      "absolute_difference": 6.190633882852126e-06,
+      "relative_difference": 1.289715224411356e-07
+    },
+    {
+      "id": "mp-625104",
+      "target_electron_count": 71.9999970894647,
+      "reference_valence_count": 72.00001048628896,
+      "absolute_difference": 1.3396824257938533e-05,
+      "relative_difference": 1.8606697648314517e-07
+    },
+    {
+      "id": "mp-625105",
+      "target_electron_count": 71.99999976320188,
+      "reference_valence_count": 72.00001048628896,
+      "absolute_difference": 1.0723087072506132e-05,
+      "relative_difference": 1.489317432050672e-07
+    },
+    {
+      "id": "mp-625108",
+      "target_electron_count": 87.99999783587539,
+      "reference_valence_count": 88.00001280064333,
+      "absolute_difference": 1.4964767942160506e-05,
+      "relative_difference": 1.7005415642452162e-07
+    },
+    {
+      "id": "mp-625109",
+      "target_electron_count": 87.99999935764812,
+      "reference_valence_count": 88.00001280064333,
+      "absolute_difference": 1.3442995211221387e-05,
+      "relative_difference": 1.527612869974845e-07
+    },
+    {
+      "id": "mp-625347",
+      "target_electron_count": 159.9999988508585,
+      "reference_valence_count": 160.0000212801025,
+      "absolute_difference": 2.2429243983879132e-05,
+      "relative_difference": 1.401827562548482e-07
+    },
+    {
+      "id": "mp-625365",
+      "target_electron_count": 160.00000123878328,
+      "reference_valence_count": 160.0000212801025,
+      "absolute_difference": 2.00413192033011e-05,
+      "relative_difference": 1.2525822836120728e-07
+    },
+    {
+      "id": "mp-625374",
+      "target_electron_count": 66.00000001467637,
+      "reference_valence_count": 66.00000690206673,
+      "absolute_difference": 6.887390355814205e-06,
+      "relative_difference": 1.0435438841747352e-07
+    },
+    {
+      "id": "mp-625377",
+      "target_electron_count": 48.00000059316249,
+      "reference_valence_count": 48.00000488080626,
+      "absolute_difference": 4.28764376891877e-06,
+      "relative_difference": 8.932590276950718e-08
+    },
+    {
+      "id": "mp-625385",
+      "target_electron_count": 48.00000001280668,
+      "reference_valence_count": 48.00000488080626,
+      "absolute_difference": 4.8679995785505525e-06,
+      "relative_difference": 1.0141664757407384e-07
+    },
+    {
+      "id": "mp-625619",
+      "target_electron_count": 32.00000004161181,
+      "reference_valence_count": 32.000003960301136,
+      "absolute_difference": 3.9186893232567854e-06,
+      "relative_difference": 1.2245902619631766e-07
+    },
+    {
+      "id": "mp-625631",
+      "target_electron_count": 127.999996745263,
+      "reference_valence_count": 128.00001584120454,
+      "absolute_difference": 1.9095941539148953e-05,
+      "relative_difference": 1.4918702481130296e-07
+    },
+    {
+      "id": "mp-625635",
+      "target_electron_count": 32.00000001462257,
+      "reference_valence_count": 32.000003960301136,
+      "absolute_difference": 3.945678564321042e-06,
+      "relative_difference": 1.233024398751953e-07
+    },
+    {
+      "id": "mp-625664",
+      "target_electron_count": 128.00000364691243,
+      "reference_valence_count": 128.00001584120454,
+      "absolute_difference": 1.2194292111189498e-05,
+      "relative_difference": 9.526789532836939e-08
+    },
+    {
+      "id": "mp-625676",
+      "target_electron_count": 128.0000022527223,
+      "reference_valence_count": 128.00001584120454,
+      "absolute_difference": 1.3588482232762544e-05,
+      "relative_difference": 1.0616000430515783e-07
+    },
+    {
+      "id": "mp-625686",
+      "target_electron_count": 128.00000003924183,
+      "reference_valence_count": 128.00001584120454,
+      "absolute_difference": 1.5801962717887363e-05,
+      "relative_difference": 1.23452818455047e-07
+    },
+    {
+      "id": "mp-625790",
+      "target_electron_count": 96.00000087501991,
+      "reference_valence_count": 96.00001104300068,
+      "absolute_difference": 1.0167980775577234e-05,
+      "relative_difference": 1.0591645422855998e-07
+    },
+    {
+      "id": "mp-625815",
+      "target_electron_count": 95.99999926776488,
+      "reference_valence_count": 96.00001104300068,
+      "absolute_difference": 1.1775235805089324e-05,
+      "relative_difference": 1.2265869219343023e-07
+    },
+    {
+      "id": "mp-625819",
+      "target_electron_count": 96.00000035905589,
+      "reference_valence_count": 96.00001104300068,
+      "absolute_difference": 1.0683944793754563e-05,
+      "relative_difference": 1.1129107879965733e-07
+    },
+    {
+      "id": "mp-625850",
+      "target_electron_count": 191.9999990796092,
+      "reference_valence_count": 192.0000315982763,
+      "absolute_difference": 3.251866709774731e-05,
+      "relative_difference": 1.6936802992713284e-07
+    },
+    {
+      "id": "mp-625861",
+      "target_electron_count": 191.99999860993074,
+      "reference_valence_count": 192.0000315982763,
+      "absolute_difference": 3.298834556630936e-05,
+      "relative_difference": 1.7181427154830487e-07
+    },
+    {
+      "id": "mp-625868",
+      "target_electron_count": 191.99999741241066,
+      "reference_valence_count": 192.0000315982763,
+      "absolute_difference": 3.418586564407633e-05,
+      "relative_difference": 1.7805135426021064e-07
+    },
+    {
+      "id": "mp-625924",
+      "target_electron_count": 63.99999999617514,
+      "reference_valence_count": 64.00000856129635,
+      "absolute_difference": 8.565121213166549e-06,
+      "relative_difference": 1.338300010532539e-07
+    },
+    {
+      "id": "mp-625927",
+      "target_electron_count": 63.99999999888026,
+      "reference_valence_count": 64.00000856129635,
+      "absolute_difference": 8.562416091706382e-06,
+      "relative_difference": 1.3378773353609291e-07
+    },
+    {
+      "id": "mp-625948",
+      "target_electron_count": 191.99999986025009,
+      "reference_valence_count": 192.0000315982763,
+      "absolute_difference": 3.173802622313815e-05,
+      "relative_difference": 1.6530219270767598e-07
+    },
+    {
+      "id": "mp-625994",
+      "target_electron_count": 128.00000184869688,
+      "reference_valence_count": 128.00001584120454,
+      "absolute_difference": 1.399250766098703e-05,
+      "relative_difference": 1.0931645257252145e-07
+    },
+    {
+      "id": "mp-626006",
+      "target_electron_count": 127.99999969437103,
+      "reference_valence_count": 128.00001584120454,
+      "absolute_difference": 1.6146833516472725e-05,
+      "relative_difference": 1.261471212355498e-07
+    },
+    {
+      "id": "mp-626046",
+      "target_electron_count": 192.0000021743935,
+      "reference_valence_count": 192.0000315982763,
+      "absolute_difference": 2.9423882807577684e-05,
+      "relative_difference": 1.5324936440188502e-07
+    },
+    {
+      "id": "mp-626066",
+      "target_electron_count": 192.00000343557952,
+      "reference_valence_count": 192.0000315982763,
+      "absolute_difference": 2.8162696793287978e-05,
+      "relative_difference": 1.4668068832516176e-07
+    },
+    {
+      "id": "mp-626093",
+      "target_electron_count": 191.99999952940573,
+      "reference_valence_count": 192.0000315982763,
+      "absolute_difference": 3.206887058126995e-05,
+      "relative_difference": 1.6702534012269324e-07
+    },
+    {
+      "id": "mp-626112",
+      "target_electron_count": 191.99999969455854,
+      "reference_valence_count": 192.0000315982763,
+      "absolute_difference": 3.1903717768955175e-05,
+      "relative_difference": 1.661651693667825e-07
+    },
+    {
+      "id": "mp-626113",
+      "target_electron_count": 64.0000000869984,
+      "reference_valence_count": 64.00000792060227,
+      "absolute_difference": 7.83360387401899e-06,
+      "relative_difference": 1.2240004538338926e-07
+    },
+    {
+      "id": "mp-626127",
+      "target_electron_count": 191.99999882309172,
+      "reference_valence_count": 192.0000315982763,
+      "absolute_difference": 3.2775184592992446e-05,
+      "relative_difference": 1.7070405832832523e-07
+    },
+    {
+      "id": "mp-626155",
+      "target_electron_count": 63.99999888760724,
+      "reference_valence_count": 64.00000792060227,
+      "absolute_difference": 9.032995031077462e-06,
+      "relative_difference": 1.4114052989311656e-07
+    },
+    {
+      "id": "mp-626256",
+      "target_electron_count": 127.99999852110477,
+      "reference_valence_count": 128.00001943909226,
+      "absolute_difference": 2.091798748438123e-05,
+      "relative_difference": 1.6342175240320864e-07
+    },
+    {
+      "id": "mp-626259",
+      "target_electron_count": 127.99999871465104,
+      "reference_valence_count": 128.00001943909226,
+      "absolute_difference": 2.0724441213815226e-05,
+      "relative_difference": 1.6190967239404817e-07
+    },
+    {
+      "id": "mp-626289",
+      "target_electron_count": 127.9999987254875,
+      "reference_valence_count": 128.00001943909226,
+      "absolute_difference": 2.0713604754973858e-05,
+      "relative_difference": 1.618250125722071e-07
+    },
+    {
+      "id": "mp-626354",
+      "target_electron_count": 160.00000182496282,
+      "reference_valence_count": 160.0000212801025,
+      "absolute_difference": 1.9455139664614762e-05,
+      "relative_difference": 1.2159460673168167e-07
+    },
+    {
+      "id": "mp-626392",
+      "target_electron_count": 159.99999801427597,
+      "reference_valence_count": 160.0000212801025,
+      "absolute_difference": 2.3265826513352295e-05,
+      "relative_difference": 1.45411396368643e-07
+    },
+    {
+      "id": "mp-626529",
+      "target_electron_count": 192.00000210017757,
+      "reference_valence_count": 192.0000315982763,
+      "absolute_difference": 2.949809874053244e-05,
+      "relative_difference": 1.5363590565574293e-07
+    },
+    {
+      "id": "mp-626534",
+      "target_electron_count": 56.00000002200897,
+      "reference_valence_count": 56.00000672105131,
+      "absolute_difference": 6.699042337743322e-06,
+      "relative_difference": 1.1962574167379597e-07
+    },
+    {
+      "id": "mp-626542",
+      "target_electron_count": 56.00000001678847,
+      "reference_valence_count": 56.00000672105131,
+      "absolute_difference": 6.704262837331498e-06,
+      "relative_difference": 1.1971896486953916e-07
+    },
+    {
+      "id": "mp-626543",
+      "target_electron_count": 55.99999998811276,
+      "reference_valence_count": 56.00000672105131,
+      "absolute_difference": 6.7329385444736545e-06,
+      "relative_difference": 1.2023103100704868e-07
+    },
+    {
+      "id": "mp-630227",
+      "target_electron_count": 239.99999989000332,
+      "reference_valence_count": 240.00000251024923,
+      "absolute_difference": 2.620245908246943e-06,
+      "relative_difference": 1.0917691170170072e-08
+    },
+    {
+      "id": "mp-632172",
+      "target_electron_count": 2.000000002182355,
+      "reference_valence_count": 2.0000004600612624,
+      "absolute_difference": 4.578789072340328e-07,
+      "relative_difference": 2.2893940095394148e-07
+    },
+    {
+      "id": "mp-632250",
+      "target_electron_count": 1.0000000018955597,
+      "reference_valence_count": 1.0000002300306312,
+      "absolute_difference": 2.281350715005459e-07,
+      "relative_difference": 2.2813501902250348e-07
+    },
+    {
+      "id": "mp-632291",
+      "target_electron_count": 1.999999998190971,
+      "reference_valence_count": 2.0000004600612624,
+      "absolute_difference": 4.6187029134614477e-07,
+      "relative_difference": 2.309350925509273e-07
+    },
+    {
+      "id": "mp-632329",
+      "target_electron_count": 7.9999998064714255,
+      "reference_valence_count": 8.000000083674975,
+      "absolute_difference": 2.7720354900395705e-07,
+      "relative_difference": 3.4650443263072765e-08
+    },
+    {
+      "id": "mp-632734",
+      "target_electron_count": 64.00000074199548,
+      "reference_valence_count": 64.00000792060227,
+      "absolute_difference": 7.178606793445397e-06,
+      "relative_difference": 1.1216571726602128e-07
+    },
+    {
+      "id": "mp-634429",
+      "target_electron_count": 64.00000004084644,
+      "reference_valence_count": 64.00000792060227,
+      "absolute_difference": 7.87975582738909e-06,
+      "relative_difference": 1.2312116956555115e-07
+    },
+    {
+      "id": "mp-634659",
+      "target_electron_count": 0.9999999946008357,
+      "reference_valence_count": 1.0000002300306312,
+      "absolute_difference": 2.3542979554758148e-07,
+      "relative_difference": 2.3542974139152946e-07
+    },
+    {
+      "id": "mp-634812",
+      "target_electron_count": 31.999999991481033,
+      "reference_valence_count": 32.000006079592026,
+      "absolute_difference": 6.088110993118789e-06,
+      "relative_difference": 1.9025343238923558e-07
+    },
+    {
+      "id": "mp-643099",
+      "target_electron_count": 47.9999997267416,
+      "reference_valence_count": 48.000004322868264,
+      "absolute_difference": 4.596126665035172e-06,
+      "relative_difference": 9.575263023144094e-08
+    },
+    {
+      "id": "mp-643432",
+      "target_electron_count": 32.00000030482123,
+      "reference_valence_count": 32.00000248170433,
+      "absolute_difference": 2.176883100446503e-06,
+      "relative_difference": 6.802759161319169e-08
+    },
+    {
+      "id": "mp-644272",
+      "target_electron_count": 9.999999998794758,
+      "reference_valence_count": 10.000000202202308,
+      "absolute_difference": 2.0340755035874736e-07,
+      "relative_difference": 2.034075462457998e-08
+    },
+    {
+      "id": "mp-644330",
+      "target_electron_count": 71.9999998406976,
+      "reference_valence_count": 72.00000577252527,
+      "absolute_difference": 5.931827672611689e-06,
+      "relative_difference": 8.23864888476889e-08
+    },
+    {
+      "id": "mp-644385",
+      "target_electron_count": 10.000000003808267,
+      "reference_valence_count": 10.000000202202308,
+      "absolute_difference": 1.9839404075128186e-07,
+      "relative_difference": 1.9839403673970864e-08
+    },
+    {
+      "id": "mp-644607",
+      "target_electron_count": 31.99999998330026,
+      "reference_valence_count": 32.000004323021955,
+      "absolute_difference": 4.339721694890386e-06,
+      "relative_difference": 1.3561628464431908e-07
+    },
+    {
+      "id": "mp-66",
+      "target_electron_count": 7.999999934960401,
+      "reference_valence_count": 8.000000083674975,
+      "absolute_difference": 1.4871457310050573e-07,
+      "relative_difference": 1.8589321443130592e-08
+    },
+    {
+      "id": "mp-667273",
+      "target_electron_count": 239.99999974087027,
+      "reference_valence_count": 240.00000251024923,
+      "absolute_difference": 2.769378966149816e-06,
+      "relative_difference": 1.1539078904932717e-08
+    },
+    {
+      "id": "mp-672233",
+      "target_electron_count": 20.000000450676012,
+      "reference_valence_count": 19.999999721336756,
+      "absolute_difference": 7.293392556562139e-07,
+      "relative_difference": 3.646696329091081e-08
+    },
+    {
+      "id": "mp-672234",
+      "target_electron_count": 20.00000083761513,
+      "reference_valence_count": 19.999999721336756,
+      "absolute_difference": 1.1162783728480008e-06,
+      "relative_difference": 5.5813919420064434e-08
+    },
+    {
+      "id": "mp-673658",
+      "target_electron_count": 31.999999998758636,
+      "reference_valence_count": 32.000006079592026,
+      "absolute_difference": 6.080833390598173e-06,
+      "relative_difference": 1.9002600735367417e-07
+    },
+    {
+      "id": "mp-675784",
+      "target_electron_count": 42.000000072174146,
+      "reference_valence_count": 42.00000486675819,
+      "absolute_difference": 4.794584043565919e-06,
+      "relative_difference": 1.1415674971411006e-07
+    },
+    {
+      "id": "mp-676050",
+      "target_electron_count": 59.00000003810496,
+      "reference_valence_count": 59.00000799026809,
+      "absolute_difference": 7.952163130653389e-06,
+      "relative_difference": 1.3478240768992913e-07
+    },
+    {
+      "id": "mp-680372",
+      "target_electron_count": 240.00000016183384,
+      "reference_valence_count": 240.00000251024923,
+      "absolute_difference": 2.348415392816605e-06,
+      "relative_difference": 9.785064034390233e-09
+    },
+    {
+      "id": "mp-684592",
+      "target_electron_count": 96.00000001516435,
+      "reference_valence_count": 96.00000256583712,
+      "absolute_difference": 2.5506727752144798e-06,
+      "relative_difference": 2.6569507365015118e-08
+    },
+    {
+      "id": "mp-684678",
+      "target_electron_count": 112.00000023264957,
+      "reference_valence_count": 112.00002127857209,
+      "absolute_difference": 2.1045922522944238e-05,
+      "relative_difference": 1.8790998682578605e-07
+    },
+    {
+      "id": "mp-684704",
+      "target_electron_count": 31.99999994763254,
+      "reference_valence_count": 32.000006079592026,
+      "absolute_difference": 6.1319594877318195e-06,
+      "relative_difference": 1.9162369758555987e-07
+    },
+    {
+      "id": "mp-696658",
+      "target_electron_count": 151.99999226683016,
+      "reference_valence_count": 152.00001784879956,
+      "absolute_difference": 2.558196939617119e-05,
+      "relative_difference": 1.6830241047483685e-07
+    },
+    {
+      "id": "mp-696659",
+      "target_electron_count": 128.00000243478516,
+      "reference_valence_count": 128.00001584120454,
+      "absolute_difference": 1.3406419384409674e-05,
+      "relative_difference": 1.0473763847843218e-07
+    },
+    {
+      "id": "mp-696717",
+      "target_electron_count": 61.99999997844985,
+      "reference_valence_count": 62.000011699122794,
+      "absolute_difference": 1.1720672944193211e-05,
+      "relative_difference": 1.8904307633153303e-07
+    },
+    {
+      "id": "mp-696735",
+      "target_electron_count": 96.0000046088281,
+      "reference_valence_count": 96.00001823877608,
+      "absolute_difference": 1.3629947972049195e-05,
+      "relative_difference": 1.419785977347223e-07
+    },
+    {
+      "id": "mp-697085",
+      "target_electron_count": 32.00000015533607,
+      "reference_valence_count": 32.000006079592026,
+      "absolute_difference": 5.924255958689173e-06,
+      "relative_difference": 1.851329635361339e-07
+    },
+    {
+      "id": "mp-697111",
+      "target_electron_count": 32.0000000285876,
+      "reference_valence_count": 32.000006079592026,
+      "absolute_difference": 6.0510044264106e-06,
+      "relative_difference": 1.890938523999101e-07
+    },
+    {
+      "id": "mp-697242",
+      "target_electron_count": 144.00000118297248,
+      "reference_valence_count": 144.0000133439944,
+      "absolute_difference": 1.2161021913925651e-05,
+      "relative_difference": 8.445153324308934e-08
+    },
+    {
+      "id": "mp-697408",
+      "target_electron_count": 115.99999867977243,
+      "reference_valence_count": 116.00001508766678,
+      "absolute_difference": 1.6407894349868002e-05,
+      "relative_difference": 1.4144734668756525e-07
+    },
+    {
+      "id": "mp-703459",
+      "target_electron_count": 96.00000182109878,
+      "reference_valence_count": 96.00001823877608,
+      "absolute_difference": 1.6417677301205913e-05,
+      "relative_difference": 1.7101743939642845e-07
+    },
+    {
+      "id": "mp-703527",
+      "target_electron_count": 128.00000081924463,
+      "reference_valence_count": 128.00000290053703,
+      "absolute_difference": 2.0812923935409344e-06,
+      "relative_difference": 1.626009645607752e-08
+    },
+    {
+      "id": "mp-706430",
+      "target_electron_count": 127.99999994104536,
+      "reference_valence_count": 128.00001943909226,
+      "absolute_difference": 1.9498046896160304e-05,
+      "relative_difference": 1.5232846824244652e-07
+    },
+    {
+      "id": "mp-707104",
+      "target_electron_count": 256.00000288904937,
+      "reference_valence_count": 256.0000316824091,
+      "absolute_difference": 2.879335971783803e-05,
+      "relative_difference": 1.1247404747808299e-07
+    },
+    {
+      "id": "mp-707289",
+      "target_electron_count": 216.0000004799565,
+      "reference_valence_count": 216.00001413944292,
+      "absolute_difference": 1.3659486427286538e-05,
+      "relative_difference": 6.323835894968228e-08
+    },
+    {
+      "id": "mp-707535",
+      "target_electron_count": 159.99999927815495,
+      "reference_valence_count": 160.00001121188103,
+      "absolute_difference": 1.193372608554455e-05,
+      "relative_difference": 7.458578280811016e-08
+    },
+    {
+      "id": "mp-707543",
+      "target_electron_count": 255.99999841744463,
+      "reference_valence_count": 256.0000209734936,
+      "absolute_difference": 2.255604894685348e-05,
+      "relative_difference": 8.810955898003207e-08
+    },
+    {
+      "id": "mp-707727",
+      "target_electron_count": 104.0000000709729,
+      "reference_valence_count": 104.00000585696544,
+      "absolute_difference": 5.785992541973428e-06,
+      "relative_difference": 5.5634540539652374e-08
+    },
+    {
+      "id": "mp-707910",
+      "target_electron_count": 319.99999991277815,
+      "reference_valence_count": 320.000034634236,
+      "absolute_difference": 3.472145783689484e-05,
+      "relative_difference": 1.0850454399663394e-07
+    },
+    {
+      "id": "mp-707917",
+      "target_electron_count": 239.99999984526963,
+      "reference_valence_count": 240.0000197326414,
+      "absolute_difference": 1.9887371763616102e-05,
+      "relative_difference": 8.286404220204031e-08
+    },
+    {
+      "id": "mp-708965",
+      "target_electron_count": 255.9999988229285,
+      "reference_valence_count": 256.000023705765,
+      "absolute_difference": 2.4882836498818506e-05,
+      "relative_difference": 9.719857107285946e-08
+    },
+    {
+      "id": "mp-7139",
+      "target_electron_count": 64.00000012753698,
+      "reference_valence_count": 64.00000368202049,
+      "absolute_difference": 3.554483512857587e-06,
+      "relative_difference": 5.553880169316533e-08
+    },
+    {
+      "id": "mp-720515",
+      "target_electron_count": 119.99999939199371,
+      "reference_valence_count": 120.0000032072964,
+      "absolute_difference": 3.815302690668432e-06,
+      "relative_difference": 3.179418823912538e-08
+    },
+    {
+      "id": "mp-720869",
+      "target_electron_count": 368.0000051497915,
+      "reference_valence_count": 368.0000493076664,
+      "absolute_difference": 4.4157874924621865e-05,
+      "relative_difference": 1.1999420926083538e-07
+    },
+    {
+      "id": "mp-721707",
+      "target_electron_count": 223.99999705905378,
+      "reference_valence_count": 224.00001762617296,
+      "absolute_difference": 2.0567119179304427e-05,
+      "relative_difference": 9.181748911122091e-08
+    },
+    {
+      "id": "mp-721759",
+      "target_electron_count": 4.999999999530329,
+      "reference_valence_count": 4.999999930334189,
+      "absolute_difference": 6.919613948497272e-08,
+      "relative_difference": 1.3839228089818754e-08
+    },
+    {
+      "id": "mp-723285",
+      "target_electron_count": 48.00000005302894,
+      "reference_valence_count": 48.00000847869396,
+      "absolute_difference": 8.425665015465711e-06,
+      "relative_difference": 1.7553465681585577e-07
+    },
+    {
+      "id": "mp-723638",
+      "target_electron_count": 191.99999925684446,
+      "reference_valence_count": 192.00000200819937,
+      "absolute_difference": 2.7513549127888837e-06,
+      "relative_difference": 1.4329973354226252e-08
+    },
+    {
+      "id": "mp-725609",
+      "target_electron_count": 96.00000230976237,
+      "reference_valence_count": 96.00001048705415,
+      "absolute_difference": 8.177291789479568e-06,
+      "relative_difference": 8.518011350199067e-08
+    },
+    {
+      "id": "mp-726720",
+      "target_electron_count": 56.00000001501432,
+      "reference_valence_count": 56.000006080357224,
+      "absolute_difference": 6.065342901706572e-06,
+      "relative_difference": 1.0830968291330373e-07
+    },
+    {
+      "id": "mp-729513",
+      "target_electron_count": 231.9999965925812,
+      "reference_valence_count": 232.0000124401377,
+      "absolute_difference": 1.5847556511516814e-05,
+      "relative_difference": 6.830842957651097e-08
+    },
+    {
+      "id": "mp-729728",
+      "target_electron_count": 64.0000000654937,
+      "reference_valence_count": 64.00000864604391,
+      "absolute_difference": 8.58055021524251e-06,
+      "relative_difference": 1.3407107900090742e-07
+    },
+    {
+      "id": "mp-729933",
+      "target_electron_count": 40.00000005567051,
+      "reference_valence_count": 40.00000440669693,
+      "absolute_difference": 4.351026419158188e-06,
+      "relative_difference": 1.0877564849542179e-07
+    },
+    {
+      "id": "mp-730101",
+      "target_electron_count": 7.999999721805088,
+      "reference_valence_count": 8.00000184024505,
+      "absolute_difference": 2.118439962117691e-06,
+      "relative_difference": 2.6480493435146514e-07
+    },
+    {
+      "id": "mp-731594",
+      "target_electron_count": 112.00000054222306,
+      "reference_valence_count": 112.00000117144964,
+      "absolute_difference": 6.292265766205674e-07,
+      "relative_difference": 5.618094375350471e-09
+    },
+    {
+      "id": "mp-731827",
+      "target_electron_count": 15.99999994919572,
+      "reference_valence_count": 16.0000036804901,
+      "absolute_difference": 3.7312943792500164e-06,
+      "relative_difference": 2.332058450586383e-07
+    },
+    {
+      "id": "mp-733610",
+      "target_electron_count": 127.99999963076569,
+      "reference_valence_count": 128.00001365182635,
+      "absolute_difference": 1.4021060664504148e-05,
+      "relative_difference": 1.0953952475851232e-07
+    },
+    {
+      "id": "mp-734030",
+      "target_electron_count": 111.99999495478416,
+      "reference_valence_count": 112.00001216071445,
+      "absolute_difference": 1.7205930291197546e-05,
+      "relative_difference": 1.5362436091978178e-07
+    },
+    {
+      "id": "mp-734124",
+      "target_electron_count": 256.000000283084,
+      "reference_valence_count": 256.00001874174154,
+      "absolute_difference": 1.8458657564224268e-05,
+      "relative_difference": 7.21041258315132e-08
+    },
+    {
+      "id": "mp-734137",
+      "target_electron_count": 352.0000035298021,
+      "reference_valence_count": 352.0000321012418,
+      "absolute_difference": 2.857143971368714e-05,
+      "relative_difference": 8.116885542064229e-08
+    },
+    {
+      "id": "mp-734416",
+      "target_electron_count": 163.99999498182484,
+      "reference_valence_count": 164.00002515741863,
+      "absolute_difference": 3.0175593792591826e-05,
+      "relative_difference": 1.839974949005477e-07
+    },
+    {
+      "id": "mp-736227",
+      "target_electron_count": 144.0000008260321,
+      "reference_valence_count": 143.9999995547468,
+      "absolute_difference": 1.2712852992535773e-06,
+      "relative_difference": 8.828370161003037e-09
+    },
+    {
+      "id": "mp-738409",
+      "target_electron_count": 32.00000004820383,
+      "reference_valence_count": 32.0000073609802,
+      "absolute_difference": 7.312776368451068e-06,
+      "relative_difference": 2.2852420894652785e-07
+    },
+    {
+      "id": "mp-738670",
+      "target_electron_count": 287.999997706592,
+      "reference_valence_count": 288.0000347493804,
+      "absolute_difference": 3.704278839222752e-05,
+      "relative_difference": 1.286207775094972e-07
+    },
+    {
+      "id": "mp-754417",
+      "target_electron_count": 1.000000001340541,
+      "reference_valence_count": 1.0000002300306312,
+      "absolute_difference": 2.2869009019821362e-07,
+      "relative_difference": 2.2869003759249994e-07
+    },
+    {
+      "id": "mp-754514",
+      "target_electron_count": 10.000000004138977,
+      "reference_valence_count": 9.999999860668378,
+      "absolute_difference": 1.4347059895669645e-07,
+      "relative_difference": 1.434706009556956e-08
+    },
+    {
+      "id": "mp-758097",
+      "target_electron_count": 160.00000198921867,
+      "reference_valence_count": 160.00000898012905,
+      "absolute_difference": 6.990910378590343e-06,
+      "relative_difference": 4.369318741387426e-08
+    },
+    {
+      "id": "mp-766262",
+      "target_electron_count": 112.00000012408505,
+      "reference_valence_count": 112.00001504582929,
+      "absolute_difference": 1.4921744238449719e-05,
+      "relative_difference": 1.3322984137407383e-07
+    },
+    {
+      "id": "mp-774616",
+      "target_electron_count": 192.00000033131604,
+      "reference_valence_count": 192.00000794869322,
+      "absolute_difference": 7.617377178803508e-06,
+      "relative_difference": 3.967383783046012e-08
+    },
+    {
+      "id": "mp-779689",
+      "target_electron_count": 32.0000000121059,
+      "reference_valence_count": 32.00000248170433,
+      "absolute_difference": 2.469598427978781e-06,
+      "relative_difference": 7.717494488916832e-08
+    },
+    {
+      "id": "mp-849229",
+      "target_electron_count": 319.99999643492856,
+      "reference_valence_count": 320.00005103736856,
+      "absolute_difference": 5.460244000232706e-05,
+      "relative_difference": 1.7063259779277587e-07
+    },
+    {
+      "id": "mp-850274",
+      "target_electron_count": 2.0000000029135307,
+      "reference_valence_count": 2.0000004600612624,
+      "absolute_difference": 4.5714773166949385e-07,
+      "relative_difference": 2.2857381325576838e-07
+    },
+    {
+      "id": "mp-866659",
+      "target_electron_count": 219.99999964994893,
+      "reference_valence_count": 220.00001723190744,
+      "absolute_difference": 1.7581958502432826e-05,
+      "relative_difference": 7.991798693315215e-08
+    },
+    {
+      "id": "mp-937760",
+      "target_electron_count": 8.000000061549008,
+      "reference_valence_count": 8.000000083674975,
+      "absolute_difference": 2.2125966836483713e-08,
+      "relative_difference": 2.7657458256325e-09
+    },
+    {
+      "id": "mp-9410",
+      "target_electron_count": 128.00000083673376,
+      "reference_valence_count": 127.99999938739687,
+      "absolute_difference": 1.4493368922785521e-06,
+      "relative_difference": 1.132294452511737e-08
+    },
+    {
+      "id": "mp-971684",
+      "target_electron_count": 127.99999747816275,
+      "reference_valence_count": 127.99999938739687,
+      "absolute_difference": 1.9092341148052583e-06,
+      "relative_difference": 1.491589159330297e-08
+    },
+    {
+      "id": "mp-973783",
+      "target_electron_count": 4.00000000412647,
+      "reference_valence_count": 4.000000920122525,
+      "absolute_difference": 9.159960550064739e-07,
+      "relative_difference": 2.289989610748429e-07
+    },
+    {
+      "id": "mp-976247",
+      "target_electron_count": 89.00000000453689,
+      "reference_valence_count": 89.00000017475399,
+      "absolute_difference": 1.7021710618791985e-07,
+      "relative_difference": 1.912551751165099e-09
+    },
+    {
+      "id": "mp-976707",
+      "target_electron_count": 48.00000152742317,
+      "reference_valence_count": 48.00000376493027,
+      "absolute_difference": 2.2375070969360422e-06,
+      "relative_difference": 4.6614727529892575e-08
+    },
+    {
+      "id": "mp-985782",
+      "target_electron_count": 23.99999999986492,
+      "reference_valence_count": 24.000002007595,
+      "absolute_difference": 2.007730081743375e-06,
+      "relative_difference": 8.365541307488276e-08
+    },
+    {
+      "id": "mp-990424",
+      "target_electron_count": 15.999999593989685,
+      "reference_valence_count": 16.00000016734995,
+      "absolute_difference": 5.733602641555535e-07,
+      "relative_difference": 3.583501613491034e-08
+    },
+    {
+      "id": "mp-990441",
+      "target_electron_count": 64.00000003778909,
+      "reference_valence_count": 64.00001215918405,
+      "absolute_difference": 1.2121394959763165e-05,
+      "relative_difference": 1.8939676026332967e-07
+    },
+    {
+      "id": "mp-990448",
+      "target_electron_count": 7.999999999691374,
+      "reference_valence_count": 8.000000083674975,
+      "absolute_difference": 8.398360051842246e-08,
+      "relative_difference": 1.0497949955000847e-08
+    },
+    {
+      "id": "mp-995183",
+      "target_electron_count": 39.99999995848108,
+      "reference_valence_count": 40.00000440669693,
+      "absolute_difference": 4.448215854324644e-06,
+      "relative_difference": 1.1120538410690548e-07
+    },
+    {
+      "id": "mp-995184",
+      "target_electron_count": 17.999999874335842,
+      "reference_valence_count": 18.00000062741121,
+      "absolute_difference": 7.530753691753489e-07,
+      "relative_difference": 4.183751905144558e-08
+    },
+    {
+      "id": "mp-995195",
+      "target_electron_count": 10.000000015375944,
+      "reference_valence_count": 10.000000543736236,
+      "absolute_difference": 5.283602924066599e-07,
+      "relative_difference": 5.283602636777978e-08
+    },
+    {
+      "id": "mp-995196",
+      "target_electron_count": 21.999999958760643,
+      "reference_valence_count": 22.000003221347722,
+      "absolute_difference": 3.262587078722845e-06,
+      "relative_difference": 1.4829939095449727e-07
+    },
+    {
+      "id": "mp-995197",
+      "target_electron_count": 40.000000010358974,
+      "reference_valence_count": 40.000002174944946,
+      "absolute_difference": 2.1645859717978055e-06,
+      "relative_difference": 5.4114646352535726e-08
+    },
+    {
+      "id": "mp-995198",
+      "target_electron_count": 64.0000011058293,
+      "reference_valence_count": 64.00000864604391,
+      "absolute_difference": 7.540214610912699e-06,
+      "relative_difference": 1.178158373792468e-07
+    },
+    {
+      "id": "mp-995200",
+      "target_electron_count": 26.000000009033585,
+      "reference_valence_count": 26.000000711086187,
+      "absolute_difference": 7.020526027190499e-07,
+      "relative_difference": 2.700202244301095e-08
+    },
+    {
+      "id": "mp-995202",
+      "target_electron_count": 50.00000056210478,
+      "reference_valence_count": 50.00000096211111,
+      "absolute_difference": 4.0000632850478723e-07,
+      "relative_difference": 8.000126416155535e-09
+    },
+    {
+      "id": "mp-995204",
+      "target_electron_count": 135.99999781193856,
+      "reference_valence_count": 136.00000892393678,
+      "absolute_difference": 1.1111998219348607e-05,
+      "relative_difference": 8.170586389860767e-08
+    },
+    {
+      "id": "mp-995206",
+      "target_electron_count": 48.00000002816097,
+      "reference_valence_count": 48.00000624694198,
+      "absolute_difference": 6.2187810101477226e-06,
+      "relative_difference": 1.2955792085014392e-07
+    },
+    {
+      "id": "mp-995217",
+      "target_electron_count": 55.99999984110199,
+      "reference_valence_count": 56.0000023422949,
+      "absolute_difference": 2.5011929096763197e-06,
+      "relative_difference": 4.4664157233208786e-08
+    },
+    {
+      "id": "mp-995218",
+      "target_electron_count": 71.99999967119007,
+      "reference_valence_count": 72.0000064979669,
+      "absolute_difference": 6.826776825619163e-06,
+      "relative_difference": 9.48163362431354e-08
+    },
+    {
+      "id": "mp-995219",
+      "target_electron_count": 143.9999999735097,
+      "reference_valence_count": 144.00001650907396,
+      "absolute_difference": 1.6535564270725445e-05,
+      "relative_difference": 1.1483029427071962e-07
+    },
+    {
+      "id": "mp-995220",
+      "target_electron_count": 126.0000001501149,
+      "reference_valence_count": 126.0000144454397,
+      "absolute_difference": 1.4295324803015319e-05,
+      "relative_difference": 1.1345494574689477e-07
+    },
+    {
+      "id": "mp-995224",
+      "target_electron_count": 128.00000014815285,
+      "reference_valence_count": 128.00001729208782,
+      "absolute_difference": 1.7143934968544272e-05,
+      "relative_difference": 1.3393697384761218e-07
+    },
+    {
+      "id": "mp-995226",
+      "target_electron_count": 95.99999968756997,
+      "reference_valence_count": 96.00001249388396,
+      "absolute_difference": 1.2806313989699447e-05,
+      "relative_difference": 1.3339908669819519e-07
+    },
+    {
+      "id": "mp-995234",
+      "target_electron_count": 154.00000066725192,
+      "reference_valence_count": 154.0000186438681,
+      "absolute_difference": 1.797661616365076e-05,
+      "relative_difference": 1.1673125965797762e-07
+    },
+    {
+      "id": "mp-997182",
+      "target_electron_count": 15.999999993272354,
+      "reference_valence_count": 16.00000016734995,
+      "absolute_difference": 1.7407759500542852e-07,
+      "relative_difference": 1.0879849574042891e-08
+    },
+    {
+      "id": "mp-998866",
+      "target_electron_count": 4.000000002282344,
+      "reference_valence_count": 4.000000041837487,
+      "absolute_difference": 3.955514316089648e-08,
+      "relative_difference": 9.888785686793633e-09
+    },
+    {
+      "id": "mp-998880",
+      "target_electron_count": 232.00000287679134,
+      "reference_valence_count": 232.00001781993302,
+      "absolute_difference": 1.49431416787138e-05,
+      "relative_difference": 6.441008849538938e-08
+    },
+    {
+      "id": "mp-999498",
+      "target_electron_count": 20.000000003063292,
+      "reference_valence_count": 19.999999721336756,
+      "absolute_difference": 2.8172653543379056e-07,
+      "relative_difference": 1.4086326967956606e-08
+    }
+  ]
+}

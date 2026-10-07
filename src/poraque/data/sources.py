@@ -80,7 +80,7 @@ DENSITY_PREFIXES = ("CHGCAR",)
 #: VASP's names, kept as the fallback so this constant still reads as it always
 #: did; the live list comes from :func:`calculation_markers`, which asks the
 #: registered readers. Hard-coding ``POSCAR``/``CONTCAR`` meant a Quantum
-#: ESPRESSO or GPAW directory was not recognised as a calculation at all, so
+#: ESPRESSO or GPAW directory was not recognized as a calculation at all, so
 #: :class:`CalculationSource` never even reached its reader — the one class a
 #: new code is supposed to need.
 CALCULATION_MARKERS = ("POSCAR", "CONTCAR")
@@ -490,7 +490,7 @@ class MaterialSource(ABC):
         """
 
     def is_spin_polarized(self, record):
-        """Whether this material's density file carries a magnetisation block."""
+        """Whether this material's density file carries a magnetization block."""
         from ..fields import is_spin_polarized
 
         path = record.files.get("CHGCAR")
@@ -510,12 +510,12 @@ class MaterialSource(ABC):
         one channel count. So a mixture is legal, and an ``ISPIN = 1`` member
         of a spin dataset is read as :math:`(\rho, m = 0)` rather than
         refused: that is a true statement about a non-magnetic calculation, and
-        it is what makes a two-channel operator a strict generalisation of a
+        it is what makes a two-channel operator a strict generalization of a
         one-channel one.
 
         :meth:`~poraque.fields.SpinDensity.read` still refuses a single-block
         file on its own, which is right for a *direct* call — there the zero
-        magnetisation would be a claim the caller had not checked. Here it has
+        magnetization would be a claim the caller had not checked. Here it has
         been checked, one level up, against every material in the set.
         """
         if not spin:
@@ -563,7 +563,7 @@ class MaterialSource(ABC):
         Deferred rather than resolved in ``__init__``, because (2) and (3) read
         files and a caller that only wants to enumerate the source should never
         pay for that. (3) is reached only where a potential actually has to be
-        *modelled*: with a ``POTCAR`` or a library entry the tabulated route
+        *modeled*: with a ``POTCAR`` or a library entry the tabulated route
         needs no ``Z_val`` at all.
         """
         if self._charges is None:
@@ -710,7 +710,7 @@ class MaterialSource(ABC):
         library can hold Pt and not Ag, and the run is then a mixture.
 
         Cheap by construction — a structure header per material (a few hundred
-        bytes) and one library read per element, memoised on the source, which
+        bytes) and one library read per element, memoized on the source, which
         the build was going to pay for anyway.
 
         Returns
@@ -761,7 +761,7 @@ class CalculationSource(MaterialSource):
     r"""
     One directory per material, each holding that material's volumetric files.
 
-    Recognised by a **density** — see :func:`_material_density` — either in
+    Recognized by a **density** — see :func:`_material_density` — either in
     ``root`` itself, which is then a single material, or in its
     subdirectories, which are then the dataset. A VASP run tree, a
     ``poraque-mp`` download and a prepared cache are all this layout.
@@ -1021,11 +1021,11 @@ class CalculationSource(MaterialSource):
         return ExternalPotential.from_calculation(
             record.directory, code=reader.code, grid=grid,
             sigma=self.options.get("sigma"),
-            zval=self.options.get("charges") or self._modelled_charges(record),
+            zval=self.options.get("charges") or self._modeled_charges(record),
             structure=structure,
         )
 
-    def _modelled_charges(self, record):
+    def _modeled_charges(self, record):
         """
         Valence charges for the Gaussian fallback, or ``None``.
 
@@ -1140,7 +1140,7 @@ def discover_records(sources, required=(), log=None):
     required : sequence of str, optional
         Keep only materials supplying every one of these fields. This is a
         *per-material* filter, not a per-directory one: one calculation in an
-        archive may have written a ``TAUCAR`` while its neighbour did not.
+        archive may have written a ``TAUCAR`` while its neighbor did not.
     log : callable, optional
         Receives one line per source.
 

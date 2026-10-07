@@ -58,7 +58,7 @@ _DEFAULT_DTYPE = np.float64
 
 def resolve_dtype(dtype=None):
     """
-    Normalise a dtype argument to a numpy floating type.
+    Normalize a dtype argument to a numpy floating type.
 
     Parameters
     ----------
@@ -164,7 +164,7 @@ class ScalarField(ABC):
         Whether :meth:`read` parses every grid block in the file rather than
         stopping after the first. Off by default because the blocks after the
         first are the expensive half of a ``CHGCAR``: the augmentation records
-        and the magnetisation grid, neither of which a single-channel field
+        and the magnetization grid, neither of which a single-channel field
         wants. A subclass whose file spreads *one* physical quantity over
         several blocks turns it on and combines them in
         :meth:`combine_blocks`.
@@ -284,7 +284,7 @@ class ScalarField(ABC):
         if len(blocks) > 1:
             raise ValueError(
                 f"{len(blocks)} sets of augmentation records were given for a "
-                f"field with one grid block. A spin-polarised CHGCAR carries "
+                f"field with one grid block. A spin-polarized CHGCAR carries "
                 f"one set per channel; write it through SpinDensity, which has "
                 f"both blocks to put them after.")
 
@@ -301,7 +301,7 @@ class ScalarField(ABC):
             )
             comment = f"{formula}  {self.default_filename}: {self.name} [{self.unit}]"
 
-        # The volumetric writer serialises the header via Poscar.to_string,
+        # The volumetric writer serializes the header via Poscar.to_string,
         # which a bare Structure (e.g. from a cube-file reader) does not
         # have -- adapt it rather than crash on the first non-VASP source.
         structure = self.structure
@@ -382,8 +382,8 @@ class ScalarField(ABC):
         Reduce the grid blocks of one file to the single field they describe.
 
         The default keeps the first block and discards the rest, which is right
-        for every field VASP writes one block per channel of: a spin-polarised
-        ``CHGCAR``'s second block is the *magnetisation*, a different quantity
+        for every field VASP writes one block per channel of: a spin-polarized
+        ``CHGCAR``'s second block is the *magnetization*, a different quantity
         on the same mesh, and belongs to :class:`~poraque.fields.SpinDensity`
         rather than here.
 
@@ -549,26 +549,26 @@ class ScalarField(ABC):
 # operator has one output channel and a `SpinDensity` when it has two, and the
 # caller does not choose which -- `data.spin: auto` does, from the data. So
 # every consumer of a prediction has to be able to take either, and the two
-# things it invariably wants are "the one number that summarises this" and
+# things it invariably wants are "the one number that summarizes this" and
 # "the density channel, as a field".
 #
 # Both had been answered locally, three times, in three files: a `hasattr`
 # check in `scripts/poraque_train.py`, the same decision spelled the other way
 # round in `calculator.py`, and -- in `scripts/poraque_inference.py` -- not at
-# all, which is how a spin-polarised model reached `SpinDensity.integrate` and
+# all, which is how a spin-polarized model reached `SpinDensity.integrate` and
 # raised `AttributeError` after the prediction had already succeeded. They live
 # here now because the classes they discriminate between live here.
 
 
 def field_integral(field):
     """
-    The one number that summarises a predicted field, for either channel count.
+    The one number that summarizes a predicted field, for either channel count.
 
     A single-channel field integrates. A :class:`~poraque.fields.SpinDensity`
     does not, and deliberately offers no ``integrate``: it is two fields, and
     the integral of :math:`(\\rho, m)` is not a scalar. The quantity meant here
     is the one the density's *first* channel carries — the electron count — so
-    that is what a spin-polarised field reports, and the magnetisation is left
+    that is what a spin-polarized field reports, and the magnetization is left
     to :meth:`~poraque.fields.SpinDensity.magnetic_moment`, which the caller
     should report beside it rather than instead of it.
 
@@ -597,8 +597,8 @@ def charge_channel(field):
     :attr:`SpinDensity.data` is a ``(2, Nx, Ny, Nz)`` stack, so every
     elementwise statement made about ``field.data`` — a range in
     :math:`e/\\mathrm{\\AA}^3`, a count of negative voxels, a von Weizsäcker
-    bound — silently acquires the magnetisation as well, and means something
-    else. A magnetisation is legitimately signed and is not in
+    bound — silently acquires the magnetization as well, and means something
+    else. A magnetization is legitimately signed and is not in
     :math:`e/\\mathrm{\\AA}^3`; counting its negative half as an error reports
     a defect in a model that has none, which is its own kind of harm.
 

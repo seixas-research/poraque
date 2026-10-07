@@ -17,7 +17,7 @@ What each part promises, pinned one at a time:
 * the readout is a property of the **field**, not of the grid it came on --- a
   grid-dependent readout failed at 184 % on held-out nanoparticles --- and it
   is the integral it claims to be;
-* readout, neighbour expansion, head and the whole operator (with an
+* readout, neighbor expansion, head and the whole operator (with an
   equivariant backbone) rotate their output with the crystal;
 * the target transform is exactly invertible and weights every L block alike;
 * it trains in the one loop, reloads bit-identically, and ``poraque-train`` and
@@ -43,7 +43,7 @@ from poraque.fields.vasp.augmentation import (  # noqa: E402
 )
 from poraque.ml.paw import (  # noqa: E402
     EquivariantHead,
-    NeighbourExpansion,
+    NeighborExpansion,
     OccupancyTransform,
     SiteReadout,
     solid_harmonics,
@@ -334,7 +334,7 @@ class TestEveryPartRotatesWithTheCrystal:
     """``D^L`` in, ``D^L`` out, for every L block."""
 
     @pytest.mark.parametrize("g_max", [6.5, 2.239581])
-    def test_the_readout_and_the_neighbours(self, g_max):
+    def test_the_readout_and_the_neighbors(self, g_max):
         field = _Field(g_below=6.0)
         rotation = _rotation()
         D = _wigner(rotation)
@@ -343,10 +343,10 @@ class TestEveryPartRotatesWithTheCrystal:
                              [0.9, 0.8, 0.5]], dtype=torch.float64)
         values = field.grid((30, 34, 40))
         readout = SiteReadout(g_max=g_max).double()
-        neighbours = NeighbourExpansion().double()
+        neighbors = NeighborExpansion().double()
         a, b = readout(values, field.cell, frac), readout(values,
                                                           rotated_cell, frac)
-        c, d = neighbours(field.cell, frac), neighbours(rotated_cell, frac)
+        c, d = neighbors(field.cell, frac), neighbors(rotated_cell, frac)
         for L in range(5):
             assert torch.allclose(b[L], a[L] @ D[L].T, atol=1e-10)
             assert torch.allclose(d[L], c[L] @ D[L].T, atol=1e-10)
@@ -430,14 +430,14 @@ class _Sites:
     def __len__(self):
         return len(self.items)
 
-    def site_targets(self, index):
+    def site_records(self, index):
         return self.items[index]
 
 
 class TestTheTargetTransform:
-    """Centre L = 0, scale each (set, L, pair); exactly invertible."""
+    """Center L = 0, scale each (set, L, pair); exactly invertible."""
 
-    def test_it_inverts_exactly_and_centres_only_l0(self):
+    def test_it_inverts_exactly_and_centers_only_l0(self):
         channels = (2, 1)
         data = _Sites(channels)
         transform = OccupancyTransform.fit(data, {78: channels}, sets=2)
@@ -512,7 +512,7 @@ def _synthetic_runs(root, count=4):
 
 
 class TestTheOperatorTrainsInTheOneLoop:
-    """Field objective plus occupancy term, one optimiser, one checkpoint."""
+    """Field objective plus occupancy term, one optimizer, one checkpoint."""
 
     @pytest.fixture
     def dataset(self, tmp_path):
@@ -559,7 +559,7 @@ class TestTheOperatorTrainsInTheOneLoop:
         the records. 99 % of the records' squared norm is the charge set's
         L = 0 block, so the score could not see the L > 0 blocks the loss
         weights equally --- a held-out slab read 3 % while its L = 2 block was
-        35 % wrong --- nor the magnetisation set at all. The score is now the
+        35 % wrong --- nor the magnetization set at all. The score is now the
         held-out objective: the field error plus w x the training term.
         """
         from poraque.ml import train
@@ -573,6 +573,48 @@ class TestTheOperatorTrainsInTheOneLoop:
                                       history["val_occupancy_loss"]):
             assert score == pytest.approx(field + 2.5 * loss)
         assert "occ loss" in history["val_metric"]
+
+    def test_charge_constraint_uses_absolute_density_and_selects_on_charge(
+            self, dataset):
+        from poraque.ml import train
+        from poraque.ml.data import FieldPairDataset
+        from poraque.ml.losses import PhysicsInformedLoss
+        from poraque.ml.physics import integrate
+        from test_pipeline_defaults import synthetic_library
+
+        residuals = FieldPairDataset(
+            dataset.root, "ext2paw",
+            baseline=synthetic_library(element="Si", n_electrons=4.))
+        source, target = residuals.fit_transforms()
+        operator = self._operator(residuals)
+        operator.input_transform, operator.target_transform = source, target
+        reference_counts = sorted(float(field.grid.integrate(field.total))
+                                  for _, field in (residuals.load_fields(i)
+                                                   for i in range(len(residuals))))
+        seen_counts = []
+
+        class RecordingLoss(PhysicsInformedLoss):
+            def forward(self, prediction, target, **kwargs):
+                count = integrate(kwargs["physical_target"][:, :1], kwargs["cell"])
+                seen_counts.extend(count.detach().cpu().tolist())
+                return super().forward(prediction, target, **kwargs)
+
+        history = train(operator, residuals, epochs=2, batch_size=2,
+                        validation=residuals, eval_every=1, early_stopping=2,
+                        occupancy_weight=2.5, learning_rate=3e-3, verbose=False,
+                        loss=RecordingLoss(task="ext2paw", electron_count_weight=1.5))
+        np.testing.assert_allclose(sorted(seen_counts), sorted(reference_counts * 2),
+                                   rtol=2e-6)
+        assert np.isfinite(history["train_electron_count_loss"]).all()
+        assert max(history["train_electron_count_loss"]) > 0
+        assert len(history["val_electron_count_error"]) == 2
+        for score, field, paw, count in zip(history["val_error"],
+                                           history["val_field_error"],
+                                           history["val_occupancy_loss"],
+                                           history["val_electron_count_loss"]):
+            assert score == pytest.approx(field + 2.5 * paw + 1.5 * count)
+        assert history["best_error"] == min(history["val_error"])
+        assert "N loss" in history["val_metric"]
 
     def test_the_held_out_term_is_the_training_term(self, dataset):
         """One batch, so the pooled mean must equal the loss itself."""
@@ -594,13 +636,25 @@ class TestTheOperatorTrainsInTheOneLoop:
                 batch["species"], batch["atom_mask"].to(occupancy.dtype))
         assert measured == pytest.approx(float(expected), rel=1e-6)
 
+    @pytest.mark.parametrize("neighbor_min", [None, 0.6])
+    @pytest.mark.parametrize("legacy_metadata", [False, True])
     def test_the_checkpoint_rebuilds_the_head_and_its_transform(self, dataset,
-                                                                tmp_path):
+                                                                tmp_path, neighbor_min,
+                                                                legacy_metadata):
         from poraque.fields import ExternalPotential
         from poraque.ml import load_bundle, save_bundle
 
         operator = self._operator(dataset)
+        if neighbor_min is not None:
+            centers = operator.model.neighbors.centers
+            centers.copy_(torch.linspace(neighbor_min, float(centers[-1]), len(centers),
+                                         dtype=centers.dtype, device=centers.device))
         path = save_bundle(str(tmp_path / "m.poraque"), {"ext2paw": operator})
+        if legacy_metadata:
+            from poraque.ml import read_bundle
+            state = read_bundle(path)
+            state["model_state_dict"]["ext2paw"]["site"].pop("neighbor_min")
+            torch.save(state, path)
         back = load_bundle(path, "ext2paw", device="cpu")
         potential = ExternalPotential.read(
             os.path.join(dataset.root, "structure_0000", "EXTCAR"))
@@ -649,7 +703,7 @@ class TestTheScriptsDriveIt:
             "model": {"width": 4, "modes": 2, "n_layers": 1,
                       "projection_channels": 4, "use_coordinates": False,
                       "paw": {"enable": True, "width": 6, "modes": 4,
-                              "n_layers": 1}},
+                              "n_layers": 1, "neighbor_min": 0.6}},
             "training": {"epochs": 3, "batch_size": 2, "valid_fraction": 0.4,
                          "eval_epoch": 1, "device": "cpu"},
             "output": {"root": str(tmp_path / "models"),
@@ -671,12 +725,13 @@ class TestTheScriptsDriveIt:
         site = read_bundle(str(bundle))["model_state_dict"]["ext2paw"]["site"]
         assert site["layouts"] == {"14": [1]}
         assert site["readout_g_max"] > 0 and site["transform"]
+        assert site["neighbor_min"] == pytest.approx(0.6)
 
         log = (tmp_path / "models" / "paw_run" / "log"
                / "paw_run.log").read_text()
         assert "occupancy layout: Z=14  channels p  -> 6 values" in log
         assert "val occ" in log
-        assert "augmentation occupancies (relative RMS" in log
+        assert "[OCCUPANCIES]" in log
         metrics = json.loads((tmp_path / "models" / "paw_run" / "log"
                               / "paw_run.json").read_text())
         assert "occupancy_relative_rms" in json.dumps(metrics)
@@ -691,7 +746,7 @@ class TestTheScriptsDriveIt:
         tmp_path, _ = trained
         folder = tmp_path / "models" / "paw_run" / "log"
         log = (folder / "paw_run.log").read_text()
-        assert "magnetisation L = 2" in log
+        assert "magnetization L = 2" in log
 
         def find(node):
             if isinstance(node, dict):

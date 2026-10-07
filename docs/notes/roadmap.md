@@ -20,7 +20,7 @@
 | Exact spectral $\nabla$, $\nabla^2$, $v_H$ | done | Poisson residual $10^{-12}$ |
 | **$\delta T_s/\delta\rho$ by autograd** | **done** | TF exact to $5\times10^{-16}$; FD-verified |
 | Joint two-model training | **not started** | ← the next real step |
-| OF-DFT minimiser | not started | the test that matters |
+| OF-DFT minimizer | not started | the test that matters |
 | More than one element | **not started** | the binding constraint |
 
 Two things are true at once: the infrastructure is essentially complete and
@@ -46,7 +46,7 @@ were all built for a heterogeneous set.
 `kinetic_potential` is verified against Thomas-Fermi (machine precision) and
 finite differences. What is **not** established is whether the *learned*
 $\delta T_s/\delta\rho$ is any good — nothing in the current results bears on
-it, because training optimises $\tau$ and only ever reports $\tau$.
+it, because training optimizes $\tau$ and only ever reports $\tau$.
 
 ### B3. There is no downstream test
 
@@ -106,7 +106,7 @@ usable energy".
    since differentiation amplifies high-frequency error — that is a finding,
    and it changes the objective.
 3. **Enable the $H^1$ (Sobolev) loss and re-measure.** It exists precisely to
-   penalise gradient error; this is the first test of whether it helps the
+   penalize gradient error; this is the first test of whether it helps the
    quantity that matters.
 
 **Falsifiable:** if the derivative error tracks the $\tau$ error, the current
@@ -133,7 +133,7 @@ Train `ext2chg` with the Euler–Lagrange residual built from the learned
 `chg2tau` functional. Two configurations:
 
 - **Frozen Model 2** — a fixed physics oracle. Simple, stable; do this first.
-- **Joint** — mutual regularisation, and Model 2 finally sees the densities
+- **Joint** — mutual regularization, and Model 2 finally sees the densities
   Model 1 actually produces, which attacks the distribution-shift problem.
 
 > **The hazard, restated:** the residual alone has trivial solutions. With both
@@ -142,9 +142,9 @@ Train `ext2chg` with the Euler–Lagrange residual built from the learned
 > data terms dominant; the collapse signature is a residual that falls while
 > held-out error rises.
 
-**The payoff to measure:** label efficiency. Train Model 1 on $k$ labelled
-structures plus $m$ unlabelled ones under the residual, and show the curve beats
-$k$ labelled alone. If the residual cannot buy label efficiency, its main
+**The payoff to measure:** label efficiency. Train Model 1 on $k$ labeled
+structures plus $m$ unlabeled ones under the residual, and show the curve beats
+$k$ labeled alone. If the residual cannot buy label efficiency, its main
 practical argument fails — and that is worth knowing early.
 
 ## Phase 4 — Grow the dataset (weeks, mostly compute)
@@ -161,7 +161,7 @@ Priority order, by what each buys:
    baseline comparison becomes informative rather than a walkover.
 3. **A binary compound** — exercises the multi-species path in the external
    potential, which is implemented but **untested**.
-4. **A spin-polarised system** — `ISPIN=2` writes a second block in `CHGCAR`
+4. **A spin-polarized system** — `ISPIN=2` writes a second block in `CHGCAR`
    and `TAUCAR` that the reader currently ignores. Silent truncation today.
 
 **Also do at this point:** re-run K-fold with $k < N$ so the folds are not
@@ -171,17 +171,17 @@ leave-one-out, giving an honest variance estimate.
 
 *Unblocks B3. The only test that settles anything.*
 
-Insert the learned KEDF into an orbital-free minimiser: minimise $E[\rho]$
+Insert the learned KEDF into an orbital-free minimizer: minimize $E[\rho]$
 using $\delta T_s/\delta\rho$ from Model 2, and measure the error in the
 **converged density and energy** against Kohn–Sham.
 
-This is where the distribution-shift risk becomes concrete — the minimiser
+This is where the distribution-shift risk becomes concrete — the minimizer
 visits non-converged densities that are, strictly, off the $v$-representable
 manifold where $\tau[\rho]$ is defined. Expect this to be the hard part.
 
 ## Phase 6 — Stretch
 
-- **Charge normalisation head** — makes $\int\rho = N$ exact by construction
+- **Charge normalization head** — makes $\int\rho = N$ exact by construction
   rather than the current 1–3 % drift. Cheap, and strictly better than the
   penalty.
 - **Pauli potential constraint** — Levy–Ou-Yang gives $v_P \ge 0$, a constraint
@@ -204,12 +204,12 @@ Small, and none of it blocks the science.
 
 | Item | Why it matters |
 |---|---|
-| `ISPIN=2` second block ignored | silent truncation on spin-polarised data |
+| `ISPIN=2` second block ignored | silent truncation on spin-polarized data |
 | Multi-species external potential untested | implemented, never exercised |
 | `from_encut` grid heuristic is approximate | off by 2× on the reference data; `from_file` is the reliable path |
 | Spline boundary condition | $6\times10^{-5}$ residual vs VASP; would need porting `SPLCOF` |
 | QE / GPAW readers are stubs | the contract is fixed; each is a day's work |
-| Two report kinds are easy to confuse | universal (training fit) vs k-fold (generalisation) differ only by filename |
+| Two report kinds are easy to confuse | universal (training fit) vs k-fold (generalization) differ only by filename |
 
 ---
 

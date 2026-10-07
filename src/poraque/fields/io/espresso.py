@@ -34,7 +34,7 @@ directory, which always carries the final cell in a single form. Watch for:
 
 **Parameters** — ``ecutwfc`` is in **Rydberg**; multiply by
 :data:`RY_TO_EV` for :attr:`CalculationParameters.cutoff`. ``ecutrho``
-(default ``4 * ecutwfc``) is the density cutoff and is the direct analogue of
+(default ``4 * ecutwfc``) is the density cutoff and is the direct analog of
 VASP's ``PREC``: the FFT grid is sized from it, so prefer
 ``grid_shape`` derived from ``ecutrho`` — or better, read ``nr1, nr2, nr3``
 straight from the XML, which removes all guesswork.

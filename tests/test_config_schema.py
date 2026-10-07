@@ -66,7 +66,7 @@ class TestEveryCommittedConfigLoads:
 
     The 26.9.8 rename broke the eight ``configs/kan/`` comparison files and left
     the four named in the change request working, which is exactly the split a
-    hand audit produces. This parametrisation is what makes the number stop
+    hand audit produces. This parametrization is what makes the number stop
     mattering.
     """
 

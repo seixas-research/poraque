@@ -1,0 +1,26 @@
+# Reconstructed by poraque-mp for mp-1014287
+# Source: the task record this density came from
+# The POSCAR beside this file is the density's own structure.
+@CLASS = Incar
+@MODULE = Pymatgen.io.vasp.inputs
+ADDGRID = True
+ALGO = Fast
+EDIFF = 5e-05
+ENCUT = 520.0
+IBRION = -1
+ISIF = 3
+ISMEAR = -5
+ISPIN = 2
+LAECHG = True
+LASPH = True
+LCHARG = True
+LORBIT = 11
+LREAL = Auto
+LVHAR = True
+LWAVE = False
+MAGMOM = 8*0.6
+NELM = 100
+NSW = 0
+PREC = Accurate
+SIGMA = 0.05
+

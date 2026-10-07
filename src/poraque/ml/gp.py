@@ -264,7 +264,7 @@ def to_string(node, feature_names):
     """
     Render a tree as a string :func:`sympy.sympify` parses correctly.
 
-    Fully parenthesised rather than minimally: every consumer re-parses this,
+    Fully parenthesized rather than minimally: every consumer re-parses this,
     and a precedence bug in a printer is a wrong expression that still looks
     plausible.
     """

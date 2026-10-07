@@ -28,7 +28,7 @@ target and become statements about :math:`\delta\rho + \rho_{\rm sup}`, which
 is why the baseline is restored before either is applied
 (:meth:`poraque.ml.training.FieldOperator.predict`).
 
-**A source of one-centre terms.** The isolated atom's own PAW augmentation
+**A source of one-center terms.** The isolated atom's own PAW augmentation
 record travels with it, which is the only thing available for an element the
 training set has never seen. It is *not* the best available source when the
 element **is** in the training set — measured on this project's platinum data, the
@@ -50,7 +50,7 @@ As a **radial reciprocal-space form factor**
 rather than as a real-space array. Three reasons, and the last is decisive:
 
 1. The superposition is a reciprocal-space sum anyway, and the structure factor
-   factorises into three 1D phase vectors — the same construction
+   factorizes into three 1D phase vectors — the same construction
    :class:`~poraque.fields.ExternalPotential` already uses for pseudo-ions.
 2. The table is **grid-independent**: one entry serves every cell and every FFT
    shape, which is the invariance the whole architecture is built around.
@@ -61,7 +61,7 @@ rather than as a real-space array. Three reasons, and the last is decisive:
    tractable at inference.
 
 Is an atom radial enough for this? Measured on ``data/vasp/ref/Pt`` — one platinum
-atom in a 10 Å cube on a 108³ grid — the recentred :math:`f(\mathbf G)` is real
+atom in a 10 Å cube on a 108³ grid — the recentered :math:`f(\mathbf G)` is real
 to :math:`7\times10^{-16}` relative, and the worst within-bin scatter is
 **0.48 %** of :math:`f(0)` (recorded per entry as ``radial_scatter``).
 
@@ -93,12 +93,12 @@ from .structure import element_of
 #: Default filename of the database.
 LIBRARY_FILENAME = "atomic_reference.json"
 
-#: Schema version, so a database written by an older Poraquê is recognised
+#: Schema version, so a database written by an older Poraquê is recognized
 #: rather than silently misread.
 #:
 #: 2 is the first whose augmentation records were read to the length their
 #: header declares. Version 1 read to the next header, and the free atoms are
-#: spin-polarised runs whose single record is followed by a ``MAGMOM`` line, so
+#: spin-polarized runs whose single record is followed by a ``MAGMOM`` line, so
 #: every version-1 record carries one value too many --- 139 for ``PAW_PBE
 #: Pt``. A version-1 database is still read for its form factors, which the
 #: parser never touched; its augmentation records are not.
@@ -119,7 +119,7 @@ base_element = element_of
 @dataclass
 class AtomicReference:
     r"""
-    One isolated atom: its form factor, its one-centre record, its provenance.
+    One isolated atom: its form factor, its one-center record, its provenance.
 
     Attributes
     ----------
@@ -406,7 +406,7 @@ class AtomicReferenceLibrary:
             warnings.warn(
                 f"{path} is a version-{version} database: its augmentation "
                 f"records for {stale} were read past their declared length "
-                f"and carry the MAGMOM line of a spin-polarised run. They are "
+                f"and carry the MAGMOM line of a spin-polarized run. They are "
                 f"dropped; the form factors are unaffected. Rebuild it with "
                 f"`poraque-atoms` to have the records back.",
                 RuntimeWarning, stacklevel=2)
@@ -428,7 +428,7 @@ def form_factor_from_density(density, grid=None, structure=None, bins=None,
     1. Take the Fourier **series** coefficients,
        :math:`c_{\mathbf G} = \Omega_0^{-1}\!\int\rho\,e^{-i\mathbf G\cdot
        \mathbf r}`, which is ``fftn(rho) / npoints``.
-    2. **Recentre** on the atom by multiplying by
+    2. **Recenter** on the atom by multiplying by
        :math:`e^{+i\mathbf G\cdot\boldsymbol\tau}`. A reference cell normally
        puts the atom at the middle, not the origin, and the uncorrected phase
        would be baked into the table and then applied to every atom of every
@@ -510,15 +510,15 @@ def form_factor_from_density(density, grid=None, structure=None, bins=None,
     means = np.zeros(bins)
     means[occupied] = sums[occupied] / counts[occupied]
 
-    # The bin's **mean |G|**, not its geometric centre. The reciprocal lattice
+    # The bin's **mean |G|**, not its geometric center. The reciprocal lattice
     # points inside a shell are not uniformly spread across it -- there are few
     # of them at small |G| and they cluster -- so pairing the mean of f with
     # the midpoint of the bin mismatches the two by the local curvature of f.
     # Measured on a Gaussian atom, whose f is known in closed form, that
     # mismatch alone cost an order of magnitude: 9e-3 relative L2 on a
     # round-trip against 6e-4 with the mean.
-    centres = np.zeros(bins)
-    centres[occupied] = g_sums[occupied] / counts[occupied]
+    centers = np.zeros(bins)
+    centers[occupied] = g_sums[occupied] / counts[occupied]
 
     variance = np.zeros(bins)
     variance[occupied] = np.maximum(
@@ -532,7 +532,7 @@ def form_factor_from_density(density, grid=None, structure=None, bins=None,
     # mean is not f(0). It is prepended explicitly instead: the total charge of
     # every superposition is f(0), and interpolating it out of the leading bin
     # would move the electron count off the integer it is supposed to be.
-    g_grid = np.concatenate(([0.0], centres[occupied]))
+    g_grid = np.concatenate(([0.0], centers[occupied]))
     table = np.concatenate(([valence], means[occupied]))
     keep = np.concatenate(([True], g_grid[1:] > 0.0))
     g_grid, table = g_grid[keep], table[keep]
@@ -675,7 +675,7 @@ def resolve_library(reference, cache=None, log=None):
     reference : str
         Path, in any of the three forms above.
     cache : str, optional
-        Where to memoise an ingested database.
+        Where to memoize an ingested database.
     log : callable, optional
 
     Returns
@@ -716,7 +716,7 @@ def resolve_library(reference, cache=None, log=None):
                  f"{library.elements()} from {direct}")
             return library
 
-    # A memoised ingest from an earlier run of this same cache. One written
+    # A memoized ingest from an earlier run of this same cache. One written
     # under an older schema is re-ingested rather than loaded: the source
     # calculations are right here, and loading it would drop the augmentation
     # records a rebuild recovers.
@@ -745,7 +745,7 @@ def resolve_library(reference, cache=None, log=None):
     if cache:
         os.makedirs(cache, exist_ok=True)
         written = library.save(os.path.join(cache, LIBRARY_FILENAME))
-        emit(f"      atomic reference: memoised to {written}")
+        emit(f"      atomic reference: memoized to {written}")
     return library
 
 
@@ -883,6 +883,94 @@ def atomic_superposition(structure, grid, library, titles=None,
                "library_fingerprint": library.fingerprint}
     payload.update(metadata or {})
     return ChargeDensity(data, grid, structure, metadata=payload)
+
+
+def structure_channels(structure, grid, library, superposition=True,
+                       elements=(), titles=None):
+    r"""
+    The structure as scalar fields: the input channels beside :math:`v_{\rm ext}`.
+
+    The operator is handed :math:`v_{\rm ext}` and must work out from it, voxel
+    by voxel, *which* atoms surround a point and how far away they are --- the
+    chemistry --- before it can say anything about the bonding charge there.
+    :math:`v_{\rm ext}` carries that information, but only implicitly, in the
+    shape of each ion's local pseudopotential, and a network of a few layers
+    spends most of its depth decoding it. These channels state it outright:
+
+    * ``superposition`` --- :math:`\rho_{\rm sup}`, the same field
+      :func:`atomic_superposition` builds for the delta-density baseline;
+    * one channel per entry of ``elements`` --- the superposition of that
+      element's atoms alone, so the channels sum to :math:`\rho_{\rm sup}` and
+      an element absent from the structure is a channel of zeros.
+
+    Every channel is a scalar field built from radial form factors, so the
+    operator that reads them stays equivariant under rotations, inversion and
+    translations, and none of them depends on anything but the geometry: they
+    are as available at inference as the potential is.
+
+    Parameters
+    ----------
+    structure : Structure
+    grid : FieldGrid
+    library : AtomicReferenceLibrary
+    superposition : bool, optional
+        Lead with the total superposition.
+    elements : sequence of str, optional
+        One channel per element, in this order.
+    titles : dict, optional
+        ``{element: potcar_title}``, as for :func:`atomic_superposition`.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(int(superposition) + len(elements), Nx, Ny, Nz)`` in e/Å³.
+
+    Raises
+    ------
+    KeyError
+        When the library misses a species, or the structure holds an element
+        that ``elements`` gives no channel --- its atoms would vanish from the
+        per-element channels while still being in the potential, which is the
+        kind of input the weights were never shown.
+    """
+    from .external import structure_factor
+
+    titles = titles or {}
+    elements = [str(element) for element in elements]
+    missing = library.missing_for(structure, titles)
+    if missing:
+        raise KeyError(
+            f"No isolated-atom reference for {missing}. The database covers "
+            f"{library.elements()}.")
+    present = sorted({base_element(symbol) for symbol in structure.symbols})
+    uncovered = [element for element in present if element not in elements]
+    if elements and uncovered:
+        raise KeyError(
+            f"The structure contains {uncovered}, and the operator has "
+            f"structure channels for {elements} only. An element without a "
+            f"channel is one the operator was never trained on.")
+
+    magnitude = np.sqrt(grid.get_g2())
+    per_element = {}
+    for symbol, atom_slice in structure.species_slices():
+        element = base_element(symbol)
+        entry = library.lookup(symbol, titles.get(element))
+        rho_g = (entry.evaluate(magnitude)
+                 * structure_factor(grid,
+                                    structure.scaled_positions[atom_slice]))
+        per_element[element] = per_element.get(element, 0.0) + rho_g
+
+    def real_space(rho_g):
+        return np.real(np.fft.ifftn(rho_g / grid.volume) * grid.npoints)
+
+    channels = []
+    if superposition:
+        channels.append(real_space(sum(per_element.values())))
+    for element in elements:
+        channels.append(real_space(per_element[element])
+                        if element in per_element
+                        else np.zeros(grid.shape))
+    return np.stack(channels) if channels else np.zeros((0, *grid.shape))
 
 
 def augmentation_from_atoms(structure, library, titles=None):

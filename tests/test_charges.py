@@ -80,8 +80,8 @@ def two_gaussians():
 
     coordinates = grid.cartesian_coordinates()
 
-    def blob(centre, charge, width=0.8):
-        squared = ((coordinates - np.asarray(centre)) ** 2).sum(-1)
+    def blob(center, charge, width=0.8):
+        squared = ((coordinates - np.asarray(center)) ** 2).sum(-1)
         return (charge * np.exp(-squared / (2 * width ** 2))
                 / (2 * np.pi * width ** 2) ** 1.5)
 
@@ -98,11 +98,11 @@ def skewed_gaussians():
                        scaled_positions=[[0.2, 0.2, 0.5], [0.7, 0.7, 0.5]])
 
     coordinates = grid.cartesian_coordinates()
-    centres = np.asarray(structure.scaled_positions) @ cell
+    centers = np.asarray(structure.scaled_positions) @ cell
 
     values = np.zeros(grid.shape)
-    for centre, charge in zip(centres, (6.0, 3.0)):
-        squared = ((coordinates - centre) ** 2).sum(-1)
+    for center, charge in zip(centers, (6.0, 3.0)):
+        squared = ((coordinates - center) ** 2).sum(-1)
         values += (charge * np.exp(-squared / (2 * 0.7 ** 2))
                    / (2 * np.pi * 0.7 ** 2) ** 1.5)
     return ChargeDensity(values, grid, structure)
@@ -198,7 +198,7 @@ class TestEveryPartitioning:
 
     def test_handles_a_non_orthogonal_cell(self, skewed_gaussians, method):
         """
-        Where a naive fractional wrap gives the wrong neighbour.
+        Where a naive fractional wrap gives the wrong neighbor.
 
         In a skewed lattice the nearest image can be a diagonal one, so the
         minimum image needs a search over the surrounding images rather than a
@@ -374,8 +374,8 @@ class TestBaderNative:
                                              [0.65, 0.5, 0.5]])
         coordinates = grid.cartesian_coordinates()
 
-        def blob(centre, charge, width):
-            squared = ((coordinates - np.asarray(centre)) ** 2).sum(-1)
+        def blob(center, charge, width):
+            squared = ((coordinates - np.asarray(center)) ** 2).sum(-1)
             return (charge * np.exp(-squared / (2 * width ** 2))
                     / (2 * np.pi * width ** 2) ** 1.5)
 

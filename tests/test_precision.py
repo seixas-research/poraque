@@ -60,7 +60,7 @@ class TestFieldDtype:
         assert get_default_dtype() == np.dtype(np.float64)
 
     @pytest.mark.parametrize("name", sorted(FIELD_DTYPES))
-    def test_every_named_precision_is_honoured(self, name, material):
+    def test_every_named_precision_is_honored(self, name, material):
         values, grid, structure = material
         field = ChargeDensity(values, grid, structure, dtype=name)
         assert field.dtype == FIELD_DTYPES[name]
@@ -146,7 +146,7 @@ class TestRoundTripThroughDisk:
         assert back.dtype == np.float64, "read defaults to the process default"
         np.testing.assert_allclose(back.data, field.data, rtol=1e-6)
 
-    def test_read_honours_an_explicit_dtype(self, material, tmp_path):
+    def test_read_honors_an_explicit_dtype(self, material, tmp_path):
         values, grid, structure = material
         path = tmp_path / "CHGCAR"
         ChargeDensity(values, grid, structure).write(path)
@@ -322,7 +322,7 @@ class TestDerivedOutputPaths:
     """
     A run should be named once.
 
-    Every artefact already came from ``task.name`` -- ``models/<name>.poraque``,
+    Every artifact already came from ``task.name`` -- ``models/<name>.poraque``,
     ``reports/<name>_report.pdf``, ``results/plots/<name>/``. The log and the
     metrics were the two a user had to repeat by hand, and the only two that
     two different runs could end up sharing while writing separate weights.
@@ -361,7 +361,7 @@ class TestDerivedOutputPaths:
                      config.plot_dir(), config.report_dir()):
             assert path.startswith(run + "/"), path
 
-    def test_each_toggle_switches_off_its_own_artefact(self):
+    def test_each_toggle_switches_off_its_own_artifact(self):
         config = self._config(name="pt_w16")
         config.output.write_pdf_report = False
         config.output.plot_figures = False
@@ -624,7 +624,7 @@ class TestShippedConfigs:
     #: ``data.delta_density`` what the operator is trained on at all -- a reader
     #:                    who does not know this is on cannot interpret a
     #:                    single reported number, and it is silent when wrong
-    #: ``data.paw_source`` which one-centre occupancies a predicted CHGCAR
+    #: ``data.paw_source`` which one-center occupancies a predicted CHGCAR
     #:                    carries; the two choices trade transferability
     #:                    against accuracy and neither is obvious
     #: ``data.storage``  and ``data.compression`` / ``data.compression_level``:

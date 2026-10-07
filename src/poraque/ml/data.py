@@ -215,7 +215,7 @@ class FieldPairDataset(Dataset):
         field**, and the arithmetic waits on it. Measured on a V100 with 115
         structures at :math:`32^3`: :meth:`__getitem__` was 59 % of the
         training loop --- 78.9 s over 483 calls --- with the GPU at 2-4 %
-        utilisation, and turning the cache on took twenty epochs from 168.0 s to
+        utilization, and turning the cache on took twenty epochs from 168.0 s to
         16.3 s, a factor of **10.3**, with the validation error identical to
         five decimals.
 
@@ -255,11 +255,18 @@ class FieldPairDataset(Dataset):
     spin : {"auto", True, False}, optional
         Whether the ``CHGCAR`` fields carry two channels
         (:math:`\\rho`, :math:`m`) from an ``ISPIN = 2`` run. ``"auto"``, the
-        default, inspects the first material's file: a spin-polarised
+        default, inspects the first material's file: a spin-polarized
         ``CHGCAR`` has a second grid block and a collinear one does not, so the
         data answers the question and no flag can contradict it. Pass ``True``
         or ``False`` to require one or the other, which turns a mixed or
-        mislabelled dataset into an error instead of a silent half-conversion.
+        mislabeled dataset into an error instead of a silent half-conversion.
+    structure_input : dict, optional
+        Extra **input** channels describing the structure, appended after the
+        input field: ``{"superposition": bool, "elements": [...]}`` as
+        :func:`~poraque.fields.atomic.structure_channels` takes them. Built
+        from the same isolated-atom library as ``baseline``, which is therefore
+        required, and only for a task whose input is the external potential.
+        ``None`` (the default) leaves the input the field alone.
 
     Attributes
     ----------
@@ -275,7 +282,7 @@ class FieldPairDataset(Dataset):
     hard error: a silently misaligned pair would train the operator on
     nonsense.
 
-    A spin-polarised dataset is only meaningful where the field *is* a density.
+    A spin-polarized dataset is only meaningful where the field *is* a density.
     ``EXTCAR`` is the ionic potential, which does not depend on spin, so the
     ``ext2chg`` task is one channel in and two out; ``chg2tau`` is two in and,
     for now, one out — :math:`\\tau` is written by VASP as a single block even
@@ -284,7 +291,8 @@ class FieldPairDataset(Dataset):
 
     def __init__(self, root, task, input_transform=None, target_transform=None,
                  materials=None, cache="auto", dtype=torch.float32,
-                 spin="auto", references=None, baseline=None):
+                 spin="auto", references=None, baseline=None,
+                 structure_input=None):
         from .tasks import resolve_task
 
         self.root = str(root)
@@ -301,6 +309,11 @@ class FieldPairDataset(Dataset):
                 f"found under {root!r}."
             )
 
+        # Normalized samples, memoized when the cache is on. Created before the
+        # transforms are assigned: assigning one empties it.
+        self._samples = {}
+        self.structure_input = _resolve_structure_input(
+            structure_input, self.task, self.baseline)
         self.input_transform = input_transform or Identity()
         self.target_transform = target_transform or Identity()
         self.dtype = dtype
@@ -311,11 +324,41 @@ class FieldPairDataset(Dataset):
         # subtraction still ran on every access of every epoch.
         self._tensors = {}
         self._baseline_tensors = {}
-        self._site_targets = {}
+        self._site_records = {}
         self.spin = self._resolve_spin(spin)
         # After spin, which decides the channel count the estimate is over.
         self._cache_bytes = None
         self.cache = self._resolve_cache(cache)
+
+    # The transforms are properties for one reason: the memoized normalized
+    # samples were made with them, and replacing either -- `fit_transforms`, or
+    # a validation split handed the training split's -- must not leave samples
+    # normalized by the old one behind. Assigning a transform empties the memo.
+    @property
+    def input_transform(self):
+        return self._input_transform
+
+    @input_transform.setter
+    def input_transform(self, transform):
+        self._input_transform = transform
+        self._samples = {}
+
+    @property
+    def target_transform(self):
+        return self._target_transform
+
+    @target_transform.setter
+    def target_transform(self, transform):
+        self._target_transform = transform
+        self._samples = {}
+
+    @property
+    def structure_channel_count(self):
+        """Input channels :attr:`structure_input` appends, ``0`` without it."""
+        if not self.structure_input:
+            return 0
+        return (int(bool(self.structure_input["superposition"]))
+                + len(self.structure_input["elements"]))
 
     @property
     def cache_bytes(self):
@@ -355,6 +398,8 @@ class FieldPairDataset(Dataset):
         # them is the difference between an estimate and an underestimate.
         per_point = in_channels + out_channels
         per_point += in_channels + out_channels
+        # And the memoized normalized samples, input and target, once more.
+        per_point += in_channels + out_channels
         if self.baseline is not None and self.task.target_field == "CHGCAR":
             per_point += 1
         total = 0
@@ -370,7 +415,7 @@ class FieldPairDataset(Dataset):
         Decide whether to keep decoded fields in memory.
 
         ``"auto"`` compares :attr:`cache_bytes` against
-        :data:`CACHE_MEMORY_BUDGET`. An explicit ``True`` is honoured whatever
+        :data:`CACHE_MEMORY_BUDGET`. An explicit ``True`` is honored whatever
         the size --- the caller may know something the estimate does not, and
         overriding a deliberate flag would be worse than running out of memory
         where it was asked for.
@@ -382,14 +427,14 @@ class FieldPairDataset(Dataset):
             # A YAML file can spell a boolean as a quoted word, and refusing
             # `cache: "true"` would be pedantry about a setting whose meaning
             # is not in doubt. Anything else is a typo and raises: silently
-            # reading an unrecognised word as False would turn it into a 10x
+            # reading an unrecognized word as False would turn it into a 10x
             # slowdown with nothing said.
             if key in ("true", "yes", "on", "1"):
                 return True
             if key in ("false", "no", "off", "0"):
                 return False
             raise ValueError(
-                f"cache={requested!r} is not a recognised setting; "
+                f"cache={requested!r} is not a recognized setting; "
                 f"expected 'auto', True or False.")
         return bool(requested)
 
@@ -410,8 +455,8 @@ class FieldPairDataset(Dataset):
             raise ValueError(
                 f"spin={requested!r} was requested but "
                 f"{self.materials[0].files['CHGCAR']} "
-                f"{'is' if detected else 'is not'} spin-polarised. A CHGCAR "
-                f"either carries a magnetisation block or it does not; "
+                f"{'is' if detected else 'is not'} spin-polarized. A CHGCAR "
+                f"either carries a magnetization block or it does not; "
                 f"overriding that would train on a channel the data has no "
                 f"values for."
             )
@@ -420,9 +465,10 @@ class FieldPairDataset(Dataset):
     @property
     def channels(self):
         """``(input_channels, target_channels)`` for this task and dataset."""
+        extra = self.structure_channel_count
         if not self.spin:
-            return (1, 1)
-        return (2 if self.task.input_field == "CHGCAR" else 1,
+            return (1 + extra, 1)
+        return ((2 if self.task.input_field == "CHGCAR" else 1) + extra,
                 2 if self.task.target_field == "CHGCAR" else 1)
 
     def reference_energy(self, index):
@@ -527,10 +573,10 @@ class FieldPairDataset(Dataset):
         if baseline is None:
             return values
 
-        # A spin-polarised target is (rho, m). Only the total density has an
+        # A spin-polarized target is (rho, m). Only the total density has an
         # atomic superposition: the references are ISPIN = 1 free atoms, and
         # subtracting a zero moment from m would be a no-op dressed up as
-        # physics. The magnetisation channel is left alone.
+        # physics. The magnetization channel is left alone.
         if values.ndim == 4:
             values = values.copy()
             values[0] = values[0] - baseline
@@ -538,18 +584,37 @@ class FieldPairDataset(Dataset):
         return values - baseline
 
     def _read_field(self, name, path, grid):
-        """Read one field, as a spin pair when the dataset is spin-polarised."""
+        """Read one field, as a spin pair when the dataset is spin-polarized."""
         if self.spin and name == "CHGCAR":
             from poraque.fields import SpinDensity
 
             return SpinDensity.read(path, grid=grid)
         return FIELD_CLASSES[name].read(path, grid=grid)
 
+    def structure_values(self, index):
+        r"""
+        The structure channels of material ``index``, in e/Å³.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            ``(channels, Nx, Ny, Nz)``, or ``None`` without
+            :attr:`structure_input`. Not memoized here: :meth:`sample_tensors`
+            keeps the tensor made from it.
+        """
+        if not self.structure_input:
+            return None
+        from ..fields.atomic import structure_channels
+
+        source = self.load_fields(index)[0]
+        return structure_channels(source.structure, source.grid, self.baseline,
+                                  **self.structure_input)
+
     def sample_tensors(self, index):
         r"""
         The **pre-transform** ``(input, target, cell)`` tensors for a material.
 
-        Memoised when :attr:`cache` is on, which removes the second layer of
+        Memoized when :attr:`cache` is on, which removes the second layer of
         per-epoch work: caching the :class:`~poraque.fields.ScalarField`
         objects kills the parse, but every access still redid
         :func:`numpy.ascontiguousarray`, :func:`torch.as_tensor` and --- in
@@ -573,9 +638,13 @@ class FieldPairDataset(Dataset):
             return self._tensors[index]
 
         source, _ = self.load_fields(index)
+        inputs = _with_channel_axis(torch.as_tensor(
+            np.ascontiguousarray(source.data), dtype=self.dtype))
+        if self.structure_input:
+            inputs = torch.cat([inputs, torch.as_tensor(
+                self.structure_values(index), dtype=self.dtype)])
         tensors = (
-            _with_channel_axis(torch.as_tensor(
-                np.ascontiguousarray(source.data), dtype=self.dtype)),
+            inputs,
             _with_channel_axis(torch.as_tensor(
                 np.ascontiguousarray(self.target_values(index)),
                 dtype=self.dtype)),
@@ -597,8 +666,18 @@ class FieldPairDataset(Dataset):
             ``material``. Fields are normalized; ``target_physical`` carries
             the untransformed target for physics losses. The channel counts
             are :attr:`channels`, which is ``(1, 1)`` unless the dataset is
-            spin-polarised.
+            spin-polarized.
         """
+        # The normalized sample itself, when the cache is on. Without this every
+        # epoch re-ran both transforms on the CPU -- an asinh over every voxel
+        # of every channel -- and that, not the operator, was the training
+        # loop: measured on an RTX 5060 Ti with 628 CHONPS cells at 48^3, the
+        # GPU sat at 2 % utilization, and memoizing took the epoch from ~60 s
+        # to ~8 s for the same arithmetic. Safe because assigning either
+        # transform empties the memo (see the properties above).
+        if self.cache and index in self._samples:
+            return self._samples[index]
+
         # No `load_fields` here: `sample_tensors` is the only reader, so an
         # uncached dataset opens each file once per access rather than twice,
         # and a cached one touches no field object at all after the first pass.
@@ -621,8 +700,8 @@ class FieldPairDataset(Dataset):
         if values is not None:
             sample["baseline"] = values
 
-        if self.task.site_target == "augmentation":
-            sites = self.site_targets(index)
+        if "augmentation" in (self.task.site_target, self.task.site_input):
+            sites = self.site_records(index)
             sample["paw"] = torch.as_tensor(sites["occupancies"],
                                             dtype=self.dtype)
             sample["paw_lengths"] = torch.as_tensor(sites["lengths"],
@@ -631,19 +710,24 @@ class FieldPairDataset(Dataset):
                                                 dtype=torch.long)
             sample["positions"] = torch.as_tensor(sites["positions"],
                                                   dtype=self.dtype)
+        if self.cache:
+            self._samples[index] = sample
         return sample
 
-    def site_targets(self, index):
+    def site_records(self, index):
         r"""
-        The per-atom PAW targets of material ``index``, read from its density.
+        The per-atom PAW records of material ``index``, read from its density.
 
-        What a model of the one-centre terms needs besides the grid: every
+        The target of ``ext2paw``, read from the target ``CHGCAR``, and the
+        input of ``paw2tau``, read from the input one (``TaskSpec.site_field``).
+
+        What a model of the one-center terms needs besides the grid: every
         atom's augmentation occupancies, the length of each record (it depends
         on the element), the atomic number, and the fractional position the
         operator's field would be read out at. In the atom order of the file,
         which is the order VASP writes the records in.
 
-        Memoised unconditionally, as :meth:`baseline_for` is: they are a few
+        Memoized unconditionally, as :meth:`baseline_for` is: they are a few
         hundred numbers per atom, they never change, and reading them walks the
         whole grid block of a text file to reach its tail.
 
@@ -653,7 +737,7 @@ class FieldPairDataset(Dataset):
             ``occupancies`` ``(atoms, sets, max_length)`` with one set per
             density channel of this dataset (see
             :func:`~poraque.fields.vasp.augmentation.occupancy_arrays` for why
-            an unpolarised member of a spin set gets zeros), ``lengths``
+            an unpolarized member of a spin set gets zeros), ``lengths``
             ``(atoms,)``, ``species`` ``(atoms,)`` atomic numbers, and
             ``positions`` ``(atoms, 3)`` fractional.
 
@@ -663,15 +747,15 @@ class FieldPairDataset(Dataset):
             When the material's density carries no records, or a record count
             that disagrees with its atoms.
         """
-        if index in self._site_targets:
-            return self._site_targets[index]
+        if index in self._site_records:
+            return self._site_records[index]
 
         from ..fields import element_of
         from ..fields.vasp.augmentation import occupancy_arrays
         from ..fields.vasp.poscar import symbol_to_z
         from ..fields.vasp.volumetric import read_augmentation_blocks
 
-        path = self.materials[index].files[self.task.target_field]
+        path = self.materials[index].files[self.task.site_field]
         _, blocks = read_augmentation_blocks(path)
         if not blocks:
             raise ValueError(
@@ -683,7 +767,7 @@ class FieldPairDataset(Dataset):
                 f"and let poraque-train rebuild it.")
 
         occupancies, lengths = occupancy_arrays(blocks,
-                                                channels=self.channels[1])
+                                                channels=2 if self.spin else 1)
         structure = self.load_fields(index)[1].structure
         species = [symbol_to_z(element_of(symbol))
                    for symbol, count in zip(structure.symbols, structure.counts)
@@ -698,7 +782,7 @@ class FieldPairDataset(Dataset):
                  "species": np.asarray(species, dtype=int),
                  "positions": np.asarray(structure.scaled_positions,
                                          dtype=float)}
-        self._site_targets[index] = sites
+        self._site_records[index] = sites
         return sites
 
     def baseline_tensor(self, index, channels):
@@ -709,7 +793,7 @@ class FieldPairDataset(Dataset):
         loop adds it back before every physics term, and the loss would
         otherwise have to rebuild a structure factor per step.
 
-        Memoised on the same terms as :meth:`sample_tensors`. The array behind
+        Memoized on the same terms as :meth:`sample_tensors`. The array behind
         it is already cached unconditionally by :meth:`baseline_for` --- it is
         an FFT over a structure that never changes --- so what this saves is
         only the conversion, but that conversion ran on every access of every
@@ -719,9 +803,9 @@ class FieldPairDataset(Dataset):
         ----------
         index : int
         channels : int
-            The target's channel count. A spin-polarised target is
+            The target's channel count. A spin-polarized target is
             :math:`(\rho, m)` and only :math:`\rho` has a superposition, so the
-            magnetisation channel is padded with zeros --- shaped like the
+            magnetization channel is padded with zeros --- shaped like the
             target so the two add without broadcasting surprises.
 
         Returns
@@ -763,8 +847,9 @@ class FieldPairDataset(Dataset):
             shapes.append(record.shape)
         return shapes
 
-    def fit_transforms(self, max_materials=32, max_points=200_000, seed=0):
-        """
+    def fit_transforms(self, max_materials=32, max_points=200_000, seed=0,
+                       target_scale=None):
+        r"""
         Derive normalizations from a subsample of the data.
 
         Statistics are gathered from randomly chosen grid points of up to
@@ -779,6 +864,14 @@ class FieldPairDataset(Dataset):
             Grid points to draw per field.
         seed : int, optional
             RNG seed.
+        target_scale : float, optional
+            A fixed :class:`~poraque.ml.transforms.Asinh` scale for every
+            channel of a ``CHGCAR`` target, in e/Å³, in place of the fitted
+            median. The median of :math:`|\delta\rho|` (0.014 on the CHONPS
+            set) puts most of the target in the logarithmic regime, so the
+            objective weighs the near-zero interstitial residual about as much
+            as the bonding charge that dominates the physical error; 0.1
+            lowered the held-out rel L2 of rho at equal epochs there.
 
         Returns
         -------
@@ -806,11 +899,46 @@ class FieldPairDataset(Dataset):
                     take = min(per_material, flat.size)
                     bucket.append(rng.choice(flat, size=take, replace=False))
 
-        self.input_transform = _fit_transform(self.task.input_field,
-                                              source_values)
-        self.target_transform = _fit_transform(self.task.target_field,
-                                               target_values)
+        input_transform = _fit_transform(self.task.input_field, source_values)
+        if self.structure_input:
+            input_transform = self._with_structure_transform(
+                input_transform, indices, per_material, rng)
+        self.input_transform = input_transform
+        target_transform = _fit_transform(self.task.target_field,
+                                          target_values)
+        if target_scale and self.task.target_field == "CHGCAR":
+            from .transforms import Asinh, Channelwise
+
+            fixed = Asinh(float(target_scale))
+            target_transform = (Channelwise([fixed] * len(target_values))
+                                if len(target_values) > 1 else fixed)
+        self.target_transform = target_transform
         return self.input_transform, self.target_transform
+
+    def _with_structure_transform(self, field_transform, indices,
+                                  per_material, rng):
+        r"""
+        Extend the input transform over the structure channels.
+
+        One :class:`~poraque.ml.transforms.Asinh` scale for all of them, the
+        median of :math:`|\rho_{\rm sup}|` over the sampled points: they are
+        all densities in e/Å³, and a per-element scale fitted on a channel that
+        is mostly zeros would be the noise floor, which is exactly the failure
+        :func:`_fit_transform` describes for the magnetization.
+        """
+        from .transforms import Asinh, Channelwise
+
+        samples = []
+        for index in indices:
+            total = self.structure_values(int(index)).sum(axis=0).ravel()
+            take = min(per_material, total.size)
+            samples.append(rng.choice(total, size=take, replace=False))
+        scale = float(np.quantile(np.abs(np.concatenate(samples)), 0.5))
+        parts = (list(field_transform.transforms)
+                 if isinstance(field_transform, Channelwise)
+                 else [field_transform])
+        return Channelwise(parts + [Asinh(max(scale, 1e-12))]
+                           * self.structure_channel_count)
 
     def split(self, fraction=0.8, seed=0):
         """
@@ -855,7 +983,7 @@ class FieldPairDataset(Dataset):
                 # mode against a model trained on residuals would report an
                 # error against the wrong field entirely.
                 spin=self.spin, references=self.references,
-                baseline=self.baseline,
+                baseline=self.baseline, structure_input=self.structure_input,
             )
 
         return subset(order[:cut]), subset(order[cut:])
@@ -961,7 +1089,7 @@ class DistributedShapeBucketSampler(Sampler):
     batch_size : int, optional
         Maximum samples per batch *per rank*. The effective global batch is
         ``batch_size * world_size``, which is worth remembering when comparing
-        a four-GPU run against a one-GPU one: they are not the same optimiser.
+        a four-GPU run against a one-GPU one: they are not the same optimizer.
     shuffle : bool, optional
     drop_last : bool, optional
         Passed to the inner :class:`ShapeBucketSampler` and applied to *batches
@@ -969,7 +1097,7 @@ class DistributedShapeBucketSampler(Sampler):
         padded rather than truncated, for the reason above.
     seed : int, optional
     num_replicas, rank : int, optional
-        World size and this process's rank. Read from the initialised process
+        World size and this process's rank. Read from the initialized process
         group when omitted, which is what ``DistributedSampler`` does and what
         makes an explicit pair useful only in a test.
 
@@ -1227,6 +1355,39 @@ def _resolve_baseline(baseline):
     return library
 
 
+def _resolve_structure_input(structure_input, task, library):
+    """
+    Validate a ``structure_input`` request against the task and the library.
+
+    Returns
+    -------
+    dict or None
+        ``{"superposition": bool, "elements": [str, ...]}``, or ``None`` when
+        nothing was asked for.
+    """
+    if not structure_input:
+        return None
+    spec = dict(structure_input)
+    unknown = sorted(set(spec) - {"superposition", "elements"})
+    if unknown:
+        raise ValueError(f"structure_input: unknown key(s) {unknown}; "
+                         f"expected 'superposition' and 'elements'.")
+    spec = {"superposition": bool(spec.get("superposition", True)),
+            "elements": [str(e) for e in (spec.get("elements") or [])]}
+    if not spec["superposition"] and not spec["elements"]:
+        return None
+    if task.input_field != "EXTCAR":
+        raise ValueError(
+            f"structure_input describes the structure beside the external "
+            f"potential, and the {task.name} input is {task.input_field}.")
+    if library is None:
+        raise ValueError(
+            "structure_input is built from the isolated-atom library, and "
+            "this dataset has none: set data.atomic_reference and keep "
+            "data.delta_density on.")
+    return spec
+
+
 def _fit_transform(field_name, per_channel):
     r"""
     Fit ``field_name``'s default transform to each channel's samples.
@@ -1235,7 +1396,7 @@ def _fit_transform(field_name, per_channel):
     :class:`~poraque.ml.transforms.Channelwise` of length one: wrapping it
     would change the serialized form of every existing checkpoint for no gain.
 
-    The magnetisation of a spin-polarised ``CHGCAR`` is not fitted: it takes
+    The magnetization of a spin-polarized ``CHGCAR`` is not fitted: it takes
     the charge channel's scale. Its own median is the wrong statistic twice
     over. A spin set is mostly cells with m = 0 to round-off, and even a
     magnetic cell is mostly vacuum, so the median of |m| is the noise floor ---

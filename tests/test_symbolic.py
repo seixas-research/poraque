@@ -10,7 +10,7 @@ package is responsible for around it — building the features, the units they
 are built in, sampling, scoring, LaTeX — is deterministic and lives outside the
 search.
 
-The featurisation carries the real risk, because an error there is silent: a
+The featurization carries the real risk, because an error there is silent: a
 wrong unit or a wrong derivative still yields a plausible expression, just not
 one about the physics. So it is pinned against the two functionals whose closed
 forms are known exactly.
@@ -228,7 +228,7 @@ class TestFeatures:
             build_features(density, np.ones((4, 4, 4)), grid)
 
 
-class TestVacuumRegularisation:
+class TestVacuumRegularization:
     """
     Vacuum is where this breaks if it breaks: p and q there are ratios of two
     vanishing numbers, so they come out as noise with a plausible magnitude —
@@ -556,7 +556,7 @@ class TestComplianceInThePipeline:
                                     engine=lambda *a: front).fit(table).summary()
         assert "no candidate satisfies both limits" in summary
 
-    def test_the_result_is_json_serialisable(self, cell):
+    def test_the_result_is_json_serializable(self, cell):
         """The compliance travels into the run summary, so it must survive."""
         from dataclasses import asdict
 
@@ -736,7 +736,7 @@ class TestPhysicsConstraints:
 
         assert result.constraints_enforced == \
             ["positivity", "thomas_fermi", "von_weizsacker"]
-        assert "penalised in-loop" in result.summary()
+        assert "penalized in-loop" in result.summary()
 
     def test_an_unconstrained_run_says_so_in_the_summary(self, cell):
         grid, density = cell
@@ -1080,7 +1080,7 @@ class TestParetoKnee:
         assert result.knee_expression() == "exp(-p)"
 
 
-class TestResultIsSerialisable:
+class TestResultIsSerializable:
     """
     The summary is written *after* training, the report and the figures.
 

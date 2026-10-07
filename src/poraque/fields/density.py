@@ -140,13 +140,13 @@ class KineticEnergyDensity(ScalarField):
     :math:`5.5\times10^{-4}` in a 1000 Å³ one — the error tracking
     :math:`\Omega` exactly, which a unit confusion could not do.
 
-    **The two blocks of a spin-polarised file are the two spin channels**,
+    **The two blocks of a spin-polarized file are the two spin channels**,
     :math:`\tau_\uparrow` and :math:`\tau_\downarrow`, *not* the
-    total/magnetisation pair a ``CHGCAR`` uses. So the total is their sum, and
+    total/magnetization pair a ``CHGCAR`` uses. So the total is their sum, and
     reading the first block alone loses half of :math:`\tau`. In the nearly
-    unpolarised bulk cells the second block equals the first to
-    :math:`3\times10^{-5}`, which no magnetisation is; in the isolated atom,
-    genuinely polarised at 2 μ_B, it is 0.774 of it and still everywhere
+    unpolarized bulk cells the second block equals the first to
+    :math:`3\times10^{-5}`, which no magnetization is; in the isolated atom,
+    genuinely polarized at 2 μ_B, it is 0.774 of it and still everywhere
     positive.
 
     Together the two corrections move :math:`\int\tau / \int\tau_{\rm TF}`
@@ -216,7 +216,7 @@ class KineticEnergyDensity(ScalarField):
 # Orbital-free kinetic energy densities
 #
 # These closed-form functionals of the density are the physical anchors of the
-# PI-FNO programme (see docs/notes/pi_fno.md): tau_vW is a rigorous *lower* bound on
+# PI-FNO program (see docs/notes/pi_fno.md): tau_vW is a rigorous *lower* bound on
 # the exact tau, and tau_TF its high-density limit, so together they bracket
 # any prediction a network makes for TAUCAR.
 # ---------------------------------------------------------------------- #

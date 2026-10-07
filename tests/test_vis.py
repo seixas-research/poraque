@@ -44,7 +44,7 @@ def fields():
 
 
 def _panel_meshes(figure):
-    """The density meshes of the data panels, excluding the colourbar's own."""
+    """The density meshes of the data panels, excluding the colorbar's own."""
     return [collection
             for axis in figure.axes if axis.get_xlabel()
             for collection in axis.collections
@@ -84,7 +84,7 @@ class TestLogTickLabels:
     ticks too, and horizontally they overlap into unreadable mush.
     """
 
-    def _labelled_minors(self, panel):
+    def _labeled_minors(self, panel):
         panel.figure.draw_without_rendering()
         return [t.get_text() for t in panel.get_xticklabels(which="minor")
                 if t.get_text()]
@@ -93,9 +93,9 @@ class TestLogTickLabels:
         figure, panel = plt.subplots()
         panel.set_xscale("log")
         panel.set_xlim(1.2, 61.0)          # the tau range that triggered it
-        before = len(self._labelled_minors(panel))
+        before = len(self._labeled_minors(panel))
         _thin_log_minor_labels(panel)
-        after = len(self._labelled_minors(panel))
+        after = len(self._labeled_minors(panel))
         assert before > after
         plt.close(figure)
 
@@ -176,7 +176,7 @@ class TestParitySplits:
         TrainingReport(tmp_path).parity(
             reference, prediction, validation=(reference, reference * 1.1),
             name="panels")
-        assert len(captured.figure.axes) >= 2       # two panels + a colourbar
+        assert len(captured.figure.axes) >= 2       # two panels + a colorbar
 
     def test_a_single_set_keeps_one_panel(self, fields, tmp_path, captured):
         reference, prediction = fields
@@ -194,10 +194,10 @@ class TestParitySplits:
         assert len({ax.get_xlim() for ax in panels}) == 1
         assert len({ax.get_ylim() for ax in panels}) == 1
 
-    def test_panels_share_one_colour_scale(self, fields, tmp_path, captured):
+    def test_panels_share_one_color_scale(self, fields, tmp_path, captured):
         """
-        Separate colourbars would each autoscale, so two different densities
-        could wear the same colour -- the one lie this plot must not tell.
+        Separate colorbars would each autoscale, so two different densities
+        could wear the same color -- the one lie this plot must not tell.
         """
         reference, prediction = fields
         TrainingReport(tmp_path).parity(
@@ -362,7 +362,7 @@ class TestNestedConfigValues:
     def test_breaks_the_line_not_the_table_row(self):
         r"""
         `\\` inside a p-column ends the table ROW, which would split one
-        setting across two rows and desynchronise the whole table from its
+        setting across two rows and desynchronize the whole table from its
         keys. Only `\newline` breaks within the cell.
         """
         rendered = _format_value(self.PHYSICS)
@@ -456,9 +456,9 @@ class TestReportStyle:
 
         return ModelReport("reports", logo=None)._preamble("chg2tau", "subtitle")
 
-    def test_uses_the_four_colour_brand_palette(self, preamble):
+    def test_uses_the_four_color_brand_palette(self, preamble):
         """
-        Four colours, and the yellow is the logo's own.
+        Four colors, and the yellow is the logo's own.
 
         Earlier revisions used a blue that appeared nowhere else, then a red
         that appeared only here, then a green sweep. The palette is now the
@@ -683,7 +683,7 @@ class TestSymbolicParityPlot:
         payload = self._symbolic(parity_file, validated=True)
         payload["constraints_enforced"] = ["positivity", "thomas_fermi"]
         captured = report_source(payload)
-        assert "penalised inside" in captured["source"]
+        assert "penalized inside" in captured["source"]
         assert "thomas\\_fermi" not in captured["source"], (
             "constraint names are prose here, not identifiers")
         assert "thomas fermi" in captured["source"]
@@ -691,7 +691,7 @@ class TestSymbolicParityPlot:
     def test_an_unconstrained_search_claims_nothing(self, report_source,
                                                     parity_file):
         captured = report_source(self._symbolic(parity_file, validated=True))
-        assert "penalised inside" not in captured["source"]
+        assert "penalized inside" not in captured["source"]
 
 
 class TestThePerformanceTableIsBoundedBySplits:
@@ -796,7 +796,7 @@ class TestThePerformanceTableIsBoundedBySplits:
         assert r"\textbf{Structures}" in source
         assert r"\textbf{MAE}" in source
 
-    def test_the_train_and_validation_rows_show_the_generalisation_gap(self):
+    def test_the_train_and_validation_rows_show_the_generalization_gap(self):
         """
         The whole reason the splits are rows: they are read against each other.
 
@@ -840,13 +840,13 @@ class TestThePerformanceTableIsBoundedBySplits:
         assert "[e]" in self._table(self._per_material(4), unit="e/Ang^3")
         assert "[eV]" in self._table(self._per_material(4), unit="eV/Ang^3")
 
-    def test_an_unrecognised_unit_is_not_guessed_at(self):
+    def test_an_unrecognized_unit_is_not_guessed_at(self):
         source = self._table(self._per_material(4), unit="furlongs")
         assert "[furlongs]" in source, "the field's own unit is still printed"
         assert "per cell" in source, "but its integral's is not invented"
 
     def test_a_split_nobody_anticipated_is_printed_rather_than_dropped(self):
-        """A fold label, a third split: unrecognised is not a reason to lose it."""
+        """A fold label, a third split: unrecognized is not a reason to lose it."""
         source = self._table({
             "a": {"split": "fold 3", "metrics": {"mse": 1.0, "mae": 1.0,
                                                  "rmse": 1.0,
@@ -992,7 +992,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
 
     def test_there_is_no_physics_column(self, tmp_path):
         """
-        `train_loss` is the total the optimiser stepped on, and the per-term
+        `train_loss` is the total the optimizer stepped on, and the per-term
         breakdown was removed from `history` in 2026-08-28 because the
         components are reported unweighted and never summed to it. A
         `physics_loss` column here would be an invented number.
@@ -1018,9 +1018,9 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         assert sum(int(row["count"]) for row in rows) == reference.size
         assert sum(float(row["density"]) for row in rows) == pytest.approx(1.0)
 
-    def test_each_split_is_normalised_to_its_own_voxels(self, tmp_path, fields):
+    def test_each_split_is_normalized_to_its_own_voxels(self, tmp_path, fields):
         """
-        Two structures need not have the same grid size, so the figure colours
+        Two structures need not have the same grid size, so the figure colors
         by each split's own share. The file has to say the same thing.
         """
         reference, prediction = fields
@@ -1042,7 +1042,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         """
         A 200-bin grid is 40 000 cells of which a few thousand are occupied.
         The zeros carry nothing -- but the edges do, and a log axis makes them
-        unrecoverable from the centres, so they get their own file.
+        unrecoverable from the centers, so they get their own file.
         """
         self._report(tmp_path).parity(*fields, bins=32)
         rows = list(csv.DictReader(
@@ -1095,13 +1095,13 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         assert int(stored["axis"]) == 0 and int(stored["index"]) == 3
 
     def test_the_file_records_what_it_takes_to_redraw_it(self, tmp_path, fields):
-        """Colour limits included: they were chosen from a quantile of the
+        """Color limits included: they were chosen from a quantile of the
         error, so a redraw that recomputed them would not match the figure."""
         self._report(tmp_path).field_comparison(*fields, unit="eV")
         stored = np.load(tmp_path / "ext2chg_field_slice.npz")
 
         assert set(stored.files) >= {"reference", "prediction", "error",
-                                     "axis", "index", "colour_limits",
+                                     "axis", "index", "color_limits",
                                      "error_limits", "label", "unit",
                                      "log_scale"}
         assert stored["error_limits"][0] < 0 < stored["error_limits"][1]

@@ -9,32 +9,32 @@
 r"""
 Plot styling: palette, colormaps and Matplotlib defaults.
 
-Colour is assigned **by the job it does**, which for scalar-field work means
+Color is assigned **by the job it does**, which for scalar-field work means
 three distinct jobs and three distinct ramps:
 
 ``CATEGORICAL``
     Identity — one hue per series (training vs validation, one material vs
     another). Hues are assigned in fixed order and never cycled, so a series
-    keeps its colour when others are added or removed.
+    keeps its color when others are added or removed.
 
 ``SEQUENTIAL``
     Magnitude — a single hue, light to dark, with monotonic lightness. Used for
     fields that are one-signed, such as :math:`\rho` and :math:`\tau`. A
     rainbow map (``jet`` and friends) is never used: its lightness is
     non-monotonic, so it invents banding that is not in the data and it is
-    unreadable to colour-blind viewers.
+    unreadable to color-blind viewers.
 
 ``DIVERGING``
-    Polarity — two hues meeting at a **neutral grey** midpoint, used for signed
+    Polarity — two hues meeting at a **neutral gray** midpoint, used for signed
     error maps. It is always paired with limits symmetric about zero
     (:func:`symmetric_limits`); a diverging ramp on asymmetric limits puts the
-    neutral colour somewhere other than zero and silently misstates the sign of
+    neutral color somewhere other than zero and silently misstates the sign of
     the error.
 
-The categorical hues are validated for colour-vision deficiency: the worst
+The categorical hues are validated for color-vision deficiency: the worst
 adjacent pair separates by ΔE 9.1 (protanopia) and 22.9 (normal vision), above
 the ΔE 8 target. Every series additionally carries a legend entry, so identity
-is never conveyed by colour alone.
+is never conveyed by color alone.
 """
 
 import numpy as np
@@ -43,7 +43,7 @@ import numpy as np
 CATEGORICAL = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100",
                "#e87ba4", "#008300", "#4a3aa7")
 
-#: Ink tokens. Text never wears a series colour; a coloured mark beside the
+#: Ink tokens. Text never wears a series color; a colored mark beside the
 #: label carries identity instead.
 INK = {
     "light": {"primary": "#0b0b0b", "secondary": "#52514e",
@@ -55,7 +55,7 @@ INK = {
 #: Endpoints of the single-hue sequential ramp (light -> dark blue).
 _SEQUENTIAL_STOPS = ("#f4f8fd", "#a8c9ee", "#5595dd", "#2a78d6", "#12447d")
 
-#: Endpoints of the diverging ramp: orange <- neutral grey -> blue.
+#: Endpoints of the diverging ramp: orange <- neutral gray -> blue.
 _DIVERGING_STOPS = ("#8c3410", "#eb6834", "#f5b498",
                     "#e8e8e6",
                     "#a8c9ee", "#2a78d6", "#12447d")
@@ -74,7 +74,7 @@ def sequential_cmap():
 
 
 def diverging_cmap():
-    """Two-hue ramp with a neutral grey midpoint, for signed error maps."""
+    """Two-hue ramp with a neutral gray midpoint, for signed error maps."""
     return _colormap("poraque_diverging", _DIVERGING_STOPS)
 
 

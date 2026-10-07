@@ -1,0 +1,2 @@
+arm,seed,charge_relative_l2,occupancy_relative_rms,balanced_occupancy_loss,common_score,seconds,parameters
+short_neighbors_lr_high,1,0.08506052153693004,0.06196895314769866,0.4153835118635498,1.3312110571275795,1226.7357822909835,60118

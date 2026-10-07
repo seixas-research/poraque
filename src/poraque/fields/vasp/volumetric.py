@@ -69,7 +69,7 @@ def read_volumetric(path, read_all=False):
         decompressed on the fly.
     read_all : bool, optional
         When true, also return any additional data blocks of the same grid
-        size (e.g. the spin channel of a spin-polarised ``CHGCAR``).
+        size (e.g. the spin channel of a spin-polarized ``CHGCAR``).
 
     Returns
     -------
@@ -145,7 +145,7 @@ def read_augmentation(path):
     Return the PAW augmentation section of a VASP volumetric file.
 
     A ``CHGCAR`` carries, after the grid block, one ``augmentation
-    occupancies`` record per atom. These are the **one-centre** PAW terms: the
+    occupancies`` record per atom. These are the **one-center** PAW terms: the
     part of the density that lives inside the augmentation spheres and is not
     representable on the plane-wave grid at all. ``ICHARG=1`` expects them, and
     a ``CHGCAR`` without them is not a restartable charge density.
@@ -168,11 +168,11 @@ def read_augmentation(path):
 
     Notes
     -----
-    A spin-polarised ``CHGCAR`` continues past the augmentation with a second
+    A spin-polarized ``CHGCAR`` continues past the augmentation with a second
     grid block, and past *that* with a second set of records. This function
-    returns the first set only, which is what a spin-unpolarised file has and
+    returns the first set only, which is what a spin-unpolarized file has and
     all a single-block writer can use; :func:`read_augmentation_blocks`
-    returns every set, which is what writing a spin-polarised ``CHGCAR`` back
+    returns every set, which is what writing a spin-polarized ``CHGCAR`` back
     needs.
 
     An HDF5 store is read through here too, exactly as :func:`read_volumetric`
@@ -216,8 +216,8 @@ def read_augmentation_blocks(path):
     r"""
     Every set of PAW augmentation records in a volumetric file.
 
-    A spin-polarised ``CHGCAR`` carries two: one after the total density and
-    one after the magnetisation, because the occupancies are resolved by spin
+    A spin-polarized ``CHGCAR`` carries two: one after the total density and
+    one after the magnetization, because the occupancies are resolved by spin
     channel just as the grid blocks are. :func:`read_augmentation` returns the
     first alone, which is the whole story for an ``ISPIN = 1`` file and half of
     it for an ``ISPIN = 2`` one --- and writing that half back produces a
@@ -299,7 +299,7 @@ def fortran_exponential(value, decimals=7, width=15):
 
     Two things separate this from ``"%*.*E" % (width, decimals, value)``:
 
-    **Mantissa normalisation.** Fortran puts the mantissa in :math:`[0.1, 1)`
+    **Mantissa normalization.** Fortran puts the mantissa in :math:`[0.1, 1)`
     and C puts it in :math:`[1, 10)`, so ``6.424378`` is ``0.6424378E+01``
     here and ``6.4243780E+00`` there.
 
@@ -339,7 +339,7 @@ def fortran_exponential(value, decimals=7, width=15):
         exponent = int(np.floor(np.log10(abs(value)))) + 1
         mantissa = value / (10.0 ** exponent)
         # Rounding can push the mantissa back to 1.0 (0.99999995 -> 1.0000000),
-        # which is not a legal Fortran mantissa; renormalise when it does.
+        # which is not a legal Fortran mantissa; renormalize when it does.
         if abs(round(mantissa, decimals)) >= 1.0:
             mantissa /= 10.0
             exponent += 1
@@ -397,7 +397,7 @@ def write_volumetric(path, structure, data, comment=None, columns=5,
     augmentation : sequence of str, optional
         PAW augmentation lines from :func:`read_augmentation`, appended after
         the grid block. Required by ``ICHARG=1``; omitted the file is a plain
-        density with no one-centre terms.
+        density with no one-center terms.
 
     Returns
     -------
@@ -451,7 +451,7 @@ def _read_header(lines, path=""):
 
     ``lines`` is an *iterator*, and it is left positioned just after the blank
     line so the caller can carry on reading the grid. That is what lets a
-    compressed 200 MB density be parsed without ever materialising its text.
+    compressed 200 MB density be parsed without ever materializing its text.
     """
     header = []
     for line in lines:

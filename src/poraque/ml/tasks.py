@@ -28,7 +28,7 @@ chain rather than an arbitrary pair:
 The two share one architecture and one dataset layout; only the endpoints of
 the map differ.
 
-A third task sits beside the chain rather than in it:
+Two more tasks sit beside the chain rather than in it:
 
 ``ext2paw`` — :math:`V_{\rm ext} \mapsto (\tilde\rho, \rho^a_{ij})`
     The pseudo-density *and* the PAW augmentation occupancies of every atom,
@@ -39,6 +39,15 @@ A third task sits beside the chain rather than in it:
     operator (``model.paw``) is not the field-to-field one: an FNO for the
     grid, and a readout at each atom over one band of :math:`|\mathbf G|`
     feeding an equivariant head per element --- :mod:`poraque.ml.paw`.
+
+``paw2tau`` --- :math:`(\tilde\rho, \rho^a_{ij}) \mapsto \tau`
+    The kinetic energy density from the pseudo-density **and** the
+    augmentation occupancies: the second link of the chain for a PAW density,
+    where the on-site part the grid cannot hold enters as input. The
+    occupancies are written into extra input channels by an equivariant
+    :class:`~poraque.ml.paw.SiteWriter`; the field operator is the ordinary
+    FNO. What ``ext2paw`` predicts is exactly what ``paw2tau`` reads, which is
+    the route this project takes to the total energy.
 """
 
 from dataclasses import dataclass
@@ -63,6 +72,9 @@ class TaskSpec:
         A per-atom target carried beside the field target, read from the same
         file. ``"augmentation"`` is the PAW occupancies of ``CHGCAR``; ``None``
         for a pure field-to-field task.
+    site_input : str or None
+        A per-atom input carried beside the input field, read from the same
+        file; ``"augmentation"`` as for ``site_target``.
     """
 
     name: str
@@ -72,6 +84,16 @@ class TaskSpec:
     input_unit: str = ""
     target_unit: str = ""
     site_target: str = None
+    site_input: str = None
+
+    @property
+    def site_field(self):
+        """The file the per-atom data is read from, or ``None`` without any."""
+        if self.site_target is not None:
+            return self.target_field
+        if self.site_input is not None:
+            return self.input_field
+        return None
 
     @property
     def required_files(self):
@@ -114,8 +136,21 @@ EXT_TO_PAW = TaskSpec(
     site_target="augmentation",
 )
 
+#: Pseudo-density plus PAW occupancies to kinetic energy density.
+PAW_TO_TAU = TaskSpec(
+    name="paw2tau",
+    input_field="CHGCAR",
+    target_field="TAUCAR",
+    description="Pseudo-density and PAW augmentation occupancies -> kinetic "
+                "energy density.",
+    input_unit="e/Ang^3",
+    target_unit="eV/Ang^3",
+    site_input="augmentation",
+)
+
 #: Registry of every task a name can resolve to.
-TASKS = {task.name: task for task in (EXT_TO_CHG, CHG_TO_TAU, EXT_TO_PAW)}
+TASKS = {task.name: task
+         for task in (EXT_TO_CHG, CHG_TO_TAU, EXT_TO_PAW, PAW_TO_TAU)}
 
 #: The orbital-free chain, in order: what ``task.type: all`` trains, what a
 #: bundle must hold to reach a total energy, and what a dataset is asked it can

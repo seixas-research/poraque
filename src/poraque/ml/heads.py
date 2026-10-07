@@ -58,7 +58,7 @@ The inequality is exact for *all-electron* densities. VASP's ``CHGCAR`` and
 ``TAUCAR`` are **pseudo** quantities, so it is not guaranteed a priori.
 Measured on the present dataset it holds at every grid point of one structure
 and at all but one point of the other — and that single point is where spectral
-downsampling rang :math:`\tau` slightly negative, i.e. an artefact of the
+downsampling rang :math:`\tau` slightly negative, i.e. an artifact of the
 resampling rather than of the physics. Verify with
 :func:`pauli_bound_violation` before enabling the head on a new dataset; if a
 pseudopotential family does violate it materially, use the soft penalty

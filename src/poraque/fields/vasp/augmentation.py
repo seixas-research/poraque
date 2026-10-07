@@ -10,7 +10,7 @@ r"""
 A transferable per-element table of PAW augmentation occupancies.
 
 VASP's ``ICHARG=1`` wants more than a density on a grid. After the grid block a
-``CHGCAR`` carries one record per atom — the **one-centre** PAW terms, the part
+``CHGCAR`` carries one record per atom — the **one-center** PAW terms, the part
 of the density inside the augmentation spheres. Those are contractions over the
 converged wavefunctions,
 
@@ -56,7 +56,7 @@ _DECIMALS = 7
 #: Version of the per-element tables built from parsed records, stamped into
 #: every entry as ``"schema"``. 2 is the first built from records read to their
 #: **declared** length; a cached table without the stamp was built by a parser
-#: that let a spin-polarised file's MAGMOM line into the last record of the
+#: that let a spin-polarized file's MAGMOM line into the last record of the
 #: first set (139 values for a free Pt atom, 170 for the last atom of a 32-atom
 #: cell) and is rebuilt rather than reused.
 RECORD_SCHEMA = 2
@@ -68,7 +68,7 @@ def parse_augmentation(block):
 
     Each record is read to the length its own header declares ---
     ``augmentation occupancies   1 138`` is atom 1, 138 values --- and not to
-    the next header. The difference is not cosmetic. A spin-polarised
+    the next header. The difference is not cosmetic. A spin-polarized
     ``CHGCAR`` writes a line of per-ion ``MAGMOM`` values after the last
     record of the first set (``NIONS`` numbers in a wider ``E20.12`` field), and
     reading to the next header folded them into that record: the last atom of
@@ -162,7 +162,7 @@ def record_layout(channels):
     r"""
     What each value of one atom's augmentation record is: ``[(a, b, L, M)]``.
 
-    VASP's ``TRANS_RHOLM`` writes the one-centre occupancies of every projector
+    VASP's ``TRANS_RHOLM`` writes the one-center occupancies of every projector
     channel pair ``a <= b`` in the POTCAR's channel order, for every ``L`` from
     ``|l_a - l_b|`` to ``l_a + l_b`` **in steps of two** (the Gaunt parity rule:
     no other L contributes to a density), and every ``M`` of that ``L`` as a
@@ -224,8 +224,8 @@ def occupancy_arrays(blocks, channels=None):
     The shape a regression target needs, where the file has a flat list of
     records per set. Three things about the records decide it:
 
-    * **one set per density channel.** A spin-polarised ``CHGCAR`` carries a
-      second set after the magnetisation block, and a target that kept only
+    * **one set per density channel.** A spin-polarized ``CHGCAR`` carries a
+      second set after the magnetization block, and a target that kept only
       the first would teach a model to write files VASP reads back wrongly
       (see :func:`~poraque.fields.vasp.volumetric.read_augmentation_blocks`);
     * **the length is a property of the element**, not of the file: it counts
@@ -234,7 +234,7 @@ def occupancy_arrays(blocks, channels=None):
       counting --- so a structure with two elements has two lengths and the
       shorter records are padded with zeros, which ``lengths`` tells apart
       from a zero occupancy;
-    * **the sets agree atom by atom.** The magnetisation record of atom *i* is
+    * **the sets agree atom by atom.** The magnetization record of atom *i* is
       the same :math:`(ll'LM)` list as its total record, so a length that
       differs between sets means the file is not what it claims.
 
@@ -246,9 +246,9 @@ def occupancy_arrays(blocks, channels=None):
         returns them.
     channels : int, optional
         Sets the caller wants. Extra sets are dropped --- a density read as one
-        channel from a spin-polarised file keeps the total's records --- and
-        missing ones are **zeros**: an unpolarised member of a spin-polarised
-        dataset carries :math:`m \equiv 0` on the grid, and its magnetisation
+        channel from a spin-polarized file keeps the total's records --- and
+        missing ones are **zeros**: an unpolarized member of a spin-polarized
+        dataset carries :math:`m \equiv 0` on the grid, and its magnetization
         occupancies vanish identically for the same reason. Defaults to the
         number of sets present.
 
@@ -366,7 +366,7 @@ def build_reference(sources, filename="CHGCAR", log=None):
     -------
     dict
         ``{element: {"values": list, "atoms": int, "structures": int}}``,
-        JSON-serialisable so it can travel inside a model bundle.
+        JSON-serializable so it can travel inside a model bundle.
     """
     emit = log if log is not None else (lambda *_: None)
     totals, structures = {}, {}

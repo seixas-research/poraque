@@ -48,14 +48,14 @@ analytically, so the electron-ion and ion-ion terms are differentiated in
 closed form (:mod:`poraque.physics.forces`) rather than by finite differences
 on a fixed grid. That construction is exact for a *local* pseudopotential and
 verified to :math:`10^{-7}` eV/Å against finite differences of the term it
-differentiates — but a PAW calculation adds projector and one-centre forces
+differentiates — but a PAW calculation adds projector and one-center forces
 that no grid-based field carries. On the shipped platinum structures the result
 gets the magnitude and not the direction. Read
 :meth:`Poraque.compute_forces` before using them for anything; geometry
-optimisation and molecular dynamics are *not* yet supportable.
+optimization and molecular dynamics are *not* yet supportable.
 
 **Absolute energies are not DFT energies.** The fields are pseudo-valence
-quantities, so the PAW one-centre terms are missing. See
+quantities, so the PAW one-center terms are missing. See
 :class:`~poraque.physics.energy.EnergyComponents`.
 """
 
@@ -105,7 +105,7 @@ class Poraque(Calculator):
         compositions: the entries for whatever elements an
         :class:`ase.Atoms` happens to contain are assembled on demand and
         cached per composition. A flat layout (``POTCAR.Pt``, ``Pt.POTCAR``)
-        is also recognised.
+        is also recognized.
     charges : dict, optional
         ``{element: Z_val}``, used only when no ``POTCAR`` is available.
         Selects the Gaussian pseudo-ion model — see the warning below.
@@ -271,7 +271,7 @@ class Poraque(Calculator):
         try:
             return load_bundle(source, task, device=self.device)
         except KeyError:
-            # A single-task bundle is a normal artefact now: the vast public
+            # A single-task bundle is a normal artifact now: the vast public
             # archives of charge densities train `ext2chg` and nothing else,
             # because no archive publishes a kinetic energy density. Say what
             # such a model *can* do rather than only that a key is missing --
@@ -887,7 +887,7 @@ class Poraque(Calculator):
            non-locality**, which includes every transition metal. The
            Hellmann-Feynman construction is complete only for a *local*
            pseudopotential; a PAW calculation adds a projector (non-local)
-           force and a one-centre force, and neither is recoverable from
+           force and a one-center force, and neither is recoverable from
            :math:`\rho`, :math:`\tau` and :math:`V_{\rm loc}` on a grid.
            Measured against VASP on the shipped platinum structures — using VASP's
            *own* density, so with no model error at all — this reproduces the

@@ -1,0 +1,182 @@
+[
+  {
+    "case": "inference_confirmation_s0",
+    "shape": [
+      14,
+      14,
+      24
+    ],
+    "elements": [
+      "C",
+      "N"
+    ],
+    "record_lengths_by_set": [
+      [
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33
+      ],
+      [
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33
+      ]
+    ],
+    "finite_fields": true,
+    "normalized": false,
+    "paw_source": "model",
+    "prediction": {
+      "directory": "/Users/leseixas/Library/CloudStorage/Dropbox/Repositories/seixas-research/poraque/experiments/chon_ext2paw/results/inference_input",
+      "formula": "C6N2",
+      "natoms": 8,
+      "volume": 70.35053840076475,
+      "grid": [
+        14,
+        14,
+        24
+      ],
+      "device": "cpu",
+      "outputs": {
+        "EXTCAR": "experiments/chon_ext2paw/results/inference_confirmation_s0/EXTCAR",
+        "CHGCAR": "experiments/chon_ext2paw/results/inference_confirmation_s0/CHGCAR"
+      },
+      "magnetic_moment": 0.04317445063309436,
+      "electrons_raw": 33.46067818825727,
+      "normalized": false,
+      "paw_augmentation": {
+        "records": 16,
+        "sets": 2,
+        "source": "model"
+      },
+      "electrons": 33.46067818825727,
+      "electrons_expected": 34.0,
+      "comparison": {
+        "CHGCAR": {
+          "relative_l2": 0.08515499068095707,
+          "mae": 0.03637340839635562,
+          "rmse": 0.06302109070705234,
+          "pearson_r": 0.9937962301519836
+        }
+      }
+    }
+  },
+  {
+    "case": "inference_confirmation_chon_s0",
+    "shape": [
+      8,
+      10,
+      24
+    ],
+    "elements": [
+      "H",
+      "C",
+      "N",
+      "O"
+    ],
+    "record_lengths_by_set": [
+      [
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33
+      ],
+      [
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33,
+        33
+      ]
+    ],
+    "finite_fields": true,
+    "normalized": false,
+    "paw_source": "model",
+    "prediction": {
+      "directory": "/Users/leseixas/Library/CloudStorage/Dropbox/Repositories/seixas-research/poraque/experiments/chon_ext2paw/results/inference_input_chon",
+      "formula": "H10C4N6O6",
+      "natoms": 26,
+      "volume": 241.8250279608153,
+      "grid": [
+        8,
+        10,
+        24
+      ],
+      "device": "cpu",
+      "outputs": {
+        "EXTCAR": "experiments/chon_ext2paw/results/inference_confirmation_chon_s0/EXTCAR",
+        "CHGCAR": "experiments/chon_ext2paw/results/inference_confirmation_chon_s0/CHGCAR"
+      },
+      "magnetic_moment": 0.09772943111012485,
+      "electrons_raw": 90.8715584735627,
+      "normalized": false,
+      "paw_augmentation": {
+        "records": 52,
+        "sets": 2,
+        "source": "model"
+      },
+      "electrons": 90.8715584735627,
+      "electrons_expected": 92.0,
+      "comparison": {
+        "CHGCAR": {
+          "relative_l2": 0.0787995300025684,
+          "mae": 0.04767028914188488,
+          "rmse": 0.06791211190494374,
+          "pearson_r": 0.9961995540713033
+        }
+      }
+    }
+  }
+]

@@ -158,7 +158,7 @@ that *is* known exactly is a coincidence of sign, not a finding.
 
 What the residual most likely contains, beyond the kinetic-functional error, is
 the **non-local part of the PAW pseudopotential** — large for a 5d metal,
-atom-centred, and absent from a local `v_ext` by construction. This measurement
+atom-centered, and absent from a local `v_ext` by construction. This measurement
 cannot separate the two contributions, and nothing here should be read as
 attributing the whole residual to `dTs/drho`.
 
@@ -196,7 +196,7 @@ insurance for a *learned* potential, exactly as with the tau head.
 **Verdict:** LPS is not an alternative to the current formulation, it is the
 same formulation with the baseline frozen at a worse value. The part worth
 importing is the constraint, not the change of variable, and it can be imposed
-inside the EL formulation by parameterising the learned correction so that
+inside the EL formulation by parameterizing the learned correction so that
 `v_kin - dT_vW/drho >= 0`.
 
 ## 3. What is left, and what it would take to model it
@@ -234,6 +234,6 @@ still trains. See `tests/test_xc_potential.py`.
 
 `poraque.fields.io.resolve_xc` resolves the functional in the order VASP does:
 the `INCAR` `GGA` tag, else the pseudopotential `LEXCH` tag. It warns rather
-than substituting silently when a functional is recognised but not implemented
-(PW91, PBEsol, RPBE), because a mislabelled `v_xc` in the residual would read as
+than substituting silently when a functional is recognized but not implemented
+(PW91, PBEsol, RPBE), because a mislabeled `v_xc` in the residual would read as
 an error of the kinetic functional.

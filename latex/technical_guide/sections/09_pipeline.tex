@@ -135,7 +135,7 @@ replaces it. It is off by default (\opt{gaussian\_blur: null}).
 The two agree to a relative $1.4\times10^{-5}$ on an \emph{orthogonal} cell and
 differ by $2$--$6\,\%$ on the fcc cell of the reference data. \opt{ndimage}
 blurs along \emph{lattice} axes, which is anisotropic in Cartesian space
-whenever the lattice vectors are not orthogonal. For a face-centred cubic
+whenever the lattice vectors are not orthogonal. For a face-centered cubic
 lattice --- angles of $60^\circ$ --- it is measurably wrong, not merely
 different.
 \end{pwarn}
@@ -204,13 +204,13 @@ The run writes a single unified checkpoint,
 \begin{pwarn}
 With \opt{valid\_fraction: 0} every structure is in training, so the reported
 metrics are \textbf{training fit}. They show the model can represent the data;
-they are not a generalisation estimate. Raise \opt{valid\_fraction}, or use the
+they are not a generalization estimate. Raise \opt{valid\_fraction}, or use the
 cross-validation of Section~\ref{sec:kfold}, for that.
 
 Measured on seventeen platinum structures: the all-structure training fit gives
 relative $L^2$ of $0.0209$ (\opt{ext2chg}) and $0.0140$ (\opt{chg2tau}),
 against held-out values of $0.0379$ and $0.0511$ --- roughly two to four times
-larger. That gap is the memorisation margin, and quoting the training-fit
+larger. That gap is the memorization margin, and quoting the training-fit
 number as a result would be a serious overstatement.
 \end{pwarn}
 
@@ -231,7 +231,7 @@ training:
 \end{lstlisting}
 
 Each fold trains a fresh model on $K-1$ groups and scores it on the held-out
-group, in physical units. The result is a generalisation estimate \emph{with a
+group, in physical units. The result is a generalization estimate \emph{with a
 spread}, not a model to deploy.
 
 \subsection{The split is at the structure level}
@@ -240,7 +240,7 @@ This is the part that decides whether the number means anything.
 
 A fold is a set of \emph{material names}; every voxel of a material goes to the
 same side of the split. Splitting at the voxel level would place the same
-material in both training and validation, and since neighbouring voxels of one
+material in both training and validation, and since neighboring voxels of one
 crystal are enormously correlated, the model would effectively be scored on
 data it had already seen. The resulting figure would look excellent and would
 say nothing about transfer to a new material.
@@ -276,7 +276,7 @@ silently.
 
 Each report carries a \emph{What these numbers do not show} section, generated
 from the run itself: whether anything was held out, how many structures there
-were, and whether the figures support a generalisation claim.
+were, and whether the figures support a generalization claim.
 
 \section{Outputs}
 

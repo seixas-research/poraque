@@ -12,7 +12,7 @@ r"""
 Two files, one row, kept in step by hand — which is exactly the kind of pair
 that drifts, and on the sibling Calango project it already had. Before the row
 was added here the Sphinx landing page had no badges at all while the README
-had four, so the manual's own front page said nothing about the licence, the
+had four, so the manual's own front page said nothing about the license, the
 Python version or where the package lives.
 
 What is asserted
@@ -24,7 +24,7 @@ What is asserted
   trusted, and the Python badge is required to be the *dynamic*
   ``pypi/pyversions`` kind rather than a hard-coded number that would drift
   from ``requires-python`` the first time it moved;
-* the documentation badge is labelled "Manual" and the word "sphinx" appears
+* the documentation badge is labeled "Manual" and the word "sphinx" appears
   nowhere in either row. That is a house rule shared with the website
   (``poraque.seixas.dev``'s own notes say the same): the manual is a manual,
   and which generator built it is an implementation detail;
@@ -124,7 +124,7 @@ class TestTheVersionBearingBadgesAreTruthful:
         assert len(badges) == 1
         assert badges[0].startswith("https://img.shields.io/pypi/pyversions/")
 
-    def test_the_licence_badge_is_read_from_the_repository(self, rows):
+    def test_the_license_badge_is_read_from_the_repository(self, rows):
         badges = [url for url in rows[0] if "license" in url]
         assert len(badges) == 1
         assert "/github/license/seixas-research/poraque" in badges[0]
@@ -215,7 +215,7 @@ class TestTheDocumentationBadge:
     def test_there_is_exactly_one(self, rows):
         assert len([url for url in rows[0] if "readthedocs/" in url]) == 1
 
-    def test_it_is_labelled_manual(self, rows):
+    def test_it_is_labeled_manual(self, rows):
         badge = [url for url in rows[0] if "readthedocs/" in url][0]
         assert "label=Manual" in badge
 
@@ -233,7 +233,7 @@ class TestTheLinkTargets:
     """A relative link works from the README and 404s from the docs site, so
     anything the two rows share has to be absolute on the docs side."""
 
-    def test_readme_targets_are_absolute_or_its_own_licence(self):
+    def test_readme_targets_are_absolute_or_its_own_license(self):
         targets = re.findall(
             r"\[!\[[^\]]*\]\(https://img\.shields\.io/[^)]+\)\]\(([^)]+)\)",
             _read("README.md"))

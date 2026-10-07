@@ -222,7 +222,7 @@ class TestFromCalculation:
     def test_records_the_code_in_metadata(self, vasp_dir):
         assert ExternalPotential.from_calculation(vasp_dir).metadata["code"] == "vasp"
 
-    def test_honours_a_shared_grid(self, vasp_dir):
+    def test_honors_a_shared_grid(self, vasp_dir):
         grid = FieldGrid((20, 20, 20), Poscar.from_string(POSCAR_TEXT).cell)
         assert ExternalPotential.from_calculation(vasp_dir,
                                                   grid=grid).shape == (20, 20, 20)
@@ -314,7 +314,7 @@ class TestNonVaspRunsAreReachable:
             for name in reader_class.structure_files:
                 assert name in markers, (
                     f"{reader_class.code} declares {name}, which ingestion "
-                    f"does not recognise")
+                    f"does not recognize")
 
     def test_vasps_own_markers_still_come_first(self):
         from poraque.data.sources import calculation_markers
@@ -433,7 +433,7 @@ class TestSpectralResample:
 # ===================================================================== #
 class TestAugmentation:
     """
-    The one-centre PAW terms live inside the augmentation spheres and are not
+    The one-center PAW terms live inside the augmentation spheres and are not
     representable on the plane-wave grid, so no grid-based model produces
     them. VASP's ``ICHARG=1`` needs them, which is why they are borrowed from
     a reference calculation rather than predicted.
@@ -479,7 +479,7 @@ class TestAugmentation:
 
     def test_a_spin_channel_is_not_dragged_along(self, tmp_path):
         """
-        The second grid block is the reference's magnetisation, which has
+        The second grid block is the reference's magnetization, which has
         nothing to do with a prediction; extraction stops before it.
         """
         from poraque.fields.vasp.volumetric import read_augmentation
@@ -567,7 +567,7 @@ class TestAugmentationReference:
 
     def test_fortran_exponent_convention(self):
         """
-        Fortran normalises the mantissa to [0.1, 1) and Python to [1, 10), so
+        Fortran normalizes the mantissa to [0.1, 1) and Python to [1, 10), so
         6.424378 is 0.6424378E+01 in one and 6.4243780E+00 in the other. VASP
         reads these with a fixed-format read; the difference is not cosmetic.
         """
@@ -1081,7 +1081,7 @@ class TestAimsReader:
 
     def test_there_is_no_plane_wave_cutoff(self, calculation):
         """
-        Numeric atom-centred orbitals have no cutoff. Reporting one would be
+        Numeric atom-centered orbitals have no cutoff. Reporting one would be
         inventing a number, so ``cutoff`` stays None and the grid comes from
         the cube the run actually wrote.
         """

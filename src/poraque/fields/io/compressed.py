@@ -9,7 +9,7 @@
 """
 Transparent reading of compressed calculation files.
 
-Volumetric files are the largest artefacts a DFT run produces and they are
+Volumetric files are the largest artifacts a DFT run produces and they are
 almost always shipped compressed: the Materials Project serves charge densities
 gzipped, archives of published calculations are usually ``.zip`` or ``.tar``
 members, and a local run is routinely gzipped to reclaim the roughly threefold
@@ -26,7 +26,7 @@ same stream of lines.
 
    Decompression is *streamed*, not staged. A 200 MB ``CHGCAR`` is decoded a
    buffer at a time into the array being filled, so peak memory tracks the
-   parsed grid rather than the file — which matters, because materialising the
+   parsed grid rather than the file — which matters, because materializing the
    text of one such file as a list of Python strings costs several times the
    grid it describes.
 """

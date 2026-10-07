@@ -38,7 +38,7 @@ that qualifies a directory; inputs beside it are a bonus. A path holding a
 one level down — is read as that one material.
 
 `TAUCAR` is optional **per material, not per directory**: one run in a tree may
-have written one while its neighbour did not, and the one that did still
+have written one while its neighbor did not, and the one that did still
 reaches `chg2tau` while both reach `ext2chg`. A task with no target anywhere is
 skipped with a message rather than failing the run.
 
@@ -55,16 +55,21 @@ each directory, `vasp` names it — and a name that disagrees with the directory
 is an error rather than an empty dataset.
 
 Everything found is pooled, spectrally downsampled once into a shared cache,
-and served through one `Dataset`. Identifiers that collide between archives are
+and served through one `Dataset`. Downsampling caps the longest axis at
+`data.resolution` and, with `data.max_spacing`, refines any axis a long, thin
+cell would leave too coarse; both are in the cache's directory name and
+fingerprint. The build prints one row per material as it finishes, counted
+`i/N` (see {doc}`../output`). Identifiers that collide between archives are
 prefixed with their directory, so two `struct_000`s never silently become one.
 
 A cached density keeps its **PAW augmentation occupancies**, copied verbatim
 from the calculation — one set per density channel, in text and HDF5 caches
 alike. They are on-site terms with no representation on the grid, so
 downsampling neither changes them nor has anything to say about them, and they
-are the per-atom target of `ext2paw` (see the configuration page's `paw`
-block). Each record is read to the length its header declares: a
-spin-polarised `CHGCAR` writes a line of per-ion `MAGMOM` values after its
+are the per-atom target of `ext2paw` and the per-atom input of `paw2tau` (see
+the configuration page's `paw` block); `FieldPairDataset.site_records(i)` serves
+them for both. Each record is read to the length its header declares: a
+spin-polarized `CHGCAR` writes a line of per-ion `MAGMOM` values after its
 first set, and reading to the next header folded them into the last atom's
 record — 139 values for a free Pt atom whose record holds 138. The per-element
 PAW tables a cache stores are stamped with the reading that built them, and one
@@ -144,7 +149,7 @@ poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
 poraque-train --config my_mp_run.yaml     # data_paths: [data/MP]
 ```
 
-and to specialise it on your own chemistry afterwards, point `data_paths` at
+and to specialize it on your own chemistry afterwards, point `data_paths` at
 both directories, or fine-tune (see {doc}`../fine_tuning/index`).
 
 ### Taking the archive whole
@@ -185,8 +190,8 @@ without a density. The search filters still apply, so `--all` is also how a
 `--hdf5` writes each density as a chunked, compressed field store rather than a
 `CHGCAR`. It is a re-encoding, not a conversion — pymatgen already holds
 $\rho\Omega$, which is the convention the store keeps — and it carries
-**everything the text file does**: the magnetisation block of a spin-polarised
-density, and the PAW augmentation records, the one-centre terms `ICHARG = 1`
+**everything the text file does**: the magnetization block of a spin-polarized
+density, and the PAW augmentation records, the one-center terms `ICHARG = 1`
 will not restart without.
 
 That was not true before 2026-09-01, and the way it was untrue is worth
@@ -232,7 +237,7 @@ total is exact; over the database that is tens of thousands of requests for a
 number nobody needs to four digits. A sampled estimate measures its N exactly
 — so `TOTAL DOWNLOAD` is a measurement of what a fetch would actually transfer,
 not an extrapolation — and **also projects** to the whole set, as the sample
-mean times the number advertised, on its own line and labelled as a projection.
+mean times the number advertised, on its own line and labeled as a projection.
 Both are printed because they answer different questions, "what will this
 fetch" and "what would all of it cost", and a report stating one of them gets
 read as the other.
@@ -264,7 +269,7 @@ two differ by **0.38 relative $L_2$**: different fields, not different
 roundings of one. A species the library cannot serve warns once and falls back
 on its own; the rest still get the exact potential. See
 {ref}`the configuration reference <potcar-dir-and-the-gaussian-fallback>` for
-the layouts recognised.
+the layouts recognized.
 
 ```{warning}
 **Mixing archives can mix two definitions of $V_\mathrm{ext}$.** A calculation
@@ -288,7 +293,7 @@ be stated wherever the model's numbers are.
 ## Fetching from the Materials Project
 
 {class}`poraque.data.materials_project.MPDataFetcher` turns a chemical space
-into a local dataset. Sizing is exact rather than modelled: charge densities are
+into a local dataset. Sizing is exact rather than modeled: charge densities are
 objects in a public S3 bucket, so the fetcher resolves each material's static
 task and issues a `HEAD` request, reading `Content-Length` without transferring
 any payload.

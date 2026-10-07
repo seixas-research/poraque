@@ -1,0 +1,2170 @@
+{
+  "zero_m_prediction_relative_error_for_nonzero_targets": 1.0,
+  "near_zero_field_structures": 137,
+  "near_zero_net_moment_structures": 349,
+  "positive_net_moment": 65,
+  "negative_net_moment": 18,
+  "max_absolute_net_moment": 16.004707589641622,
+  "per_material": [
+    {
+      "id": "mp-1001080",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1008374",
+      "net_magnetic_moment": -0.0001883343359884528,
+      "magnetization_to_charge_norm": 7.276475781202523e-05
+    },
+    {
+      "id": "mp-1008395",
+      "net_magnetic_moment": -8.194845374296443e-05,
+      "magnetization_to_charge_norm": 3.578341624276783e-05
+    },
+    {
+      "id": "mp-1009490",
+      "net_magnetic_moment": 1.999553664695523,
+      "magnetization_to_charge_norm": 0.20218081599336182
+    },
+    {
+      "id": "mp-1009818",
+      "net_magnetic_moment": -0.00012182042978931495,
+      "magnetization_to_charge_norm": 4.964461455973521e-05
+    },
+    {
+      "id": "mp-1014214",
+      "net_magnetic_moment": 0.0013998613826060593,
+      "magnetization_to_charge_norm": 9.579485594350748e-05
+    },
+    {
+      "id": "mp-1014281",
+      "net_magnetic_moment": 0.2110414374256471,
+      "magnetization_to_charge_norm": 0.04006805804272603
+    },
+    {
+      "id": "mp-1014286",
+      "net_magnetic_moment": 0.0033013558930228832,
+      "magnetization_to_charge_norm": 0.00015450776943575563
+    },
+    {
+      "id": "mp-1014287",
+      "net_magnetic_moment": 0.8424300390916729,
+      "magnetization_to_charge_norm": 0.0569981478969067
+    },
+    {
+      "id": "mp-1014296",
+      "net_magnetic_moment": 0.00018355333421674682,
+      "magnetization_to_charge_norm": 1.5245225281767229e-05
+    },
+    {
+      "id": "mp-1014297",
+      "net_magnetic_moment": 4.000488049005822,
+      "magnetization_to_charge_norm": 0.0751340851813264
+    },
+    {
+      "id": "mp-1014298",
+      "net_magnetic_moment": -0.00027944486683162824,
+      "magnetization_to_charge_norm": 9.822977597016991e-05
+    },
+    {
+      "id": "mp-1014311",
+      "net_magnetic_moment": 0.0007215590407523541,
+      "magnetization_to_charge_norm": 7.19632123977711e-05
+    },
+    {
+      "id": "mp-1014316",
+      "net_magnetic_moment": 0.00035806747999197206,
+      "magnetization_to_charge_norm": 5.647567258528973e-05
+    },
+    {
+      "id": "mp-1014324",
+      "net_magnetic_moment": 0.00023898710302945361,
+      "magnetization_to_charge_norm": 2.5392288703095623e-05
+    },
+    {
+      "id": "mp-1014332",
+      "net_magnetic_moment": 3.5969087174421803,
+      "magnetization_to_charge_norm": 0.13050774548202593
+    },
+    {
+      "id": "mp-1014333",
+      "net_magnetic_moment": 0.00043963556575290607,
+      "magnetization_to_charge_norm": 5.885761045938965e-06
+    },
+    {
+      "id": "mp-1018088",
+      "net_magnetic_moment": 0.00320693877174523,
+      "magnetization_to_charge_norm": 0.0002167925282759335
+    },
+    {
+      "id": "mp-1018655",
+      "net_magnetic_moment": 0.0005273629148249177,
+      "magnetization_to_charge_norm": 4.257599727929849e-05
+    },
+    {
+      "id": "mp-1019086",
+      "net_magnetic_moment": -8.80673478113237e-06,
+      "magnetization_to_charge_norm": 5.104969389334647e-05
+    },
+    {
+      "id": "mp-1021328",
+      "net_magnetic_moment": -0.00017583175638019008,
+      "magnetization_to_charge_norm": 6.847350977594927e-05
+    },
+    {
+      "id": "mp-1023923",
+      "net_magnetic_moment": 2.3065730578021386e-05,
+      "magnetization_to_charge_norm": 6.672399402895025e-06
+    },
+    {
+      "id": "mp-1040425",
+      "net_magnetic_moment": 0.0001732597851083271,
+      "magnetization_to_charge_norm": 0.007144908452236245
+    },
+    {
+      "id": "mp-1056059",
+      "net_magnetic_moment": -0.0002842970490047317,
+      "magnetization_to_charge_norm": 6.220074462892157e-05
+    },
+    {
+      "id": "mp-1056831",
+      "net_magnetic_moment": 6.099237533604957e-05,
+      "magnetization_to_charge_norm": 3.3191327527456126e-05
+    },
+    {
+      "id": "mp-1056957",
+      "net_magnetic_moment": 8.5716485355945e-05,
+      "magnetization_to_charge_norm": 9.586688344546235e-05
+    },
+    {
+      "id": "mp-1057818",
+      "net_magnetic_moment": -4.6720551919107185e-07,
+      "magnetization_to_charge_norm": 1.4494203727193044e-06
+    },
+    {
+      "id": "mp-1058623",
+      "net_magnetic_moment": 0.001325110594140039,
+      "magnetization_to_charge_norm": 0.00013109320622357737
+    },
+    {
+      "id": "mp-1061298",
+      "net_magnetic_moment": 1.1117510554478914e-06,
+      "magnetization_to_charge_norm": 5.288534787569779e-07
+    },
+    {
+      "id": "mp-1065697",
+      "net_magnetic_moment": -0.00019003852742497767,
+      "magnetization_to_charge_norm": 7.653714972059806e-05
+    },
+    {
+      "id": "mp-1066100",
+      "net_magnetic_moment": 0.0015852139378262544,
+      "magnetization_to_charge_norm": 4.199535648580833e-05
+    },
+    {
+      "id": "mp-1066989",
+      "net_magnetic_moment": -0.0001276279472160376,
+      "magnetization_to_charge_norm": 8.724104181617799e-05
+    },
+    {
+      "id": "mp-1077316",
+      "net_magnetic_moment": 3.7666027432434956e-12,
+      "magnetization_to_charge_norm": 1.0850044181309015e-05
+    },
+    {
+      "id": "mp-1077595",
+      "net_magnetic_moment": -6.610531251382929e-05,
+      "magnetization_to_charge_norm": 3.7689022636863566e-05
+    },
+    {
+      "id": "mp-1077906",
+      "net_magnetic_moment": -0.0007671296109784565,
+      "magnetization_to_charge_norm": 2.7478650620812434e-05
+    },
+    {
+      "id": "mp-1078219",
+      "net_magnetic_moment": 2.3461607852813904,
+      "magnetization_to_charge_norm": 0.18895218371398584
+    },
+    {
+      "id": "mp-1078789",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1078791",
+      "net_magnetic_moment": 2.000102427491701,
+      "magnetization_to_charge_norm": 0.09411340073172442
+    },
+    {
+      "id": "mp-1078845",
+      "net_magnetic_moment": -5.1733776909808684e-05,
+      "magnetization_to_charge_norm": 3.641970007464002e-05
+    },
+    {
+      "id": "mp-1079612",
+      "net_magnetic_moment": 9.421894206374204e-05,
+      "magnetization_to_charge_norm": 5.773228401351914e-05
+    },
+    {
+      "id": "mp-1079684",
+      "net_magnetic_moment": 3.999975757807169,
+      "magnetization_to_charge_norm": 0.1460745038271945
+    },
+    {
+      "id": "mp-1080711",
+      "net_magnetic_moment": 5.472784957813228,
+      "magnetization_to_charge_norm": 0.14968329918841294
+    },
+    {
+      "id": "mp-1080826",
+      "net_magnetic_moment": -4.832212522856878e-05,
+      "magnetization_to_charge_norm": 3.9737867944728305e-05
+    },
+    {
+      "id": "mp-1087546",
+      "net_magnetic_moment": 8.000916055288046,
+      "magnetization_to_charge_norm": 0.2019660646140453
+    },
+    {
+      "id": "mp-1095534",
+      "net_magnetic_moment": 0.0019360286642979392,
+      "magnetization_to_charge_norm": 9.040595544610525e-05
+    },
+    {
+      "id": "mp-1095633",
+      "net_magnetic_moment": -5.353526008515394e-06,
+      "magnetization_to_charge_norm": 4.875976268494319e-06
+    },
+    {
+      "id": "mp-1096864",
+      "net_magnetic_moment": -0.001462529507563994,
+      "magnetization_to_charge_norm": 4.0917651993538634e-05
+    },
+    {
+      "id": "mp-1096892",
+      "net_magnetic_moment": 3.515132107741957,
+      "magnetization_to_charge_norm": 0.1204926996052499
+    },
+    {
+      "id": "mp-1096977",
+      "net_magnetic_moment": -6.004200138283394e-05,
+      "magnetization_to_charge_norm": 0.00012024409778433854
+    },
+    {
+      "id": "mp-1096984",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1096986",
+      "net_magnetic_moment": 7.408408254715928e-05,
+      "magnetization_to_charge_norm": 6.556068725619854e-05
+    },
+    {
+      "id": "mp-1097832",
+      "net_magnetic_moment": -0.00024445884272519716,
+      "magnetization_to_charge_norm": 6.687624676433695e-05
+    },
+    {
+      "id": "mp-1102227",
+      "net_magnetic_moment": 9.288935595549922e-05,
+      "magnetization_to_charge_norm": 3.390521127976228e-06
+    },
+    {
+      "id": "mp-1102232",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1102442",
+      "net_magnetic_moment": -6.894883711994081e-05,
+      "magnetization_to_charge_norm": 1.885388750930789e-05
+    },
+    {
+      "id": "mp-1102681",
+      "net_magnetic_moment": -1.5023299732923174e-05,
+      "magnetization_to_charge_norm": 1.9000118170954736e-05
+    },
+    {
+      "id": "mp-1103367",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1103408",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1104073",
+      "net_magnetic_moment": 0.0020836241275333373,
+      "magnetization_to_charge_norm": 6.186945633323041e-05
+    },
+    {
+      "id": "mp-1104403",
+      "net_magnetic_moment": 0.00024966445933841347,
+      "magnetization_to_charge_norm": 7.543897587086132e-06
+    },
+    {
+      "id": "mp-1104513",
+      "net_magnetic_moment": 0.00011717336256550228,
+      "magnetization_to_charge_norm": 2.9787199050811462e-05
+    },
+    {
+      "id": "mp-1105655",
+      "net_magnetic_moment": 1.710843957494148e-05,
+      "magnetization_to_charge_norm": 2.2473604027104366e-06
+    },
+    {
+      "id": "mp-11725",
+      "net_magnetic_moment": 3.246412177242954e-05,
+      "magnetization_to_charge_norm": 9.382951435407023e-06
+    },
+    {
+      "id": "mp-1176403",
+      "net_magnetic_moment": -0.0009602023713161115,
+      "magnetization_to_charge_norm": 0.00017129881850923008
+    },
+    {
+      "id": "mp-1180008",
+      "net_magnetic_moment": 1.3000059377934214e-05,
+      "magnetization_to_charge_norm": 1.1295690496796845e-05
+    },
+    {
+      "id": "mp-1180036",
+      "net_magnetic_moment": -0.00011857566710500203,
+      "magnetization_to_charge_norm": 1.4033250479365355e-05
+    },
+    {
+      "id": "mp-1180050",
+      "net_magnetic_moment": 0.00018971535375639028,
+      "magnetization_to_charge_norm": 3.862441795573849e-05
+    },
+    {
+      "id": "mp-1180064",
+      "net_magnetic_moment": 3.999223831692767,
+      "magnetization_to_charge_norm": 0.1035390137411437
+    },
+    {
+      "id": "mp-1180220",
+      "net_magnetic_moment": 3.999694540251123,
+      "magnetization_to_charge_norm": 0.0988923042833462
+    },
+    {
+      "id": "mp-1180282",
+      "net_magnetic_moment": 3.999182034238272,
+      "magnetization_to_charge_norm": 0.09917429632526747
+    },
+    {
+      "id": "mp-1180334",
+      "net_magnetic_moment": 0.10466333789716385,
+      "magnetization_to_charge_norm": 0.003271156226370856
+    },
+    {
+      "id": "mp-1180345",
+      "net_magnetic_moment": 11.999985605154382,
+      "magnetization_to_charge_norm": 0.18716252949598464
+    },
+    {
+      "id": "mp-1180438",
+      "net_magnetic_moment": 7.567834740374958,
+      "magnetization_to_charge_norm": 0.09407436916463116
+    },
+    {
+      "id": "mp-1180473",
+      "net_magnetic_moment": 0.0001541772892047418,
+      "magnetization_to_charge_norm": 1.0741810435957763e-05
+    },
+    {
+      "id": "mp-1180500",
+      "net_magnetic_moment": 0.00010586973482292875,
+      "magnetization_to_charge_norm": 1.0390637630600174e-05
+    },
+    {
+      "id": "mp-1180808",
+      "net_magnetic_moment": 11.999999915662869,
+      "magnetization_to_charge_norm": 0.13277672601548293
+    },
+    {
+      "id": "mp-1180988",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181087",
+      "net_magnetic_moment": 0.00019457692359999286,
+      "magnetization_to_charge_norm": 6.739203392440714e-06
+    },
+    {
+      "id": "mp-1181093",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181155",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181214",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181265",
+      "net_magnetic_moment": 8.000034043709276,
+      "magnetization_to_charge_norm": 0.5299555792263327
+    },
+    {
+      "id": "mp-1181328",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181348",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181349",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181373",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181376",
+      "net_magnetic_moment": -0.0007096135592497558,
+      "magnetization_to_charge_norm": 7.681474231644066e-06
+    },
+    {
+      "id": "mp-1181417",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181419",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181430",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181505",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181559",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181584",
+      "net_magnetic_moment": 0.0006255113044099553,
+      "magnetization_to_charge_norm": 7.852617423354109e-06
+    },
+    {
+      "id": "mp-1181677",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181996",
+      "net_magnetic_moment": -1.5857955354774735e-05,
+      "magnetization_to_charge_norm": 0.00017035867936021209
+    },
+    {
+      "id": "mp-1182019",
+      "net_magnetic_moment": 0.000989464817243538,
+      "magnetization_to_charge_norm": 1.220439505371136e-05
+    },
+    {
+      "id": "mp-1182029",
+      "net_magnetic_moment": 4.727387967852475e-05,
+      "magnetization_to_charge_norm": 2.2400131735370048e-05
+    },
+    {
+      "id": "mp-1182145",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1182172",
+      "net_magnetic_moment": 6.340005731091943e-05,
+      "magnetization_to_charge_norm": 6.447115170695345e-05
+    },
+    {
+      "id": "mp-1182484",
+      "net_magnetic_moment": 5.574205568110068e-05,
+      "magnetization_to_charge_norm": 6.682554556648487e-07
+    },
+    {
+      "id": "mp-11875",
+      "net_magnetic_moment": -0.000246232606065577,
+      "magnetization_to_charge_norm": 2.2226498340523822e-05
+    },
+    {
+      "id": "mp-1188168",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1188177",
+      "net_magnetic_moment": -1.7226297107713425e-06,
+      "magnetization_to_charge_norm": 4.2230844155398415e-05
+    },
+    {
+      "id": "mp-1188347",
+      "net_magnetic_moment": 8.15703340857711e-05,
+      "magnetization_to_charge_norm": 3.080205440036613e-05
+    },
+    {
+      "id": "mp-1188817",
+      "net_magnetic_moment": 0.02017915641323176,
+      "magnetization_to_charge_norm": 0.000363477295914209
+    },
+    {
+      "id": "mp-1189505",
+      "net_magnetic_moment": 8.00020598525674,
+      "magnetization_to_charge_norm": 0.28916198360458933
+    },
+    {
+      "id": "mp-1189886",
+      "net_magnetic_moment": 0.00031763486544918266,
+      "magnetization_to_charge_norm": 6.55494267490313e-06
+    },
+    {
+      "id": "mp-1190171",
+      "net_magnetic_moment": 0.0015570369489661493,
+      "magnetization_to_charge_norm": 2.752534466501e-05
+    },
+    {
+      "id": "mp-1190216",
+      "net_magnetic_moment": 0.0017688636292196717,
+      "magnetization_to_charge_norm": 1.2235445553284631e-05
+    },
+    {
+      "id": "mp-1190685",
+      "net_magnetic_moment": -0.0008627322430233503,
+      "magnetization_to_charge_norm": 7.928515305144536e-06
+    },
+    {
+      "id": "mp-1190699",
+      "net_magnetic_moment": 0.00025154078306460455,
+      "magnetization_to_charge_norm": 2.611246638030438e-06
+    },
+    {
+      "id": "mp-1192619",
+      "net_magnetic_moment": 2.0000428390894283,
+      "magnetization_to_charge_norm": 0.04342000302301879
+    },
+    {
+      "id": "mp-1193580",
+      "net_magnetic_moment": -0.00018026220191596655,
+      "magnetization_to_charge_norm": 7.613928710583644e-06
+    },
+    {
+      "id": "mp-1194028",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1194227",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1195106",
+      "net_magnetic_moment": -0.0002914967089117257,
+      "magnetization_to_charge_norm": 3.1342903924187613e-06
+    },
+    {
+      "id": "mp-1196253",
+      "net_magnetic_moment": -0.0005974568076195245,
+      "magnetization_to_charge_norm": 1.415919901148955e-06
+    },
+    {
+      "id": "mp-1197051",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1197148",
+      "net_magnetic_moment": -0.0012619493374223137,
+      "magnetization_to_charge_norm": 6.918626619414549e-06
+    },
+    {
+      "id": "mp-1197543",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1197681",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1198447",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1198679",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1198776",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1199197",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1199386",
+      "net_magnetic_moment": -0.0007584936626690656,
+      "magnetization_to_charge_norm": 7.5652949621822565e-06
+    },
+    {
+      "id": "mp-1200465",
+      "net_magnetic_moment": -0.0004930551676885739,
+      "magnetization_to_charge_norm": 1.4998701730140094e-06
+    },
+    {
+      "id": "mp-1200473",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1200776",
+      "net_magnetic_moment": -0.00013481309726399345,
+      "magnetization_to_charge_norm": 1.7092474644396786e-06
+    },
+    {
+      "id": "mp-1200980",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1201465",
+      "net_magnetic_moment": 0.0005474381035636602,
+      "magnetization_to_charge_norm": 1.2709138029306921e-06
+    },
+    {
+      "id": "mp-1201974",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1202134",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1202251",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1203058",
+      "net_magnetic_moment": -0.0005848350094385409,
+      "magnetization_to_charge_norm": 7.658891199065562e-06
+    },
+    {
+      "id": "mp-1203308",
+      "net_magnetic_moment": 0.0003972122954575943,
+      "magnetization_to_charge_norm": 2.867449393627928e-06
+    },
+    {
+      "id": "mp-1204579",
+      "net_magnetic_moment": 16.00155473881678,
+      "magnetization_to_charge_norm": 0.06177522376097958
+    },
+    {
+      "id": "mp-1204989",
+      "net_magnetic_moment": -0.00019720689643737182,
+      "magnetization_to_charge_norm": 1.0929952453144482e-06
+    },
+    {
+      "id": "mp-1205283",
+      "net_magnetic_moment": 6.421830883333435e-05,
+      "magnetization_to_charge_norm": 7.409210417365662e-07
+    },
+    {
+      "id": "mp-1205417",
+      "net_magnetic_moment": -0.000567428531801398,
+      "magnetization_to_charge_norm": 1.385371371381417e-05
+    },
+    {
+      "id": "mp-12103",
+      "net_magnetic_moment": 5.99997452699959,
+      "magnetization_to_charge_norm": 0.6045580902401404
+    },
+    {
+      "id": "mp-1212478",
+      "net_magnetic_moment": 0.00012598159029282734,
+      "magnetization_to_charge_norm": 4.360503833153599e-06
+    },
+    {
+      "id": "mp-1212506",
+      "net_magnetic_moment": 13.999934953576089,
+      "magnetization_to_charge_norm": 0.23811234458169425
+    },
+    {
+      "id": "mp-1212515",
+      "net_magnetic_moment": -0.0015640745174772613,
+      "magnetization_to_charge_norm": 7.317064814391034e-06
+    },
+    {
+      "id": "mp-1212522",
+      "net_magnetic_moment": 0.0001193630685157245,
+      "magnetization_to_charge_norm": 5.690477752054481e-06
+    },
+    {
+      "id": "mp-1212532",
+      "net_magnetic_moment": -0.0011121411025945935,
+      "magnetization_to_charge_norm": 8.003187116077996e-06
+    },
+    {
+      "id": "mp-1212539",
+      "net_magnetic_moment": -0.00022710746508935951,
+      "magnetization_to_charge_norm": 1.4377317966010569e-06
+    },
+    {
+      "id": "mp-1212551",
+      "net_magnetic_moment": 0.0004213905360689302,
+      "magnetization_to_charge_norm": 3.1647416606792267e-06
+    },
+    {
+      "id": "mp-1212560",
+      "net_magnetic_moment": -0.0006737990805183891,
+      "magnetization_to_charge_norm": 1.0381661748010926e-05
+    },
+    {
+      "id": "mp-1212563",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1212577",
+      "net_magnetic_moment": 0.0005524323467674485,
+      "magnetization_to_charge_norm": 8.366210222312459e-06
+    },
+    {
+      "id": "mp-1212579",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1212581",
+      "net_magnetic_moment": -0.0006043885248349452,
+      "magnetization_to_charge_norm": 4.5239198423077675e-06
+    },
+    {
+      "id": "mp-1212607",
+      "net_magnetic_moment": 0.00046273004952342644,
+      "magnetization_to_charge_norm": 3.869459653527178e-06
+    },
+    {
+      "id": "mp-1212613",
+      "net_magnetic_moment": 0.00013505668764206063,
+      "magnetization_to_charge_norm": 4.122171656268095e-06
+    },
+    {
+      "id": "mp-1212626",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1212629",
+      "net_magnetic_moment": -0.00011523772320549493,
+      "magnetization_to_charge_norm": 7.925477113298398e-06
+    },
+    {
+      "id": "mp-1212645",
+      "net_magnetic_moment": -0.00022558609817559927,
+      "magnetization_to_charge_norm": 2.2943854613074366e-06
+    },
+    {
+      "id": "mp-1212710",
+      "net_magnetic_moment": -9.32013941799504e-05,
+      "magnetization_to_charge_norm": 1.7944987489771794e-06
+    },
+    {
+      "id": "mp-1212762",
+      "net_magnetic_moment": -3.78226052614596e-05,
+      "magnetization_to_charge_norm": 3.4918792929266615e-06
+    },
+    {
+      "id": "mp-1212804",
+      "net_magnetic_moment": -0.00022874746568753214,
+      "magnetization_to_charge_norm": 9.517117348660812e-07
+    },
+    {
+      "id": "mp-1212807",
+      "net_magnetic_moment": -0.00022009345501625957,
+      "magnetization_to_charge_norm": 1.7313789229951725e-06
+    },
+    {
+      "id": "mp-1212918",
+      "net_magnetic_moment": 3.350987962287043e-05,
+      "magnetization_to_charge_norm": 4.1106352332577755e-07
+    },
+    {
+      "id": "mp-1212999",
+      "net_magnetic_moment": -0.00013972673423184298,
+      "magnetization_to_charge_norm": 3.3289100211620995e-06
+    },
+    {
+      "id": "mp-1214163",
+      "net_magnetic_moment": 16.000022477883636,
+      "magnetization_to_charge_norm": 0.20864679709789355
+    },
+    {
+      "id": "mp-1214250",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1214309",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1214325",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1221446",
+      "net_magnetic_moment": -0.00015237372668061176,
+      "magnetization_to_charge_norm": 2.5202120345059117e-05
+    },
+    {
+      "id": "mp-1224501",
+      "net_magnetic_moment": -4.9055455794889086e-05,
+      "magnetization_to_charge_norm": 1.5471648941819824e-05
+    },
+    {
+      "id": "mp-1224588",
+      "net_magnetic_moment": 0.0005378830896400599,
+      "magnetization_to_charge_norm": 1.0556539487690542e-05
+    },
+    {
+      "id": "mp-1224772",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1225107",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1225208",
+      "net_magnetic_moment": -0.001158339664949843,
+      "magnetization_to_charge_norm": 1.7555539658915955e-06
+    },
+    {
+      "id": "mp-1237215",
+      "net_magnetic_moment": 0.00037055049922675556,
+      "magnetization_to_charge_norm": 3.2889777309401508e-06
+    },
+    {
+      "id": "mp-1237354",
+      "net_magnetic_moment": -0.0024604831123107,
+      "magnetization_to_charge_norm": 1.2254924381735338e-05
+    },
+    {
+      "id": "mp-1238814",
+      "net_magnetic_moment": -0.0004104630284474449,
+      "magnetization_to_charge_norm": 7.807909295141985e-05
+    },
+    {
+      "id": "mp-1244913",
+      "net_magnetic_moment": 1.999969247837535,
+      "magnetization_to_charge_norm": 0.0201665393665932
+    },
+    {
+      "id": "mp-1244964",
+      "net_magnetic_moment": 2.000244891104079,
+      "magnetization_to_charge_norm": 0.024702634739820373
+    },
+    {
+      "id": "mp-1245190",
+      "net_magnetic_moment": 4.120331951892106,
+      "magnetization_to_charge_norm": 0.03528433840799246
+    },
+    {
+      "id": "mp-12957",
+      "net_magnetic_moment": -4.223524026205272e-06,
+      "magnetization_to_charge_norm": 0.00030848076238167117
+    },
+    {
+      "id": "mp-154",
+      "net_magnetic_moment": 5.706679870727274e-06,
+      "magnetization_to_charge_norm": 1.970102682347771e-06
+    },
+    {
+      "id": "mp-169",
+      "net_magnetic_moment": 8.195226382463608e-05,
+      "magnetization_to_charge_norm": 4.850234540209891e-05
+    },
+    {
+      "id": "mp-1771",
+      "net_magnetic_moment": 0.00040306464348941926,
+      "magnetization_to_charge_norm": 3.347662211037438e-05
+    },
+    {
+      "id": "mp-1985",
+      "net_magnetic_moment": -0.00021368570425069468,
+      "magnetization_to_charge_norm": 2.1347670828673122e-05
+    },
+    {
+      "id": "mp-20066",
+      "net_magnetic_moment": -0.00101771521025336,
+      "magnetization_to_charge_norm": 3.443317286920807e-05
+    },
+    {
+      "id": "mp-23668",
+      "net_magnetic_moment": -0.0008155649290798007,
+      "magnetization_to_charge_norm": 2.3754324306441875e-06
+    },
+    {
+      "id": "mp-23680",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-23683",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-23778",
+      "net_magnetic_moment": -0.0004585409503743247,
+      "magnetization_to_charge_norm": 1.8341985010033404e-05
+    },
+    {
+      "id": "mp-23790",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-23907",
+      "net_magnetic_moment": 2.000000081511358,
+      "magnetization_to_charge_norm": 1.0000000013879051
+    },
+    {
+      "id": "mp-23922",
+      "net_magnetic_moment": -0.0002484375207629789,
+      "magnetization_to_charge_norm": 2.083378588299619e-06
+    },
+    {
+      "id": "mp-23939",
+      "net_magnetic_moment": 0.0001775030201040996,
+      "magnetization_to_charge_norm": 1.4147263399191647e-05
+    },
+    {
+      "id": "mp-24",
+      "net_magnetic_moment": -5.403470155167507e-05,
+      "magnetization_to_charge_norm": 2.3042302213151582e-05
+    },
+    {
+      "id": "mp-24043",
+      "net_magnetic_moment": -2.787308398851796e-05,
+      "magnetization_to_charge_norm": 1.6022932140625504e-05
+    },
+    {
+      "id": "mp-24207",
+      "net_magnetic_moment": -0.0004101505253918868,
+      "magnetization_to_charge_norm": 6.050437301084705e-06
+    },
+    {
+      "id": "mp-24230",
+      "net_magnetic_moment": -8.525897455638337e-06,
+      "magnetization_to_charge_norm": 6.64438459105771e-06
+    },
+    {
+      "id": "mp-24232",
+      "net_magnetic_moment": -7.350827171050566e-05,
+      "magnetization_to_charge_norm": 4.0509067394077875e-06
+    },
+    {
+      "id": "mp-24332",
+      "net_magnetic_moment": -0.0008075040334831431,
+      "magnetization_to_charge_norm": 2.0159494733262896e-06
+    },
+    {
+      "id": "mp-24504",
+      "net_magnetic_moment": 8.149959469451202e-06,
+      "magnetization_to_charge_norm": 8.671508721549828e-05
+    },
+    {
+      "id": "mp-24834",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-25",
+      "net_magnetic_moment": 3.737886479782092e-06,
+      "magnetization_to_charge_norm": 1.8442226763598623e-06
+    },
+    {
+      "id": "mp-2646980",
+      "net_magnetic_moment": 1.6494705230179634e-06,
+      "magnetization_to_charge_norm": 4.769903789648957e-06
+    },
+    {
+      "id": "mp-2647017",
+      "net_magnetic_moment": 1.0123477974924793e-12,
+      "magnetization_to_charge_norm": 2.2549818422124422e-06
+    },
+    {
+      "id": "mp-2647151",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-27461",
+      "net_magnetic_moment": 0.00029804868301447075,
+      "magnetization_to_charge_norm": 3.877898569689117e-06
+    },
+    {
+      "id": "mp-2789",
+      "net_magnetic_moment": -4.572421462898534e-05,
+      "magnetization_to_charge_norm": 1.8515669367541294e-06
+    },
+    {
+      "id": "mp-28015",
+      "net_magnetic_moment": 1.1449185018275877e-05,
+      "magnetization_to_charge_norm": 4.076435994222676e-05
+    },
+    {
+      "id": "mp-28349",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-2852",
+      "net_magnetic_moment": 0.00012621022487667324,
+      "magnetization_to_charge_norm": 2.370845695194481e-05
+    },
+    {
+      "id": "mp-28551",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-28643",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-29145",
+      "net_magnetic_moment": -8.887066588091554e-06,
+      "magnetization_to_charge_norm": 5.688897121006555e-06
+    },
+    {
+      "id": "mp-29943",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-30094",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-30168",
+      "net_magnetic_moment": 0.000118495543400471,
+      "magnetization_to_charge_norm": 4.31481989995918e-06
+    },
+    {
+      "id": "mp-30184",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-31000",
+      "net_magnetic_moment": 3.9990895767823544,
+      "magnetization_to_charge_norm": 0.09998975762546942
+    },
+    {
+      "id": "mp-32854",
+      "net_magnetic_moment": 1.000159679879114,
+      "magnetization_to_charge_norm": 0.05339024529881664
+    },
+    {
+      "id": "mp-32959",
+      "net_magnetic_moment": -0.00036805969774074133,
+      "magnetization_to_charge_norm": 2.1934118217273322e-05
+    },
+    {
+      "id": "mp-47",
+      "net_magnetic_moment": -4.217891376878369e-13,
+      "magnetization_to_charge_norm": 2.212851849410716e-06
+    },
+    {
+      "id": "mp-48",
+      "net_magnetic_moment": 9.701002001304074e-07,
+      "magnetization_to_charge_norm": 2.844491501488719e-07
+    },
+    {
+      "id": "mp-504422",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-504769",
+      "net_magnetic_moment": 0.0017809687765189626,
+      "magnetization_to_charge_norm": 4.8929348901431155e-05
+    },
+    {
+      "id": "mp-510458",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-542782",
+      "net_magnetic_moment": -9.478232375915321e-05,
+      "magnetization_to_charge_norm": 3.838188437083533e-06
+    },
+    {
+      "id": "mp-554659",
+      "net_magnetic_moment": -0.00032097177941883397,
+      "magnetization_to_charge_norm": 6.49056221629801e-06
+    },
+    {
+      "id": "mp-555128",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-555229",
+      "net_magnetic_moment": 0.0009693806127064027,
+      "magnetization_to_charge_norm": 1.753585028666759e-05
+    },
+    {
+      "id": "mp-555516",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-555711",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-556034",
+      "net_magnetic_moment": -0.0008256185849852048,
+      "magnetization_to_charge_norm": 3.96175658801252e-05
+    },
+    {
+      "id": "mp-556151",
+      "net_magnetic_moment": -0.0010536200908519884,
+      "magnetization_to_charge_norm": 7.097387774264322e-06
+    },
+    {
+      "id": "mp-556451",
+      "net_magnetic_moment": -0.0008463413906646225,
+      "magnetization_to_charge_norm": 3.8829916881951185e-06
+    },
+    {
+      "id": "mp-556660",
+      "net_magnetic_moment": -0.00016328691081637345,
+      "magnetization_to_charge_norm": 6.342528852890845e-06
+    },
+    {
+      "id": "mp-557248",
+      "net_magnetic_moment": -0.0019195780210737989,
+      "magnetization_to_charge_norm": 1.5712343617821e-05
+    },
+    {
+      "id": "mp-557263",
+      "net_magnetic_moment": -0.00017180384609885542,
+      "magnetization_to_charge_norm": 2.84134160849217e-06
+    },
+    {
+      "id": "mp-557825",
+      "net_magnetic_moment": 0.00024349787752461045,
+      "magnetization_to_charge_norm": 1.2116347907402491e-05
+    },
+    {
+      "id": "mp-557865",
+      "net_magnetic_moment": -0.0001336907942619782,
+      "magnetization_to_charge_norm": 2.0259765839396255e-06
+    },
+    {
+      "id": "mp-558226",
+      "net_magnetic_moment": 2.6180779653073266e-05,
+      "magnetization_to_charge_norm": 1.892573648812915e-05
+    },
+    {
+      "id": "mp-558412",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-558863",
+      "net_magnetic_moment": -0.0005973720580647304,
+      "magnetization_to_charge_norm": 2.2355120368659794e-06
+    },
+    {
+      "id": "mp-559139",
+      "net_magnetic_moment": -0.0002667404494888352,
+      "magnetization_to_charge_norm": 2.5015176943641375e-06
+    },
+    {
+      "id": "mp-560121",
+      "net_magnetic_moment": -0.0009914509154182849,
+      "magnetization_to_charge_norm": 5.700767340779738e-06
+    },
+    {
+      "id": "mp-560323",
+      "net_magnetic_moment": -0.0002125640282611318,
+      "magnetization_to_charge_norm": 7.445995378896743e-06
+    },
+    {
+      "id": "mp-560602",
+      "net_magnetic_moment": -0.0003573213097007671,
+      "magnetization_to_charge_norm": 1.955548346811999e-05
+    },
+    {
+      "id": "mp-560961",
+      "net_magnetic_moment": -4.9385578559461206e-05,
+      "magnetization_to_charge_norm": 8.947495540336537e-07
+    },
+    {
+      "id": "mp-561848",
+      "net_magnetic_moment": 0.001540023370247724,
+      "magnetization_to_charge_norm": 5.8805235137571745e-06
+    },
+    {
+      "id": "mp-563",
+      "net_magnetic_moment": 0.0006223206720226758,
+      "magnetization_to_charge_norm": 2.8453333868208677e-05
+    },
+    {
+      "id": "mp-567885",
+      "net_magnetic_moment": 4.488255870443947e-05,
+      "magnetization_to_charge_norm": 4.782807450828498e-06
+    },
+    {
+      "id": "mp-568028",
+      "net_magnetic_moment": 0.00014963022029224274,
+      "magnetization_to_charge_norm": 7.075564400285692e-07
+    },
+    {
+      "id": "mp-568286",
+      "net_magnetic_moment": -0.0008330874768706102,
+      "magnetization_to_charge_norm": 4.186444981797695e-05
+    },
+    {
+      "id": "mp-568363",
+      "net_magnetic_moment": 0.001519187759289011,
+      "magnetization_to_charge_norm": 0.00021756687294474352
+    },
+    {
+      "id": "mp-568410",
+      "net_magnetic_moment": -0.0006228459521852485,
+      "magnetization_to_charge_norm": 0.00011531273860102988
+    },
+    {
+      "id": "mp-568584",
+      "net_magnetic_moment": 0.000530857959040454,
+      "magnetization_to_charge_norm": 5.917364003814312e-06
+    },
+    {
+      "id": "mp-568806",
+      "net_magnetic_moment": 2.5114181093450715e-05,
+      "magnetization_to_charge_norm": 0.006984614875056327
+    },
+    {
+      "id": "mp-569304",
+      "net_magnetic_moment": 0.00010155885519441762,
+      "magnetization_to_charge_norm": 6.344800535654557e-06
+    },
+    {
+      "id": "mp-569416",
+      "net_magnetic_moment": 4.932133047272051e-05,
+      "magnetization_to_charge_norm": 0.016287746623388978
+    },
+    {
+      "id": "mp-569517",
+      "net_magnetic_moment": -0.003956871783150379,
+      "magnetization_to_charge_norm": 0.00011430609470954404
+    },
+    {
+      "id": "mp-569567",
+      "net_magnetic_moment": 4.8717913281800515e-05,
+      "magnetization_to_charge_norm": 9.408234124781372e-06
+    },
+    {
+      "id": "mp-570002",
+      "net_magnetic_moment": 5.177477876033458e-05,
+      "magnetization_to_charge_norm": 5.597765648346473e-06
+    },
+    {
+      "id": "mp-570572",
+      "net_magnetic_moment": 0.0006916540302782758,
+      "magnetization_to_charge_norm": 9.703800643395899e-05
+    },
+    {
+      "id": "mp-570747",
+      "net_magnetic_moment": 9.685025125656628e-06,
+      "magnetization_to_charge_norm": 5.695535164517529e-06
+    },
+    {
+      "id": "mp-570752",
+      "net_magnetic_moment": 1.99999987720394,
+      "magnetization_to_charge_norm": 1.0000000003187661
+    },
+    {
+      "id": "mp-571653",
+      "net_magnetic_moment": -6.444557381803345e-13,
+      "magnetization_to_charge_norm": 2.0786610263165492e-05
+    },
+    {
+      "id": "mp-579909",
+      "net_magnetic_moment": 0.0002035735804972076,
+      "magnetization_to_charge_norm": 2.920201975747068e-05
+    },
+    {
+      "id": "mp-583606",
+      "net_magnetic_moment": 0.00021658916580908816,
+      "magnetization_to_charge_norm": 4.438133032618713e-06
+    },
+    {
+      "id": "mp-601178",
+      "net_magnetic_moment": -0.0004848343328950506,
+      "magnetization_to_charge_norm": 3.4219953711467665e-06
+    },
+    {
+      "id": "mp-601210",
+      "net_magnetic_moment": 0.00022683213484141315,
+      "magnetization_to_charge_norm": 2.8184580099433802e-06
+    },
+    {
+      "id": "mp-603334",
+      "net_magnetic_moment": -5.9114754281980784e-05,
+      "magnetization_to_charge_norm": 2.595425132493585e-06
+    },
+    {
+      "id": "mp-606949",
+      "net_magnetic_moment": 1.9783731420151455e-05,
+      "magnetization_to_charge_norm": 1.7407224502116822e-05
+    },
+    {
+      "id": "mp-607540",
+      "net_magnetic_moment": -1.0045475895281206e-06,
+      "magnetization_to_charge_norm": 2.108790466277549e-06
+    },
+    {
+      "id": "mp-608071",
+      "net_magnetic_moment": 6.000016239868423,
+      "magnetization_to_charge_norm": 0.0834181585562239
+    },
+    {
+      "id": "mp-610917",
+      "net_magnetic_moment": 1.9999908221182285,
+      "magnetization_to_charge_norm": 0.20235727257298372
+    },
+    {
+      "id": "mp-611426",
+      "net_magnetic_moment": 0.0001952417433790307,
+      "magnetization_to_charge_norm": 9.021613094763081e-05
+    },
+    {
+      "id": "mp-611448",
+      "net_magnetic_moment": 0.0009448289349693722,
+      "magnetization_to_charge_norm": 6.712271851757515e-05
+    },
+    {
+      "id": "mp-611836",
+      "net_magnetic_moment": 2.0000078968753194,
+      "magnetization_to_charge_norm": 0.20231421613232728
+    },
+    {
+      "id": "mp-616407",
+      "net_magnetic_moment": 0.0022353360579290757,
+      "magnetization_to_charge_norm": 1.3860984315411654e-05
+    },
+    {
+      "id": "mp-616440",
+      "net_magnetic_moment": 4.659564212290203e-05,
+      "magnetization_to_charge_norm": 1.2591581105645442e-05
+    },
+    {
+      "id": "mp-624889",
+      "net_magnetic_moment": 0.0001486714768560691,
+      "magnetization_to_charge_norm": 4.15024494337097e-05
+    },
+    {
+      "id": "mp-625082",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625104",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625105",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625108",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625109",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625347",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625365",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625374",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625377",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625385",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625619",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625631",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625635",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625664",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625676",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625686",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625790",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625815",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625819",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625850",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625861",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625868",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625924",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625927",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625948",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625994",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626006",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626046",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626066",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626093",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626112",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626113",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626127",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626155",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626256",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626259",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626289",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626354",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626392",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626529",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626534",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626542",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626543",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-630227",
+      "net_magnetic_moment": 0.00032526625838028245,
+      "magnetization_to_charge_norm": 2.9357107315498033e-06
+    },
+    {
+      "id": "mp-632172",
+      "net_magnetic_moment": -0.00017855454572760637,
+      "magnetization_to_charge_norm": 0.00019646882687824997
+    },
+    {
+      "id": "mp-632250",
+      "net_magnetic_moment": 1.0000004073470201,
+      "magnetization_to_charge_norm": 0.9999999647659584
+    },
+    {
+      "id": "mp-632291",
+      "net_magnetic_moment": 7.030421956209837e-05,
+      "magnetization_to_charge_norm": 7.621769614782932e-05
+    },
+    {
+      "id": "mp-632329",
+      "net_magnetic_moment": -9.386393962823394e-06,
+      "magnetization_to_charge_norm": 1.445025644669392e-05
+    },
+    {
+      "id": "mp-632734",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-634429",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-634659",
+      "net_magnetic_moment": 1.00000000124157,
+      "magnetization_to_charge_norm": 1.0000000031320437
+    },
+    {
+      "id": "mp-634812",
+      "net_magnetic_moment": -4.5210684919785976e-05,
+      "magnetization_to_charge_norm": 2.6601586677089032e-05
+    },
+    {
+      "id": "mp-643099",
+      "net_magnetic_moment": 0.0002097890327447192,
+      "magnetization_to_charge_norm": 1.2871944772903397e-05
+    },
+    {
+      "id": "mp-643432",
+      "net_magnetic_moment": -4.395673014357761e-05,
+      "magnetization_to_charge_norm": 1.1565009719820318e-05
+    },
+    {
+      "id": "mp-644272",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-644330",
+      "net_magnetic_moment": -0.0004117168606783927,
+      "magnetization_to_charge_norm": 1.1279908655954244e-05
+    },
+    {
+      "id": "mp-644385",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-644607",
+      "net_magnetic_moment": -0.0007284585723737453,
+      "magnetization_to_charge_norm": 6.300227351791444e-05
+    },
+    {
+      "id": "mp-66",
+      "net_magnetic_moment": 2.0830896934326065e-14,
+      "magnetization_to_charge_norm": 2.2336523850661361e-07
+    },
+    {
+      "id": "mp-667273",
+      "net_magnetic_moment": 0.0008179203280161403,
+      "magnetization_to_charge_norm": 3.1024294742397837e-06
+    },
+    {
+      "id": "mp-672233",
+      "net_magnetic_moment": -1.3413938778990962e-12,
+      "magnetization_to_charge_norm": 1.0738075613636562e-05
+    },
+    {
+      "id": "mp-672234",
+      "net_magnetic_moment": 12.000012846216967,
+      "magnetization_to_charge_norm": 0.604656698395774
+    },
+    {
+      "id": "mp-673658",
+      "net_magnetic_moment": -6.974450617581417e-05,
+      "magnetization_to_charge_norm": 1.133919118561701e-05
+    },
+    {
+      "id": "mp-675784",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-676050",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-680372",
+      "net_magnetic_moment": 0.000333793153033016,
+      "magnetization_to_charge_norm": 2.7650898619735042e-06
+    },
+    {
+      "id": "mp-684592",
+      "net_magnetic_moment": -0.00013040439759041863,
+      "magnetization_to_charge_norm": 2.3204186748936705e-05
+    },
+    {
+      "id": "mp-684678",
+      "net_magnetic_moment": 2.0020839599371976,
+      "magnetization_to_charge_norm": 0.08603484053389224
+    },
+    {
+      "id": "mp-684704",
+      "net_magnetic_moment": 8.049496681756953e-05,
+      "magnetization_to_charge_norm": 5.456241545083478e-05
+    },
+    {
+      "id": "mp-696658",
+      "net_magnetic_moment": -5.097455778365976e-05,
+      "magnetization_to_charge_norm": 3.5037163258862923e-06
+    },
+    {
+      "id": "mp-696659",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-696717",
+      "net_magnetic_moment": 2.0000039143882007,
+      "magnetization_to_charge_norm": 0.08494370292913168
+    },
+    {
+      "id": "mp-696735",
+      "net_magnetic_moment": -6.049036804791945e-05,
+      "magnetization_to_charge_norm": 5.379448946116563e-06
+    },
+    {
+      "id": "mp-697085",
+      "net_magnetic_moment": -5.174778313720084e-12,
+      "magnetization_to_charge_norm": 4.69299630585334e-06
+    },
+    {
+      "id": "mp-697111",
+      "net_magnetic_moment": 3.112868065153642e-05,
+      "magnetization_to_charge_norm": 5.4872351226360854e-05
+    },
+    {
+      "id": "mp-697242",
+      "net_magnetic_moment": -0.001319464680919719,
+      "magnetization_to_charge_norm": 6.290694926974723e-06
+    },
+    {
+      "id": "mp-697408",
+      "net_magnetic_moment": 0.00033829461817709724,
+      "magnetization_to_charge_norm": 4.404918694053958e-06
+    },
+    {
+      "id": "mp-703459",
+      "net_magnetic_moment": 4.04293914280583e-05,
+      "magnetization_to_charge_norm": 5.680471073955539e-06
+    },
+    {
+      "id": "mp-703527",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-706430",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-707104",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-707289",
+      "net_magnetic_moment": -9.009504992887557e-05,
+      "magnetization_to_charge_norm": 1.5502355518858236e-06
+    },
+    {
+      "id": "mp-707535",
+      "net_magnetic_moment": 0.0007196423912029492,
+      "magnetization_to_charge_norm": 3.3926687275955026e-06
+    },
+    {
+      "id": "mp-707543",
+      "net_magnetic_moment": 0.0005537275098250013,
+      "magnetization_to_charge_norm": 8.85239437878108e-06
+    },
+    {
+      "id": "mp-707727",
+      "net_magnetic_moment": 0.0018501477009019588,
+      "magnetization_to_charge_norm": 9.771036976804246e-06
+    },
+    {
+      "id": "mp-707910",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-707917",
+      "net_magnetic_moment": -0.0008556807037733119,
+      "magnetization_to_charge_norm": 1.8098343853170098e-06
+    },
+    {
+      "id": "mp-708965",
+      "net_magnetic_moment": 0.00045537173608387087,
+      "magnetization_to_charge_norm": 5.583143091335809e-06
+    },
+    {
+      "id": "mp-7139",
+      "net_magnetic_moment": -0.0009437745417889429,
+      "magnetization_to_charge_norm": 2.2100317662412473e-05
+    },
+    {
+      "id": "mp-720515",
+      "net_magnetic_moment": -0.0014909158711449418,
+      "magnetization_to_charge_norm": 1.4844721283254038e-05
+    },
+    {
+      "id": "mp-720869",
+      "net_magnetic_moment": -0.0011440648875294618,
+      "magnetization_to_charge_norm": 1.7928165609859092e-06
+    },
+    {
+      "id": "mp-721707",
+      "net_magnetic_moment": -5.14106083112495e-05,
+      "magnetization_to_charge_norm": 7.892899690420498e-07
+    },
+    {
+      "id": "mp-721759",
+      "net_magnetic_moment": 6.034343932390446e-07,
+      "magnetization_to_charge_norm": 7.361164368567209e-06
+    },
+    {
+      "id": "mp-723285",
+      "net_magnetic_moment": 8.000258533020377,
+      "magnetization_to_charge_norm": 0.20085611713867638
+    },
+    {
+      "id": "mp-723638",
+      "net_magnetic_moment": -0.00016684759352674947,
+      "magnetization_to_charge_norm": 1.7909240164397712e-06
+    },
+    {
+      "id": "mp-725609",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-726720",
+      "net_magnetic_moment": 4.000142740624214,
+      "magnetization_to_charge_norm": 0.20179521682565474
+    },
+    {
+      "id": "mp-729513",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-729728",
+      "net_magnetic_moment": -0.001362948405389272,
+      "magnetization_to_charge_norm": 9.490483787086156e-06
+    },
+    {
+      "id": "mp-729933",
+      "net_magnetic_moment": 0.00019581008186237114,
+      "magnetization_to_charge_norm": 3.677780304350618e-05
+    },
+    {
+      "id": "mp-730101",
+      "net_magnetic_moment": 0.00011493788931187761,
+      "magnetization_to_charge_norm": 1.4810795442742197e-05
+    },
+    {
+      "id": "mp-731594",
+      "net_magnetic_moment": -0.0004028736739694889,
+      "magnetization_to_charge_norm": 0.00013524070787809792
+    },
+    {
+      "id": "mp-731827",
+      "net_magnetic_moment": 0.00010151467756325403,
+      "magnetization_to_charge_norm": 1.2565178828019876e-05
+    },
+    {
+      "id": "mp-733610",
+      "net_magnetic_moment": -7.690998528701771e-05,
+      "magnetization_to_charge_norm": 2.560024996626083e-06
+    },
+    {
+      "id": "mp-734030",
+      "net_magnetic_moment": 8.00016536038223,
+      "magnetization_to_charge_norm": 0.1983503213778396
+    },
+    {
+      "id": "mp-734124",
+      "net_magnetic_moment": -0.003757168102974286,
+      "magnetization_to_charge_norm": 1.3963681974566737e-05
+    },
+    {
+      "id": "mp-734137",
+      "net_magnetic_moment": -0.00011767765719883293,
+      "magnetization_to_charge_norm": 1.972245378213301e-06
+    },
+    {
+      "id": "mp-734416",
+      "net_magnetic_moment": 3.9987605414901473,
+      "magnetization_to_charge_norm": 0.04808189910418874
+    },
+    {
+      "id": "mp-736227",
+      "net_magnetic_moment": 16.004707589641622,
+      "magnetization_to_charge_norm": 0.228755618262847
+    },
+    {
+      "id": "mp-738409",
+      "net_magnetic_moment": -9.750727849004815e-05,
+      "magnetization_to_charge_norm": 4.425291751177855e-05
+    },
+    {
+      "id": "mp-738670",
+      "net_magnetic_moment": -0.00025213185083247945,
+      "magnetization_to_charge_norm": 1.7287795921822937e-06
+    },
+    {
+      "id": "mp-754417",
+      "net_magnetic_moment": 9.075034472119661e-06,
+      "magnetization_to_charge_norm": 7.023757417355419e-05
+    },
+    {
+      "id": "mp-754514",
+      "net_magnetic_moment": -0.0005820770275699891,
+      "magnetization_to_charge_norm": 0.00015371334885289867
+    },
+    {
+      "id": "mp-758097",
+      "net_magnetic_moment": -0.004528359227419069,
+      "magnetization_to_charge_norm": 2.2807886055241558e-05
+    },
+    {
+      "id": "mp-766262",
+      "net_magnetic_moment": -0.00015921127533721915,
+      "magnetization_to_charge_norm": 1.0326728952833468e-05
+    },
+    {
+      "id": "mp-774616",
+      "net_magnetic_moment": -0.0019811271548071364,
+      "magnetization_to_charge_norm": 8.519900522959332e-06
+    },
+    {
+      "id": "mp-779689",
+      "net_magnetic_moment": -0.0003873959958022318,
+      "magnetization_to_charge_norm": 4.3127373893336155e-05
+    },
+    {
+      "id": "mp-849229",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-850274",
+      "net_magnetic_moment": 0.0001381682761813513,
+      "magnetization_to_charge_norm": 8.55456122909519e-05
+    },
+    {
+      "id": "mp-866659",
+      "net_magnetic_moment": 0.0011613780384981149,
+      "magnetization_to_charge_norm": 8.137902641043814e-06
+    },
+    {
+      "id": "mp-937760",
+      "net_magnetic_moment": 5.003595346324757e-07,
+      "magnetization_to_charge_norm": 1.348524015002251e-05
+    },
+    {
+      "id": "mp-9410",
+      "net_magnetic_moment": -0.0003107189193144773,
+      "magnetization_to_charge_norm": 9.532620359468717e-06
+    },
+    {
+      "id": "mp-971684",
+      "net_magnetic_moment": -0.00024889479357851886,
+      "magnetization_to_charge_norm": 8.077472381412563e-06
+    },
+    {
+      "id": "mp-973783",
+      "net_magnetic_moment": -5.719595122390365e-05,
+      "magnetization_to_charge_norm": 3.986697879247489e-05
+    },
+    {
+      "id": "mp-976247",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-976707",
+      "net_magnetic_moment": -0.00041880272500788946,
+      "magnetization_to_charge_norm": 1.988911241155782e-05
+    },
+    {
+      "id": "mp-985782",
+      "net_magnetic_moment": -0.0005627238934160996,
+      "magnetization_to_charge_norm": 7.254050116164732e-05
+    },
+    {
+      "id": "mp-990424",
+      "net_magnetic_moment": 7.835972497082667e-07,
+      "magnetization_to_charge_norm": 2.4084244244997466e-07
+    },
+    {
+      "id": "mp-990441",
+      "net_magnetic_moment": 0.00030432527061216986,
+      "magnetization_to_charge_norm": 0.059116447014278
+    },
+    {
+      "id": "mp-990448",
+      "net_magnetic_moment": -7.350084977432798e-05,
+      "magnetization_to_charge_norm": 0.007692802331728063
+    },
+    {
+      "id": "mp-995183",
+      "net_magnetic_moment": 0.03327325094735872,
+      "magnetization_to_charge_norm": 0.0010875471951796317
+    },
+    {
+      "id": "mp-995184",
+      "net_magnetic_moment": 0.00014656983034348108,
+      "magnetization_to_charge_norm": 2.1014694779084334e-05
+    },
+    {
+      "id": "mp-995195",
+      "net_magnetic_moment": -9.378303172606037e-05,
+      "magnetization_to_charge_norm": 8.393560356925546e-05
+    },
+    {
+      "id": "mp-995196",
+      "net_magnetic_moment": 0.0013430419260139835,
+      "magnetization_to_charge_norm": 0.0001297997666596793
+    },
+    {
+      "id": "mp-995197",
+      "net_magnetic_moment": 0.0005138534121625678,
+      "magnetization_to_charge_norm": 9.328267304654254e-05
+    },
+    {
+      "id": "mp-995198",
+      "net_magnetic_moment": 0.0015427159746115322,
+      "magnetization_to_charge_norm": 1.5436975711044267e-05
+    },
+    {
+      "id": "mp-995200",
+      "net_magnetic_moment": 0.0003251146851836603,
+      "magnetization_to_charge_norm": 3.023349225968845e-05
+    },
+    {
+      "id": "mp-995202",
+      "net_magnetic_moment": 0.0001862803638080205,
+      "magnetization_to_charge_norm": 2.7233343089380783e-05
+    },
+    {
+      "id": "mp-995204",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995206",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995217",
+      "net_magnetic_moment": -0.00016985320729518842,
+      "magnetization_to_charge_norm": 7.951685138295731e-06
+    },
+    {
+      "id": "mp-995218",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995219",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995220",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995224",
+      "net_magnetic_moment": -0.00034194773381481116,
+      "magnetization_to_charge_norm": 8.15765497503539e-06
+    },
+    {
+      "id": "mp-995226",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995234",
+      "net_magnetic_moment": 0.0,
+      "magnetization_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-997182",
+      "net_magnetic_moment": 0.0014262598501100408,
+      "magnetization_to_charge_norm": 0.0005859486838070536
+    },
+    {
+      "id": "mp-998866",
+      "net_magnetic_moment": 8.703238474042451e-05,
+      "magnetization_to_charge_norm": 8.764874455419827e-05
+    },
+    {
+      "id": "mp-998880",
+      "net_magnetic_moment": -0.0010774294913409978,
+      "magnetization_to_charge_norm": 4.016482981746829e-06
+    },
+    {
+      "id": "mp-999498",
+      "net_magnetic_moment": -0.0006216797455765294,
+      "magnetization_to_charge_norm": 9.08744450089664e-05
+    }
+  ]
+}

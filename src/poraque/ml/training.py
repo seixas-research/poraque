@@ -81,7 +81,7 @@ def clip_gradients(parameters, max_norm):
 
 def _resolve_operator_baseline(baseline):
     """
-    Accept a library, a path, a serialised payload from a checkpoint, or ``None``.
+    Accept a library, a path, a serialized payload from a checkpoint, or ``None``.
 
     The dict form is what :meth:`FieldOperator.state` writes, so a checkpoint
     round-trips without the caller having to know the library ever existed.
@@ -125,7 +125,7 @@ class FieldOperator:
         :func:`~poraque.ml.device.resolve_device`.
     strict_device : bool, optional
         Raise instead of falling back to the CPU when ``device`` cannot be
-        honoured. Off by default, which is right for a workstation and wrong
+        honored. Off by default, which is right for a workstation and wrong
         for a queue — a batch job that quietly moves to the CPU spends its GPU
         allocation not using a GPU. Forwarded straight to
         :func:`~poraque.ml.device.resolve_device`; a run sets it from
@@ -150,7 +150,7 @@ class FieldOperator:
         resolution-*indifferent*, and nothing downstream can detect that it is
         being extrapolated.
     init_seed : int, optional
-        Seed for the **weight initialisation only**. The global RNG state is
+        Seed for the **weight initialization only**. The global RNG state is
         saved and restored around the draw, so everything downstream — batch
         order, any stochastic layer — is left on the stream it would otherwise
         have had.
@@ -158,8 +158,8 @@ class FieldOperator:
         That isolation is what makes a *query-by-committee* ensemble
         interpretable: members share a seed for the data pipeline and differ
         only in ``init_seed``, so their disagreement measures the spread of
-        optimisation outcomes rather than a confounded mixture of that and a
-        reshuffled dataset. ``None`` leaves initialisation on the ambient
+        optimization outcomes rather than a confounded mixture of that and a
+        reshuffled dataset. ``None`` leaves initialization on the ambient
         stream.
     baseline : AtomicReferenceLibrary, str, dict or None, optional
         Isolated-atom database. Its presence puts the operator in
@@ -182,9 +182,26 @@ class FieldOperator:
     readout_g_max : float, optional
         The band in Å⁻¹ the occupancy head reads the fields over; required with
         ``site_layouts``.
+    neighbor_min : float, optional
+        First geometric neighbor-kernel center in Å. Defaults to the
+        original 2.2 Å; 0.6 Å also resolves short covalent bonds.
     site_transform : OccupancyTransform, optional
         The occupancies' training form, fitted on the training split. Stored
         in the checkpoint, and what :meth:`predict_occupancies` inverts.
+    occupancy_channels : int, optional
+        For a task with a per-atom **input** (``paw2tau``): the field channels
+        the occupancies are written into by
+        :class:`~poraque.ml.paw.SiteWriter`, beside the input field. The model
+        is then a :class:`~poraque.ml.paw.OccupancyInputModel`, ``site_layouts``
+        and ``site_transform`` (which normalizes the input records) are
+        required, and :meth:`predict` needs the records.
+    structure_input : dict, optional
+        ``{"superposition": bool, "elements": [...]}``: input channels that
+        describe the structure, appended after the field --- see
+        :func:`~poraque.fields.atomic.structure_channels`. Built from
+        ``baseline``, which is therefore required, and recorded in the
+        checkpoint, because ``in_channels`` alone cannot say which channels the
+        weights expect. ``None`` (the default) is the field alone.
     **model_kwargs
         Forwarded to :class:`~poraque.ml.fno.FNO3d`.
     """
@@ -194,12 +211,17 @@ class FieldOperator:
                  pauli_scale=1.0, learn_pauli_scale=True,
                  training_resolution=None, init_seed=None, baseline=None,
                  strict_device=False, site_layouts=None, readout_g_max=None,
-                 site_transform=None, **model_kwargs):
+                 site_transform=None, neighbor_min=None, structure_input=None,
+                 occupancy_channels=None, **model_kwargs):
         self.task = resolve_task(task)
         self.device = resolve_device(device, strict=strict_device)
         self.input_transform = input_transform or Identity()
         self.target_transform = target_transform or Identity()
         self.baseline = _resolve_operator_baseline(baseline)
+        from .data import _resolve_structure_input
+
+        self.structure_input = _resolve_structure_input(
+            structure_input, self.task, self.baseline)
         #: LoRA settings when this operator has been adapted, else ``None``.
         #: Set by the fine-tuning path; read by :meth:`state` so the record can
         #: say where the frozen base lives.
@@ -213,7 +235,7 @@ class FieldOperator:
         self.learn_pauli_scale = bool(learn_pauli_scale)
 
         # Channel counts are part of the architecture and are recorded in
-        # state(); two of them means a spin-polarised (rho, m) field.
+        # state(); two of them means a spin-polarized (rho, m) field.
         self.in_channels = int(model_kwargs.get("in_channels", 1))
         self.out_channels = int(model_kwargs.get("out_channels", 1))
         self.use_coordinates = bool(model_kwargs.get("use_coordinates", True))
@@ -228,6 +250,21 @@ class FieldOperator:
                                                 self.use_coordinates))
         else:
             def build():
+                if self.task.site_input is not None:
+                    if not site_layouts:
+                        raise ValueError(
+                            f"task {self.task.name!r} reads every atom's PAW "
+                            f"occupancies and needs site_layouts (the "
+                            f"projector channels of each element).")
+                    from .paw import WRITER_CHANNELS, OccupancyInputModel
+
+                    written = int(occupancy_channels or WRITER_CHANNELS)
+                    kwargs = dict(model_kwargs)
+                    kwargs["in_channels"] = self.in_channels + written
+                    # One record set per density channel of the input.
+                    return OccupancyInputModel(FNO3d(**kwargs), site_layouts,
+                                               sets=self.in_channels,
+                                               channels=written)
                 network = FNO3d(**model_kwargs)
                 if self.task.site_target is None:
                     return network
@@ -239,7 +276,8 @@ class FieldOperator:
                         f"reads, 1/Ang).")
                 from .paw import PAWOperatorModel
 
-                return PAWOperatorModel(network, site_layouts, readout_g_max)
+                return PAWOperatorModel(network, site_layouts, readout_g_max,
+                                        neighbor_min=neighbor_min)
 
             if self.init_seed is None:
                 backbone = build()
@@ -318,6 +356,31 @@ class FieldOperator:
         return atomic_superposition(field.structure, field.grid,
                                     self.baseline).data
 
+    def input_values(self, field):
+        r"""
+        The network's input for ``field``, in physical units.
+
+        The field itself, followed by the structure channels when the operator
+        was trained with them --- computed here from the field's own structure
+        and grid and the checkpoint's library, so a caller hands over a
+        potential and nothing else, as before.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``(Nx, Ny, Nz)`` for a one-channel input without structure
+            channels, else ``(C, Nx, Ny, Nz)``.
+        """
+        values = np.ascontiguousarray(field.data)
+        if not self.structure_input:
+            return values
+        from ..fields.atomic import structure_channels
+
+        extra = structure_channels(field.structure, field.grid, self.baseline,
+                                   **self.structure_input)
+        return np.concatenate([values[None] if values.ndim == 3 else values,
+                               extra])
+
     def set_precision(self, precision):
         """
         Convert the operator to another precision.
@@ -341,7 +404,40 @@ class FieldOperator:
         convert(self.model, precision)
         return self
 
-    def predict(self, field):
+    def site_inputs(self, sites, compute=None):
+        """
+        The model's ``sites`` for one structure's PAW records.
+
+        Parameters
+        ----------
+        sites : dict
+            ``occupancies`` ``(atoms, sets, length)``, ``species`` and
+            ``positions`` (fractional), as
+            :meth:`~poraque.ml.data.FieldPairDataset.site_records` returns
+            them, in physical units.
+        compute : torch.dtype, optional
+
+        Returns
+        -------
+        dict
+            Batched tensors on this operator's device, the records normalized
+            by :attr:`site_transform`.
+        """
+        if self.site_transform is None:
+            raise ValueError(f"this {self.task.name} operator has no "
+                             f"site_transform to normalize its input records.")
+        compute = compute or self.compute_dtype()
+        occupancies = torch.as_tensor(np.asarray(sites["occupancies"]),
+                                      dtype=compute, device=self.device)[None]
+        species = torch.as_tensor(np.asarray(sites["species"]),
+                                  dtype=torch.long, device=self.device)[None]
+        positions = torch.as_tensor(np.asarray(sites["positions"]),
+                                    dtype=compute, device=self.device)[None]
+        return {"records": self.site_transform.normalize(occupancies, species),
+                "species": species, "positions": positions,
+                "atom_mask": torch.ones_like(species, dtype=torch.bool)}
+
+    def predict(self, field, sites=None):
         """
         Apply the operator to a :class:`~poraque.fields.ScalarField`.
 
@@ -350,6 +446,9 @@ class FieldOperator:
         field : ScalarField
             Input field; its grid is reused for the output, so the prediction
             is defined on exactly the same mesh as the input.
+        sites : dict, optional
+            Every atom's PAW records, required by an operator with a per-atom
+            input (``paw2tau``); see :meth:`site_inputs`.
 
         Returns
         -------
@@ -365,12 +464,12 @@ class FieldOperator:
         # handed single-precision input and fail on the first spectral layer.
         # The dtype is read from the weights, so the two cannot disagree.
         compute = self.compute_dtype()
-        values = torch.as_tensor(np.ascontiguousarray(field.data),
+        values = torch.as_tensor(self.input_values(field),
                                  dtype=compute, device=self.device)
         cell = torch.as_tensor(field.grid.cell, dtype=compute,
                                device=self.device).unsqueeze(0)
 
-        # A field is either (Nx, Ny, Nz) or, when spin-polarised, already
+        # A field is either (Nx, Ny, Nz) or, when spin-polarized, already
         # (C, Nx, Ny, Nz). Only the batch axis has to be added in the second
         # case, so the channel axis is inserted from the field's own rank
         # rather than assumed.
@@ -379,7 +478,18 @@ class FieldOperator:
             normalized = normalized.unsqueeze(0)
         normalized = normalized.unsqueeze(0)
 
-        prediction = self.target_transform.inverse(self.model(normalized, cell))
+        if self.task.site_input is not None:
+            if sites is None:
+                raise ValueError(
+                    f"{self.task.name} reads every atom's PAW occupancies "
+                    f"beside the field: pass sites= (a dataset's "
+                    f"site_records(index), or occupancies, species and "
+                    f"positions for the structure).")
+            output = self.model(normalized, cell,
+                                sites=self.site_inputs(sites, compute))
+        else:
+            output = self.model(normalized, cell)
+        prediction = self.target_transform.inverse(output)
 
         # To CPU in the compute dtype before .numpy(): accelerators may hand
         # back a dtype numpy cannot consume directly, and .cpu() alone does not
@@ -402,8 +512,8 @@ class FieldOperator:
         # density.
         baseline = self.baseline_for(field)
         if baseline is not None:
-            # Channel 0 only: a spin-polarised prediction is (rho, m) and the
-            # magnetisation has no free-atom superposition to restore.
+            # Channel 0 only: a spin-polarized prediction is (rho, m) and the
+            # magnetization has no free-atom superposition to restore.
             channels = np.array(channels, copy=True)
             channels[0] = channels[0] + baseline
             metadata["delta_density"] = True
@@ -424,7 +534,7 @@ class FieldOperator:
         raise ValueError(
             f"An operator with {channels.shape[0]} output channels has no "
             f"field representation for target {self.task.target_field!r}. "
-            f"One channel is a scalar field; two on CHGCAR is a spin-polarised "
+            f"One channel is a scalar field; two on CHGCAR is a spin-polarized "
             f"(rho, m) density."
         )
 
@@ -462,7 +572,7 @@ class FieldOperator:
 
         self.model.eval()
         compute = self.compute_dtype()
-        values = torch.as_tensor(np.ascontiguousarray(field.data),
+        values = torch.as_tensor(self.input_values(field),
                                  dtype=compute, device=self.device)
         cell = torch.as_tensor(field.grid.cell, dtype=compute,
                                device=self.device).unsqueeze(0)
@@ -482,8 +592,8 @@ class FieldOperator:
                      np.asarray(structure.scaled_positions)[None],
                      dtype=compute, device=self.device),
                  "atom_mask": torch.ones_like(species, dtype=torch.bool)}
-        _, normalised = self.model(normalized, cell, sites=sites)
-        physical = self.site_transform.inverse(normalised, species)[0]
+        _, normalized = self.model(normalized, cell, sites=sites)
+        physical = self.site_transform.inverse(normalized, species)[0]
         # `.cpu()` first, then the cast: `.to("cpu", torch.float64)` asks
         # the source device for a float64 view, which Metal refuses.
         physical = physical.cpu().double().numpy()
@@ -557,6 +667,9 @@ class FieldOperator:
             "in_channels": self.in_channels,
             "out_channels": self.out_channels,
             "use_coordinates": self.use_coordinates,
+            # Which channels follow the field on the input side; `None` for
+            # the field alone, which is every checkpoint written before it.
+            "structure_input": self.structure_input,
             "architecture": architecture,
             "input_transform": self.input_transform.state_dict(),
             "target_transform": self.target_transform.state_dict(),
@@ -567,7 +680,7 @@ class FieldOperator:
             "init_seed": self.init_seed,
             # The baseline is part of what the weights *mean*, not a runtime
             # convenience: the residual was defined against this particular
-            # superposition. Stored as the serialised library so a checkpoint
+            # superposition. Stored as the serialized library so a checkpoint
             # is self-contained; `None` in absolute-density mode.
             "baseline": (None if self.baseline is None
                          else {"version": 1,
@@ -578,9 +691,17 @@ class FieldOperator:
             # is in a tensor shape, and all of it changes what the weights
             # mean. `None` for a field-to-field operator.
             "site": (None if not hasattr(self.model, "layouts") else {
+                "role": "input", "layouts": {str(z): list(channels) for z, channels
+                                             in self.model.layouts.items()},
+                "channels": self.model.writer.channels,
+                "transform": (None if self.site_transform is None
+                              else self.site_transform.state_dict()),
+            } if hasattr(self.model, "writer") else {
+                "role": "target",
                 "layouts": {str(z): list(channels) for z, channels
                             in self.model.layouts.items()},
                 "readout_g_max": self.model.g_max,
+                "neighbor_min": float(self.model.neighbors.centers[0]),
                 "transform": (None if self.site_transform is None
                               else self.site_transform.state_dict()),
             }),
@@ -653,7 +774,11 @@ class FieldOperator:
 
             inferred["site_layouts"] = {int(z): channels for z, channels
                                         in site["layouts"].items()}
-            inferred["readout_g_max"] = site["readout_g_max"]
+            if site.get("role") == "input":
+                inferred["occupancy_channels"] = site["channels"]
+            else:
+                inferred["readout_g_max"] = site["readout_g_max"]
+                inferred["neighbor_min"] = site.get("neighbor_min")
             if site.get("transform"):
                 inferred["site_transform"] = OccupancyTransform.from_state_dict(
                     site["transform"])
@@ -668,6 +793,7 @@ class FieldOperator:
             training_resolution=state.get("training_resolution"),
             init_seed=state.get("init_seed"),
             baseline=state.get("baseline"),
+            structure_input=state.get("structure_input"),
             **inferred,
         )
         operator.model.load_state_dict(state["model_state"])
@@ -707,7 +833,7 @@ class FieldOperator:
         base = load_bundle(str(base_path), state["task"], device=device,
                            **model_kwargs)
         # The transforms, the baseline and the task come from *this* record:
-        # a fine-tune may have been trained against a different normalisation
+        # a fine-tune may have been trained against a different normalization
         # than the base was, and taking them from the base would decode the
         # adapted model's outputs with the wrong scale.
         base.input_transform = FieldTransform.from_state_dict(
@@ -731,7 +857,7 @@ class FieldOperator:
         """
         Save this single operator to ``path``.
 
-        Used for per-fold diagnostic checkpoints. The deployable artefact is a
+        Used for per-fold diagnostic checkpoints. The deployable artifact is a
         *bundle* holding every task at once — see :func:`save_bundle`.
         """
         torch.save(self.state(), path)
@@ -826,7 +952,7 @@ def resolve_bundle_path(path, log=None):
 
 
 #: Filename for a fine-tuned bundle. Deliberately distinct from
-#: :data:`BUNDLE_FILENAME`: a fine-tune is a specialisation of the base model,
+#: :data:`BUNDLE_FILENAME`: a fine-tune is a specialization of the base model,
 #: usually to a narrower set of materials, and writing it over the general
 #: model would silently replace something broad with something narrow.
 FINETUNED_BUNDLE_FILENAME = "poraque_finetuned" + BUNDLE_SUFFIX
@@ -914,7 +1040,7 @@ def save_bundle(path, operators, config=None, paw_profiles=None):
 
     ``model_state_dict`` holds, per task, everything that rebuilds that
     operator --- the network's weights *and* the architecture record, the two
-    normalisations and the δ-density baseline --- because weights without the
+    normalizations and the δ-density baseline --- because weights without the
     transforms they were trained behind decode to a field in the wrong units.
     ``paw_profiles`` is the PAW data a prediction needs and no grid model
     predicts, per element: the radial core charge density read from the POTCAR
@@ -923,7 +1049,7 @@ def save_bundle(path, operators, config=None, paw_profiles=None):
     needs neither the POTCARs nor a reference calculation to write a
     ``CHGCAR`` VASP will read.
 
-    The whole pipeline is a chain, so its artefact is a chain: one file holding
+    The whole pipeline is a chain, so its artifact is a chain: one file holding
     every stage means the two halves cannot drift apart, be copied
     individually, or be mixed across training runs.
 
@@ -1059,7 +1185,7 @@ def freeze_lifting_layers(model, freeze=True):
 
     The lifting map embeds the input field into the network's channel space
     before any operator acts on it, so it is the most general part of the
-    model and the part least in need of specialising to a new material family.
+    model and the part least in need of specializing to a new material family.
     Freezing it also removes parameters a small fine-tuning set could
     otherwise overfit.
 
@@ -1100,7 +1226,7 @@ def freeze_lifting_layers(model, freeze=True):
     }
 
 
-#: Optimisers selectable through ``training.optimizer``.
+#: Optimizers selectable through ``training.optimizer``.
 #:
 #: ``adamw`` is the default and was the only one for most of this project's
 #: life. The distinction from ``adam`` is not cosmetic: both keep the same
@@ -1129,7 +1255,7 @@ def build_optimizer(parameters, name="adamw", learning_rate=1e-3,
     Parameters
     ----------
     parameters : iterable
-        Tensors to optimise -- the *trainable* ones; see the note at the call
+        Tensors to optimize -- the *trainable* ones; see the note at the call
         site about frozen weights and decoupled decay.
     name : str, optional
         One of :data:`OPTIMIZERS`.
@@ -1170,7 +1296,7 @@ def _distributed_forward(operator, context, emit, verbose):
     The wrapper is used to *call* the model and is never assigned onto the
     operator: DDP prefixes every ``state_dict`` key with ``module.``, so an
     operator holding one would write checkpoints that load nowhere else. The parameters are the same tensors either way, which is
-    what lets the optimiser, the gradient clipping and the best-weight snapshot
+    what lets the optimizer, the gradient clipping and the best-weight snapshot
     all keep addressing ``operator.model`` directly.
 
     Parameters
@@ -1213,13 +1339,13 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
           grad_clip=1.0, eval_every=1, early_stopping=0, checkpoint=None,
           seed=0, verbose=True, log=None, optimizer="adamw",
           num_workers=0, pin_memory="auto", distributed=None,
-          occupancy_weight=1.0):
+          occupancy_weight=1.0, samples_per_step=0):
     """
     Train a :class:`FieldOperator`.
 
     **One GPU, unless a group is passed.** With ``distributed`` left at
     ``None`` this is the single-device loop it has always been. Given an
-    initialised :class:`~poraque.ml.distributed.DistributedContext` it becomes
+    initialized :class:`~poraque.ml.distributed.DistributedContext` it becomes
     data-parallel over NCCL: the model is wrapped in
     :class:`~torch.nn.parallel.DistributedDataParallel`, the shape-bucketed
     batches are partitioned across ranks by
@@ -1229,7 +1355,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     Three things about that are worth knowing before reading a scaling number.
     The **effective batch size is multiplied by the world size**, so a
     four-rank run at ``batch_size`` 32 is stepping on 128 samples and is not
-    the same optimiser as the one-rank run it is being compared against.
+    the same optimizer as the one-rank run it is being compared against.
     **Validation is not distributed**: every rank evaluates the whole held-out
     set, redundantly, so that ``best_error`` and the early-stopping decision
     are identical on every rank by construction rather than by a reduction that
@@ -1249,7 +1375,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     batch_size : int, optional
         Maximum batch size within one shape bucket.
     learning_rate, weight_decay : float, optional
-        Step size and decay, passed to whichever optimiser is selected.
+        Step size and decay, passed to whichever optimizer is selected.
     validation : FieldPairDataset, optional
         Held-out materials, evaluated every ``eval_every`` epochs.
     loss : nn.Module, optional
@@ -1280,7 +1406,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     checkpoint : str, optional
         Path to save the best-validation model to. Only epochs on which
         validation was computed can improve on the best, which is the intended
-        behaviour: a checkpoint is written against a measured score, never an
+        behavior: a checkpoint is written against a measured score, never an
         assumed one.
     seed : int, optional
         RNG seed.
@@ -1299,22 +1425,31 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         Page-locked staging for the host-to-device copy. ``"auto"`` resolves to
         ``True`` on CUDA and ``False`` elsewhere, which is the whole decision.
     distributed : DistributedContext, optional
-        The process group this rank belongs to, already initialised by
+        The process group this rank belongs to, already initialized by
         :func:`~poraque.ml.distributed.initialize`. ``None`` and a disabled
         context are the same thing, so a caller passes it unconditionally and
         the single-device path is what runs when there is no group.
     occupancy_weight : float, optional
         For an operator with an occupancy head (``ext2paw``): the weight of the
-        per-atom term, the equally-weighted L blocks of the normalised records,
+        per-atom term, the equally-weighted L blocks of the normalized records,
         against the field objective. The validation score the best epoch is
         chosen on is the same sum on the held-out split, so selection and
-        optimisation weigh the two terms, and the L blocks, alike.
+        optimization weigh the two terms, and the L blocks, alike.
+    samples_per_step : int, optional
+        Accumulate gradients over consecutive shape-bucketed batches until at
+        least this many **structures** have been seen, then take one optimizer
+        step; each batch's loss is weighted by its size, so every structure
+        carries the same weight whatever bucket it fell in. ``0`` (the
+        default) steps once per batch, as before. That default weighs a
+        structure by the inverse of its batch's size: on a set whose grid
+        shapes are mostly unique, a structure alone in its bucket moved the
+        weights as far as four structures sharing the commonest shape did.
 
     Returns
     -------
     dict
         ``train_loss`` (one entry per epoch) — the **total** objective, data
-        fidelity plus every weighted physics term, which is what the optimiser
+        fidelity plus every weighted physics term, which is what the optimizer
         stepped on — and, when validating,
         ``val_error`` together with ``val_epoch`` — the 1-based epochs those
         errors were measured on. The two validation lists are the same length
@@ -1348,7 +1483,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         verbose = False
         checkpoint = None
     criterion = loss or PhysicsInformedLoss(task=operator.task.name)
-    # Only unfrozen parameters reach the optimiser. A frozen one would receive
+    # Only unfrozen parameters reach the optimizer. A frozen one would receive
     # no gradient and so never move, but AdamW's decoupled weight decay is
     # applied regardless of the gradient -- handing it frozen weights would
     # shrink them towards zero every step, quietly undoing the pre-training the
@@ -1362,7 +1497,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         if scheduler == "cosine" else None
     )
 
-    # Pinning is a CUDA transfer optimisation and nothing else: it does not
+    # Pinning is a CUDA transfer optimization and nothing else: it does not
     # help on MPS and some PyTorch versions warn when asked for it there. This
     # is the layer that knows the device, so this is where "auto" is answered.
     if isinstance(pin_memory, str):
@@ -1396,7 +1531,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
 
     history = {"train_loss": [], "val_error": [], "val_epoch": [],
                "seconds_per_epoch": []}
-    # A spin-polarised density target is (rho, m), and one objective over the
+    # A spin-polarized density target is (rho, m), and one objective over the
     # stacked pair says nothing about which channel it is spending on. Each
     # channel's share is reported beside it, in the objective's own norm and
     # against its own denominator -- the norm of the whole target, not of the
@@ -1407,7 +1542,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
                      and operator.task.target_field == "CHGCAR")
     if channel_parts:
         history["train_loss_charge"] = []
-        history["train_loss_magnetisation"] = []
+        history["train_loss_magnetization"] = []
 
     # An operator with an occupancy head trains its per-atom term beside the
     # field objective, in the one loop, and is validated on both.
@@ -1421,6 +1556,13 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         history["val_occupancy_error"] = []
         history["val_occupancy_loss"] = []
         history["val_field_error"] = []
+    # A per-atom *input* (paw2tau): the records are normalized by the same
+    # transform form and handed to the model beside the field.
+    input_sites = operator.task.site_input is not None
+    if input_sites and operator.site_transform is None:
+        raise ValueError(
+            f"a {operator.task.name} operator needs its site_transform, fitted "
+            f"on the training split (OccupancyTransform.fit), before training.")
     if operator.device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(operator.device)
     best_error = float("inf")
@@ -1447,8 +1589,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     validating = validation_loader is not None
     # The validation column names the norm it is actually measured in. An H1
     # objective constrains the gradient as well as the values and an absolute
-    # one does not normalise per sample, so watching any of the four on a plain
-    # relative L2 reports a quantity the optimiser is not minimising -- and
+    # one does not normalize per sample, so watching any of the four on a plain
+    # relative L2 reports a quantity the optimizer is not minimizing -- and
     # early stopping then selects against the wrong one. Both are read off the
     # criterion rather than passed in, so the label cannot disagree with the
     # objective it describes.
@@ -1467,30 +1609,45 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     # saving comes from `PhysicsInformedLoss` itself answering False, which it
     # does whenever no weight is set -- the default configuration.
     physics_informed = bool(getattr(criterion, "physics_informed", True))
+    electron_count_weight = (float(getattr(criterion, "electron_count_weight", 0.0))
+                             if physics_informed and operator.task.name in
+                             ("ext2chg", "ext2paw") else 0.0)
+    if electron_count_weight > 0.0:
+        history["train_electron_count_loss"] = []
+        history["val_electron_count_error"] = []
+        history["val_electron_count_loss"] = []
     val_metric = str(getattr(criterion, "metric_label", "rel L2"))
     # One number for the objective, whatever it is made of. A physics-informed
-    # run's `train loss` is the total the optimiser actually stepped on --
+    # run's `train loss` is the total the optimizer actually stepped on --
     # data plus every weighted constraint -- and that total is the only
     # quantity a reader can compare against another run's.
     header = f"    {'epoch':>11s}  {'train loss':>13s}"
     if channel_parts:
         header += f"  {'charge':>9s}  {'mag':>9s}"
+    if electron_count_weight > 0.0:
+        header += f"  {'train N loss':>12s}"
     if validating:
         header += f"  {f'val {val_metric}':>13s}"
         if sites_task:
-            header += f"  {'val occ':>9s}  {'occ loss':>9s}  {'score':>9s}"
+            header += f"  {'val occ':>9s}  {'occ loss':>9s}"
+        if electron_count_weight > 0.0:
+            header += f"  {'val |dN/N|':>12s}"
+        if sites_task or electron_count_weight > 0.0:
+            header += f"  {'score':>9s}"
     if verbose:
         legend = f"    train loss: mean {type(criterion).__name__} per batch"
         if validating:
             legend += (f"   |   val {val_metric}: held-out error, "
                        f"physical units")
             if sites_task:
+                count_term = (f" + {electron_count_weight:g} x N loss"
+                              if electron_count_weight > 0.0 else "")
                 legend += (f"\n    val occ: relative RMS of the held-out "
                            f"augmentation occupancies, physical units   |   "
                            f"occ loss: the training term on the held-out "
                            f"split, L blocks and sets weighted alike\n"
                            f"    score = val {val_metric} + "
-                           f"{occupancy_weight:g} x occ loss, the objective "
+                           f"{occupancy_weight:g} x occ loss{count_term}, the objective "
                            f"on held-out data, which the best epoch is "
                            f"chosen on")
             if sobolev_weight > 0.0:
@@ -1506,9 +1663,16 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             quadrature = ("; for this L2 objective data = sqrt(charge^2 + "
                           "mag^2) per sample" if sobolev_weight <= 0.0 else "")
             legend += (f"\n    charge, mag: the data term's error in the "
-                       f"density and magnetisation channels, same norm and "
+                       f"density and magnetization channels, same norm and "
                        f"denominator as the objective{quadrature}; train "
                        f"loss is the total, with any physics terms")
+        if electron_count_weight > 0.0:
+            legend += (f"\n    train N loss: mean squared relative electron-count "
+                       f"error, on decoded absolute charge density; weight "
+                       f"{electron_count_weight:g}. val |dN/N|: mean absolute "
+                       f"relative error before output normalization. The "
+                       f"validation score includes {electron_count_weight:g} "
+                       f"x the mean squared count error.")
         emit(legend)
         if validating and (checkpoint or early_stopping):
             emit("    * marks an epoch that improved on the best score so far")
@@ -1525,12 +1689,16 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         operator.model.train()
         epoch_start = time.perf_counter()
         # Accumulated **on the device**. `float(loss)` per batch is a
-        # synchronisation per batch: the CPU stops until the queue drains, so a
+        # synchronization per batch: the CPU stops until the queue drains, so a
         # run pays the latency once per step to record a number it does not
         # read until the epoch ends. One `.item()` below is enough.
         running = torch.zeros((), device=operator.device)
         running_channels = torch.zeros(2, device=operator.device)
+        running_count = torch.zeros((), device=operator.device)
         batches = 0
+        accumulate = max(0, int(samples_per_step or 0))
+        pending = 0
+        optimizer.zero_grad(set_to_none=True)
         for batch in loader:
             # non_blocking only does anything with pin_memory, and is harmless
             # without it -- an unpinned copy is synchronous whatever is asked.
@@ -1538,12 +1706,16 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             targets = batch["target"].to(operator.device, non_blocking=pin_memory)
             cell = batch["cell"].to(operator.device, non_blocking=pin_memory)
 
-            optimizer.zero_grad(set_to_none=True)
+            if not accumulate:
+                optimizer.zero_grad(set_to_none=True)
             if sites_task:
                 sites = {key: batch[key].to(operator.device,
                                             non_blocking=pin_memory)
                          for key in ("species", "positions", "atom_mask")}
                 prediction, occupancy = forward(inputs, cell, sites=sites)
+            elif input_sites:
+                prediction = forward(inputs, cell, sites=input_site_batch(
+                    operator, batch, non_blocking=pin_memory))
             else:
                 prediction = forward(inputs, cell)
 
@@ -1567,7 +1739,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
                 # The reference in physical units serves two terms: it is rho
                 # for the von Weizsacker bound on chg2tau -- where the *input*
                 # is the density -- and its integral is the electron count the
-                # charge-conservation term on ext2chg is measured against.
+                # charge-conservation term on ext2chg/ext2paw is measured against.
                 physical_target = batch["target_physical"].to(
                     operator.device, non_blocking=pin_memory)
                 physical_prediction = operator.target_transform.inverse(
@@ -1614,19 +1786,34 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
                 total = total + occupancy_weight * transform.loss(
                     occupancy, wanted, sites["species"],
                     sites["atom_mask"].to(occupancy.dtype))
-            total.backward()
+            if accumulate:
+                size = inputs.shape[0]
+                (total * (size / accumulate)).backward()
+                pending += size
+                if pending >= accumulate:
+                    _accumulated_step(operator, optimizer, grad_clip,
+                                      accumulate / pending)
+                    pending = 0
+            else:
+                total.backward()
 
-            if grad_clip:
-                clip_gradients(operator.model.parameters(), grad_clip)
-            optimizer.step()
+                if grad_clip:
+                    clip_gradients(operator.model.parameters(), grad_clip)
+                optimizer.step()
 
             # The composite loss reports its parts, but only `total` is
-            # differentiated and only `total` is recorded: it is the objective
-            # the optimiser stepped on, and the parts are reported *unweighted*
-            # so they do not sum to it.
+            # differentiated. `total` is the objective the optimizer stepped
+            # on; the count diagnostic is recorded separately, unweighted.
             running += total.detach()
+            if electron_count_weight > 0.0:
+                running_count += terms["electron_count"]
             batches += 1
 
+        if pending:
+            # The epoch's remainder: fewer structures than a step, rescaled so
+            # the gradient is still their mean rather than a fraction of it.
+            _accumulated_step(operator, optimizer, grad_clip,
+                              accumulate / pending)
         if lr_schedule is not None:
             lr_schedule.step()
 
@@ -1637,16 +1824,19 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         # stopping branch below in agreement across the group. A no-op without
         # one, so the single-device path is unchanged.
         running = all_reduce_mean(running / divisor, context)
-        # The one synchronisation per epoch that the device-side accumulator
+        # The one synchronization per epoch that the device-side accumulator
         # above exists to reduce the count of.
         mean_loss = float(running)
         history["train_loss"].append(mean_loss)
+        if electron_count_weight > 0.0:
+            history["train_electron_count_loss"].append(float(
+                all_reduce_mean(running_count / divisor, context)))
         if channel_parts:
             parts = all_reduce_mean(running_channels / divisor, context)
             history["train_loss_charge"].append(float(parts[0]))
-            history["train_loss_magnetisation"].append(float(parts[1]))
+            history["train_loss_magnetization"].append(float(parts[1]))
         # After the sync `.item()` forced, so this is compute rather than
-        # queueing -- an unsynchronised clock on an asynchronous backend
+        # queueing -- an unsynchronized clock on an asynchronous backend
         # measures how fast work was *submitted*.
         synchronize(operator.device)
         history["seconds_per_epoch"].append(time.perf_counter() - epoch_start)
@@ -1662,12 +1852,18 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         message = f"    {f'{epoch + 1}/{epochs}':>11s}  {mean_loss:>13.5f}"
         if channel_parts:
             message += (f"  {history['train_loss_charge'][-1]:>9.5f}"
-                        f"  {history['train_loss_magnetisation'][-1]:>9.5f}")
+                        f"  {history['train_loss_magnetization'][-1]:>9.5f}")
+        if electron_count_weight > 0.0:
+            message += f"  {history['train_electron_count_loss'][-1]:>12.5e}"
         exhausted = False
         if validating:
             error = evaluate(operator, validation_loader,
                              loss=data_loss_name,
-                             sobolev_weight=sobolev_weight)
+                             sobolev_weight=sobolev_weight,
+                             return_metrics=electron_count_weight > 0.0)
+            count_metrics = error if electron_count_weight > 0.0 else None
+            if count_metrics is not None:
+                error = count_metrics["field_error"]
             message += f"  {error:>13.5f}"
             if sites_task:
                 occupancy_error, occupancy_loss = validate_occupancies(
@@ -1677,7 +1873,16 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
                 history["val_occupancy_loss"].append(occupancy_loss)
                 error = error + occupancy_weight * occupancy_loss
                 message += (f"  {occupancy_error:>9.5f}  "
-                            f"{occupancy_loss:>9.5f}  {error:>9.5f}")
+                            f"{occupancy_loss:>9.5f}")
+            if count_metrics is not None:
+                history["val_electron_count_error"].append(
+                    count_metrics["electron_count_error"])
+                history["val_electron_count_loss"].append(
+                    count_metrics["electron_count_loss"])
+                error += electron_count_weight * count_metrics["electron_count_loss"]
+                message += f"  {count_metrics['electron_count_error']:>12.5e}"
+            if sites_task or count_metrics is not None:
+                message += f"  {error:>9.5f}"
             history["val_error"].append(error)
             history["val_epoch"].append(epoch + 1)
 
@@ -1710,6 +1915,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         if verbose and not stopped_early and best_epoch != len(history["train_loss"]):
             scored = (f"val {val_metric}" if not sites_task else
                       f"score {val_metric} + {occupancy_weight:g} x occ loss")
+            if electron_count_weight > 0.0:
+                scored += f" + {electron_count_weight:g} x N loss"
             emit(f"    restored the best weights, from epoch {best_epoch} "
                  f"({scored} {best_error:.5f})")
 
@@ -1722,6 +1929,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         history["val_metric"] = (val_metric if not sites_task else
                                  f"{val_metric} + {occupancy_weight:g} x occ "
                                  f"loss")
+        if electron_count_weight > 0.0:
+            history["val_metric"] += f" + {electron_count_weight:g} x N loss"
 
     # Reported in the run's own JSON rather than sampled from outside it with
     # `nvidia-smi`, which is how every number in the CUDA work list had to be
@@ -1736,6 +1945,38 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     # into the next task and start reading a file that is still being written.
     barrier(context)
     return history
+
+
+def input_site_batch(operator, batch, non_blocking=False):
+    """
+    A collated batch's PAW records as the model's ``sites``, normalized.
+
+    For an operator with a per-atom input (``paw2tau``). The records are moved
+    to the device and passed through the operator's ``site_transform``; the
+    collated padding (zeros past a record's length, absent atoms masked) stays
+    zero.
+    """
+    device = operator.device
+    species = batch["species"].to(device, non_blocking=non_blocking)
+    records = batch["paw"].to(device, non_blocking=non_blocking)
+    return {"records": operator.site_transform.normalize(records, species),
+            "species": species,
+            "positions": batch["positions"].to(device,
+                                               non_blocking=non_blocking),
+            "atom_mask": batch["atom_mask"].to(device,
+                                               non_blocking=non_blocking)}
+
+
+def _accumulated_step(operator, optimizer, grad_clip, rescale):
+    """One optimizer step on accumulated gradients, ``rescale``-d to a mean."""
+    if rescale != 1.0:
+        for parameter in operator.model.parameters():
+            if parameter.grad is not None:
+                parameter.grad.mul_(rescale)
+    if grad_clip:
+        clip_gradients(operator.model.parameters(), grad_clip)
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
 
 
 def evaluate_occupancies(operator, loader):
@@ -1758,12 +1999,12 @@ def validate_occupancies(operator, loader):
     atoms rather than as one sample. This is the number to report, and a poor
     one to select on: 99 % of the records' squared norm is the charge set's
     L = 0 block, so it is blind to the L > 0 blocks (8--42 % error on a
-    held-out slab while it read 3 %) and to the magnetisation set.
+    held-out slab while it read 3 %) and to the magnetization set.
 
     **The training term** --- :meth:`~poraque.ml.paw.OccupancyTransform.loss`,
     every L block of every set weighted alike --- averaged over atoms and sets.
     This is what the validation score adds to the field error, so the best
-    epoch is chosen on the objective the optimiser minimised.
+    epoch is chosen on the objective the optimizer minimized.
 
     Parameters
     ----------
@@ -1816,7 +2057,8 @@ def validate_occupancies(operator, loader):
 
 
 @torch.no_grad()
-def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0):
+def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0,
+             return_metrics=False):
     r"""
     Mean held-out error over a loader, in *physical* units.
 
@@ -1829,23 +2071,34 @@ def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0):
     loader : torch.utils.data.DataLoader
     loss : str, optional
         Which of :data:`~poraque.ml.losses.DATA_LOSSES` to measure. Pass the
-        run's own, so the number watched is the number optimised — the
+        run's own, so the number watched is the number optimized — the
         checkpoint and early stopping are decided on it.
     sobolev_weight : float, optional
         Gradient weight, for the two :math:`H^1` forms.
+    return_metrics : bool, optional
+        Return the field error and the mean absolute and mean squared relative
+        electron-count errors in a dict. Counts use the total charge channel
+        of the decoded absolute density and its reference, before any output
+        normalization; only use with charge-density tasks.
 
     Returns
     -------
-    float
+    float or dict
     """
     operator.model.eval()
     errors = []
+    count_errors = []
     for batch in loader:
         inputs = batch["input"].to(operator.device)
         cell = batch["cell"].to(operator.device)
         physical_target = batch["target_physical"].to(operator.device)
 
-        prediction = operator.target_transform.inverse(operator.model(inputs, cell))
+        if operator.task.site_input is not None:
+            output = operator.model(inputs, cell,
+                                    sites=input_site_batch(operator, batch))
+        else:
+            output = operator.model(inputs, cell)
+        prediction = operator.target_transform.inverse(output)
 
         # Delta-density mode: the reported error is on the **absolute**
         # density, not on the residual. A relative L2 on delta_rho has a
@@ -1859,10 +2112,24 @@ def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0):
             prediction = prediction + baseline
             physical_target = physical_target + baseline
 
-        # Kept on the device: `.cpu()` per batch is a synchronisation per
+        # Kept on the device: `.cpu()` per batch is a synchronization per
         # batch, for a number that is only read once the loader is exhausted.
         errors.append(data_error(prediction, physical_target, cell,
                                  loss=loss,
                                  sobolev_weight=sobolev_weight))
+        if return_metrics:
+            from .physics import integrate
 
-    return float(torch.cat(errors).mean()) if errors else float("nan")
+            count = integrate(physical_target[:, :1], cell)
+            predicted_count = integrate(prediction[:, :1], cell)
+            count_errors.append((predicted_count - count) / count.clamp_min(1e-8))
+
+    error = float(torch.cat(errors).mean()) if errors else float("nan")
+    if return_metrics:
+        counts = torch.cat(count_errors) if count_errors else None
+        return {"field_error": error,
+                "electron_count_error": (float(counts.abs().mean())
+                                         if counts is not None else float("nan")),
+                "electron_count_loss": (float(counts.square().mean())
+                                        if counts is not None else float("nan"))}
+    return error

@@ -15,13 +15,13 @@ questions, which is why they are three figures and not one:
 **Did it train?**  :meth:`loss_curves`
     Objective against epoch. Training loss and validation error are drawn in
     *separate stacked panels* rather than on twin y-axes: they are different
-    quantities (a normalised objective and a physical relative :math:`L^2`), and
+    quantities (a normalized objective and a physical relative :math:`L^2`), and
     a second y-scale invites the reader to compare two curves whose vertical
     positions have no shared meaning.
 
 **Is it right in space?**  :meth:`field_comparison`
     A cross-section of the reference field, the prediction, and their
-    difference. Reference and prediction share one colour scale — plotting them
+    difference. Reference and prediction share one color scale — plotting them
     on independent scales is the classic way to make a bad prediction look
     good. The difference panel uses a diverging ramp on limits symmetric about
     zero, so neutral always means zero error.
@@ -65,7 +65,7 @@ def _as_array(field):
     if values.ndim != 3:
         raise ValueError(
             f"a field figure draws one 3D quantity, got shape {values.shape}. "
-            f"For a spin-polarised field pass the channel to draw -- `.total` "
+            f"For a spin-polarized field pass the channel to draw -- `.total` "
             f"or `.magnetization` -- rather than the field itself.")
     return values
 
@@ -80,7 +80,7 @@ def _thin_log_minor_labels(panel, subs=(2.0, 5.0)):
     horizontally they overprint into unreadable overlap -- the y-axis survives
     the same labels only because vertical tick spacing dwarfs the text height.
 
-    Labelling the 2 and 5 subdivisions keeps the decade structure legible at a
+    Labeling the 2 and 5 subdivisions keeps the decade structure legible at a
     fraction of the width. The ticks themselves are untouched; only which of
     them carry text changes.
     """
@@ -97,7 +97,7 @@ def _rotate_if_crowded(figure, panel, rotation=30, pad=2.0):
     """
     Rotate the x tick labels, but only when they actually collide.
 
-    Measuring beats rotating unconditionally: a linear parity axis labelled
+    Measuring beats rotating unconditionally: a linear parity axis labeled
     ``1 2 3 4 5`` is perfectly readable upright, and tilting it would be a
     cosmetic regression. So the figure is laid out once, the drawn label boxes
     are compared, and the rotation is applied only if two of them overlap.
@@ -254,7 +254,7 @@ class TrainingReport:
 
             ``train_loss`` is the **total** objective — data fidelity plus
             every weighted physics term — because that is the quantity the
-            optimiser stepped on and the only one comparable between runs.
+            optimizer stepped on and the only one comparable between runs.
         name : str, optional
             Filename stem.
         title : str, optional
@@ -310,18 +310,18 @@ class TrainingReport:
                                f"(physical units)", 1))
 
             for axis, values, epochs, label, slot in panels:
-                colour = series_color(slot)
+                color = series_color(slot)
                 # Mark the individual points on a sparse series, so a
                 # ten-point validation curve does not read as a smooth one.
                 marker = "o" if values.size <= 40 else None
-                axis.plot(epochs, values, color=colour, label=label,
+                axis.plot(epochs, values, color=color, label=label,
                           marker=marker, markersize=3)
                 if log_scale and np.all(values > 0):
                     axis.set_yscale("log")
 
                 # Direct label at the final point, rather than a number on
                 # every point: the endpoint is the value the reader wants.
-                axis.scatter([epochs[-1]], [values[-1]], s=28, color=colour,
+                axis.scatter([epochs[-1]], [values[-1]], s=28, color=color,
                              zorder=3, edgecolor=self.ink["surface"], linewidth=2)
                 axis.annotate(f"{values[-1]:.4g}",
                               xy=(epochs[-1], values[-1]),
@@ -332,7 +332,7 @@ class TrainingReport:
                     if best != values.size - 1:
                         axis.scatter([epochs[best]], [values[best]], s=28,
                                      facecolor=self.ink["surface"],
-                                     edgecolor=colour, linewidth=1.8, zorder=3)
+                                     edgecolor=color, linewidth=1.8, zorder=3)
                         axis.annotate(f"best {values[best]:.4g}",
                                       xy=(epochs[best], values[best]),
                                       xytext=(6, -12), textcoords="offset points",
@@ -356,7 +356,7 @@ class TrainingReport:
 
         Two columns and not three. ``train loss`` is the **total** objective —
         data fidelity plus every weighted physics term, which is what the
-        optimiser stepped on — and there is no separate physics column to
+        optimizer stepped on — and there is no separate physics column to
         write: the per-term breakdown was removed from ``history`` in
         2026-08-28 because the components are reported *unweighted* and so
         never summed to the total. Emitting a ``physics_loss`` column here
@@ -404,10 +404,10 @@ class TrainingReport:
         label : str, optional
             Quantity name used in panel titles.
         unit : str, optional
-            Physical unit, shown on the colour bars.
+            Physical unit, shown on the color bars.
         title : str, optional
         log : bool, optional
-            Logarithmic colour scale, for strictly positive fields spanning
+            Logarithmic color scale, for strictly positive fields spanning
             several decades (a valence density does).
         difference_quantile : float, optional
             Quantile of ``|error|`` setting the diverging limits, so a few
@@ -463,7 +463,7 @@ class TrainingReport:
                 error=difference,
                 axis=np.asarray(axis), index=np.asarray(index),
                 slice_axes=np.asarray(remaining),
-                colour_limits=np.asarray([float(finite.min()),
+                color_limits=np.asarray([float(finite.min()),
                                           float(finite.max())]),
                 error_limits=np.asarray([float(low), float(high)]),
                 label=np.asarray(label), unit=np.asarray(unit),
@@ -579,11 +579,11 @@ class TrainingReport:
             axes.scatter(complexity, loss, s=34, color=self.ink["secondary"],
                          zorder=2, label="front")
 
-            def mark(entry, colour, marker, text):
+            def mark(entry, color, marker, text):
                 if not entry:
                     return
                 axes.scatter([entry["complexity"]], [entry["loss"]], s=170,
-                             marker=marker, facecolor=colour, zorder=4,
+                             marker=marker, facecolor=color, zorder=4,
                              edgecolor=self.ink["surface"], linewidth=1.8,
                              label=text)
 
@@ -593,7 +593,7 @@ class TrainingReport:
             if not same:
                 mark(knee, series_color(1), "D", "Pareto knee")
 
-            # Labelled sparsely and only on the interesting end: a formula
+            # Labeled sparsely and only on the interesting end: a formula
             # printed beside every point is unreadable at any figure size.
             marked = {id(best), id(knee)}
             step = max(1, len(usable) // max(1, annotate))
@@ -636,7 +636,7 @@ class TrainingReport:
         the grid is still reconstructible exactly.
 
         ``count`` is voxels; ``density`` is the share of *that split's* voxels,
-        which is the quantity the figure colours by — two structures need not
+        which is the quantity the figure colors by — two structures need not
         have the same grid size, and raw counts would paint the larger one
         denser for no physical reason.
 
@@ -665,24 +665,24 @@ class TrainingReport:
         The histogram form of :meth:`_write_parity_data`, for any source of
         counts: one row per occupied bin of each split, and the edges beside.
         """
-        centres = 0.5 * (edges[:-1] + edges[1:])
+        centers = 0.5 * (edges[:-1] + edges[1:])
         rows = []
         for series_name, voxels, shares in zip(labels, totals, histograms):
-            # `histograms` holds the normalised share, which is what the figure
-            # colours by. The voxel count is that share times the split's own
+            # `histograms` holds the normalized share, which is what the figure
+            # colors by. The voxel count is that share times the split's own
             # point total -- written out rather than left as arithmetic for
             # whoever reads the file.
             for i, j in np.argwhere(shares > 0):
                 share = float(shares[i, j])
                 rows.append([series_name,
-                             f"{float(centres[i]):.10g}",
-                             f"{float(centres[j]):.10g}",
+                             f"{float(centers[i]):.10g}",
+                             f"{float(centers[j]):.10g}",
                              int(round(share * voxels)),
                              f"{share:.10g}"])
 
         # The edges go in their own file rather than into every row. Occupied
-        # bin *centres* replot as a scatter directly, but a `pcolormesh` needs
-        # the edges, and they cannot be recovered from the centres alone once
+        # bin *centers* replot as a scatter directly, but a `pcolormesh` needs
+        # the edges, and they cannot be recovered from the centers alone once
         # the axis may be log-spaced.
         self._write_csv(f"{name}_bin_edges", ["index", "edge"],
                         [[index, f"{float(edge):.10g}"]
@@ -701,12 +701,12 @@ class TrainingReport:
 
         Passing ``validation`` puts the held-out set in a **second panel**
         beside the training one, which is the plot that answers whether the
-        operator generalises: if the held-out density sits wider about the
-        identity line, that spread *is* the generalisation gap, read off
+        operator generalizes: if the held-out density sits wider about the
+        identity line, that spread *is* the generalization gap, read off
         directly rather than inferred from two summary numbers.
 
-        The panels share their axes, their bin edges and one colour scale, so
-        the two sides are directly comparable. Each is normalised to the share
+        The panels share their axes, their bin edges and one color scale, so
+        the two sides are directly comparable. Each is normalized to the share
         of *its own* voxels, because two structures need not have the same grid
         size and raw counts would then paint the larger one denser for no
         physical reason.
@@ -737,7 +737,7 @@ class TrainingReport:
             Legend names for the two sets.
         prediction_label : str, optional
             What produced the y values. The default names the operator; a
-            distilled expression is not the operator, and labelling its plot
+            distilled expression is not the operator, and labeling its plot
             as though it were would misattribute the error.
 
         Returns
@@ -836,8 +836,8 @@ class TrainingReport:
         The same figure :meth:`parity` draws, fed by
         :class:`~poraque.vis.parity.ParityAccumulator` rather than by arrays: a
         fixed random sample of each structure's voxels, binned as it was taken,
-        so the split can be any size. The panels share edges and one colour
-        scale, and each is normalised to its own sampled voxels.
+        so the split can be any size. The panels share edges and one color
+        scale, and each is normalized to its own sampled voxels.
 
         Parameters
         ----------
@@ -982,9 +982,9 @@ class TrainingReport:
                     panel.label_outer()
 
             if mesh is not None:
-                # One colourbar for every panel. Separate bars would each
+                # One colorbar for every panel. Separate bars would each
                 # autoscale and two different densities could then wear the
-                # same colour, which is the specific lie this plot must not tell.
+                # same color, which is the specific lie this plot must not tell.
                 bar = figure.colorbar(mesh, ax=panels, fraction=0.046, pad=0.02)
                 bar.set_label(colorbar_label)
                 bar.outline.set_visible(False)

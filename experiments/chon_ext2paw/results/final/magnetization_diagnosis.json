@@ -1,0 +1,3511 @@
+{
+  "checkpoint": "experiments/chon_ext2paw/results/final/best.poraque",
+  "target_transform": {
+    "type": "Channelwise",
+    "transforms": [
+      {
+        "type": "Asinh",
+        "scale": 0.019291815244992586
+      },
+      {
+        "type": "Asinh",
+        "scale": 0.019291815244992586
+      }
+    ]
+  },
+  "input_transform": {
+    "type": "Standardize",
+    "mean": 0.12398697340880518,
+    "std": 57.99170095243391
+  },
+  "splits": {
+    "train": {
+      "materials": 303,
+      "predicted_to_reference_m_norm": 0.0338824762463616,
+      "projection_on_reference": 0.009105105265343067,
+      "relative_l2": 0.9914322022538397,
+      "relative_l2_allowing_global_spin_flip_per_structure": 0.9913856022679798,
+      "reference_m_to_charge_norm": 0.05143133805836256,
+      "mean_magnetic_target_squared_share_in_normalized_field_loss": 0.05308048639763745,
+      "median_magnetic_target_squared_share_in_normalized_field_loss": 3.32851778065734e-08
+    },
+    "test": {
+      "materials": 41,
+      "predicted_to_reference_m_norm": 0.018001439614088958,
+      "projection_on_reference": 0.005077336673376987,
+      "relative_l2": 0.9950725493557874,
+      "relative_l2_allowing_global_spin_flip_per_structure": 0.9950722261510101,
+      "reference_m_to_charge_norm": 0.062677693698508,
+      "mean_magnetic_target_squared_share_in_normalized_field_loss": 0.040948954079439985,
+      "median_magnetic_target_squared_share_in_normalized_field_loss": 7.515706535124699e-08
+    },
+    "validation": {
+      "materials": 88,
+      "predicted_to_reference_m_norm": 0.044962613812515206,
+      "projection_on_reference": 0.009815742040162464,
+      "relative_l2": 0.991155967827732,
+      "relative_l2_allowing_global_spin_flip_per_structure": 0.9911547987412386,
+      "reference_m_to_charge_norm": 0.048088493326524824,
+      "mean_magnetic_target_squared_share_in_normalized_field_loss": 0.05665692806565206,
+      "median_magnetic_target_squared_share_in_normalized_field_loss": 2.4577841987877893e-08
+    }
+  },
+  "per_material": [
+    {
+      "id": "mp-1001080",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.05759136759409904,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1008374",
+      "split": "train",
+      "reference_m_norm": 0.00554199801465037,
+      "predicted_m_norm": 0.061545341343543586,
+      "magnetic_loss_target_squared_share": 2.4846309025972992e-06,
+      "m_to_charge_norm": 7.27647577894843e-05
+    },
+    {
+      "id": "mp-1008395",
+      "split": "train",
+      "reference_m_norm": 0.0035102666375634592,
+      "predicted_m_norm": 0.07442275167171769,
+      "magnetic_loss_target_squared_share": 5.877570226667733e-07,
+      "m_to_charge_norm": 3.578341633983551e-05
+    },
+    {
+      "id": "mp-1009490",
+      "split": "train",
+      "reference_m_norm": 16.767284797321512,
+      "predicted_m_norm": 0.0941041734334289,
+      "magnetic_loss_target_squared_share": 0.7344384357714394,
+      "m_to_charge_norm": 0.20218081611241714
+    },
+    {
+      "id": "mp-1009818",
+      "split": "train",
+      "reference_m_norm": 0.006434405921896081,
+      "predicted_m_norm": 0.12239202221338272,
+      "magnetic_loss_target_squared_share": 2.082483068796288e-06,
+      "m_to_charge_norm": 4.964461452429458e-05
+    },
+    {
+      "id": "mp-1014214",
+      "split": "train",
+      "reference_m_norm": 0.007777431944048321,
+      "predicted_m_norm": 0.11089142638131293,
+      "magnetic_loss_target_squared_share": 1.9995651192348194e-05,
+      "m_to_charge_norm": 9.579485570830117e-05
+    },
+    {
+      "id": "mp-1014281",
+      "split": "train",
+      "reference_m_norm": 1.880270673880509,
+      "predicted_m_norm": 0.10293948697298716,
+      "magnetic_loss_target_squared_share": 0.20705201762200318,
+      "m_to_charge_norm": 0.04006805783710753
+    },
+    {
+      "id": "mp-1014286",
+      "split": "test",
+      "reference_m_norm": 0.007205466946304767,
+      "predicted_m_norm": 0.04074901651935048,
+      "magnetic_loss_target_squared_share": 2.3749586211391125e-05,
+      "m_to_charge_norm": 0.00015450777170641743
+    },
+    {
+      "id": "mp-1014287",
+      "split": "validation",
+      "reference_m_norm": 2.893145061620796,
+      "predicted_m_norm": 0.04706164156366266,
+      "magnetic_loss_target_squared_share": 0.29303701176377556,
+      "m_to_charge_norm": 0.056998147801990875
+    },
+    {
+      "id": "mp-1014296",
+      "split": "train",
+      "reference_m_norm": 0.0003556451857213402,
+      "predicted_m_norm": 0.028734780383746373,
+      "magnetic_loss_target_squared_share": 1.2219658582256587e-07,
+      "m_to_charge_norm": 1.5245225225552332e-05
+    },
+    {
+      "id": "mp-1014297",
+      "split": "train",
+      "reference_m_norm": 5.657234666553677,
+      "predicted_m_norm": 0.05860845400166057,
+      "magnetic_loss_target_squared_share": 0.38383609477733166,
+      "m_to_charge_norm": 0.07513408504821974
+    },
+    {
+      "id": "mp-1014298",
+      "split": "validation",
+      "reference_m_norm": 0.007010729373796266,
+      "predicted_m_norm": 0.06217386901924416,
+      "magnetic_loss_target_squared_share": 7.522862584053604e-06,
+      "m_to_charge_norm": 9.822977590481675e-05
+    },
+    {
+      "id": "mp-1014311",
+      "split": "train",
+      "reference_m_norm": 0.006602585965638238,
+      "predicted_m_norm": 0.0792569490685933,
+      "magnetic_loss_target_squared_share": 1.0775940574484473e-05,
+      "m_to_charge_norm": 7.196321223383699e-05
+    },
+    {
+      "id": "mp-1014316",
+      "split": "train",
+      "reference_m_norm": 0.004844777683988502,
+      "predicted_m_norm": 0.09271102999661193,
+      "magnetic_loss_target_squared_share": 6.877787743782083e-06,
+      "m_to_charge_norm": 5.6475672071320644e-05
+    },
+    {
+      "id": "mp-1014324",
+      "split": "train",
+      "reference_m_norm": 0.0021130266597574653,
+      "predicted_m_norm": 0.07903466622708319,
+      "magnetic_loss_target_squared_share": 4.638718600079397e-07,
+      "m_to_charge_norm": 2.5392288641035908e-05
+    },
+    {
+      "id": "mp-1014332",
+      "split": "train",
+      "reference_m_norm": 10.182637816270004,
+      "predicted_m_norm": 0.08375877929193276,
+      "magnetic_loss_target_squared_share": 0.2570152461707422,
+      "m_to_charge_norm": 0.13050774496890183
+    },
+    {
+      "id": "mp-1014333",
+      "split": "train",
+      "reference_m_norm": 0.00025179317509270004,
+      "predicted_m_norm": 0.02636373434682122,
+      "magnetic_loss_target_squared_share": 2.519108020286313e-08,
+      "m_to_charge_norm": 5.885761015994723e-06
+    },
+    {
+      "id": "mp-1018088",
+      "split": "train",
+      "reference_m_norm": 0.017281948390650857,
+      "predicted_m_norm": 0.05711797543520405,
+      "magnetic_loss_target_squared_share": 2.546787009214067e-05,
+      "m_to_charge_norm": 0.00021679252838294416
+    },
+    {
+      "id": "mp-1018655",
+      "split": "train",
+      "reference_m_norm": 0.0011364731673765265,
+      "predicted_m_norm": 0.05135159765892215,
+      "magnetic_loss_target_squared_share": 1.4961077411356574e-06,
+      "m_to_charge_norm": 4.25759973718097e-05
+    },
+    {
+      "id": "mp-1019086",
+      "split": "train",
+      "reference_m_norm": 0.0045773648995192226,
+      "predicted_m_norm": 0.09900930682070705,
+      "magnetic_loss_target_squared_share": 2.166669094308877e-06,
+      "m_to_charge_norm": 5.104969403862627e-05
+    },
+    {
+      "id": "mp-1021328",
+      "split": "validation",
+      "reference_m_norm": 0.0026560360483590755,
+      "predicted_m_norm": 0.19287604149104792,
+      "magnetic_loss_target_squared_share": 1.4298351800228915e-06,
+      "m_to_charge_norm": 6.847350996702841e-05
+    },
+    {
+      "id": "mp-1023923",
+      "split": "train",
+      "reference_m_norm": 0.0008191993410647441,
+      "predicted_m_norm": 0.1326776337418186,
+      "magnetic_loss_target_squared_share": 8.895155441515221e-08,
+      "m_to_charge_norm": 6.672399434355876e-06
+    },
+    {
+      "id": "mp-1040425",
+      "split": "train",
+      "reference_m_norm": 0.039103151198619256,
+      "predicted_m_norm": 0.030650147327933124,
+      "magnetic_loss_target_squared_share": 0.01104606726049097,
+      "m_to_charge_norm": 0.0071449084918683
+    },
+    {
+      "id": "mp-1056059",
+      "split": "train",
+      "reference_m_norm": 0.005432694690392713,
+      "predicted_m_norm": 0.09912709262554062,
+      "magnetic_loss_target_squared_share": 1.1491723599351044e-05,
+      "m_to_charge_norm": 6.22007447000625e-05
+    },
+    {
+      "id": "mp-1056831",
+      "split": "train",
+      "reference_m_norm": 0.0015854583830534228,
+      "predicted_m_norm": 0.05167424699758199,
+      "magnetic_loss_target_squared_share": 4.2464607567598405e-06,
+      "m_to_charge_norm": 3.319132756383654e-05
+    },
+    {
+      "id": "mp-1056957",
+      "split": "train",
+      "reference_m_norm": 0.0018981539203881536,
+      "predicted_m_norm": 0.015251475258105862,
+      "magnetic_loss_target_squared_share": 6.014565029864844e-06,
+      "m_to_charge_norm": 9.586688289247986e-05
+    },
+    {
+      "id": "mp-1057818",
+      "split": "train",
+      "reference_m_norm": 0.00021598458023132722,
+      "predicted_m_norm": 0.1473167326740372,
+      "magnetic_loss_target_squared_share": 2.760469352405359e-08,
+      "m_to_charge_norm": 1.44942035950546e-06
+    },
+    {
+      "id": "mp-1058623",
+      "split": "train",
+      "reference_m_norm": 0.009762867809208793,
+      "predicted_m_norm": 0.05450288346273269,
+      "magnetic_loss_target_squared_share": 7.0727166183667e-05,
+      "m_to_charge_norm": 0.00013109320645900312
+    },
+    {
+      "id": "mp-1061298",
+      "split": "train",
+      "reference_m_norm": 6.53278337582468e-05,
+      "predicted_m_norm": 0.10824603458114955,
+      "magnetic_loss_target_squared_share": 6.97914761363765e-10,
+      "m_to_charge_norm": 5.288534802064822e-07
+    },
+    {
+      "id": "mp-1065697",
+      "split": "validation",
+      "reference_m_norm": 0.010110603607967186,
+      "predicted_m_norm": 0.12244934716753583,
+      "magnetic_loss_target_squared_share": 2.0660798330941968e-05,
+      "m_to_charge_norm": 7.653715040714197e-05
+    },
+    {
+      "id": "mp-1066100",
+      "split": "train",
+      "reference_m_norm": 0.0020265702351064357,
+      "predicted_m_norm": 0.05846970247549831,
+      "magnetic_loss_target_squared_share": 4.53875924569716e-06,
+      "m_to_charge_norm": 4.1995356325746605e-05
+    },
+    {
+      "id": "mp-1066989",
+      "split": "train",
+      "reference_m_norm": 0.002833067985951243,
+      "predicted_m_norm": 0.0620347267886625,
+      "magnetic_loss_target_squared_share": 1.1455559781743228e-06,
+      "m_to_charge_norm": 8.724104202059658e-05
+    },
+    {
+      "id": "mp-1077316",
+      "split": "test",
+      "reference_m_norm": 0.0016620033169157027,
+      "predicted_m_norm": 0.13330545067844266,
+      "magnetic_loss_target_squared_share": 1.899226193623815e-07,
+      "m_to_charge_norm": 1.0850044169410921e-05
+    },
+    {
+      "id": "mp-1077595",
+      "split": "train",
+      "reference_m_norm": 0.004062192369146453,
+      "predicted_m_norm": 0.09764703240944142,
+      "magnetic_loss_target_squared_share": 1.218255017277987e-06,
+      "m_to_charge_norm": 3.7689022688464766e-05
+    },
+    {
+      "id": "mp-1077906",
+      "split": "train",
+      "reference_m_norm": 0.0018555069729118974,
+      "predicted_m_norm": 0.031155814505532623,
+      "magnetic_loss_target_squared_share": 1.3711458285161875e-06,
+      "m_to_charge_norm": 2.7478650979956935e-05
+    },
+    {
+      "id": "mp-1078219",
+      "split": "train",
+      "reference_m_norm": 8.211400186485031,
+      "predicted_m_norm": 0.0830138124871513,
+      "magnetic_loss_target_squared_share": 0.3912316696057353,
+      "m_to_charge_norm": 0.18895218418852888
+    },
+    {
+      "id": "mp-1078789",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.08871688728717589,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1078791",
+      "split": "validation",
+      "reference_m_norm": 10.247093631922297,
+      "predicted_m_norm": 0.09017515241608676,
+      "magnetic_loss_target_squared_share": 0.2701412648958788,
+      "m_to_charge_norm": 0.09411340081264007
+    },
+    {
+      "id": "mp-1078845",
+      "split": "validation",
+      "reference_m_norm": 0.002770986459131894,
+      "predicted_m_norm": 0.05833422615457628,
+      "magnetic_loss_target_squared_share": 6.114448749157125e-07,
+      "m_to_charge_norm": 3.641970022163717e-05
+    },
+    {
+      "id": "mp-1079612",
+      "split": "train",
+      "reference_m_norm": 0.004661506290442317,
+      "predicted_m_norm": 0.06753170057155401,
+      "magnetic_loss_target_squared_share": 1.1987746063621297e-06,
+      "m_to_charge_norm": 5.7732283958687546e-05
+    },
+    {
+      "id": "mp-1079684",
+      "split": "validation",
+      "reference_m_norm": 9.764722927721095,
+      "predicted_m_norm": 0.09205090877831759,
+      "magnetic_loss_target_squared_share": 0.5130110062800118,
+      "m_to_charge_norm": 0.14607450377123846
+    },
+    {
+      "id": "mp-1080711",
+      "split": "validation",
+      "reference_m_norm": 16.498488081556093,
+      "predicted_m_norm": 0.10727100365380167,
+      "magnetic_loss_target_squared_share": 0.5461592479880321,
+      "m_to_charge_norm": 0.1496832997196098
+    },
+    {
+      "id": "mp-1080826",
+      "split": "train",
+      "reference_m_norm": 0.003920777831630863,
+      "predicted_m_norm": 0.08312689266167246,
+      "magnetic_loss_target_squared_share": 7.360150095029024e-07,
+      "m_to_charge_norm": 3.973786795406067e-05
+    },
+    {
+      "id": "mp-1087546",
+      "split": "train",
+      "reference_m_norm": 19.87797853075729,
+      "predicted_m_norm": 0.08741326498331939,
+      "magnetic_loss_target_squared_share": 0.7231180418021154,
+      "m_to_charge_norm": 0.20196606591552385
+    },
+    {
+      "id": "mp-1095534",
+      "split": "test",
+      "reference_m_norm": 0.006573098340719588,
+      "predicted_m_norm": 0.07439753303421391,
+      "magnetic_loss_target_squared_share": 3.839663357678695e-06,
+      "m_to_charge_norm": 9.040595599724453e-05
+    },
+    {
+      "id": "mp-1095633",
+      "split": "train",
+      "reference_m_norm": 0.00032805703507454763,
+      "predicted_m_norm": 0.07259624308840376,
+      "magnetic_loss_target_squared_share": 1.1266395745354801e-08,
+      "m_to_charge_norm": 4.875976256621637e-06
+    },
+    {
+      "id": "mp-1096864",
+      "split": "train",
+      "reference_m_norm": 0.0026226158840666133,
+      "predicted_m_norm": 0.04524574333892995,
+      "magnetic_loss_target_squared_share": 1.1732687547570113e-06,
+      "m_to_charge_norm": 4.0917651970480344e-05
+    },
+    {
+      "id": "mp-1096892",
+      "split": "validation",
+      "reference_m_norm": 6.780750384888926,
+      "predicted_m_norm": 0.05759090640777768,
+      "magnetic_loss_target_squared_share": 0.1727344065175519,
+      "m_to_charge_norm": 0.12049270005015186
+    },
+    {
+      "id": "mp-1096977",
+      "split": "test",
+      "reference_m_norm": 0.0025006887416773225,
+      "predicted_m_norm": 0.04985315662920664,
+      "magnetic_loss_target_squared_share": 2.718899522204758e-06,
+      "m_to_charge_norm": 0.0001202440986131768
+    },
+    {
+      "id": "mp-1096984",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04904584024427376,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1096986",
+      "split": "validation",
+      "reference_m_norm": 0.0021650465993876453,
+      "predicted_m_norm": 0.043432946425606876,
+      "magnetic_loss_target_squared_share": 1.6123511141255626e-06,
+      "m_to_charge_norm": 6.556068709513246e-05
+    },
+    {
+      "id": "mp-1097832",
+      "split": "train",
+      "reference_m_norm": 0.0006926887171323731,
+      "predicted_m_norm": 0.008819526688749002,
+      "magnetic_loss_target_squared_share": 2.6767670897833016e-06,
+      "m_to_charge_norm": 6.687624731533064e-05
+    },
+    {
+      "id": "mp-1102227",
+      "split": "train",
+      "reference_m_norm": 0.00027570881177526474,
+      "predicted_m_norm": 0.046598643620256196,
+      "magnetic_loss_target_squared_share": 2.089110841390622e-08,
+      "m_to_charge_norm": 3.3905210873863397e-06
+    },
+    {
+      "id": "mp-1102232",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.07807122566001659,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1102442",
+      "split": "train",
+      "reference_m_norm": 0.003007870079721025,
+      "predicted_m_norm": 0.11948488825513141,
+      "magnetic_loss_target_squared_share": 8.901132508837664e-07,
+      "m_to_charge_norm": 1.885388745915031e-05
+    },
+    {
+      "id": "mp-1102681",
+      "split": "test",
+      "reference_m_norm": 0.002478809149916987,
+      "predicted_m_norm": 0.11954277040904251,
+      "magnetic_loss_target_squared_share": 3.0711487971541283e-07,
+      "m_to_charge_norm": 1.900011813303207e-05
+    },
+    {
+      "id": "mp-1103367",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.05373519831859622,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1103408",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.09121986869325781,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1104073",
+      "split": "train",
+      "reference_m_norm": 0.004101580999231677,
+      "predicted_m_norm": 0.05850350729841665,
+      "magnetic_loss_target_squared_share": 2.305235414513277e-06,
+      "m_to_charge_norm": 6.186945634482806e-05
+    },
+    {
+      "id": "mp-1104403",
+      "split": "validation",
+      "reference_m_norm": 0.0005269020143137131,
+      "predicted_m_norm": 0.06457617267468682,
+      "magnetic_loss_target_squared_share": 4.9846363741873603e-08,
+      "m_to_charge_norm": 7.5438975851438685e-06
+    },
+    {
+      "id": "mp-1104513",
+      "split": "train",
+      "reference_m_norm": 0.0016228245897959774,
+      "predicted_m_norm": 0.05150065266286379,
+      "magnetic_loss_target_squared_share": 5.807975561695236e-07,
+      "m_to_charge_norm": 2.9787199065267526e-05
+    },
+    {
+      "id": "mp-1105655",
+      "split": "train",
+      "reference_m_norm": 0.00025553324987674224,
+      "predicted_m_norm": 0.07941676567061273,
+      "magnetic_loss_target_squared_share": 3.6100712412181925e-09,
+      "m_to_charge_norm": 2.2473604064350853e-06
+    },
+    {
+      "id": "mp-11725",
+      "split": "validation",
+      "reference_m_norm": 0.0008409865749231674,
+      "predicted_m_norm": 0.11048227249288921,
+      "magnetic_loss_target_squared_share": 1.6405070119318145e-07,
+      "m_to_charge_norm": 9.382951444763996e-06
+    },
+    {
+      "id": "mp-1176403",
+      "split": "train",
+      "reference_m_norm": 0.006426485341568037,
+      "predicted_m_norm": 0.028748035671744943,
+      "magnetic_loss_target_squared_share": 3.593994278034624e-05,
+      "m_to_charge_norm": 0.00017129881776004857
+    },
+    {
+      "id": "mp-1180008",
+      "split": "train",
+      "reference_m_norm": 0.000889238492656423,
+      "predicted_m_norm": 0.0697857517420461,
+      "magnetic_loss_target_squared_share": 2.8984991506450037e-07,
+      "m_to_charge_norm": 1.1295690483666828e-05
+    },
+    {
+      "id": "mp-1180036",
+      "split": "test",
+      "reference_m_norm": 0.0018677996842026655,
+      "predicted_m_norm": 0.10080045511190387,
+      "magnetic_loss_target_squared_share": 6.537607072514013e-07,
+      "m_to_charge_norm": 1.4033250490247391e-05
+    },
+    {
+      "id": "mp-1180050",
+      "split": "validation",
+      "reference_m_norm": 0.004738281822343041,
+      "predicted_m_norm": 0.10735004176794158,
+      "magnetic_loss_target_squared_share": 4.24828242188546e-06,
+      "m_to_charge_norm": 3.862441816093226e-05
+    },
+    {
+      "id": "mp-1180064",
+      "split": "validation",
+      "reference_m_norm": 10.361132520972578,
+      "predicted_m_norm": 0.09022779738940653,
+      "magnetic_loss_target_squared_share": 0.47874076289668255,
+      "m_to_charge_norm": 0.10353901408589286
+    },
+    {
+      "id": "mp-1180220",
+      "split": "train",
+      "reference_m_norm": 6.064156865875743,
+      "predicted_m_norm": 0.04791129720798473,
+      "magnetic_loss_target_squared_share": 0.5990984784776752,
+      "m_to_charge_norm": 0.09889230444183139
+    },
+    {
+      "id": "mp-1180282",
+      "split": "validation",
+      "reference_m_norm": 6.890171110804148,
+      "predicted_m_norm": 0.055011937814651246,
+      "magnetic_loss_target_squared_share": 0.6061154494435005,
+      "m_to_charge_norm": 0.09917429627094936
+    },
+    {
+      "id": "mp-1180334",
+      "split": "train",
+      "reference_m_norm": 0.2755058345119625,
+      "predicted_m_norm": 0.06000808298680371,
+      "magnetic_loss_target_squared_share": 0.0182299973735714,
+      "m_to_charge_norm": 0.0032711561963852808
+    },
+    {
+      "id": "mp-1180345",
+      "split": "validation",
+      "reference_m_norm": 18.1006607770241,
+      "predicted_m_norm": 0.08369676978809149,
+      "magnetic_loss_target_squared_share": 0.5524718385170581,
+      "m_to_charge_norm": 0.18716252937816397
+    },
+    {
+      "id": "mp-1180438",
+      "split": "train",
+      "reference_m_norm": 4.357930458638732,
+      "predicted_m_norm": 0.054396118166071074,
+      "magnetic_loss_target_squared_share": 0.22943577524865386,
+      "m_to_charge_norm": 0.09407436924166399
+    },
+    {
+      "id": "mp-1180473",
+      "split": "train",
+      "reference_m_norm": 0.0009429849662386786,
+      "predicted_m_norm": 0.06821600009301235,
+      "magnetic_loss_target_squared_share": 2.1090351108736774e-07,
+      "m_to_charge_norm": 1.0741810578814178e-05
+    },
+    {
+      "id": "mp-1180500",
+      "split": "train",
+      "reference_m_norm": 0.0009559123192103082,
+      "predicted_m_norm": 0.075448166086242,
+      "magnetic_loss_target_squared_share": 2.1933864220311294e-07,
+      "m_to_charge_norm": 1.0390637593824126e-05
+    },
+    {
+      "id": "mp-1180808",
+      "split": "test",
+      "reference_m_norm": 5.759044053169124,
+      "predicted_m_norm": 0.06481253236123952,
+      "magnetic_loss_target_squared_share": 0.30485419585846846,
+      "m_to_charge_norm": 0.13277672567522927
+    },
+    {
+      "id": "mp-1180988",
+      "split": "test",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.051306451587124026,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181087",
+      "split": "train",
+      "reference_m_norm": 0.0004042588870868816,
+      "predicted_m_norm": 0.059849104784576494,
+      "magnetic_loss_target_squared_share": 4.467578267984896e-08,
+      "m_to_charge_norm": 6.7392034014286e-06
+    },
+    {
+      "id": "mp-1181093",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.048718562539601246,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181155",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.08040813499558437,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181214",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.026792796860245348,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181265",
+      "split": "train",
+      "reference_m_norm": 6.276530838034931,
+      "predicted_m_norm": 0.22116435858987768,
+      "magnetic_loss_target_squared_share": 0.8308130226649252,
+      "m_to_charge_norm": 0.5299555845637938
+    },
+    {
+      "id": "mp-1181328",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.034204666544411205,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181348",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03657443745292399,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181349",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.029506194105037454,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181373",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.06707476015777747,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181376",
+      "split": "train",
+      "reference_m_norm": 0.0004337317184816655,
+      "predicted_m_norm": 0.05966485977722784,
+      "magnetic_loss_target_squared_share": 3.415890942482319e-08,
+      "m_to_charge_norm": 7.681474238188585e-06
+    },
+    {
+      "id": "mp-1181417",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.11481217006453272,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181419",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.047006016609377324,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181430",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.1342302851839222,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181505",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.10954416548320263,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181559",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.020879033228311188,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181584",
+      "split": "train",
+      "reference_m_norm": 0.0005594714680832952,
+      "predicted_m_norm": 0.08246023496495128,
+      "magnetic_loss_target_squared_share": 3.8388521202729776e-08,
+      "m_to_charge_norm": 7.852617439280734e-06
+    },
+    {
+      "id": "mp-1181677",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.08763885066467941,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1181996",
+      "split": "train",
+      "reference_m_norm": 0.013542279359027378,
+      "predicted_m_norm": 0.14852361448727477,
+      "magnetic_loss_target_squared_share": 1.7731990759323253e-05,
+      "m_to_charge_norm": 0.00017035867922063352
+    },
+    {
+      "id": "mp-1182019",
+      "split": "train",
+      "reference_m_norm": 0.0007278473884589246,
+      "predicted_m_norm": 0.0581509171621013,
+      "magnetic_loss_target_squared_share": 1.2781593360083375e-07,
+      "m_to_charge_norm": 1.220439508005741e-05
+    },
+    {
+      "id": "mp-1182029",
+      "split": "train",
+      "reference_m_norm": 0.000904830542945564,
+      "predicted_m_norm": 0.0674659492930316,
+      "magnetic_loss_target_squared_share": 2.7285674733492416e-07,
+      "m_to_charge_norm": 2.240013167444654e-05
+    },
+    {
+      "id": "mp-1182145",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.060452077733037374,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1182172",
+      "split": "test",
+      "reference_m_norm": 0.006621614445032533,
+      "predicted_m_norm": 0.10928331564197509,
+      "magnetic_loss_target_squared_share": 3.512140867926156e-06,
+      "m_to_charge_norm": 6.447115172408929e-05
+    },
+    {
+      "id": "mp-1182484",
+      "split": "train",
+      "reference_m_norm": 8.508592612853946e-06,
+      "predicted_m_norm": 0.043687456384924994,
+      "magnetic_loss_target_squared_share": 7.875998200977005e-11,
+      "m_to_charge_norm": 6.682554597673374e-07
+    },
+    {
+      "id": "mp-11875",
+      "split": "train",
+      "reference_m_norm": 0.0016574148720807662,
+      "predicted_m_norm": 0.13572884802560614,
+      "magnetic_loss_target_squared_share": 7.697575089836397e-07,
+      "m_to_charge_norm": 2.22264984382116e-05
+    },
+    {
+      "id": "mp-1188168",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.06581756254453813,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1188177",
+      "split": "validation",
+      "reference_m_norm": 0.00134412257359442,
+      "predicted_m_norm": 0.06653675394732564,
+      "magnetic_loss_target_squared_share": 2.683168184491336e-07,
+      "m_to_charge_norm": 4.22308442105113e-05
+    },
+    {
+      "id": "mp-1188347",
+      "split": "test",
+      "reference_m_norm": 0.003507383976142305,
+      "predicted_m_norm": 0.0792852578274414,
+      "magnetic_loss_target_squared_share": 6.782516766921112e-07,
+      "m_to_charge_norm": 3.080205450186298e-05
+    },
+    {
+      "id": "mp-1188817",
+      "split": "train",
+      "reference_m_norm": 0.03258363935862723,
+      "predicted_m_norm": 0.0632531544407501,
+      "magnetic_loss_target_squared_share": 6.531980730655197e-05,
+      "m_to_charge_norm": 0.00036347729119060745
+    },
+    {
+      "id": "mp-1189505",
+      "split": "train",
+      "reference_m_norm": 13.836158915749104,
+      "predicted_m_norm": 0.22382109613653708,
+      "magnetic_loss_target_squared_share": 0.6779431492797521,
+      "m_to_charge_norm": 0.28916198509817564
+    },
+    {
+      "id": "mp-1189886",
+      "split": "train",
+      "reference_m_norm": 0.0004958122797352246,
+      "predicted_m_norm": 0.05128592899037058,
+      "magnetic_loss_target_squared_share": 4.122043163726337e-08,
+      "m_to_charge_norm": 6.554942624665004e-06
+    },
+    {
+      "id": "mp-1190171",
+      "split": "train",
+      "reference_m_norm": 0.0011096246774612714,
+      "predicted_m_norm": 0.033856436607845174,
+      "magnetic_loss_target_squared_share": 3.529849202499328e-07,
+      "m_to_charge_norm": 2.7525344455229305e-05
+    },
+    {
+      "id": "mp-1190216",
+      "split": "train",
+      "reference_m_norm": 0.0006739953133269724,
+      "predicted_m_norm": 0.039784386455691725,
+      "magnetic_loss_target_squared_share": 1.4683399654181242e-07,
+      "m_to_charge_norm": 1.2235445570926164e-05
+    },
+    {
+      "id": "mp-1190685",
+      "split": "train",
+      "reference_m_norm": 0.0009135901438065755,
+      "predicted_m_norm": 0.08049918476980421,
+      "magnetic_loss_target_squared_share": 1.0065812929149246e-07,
+      "m_to_charge_norm": 7.928515336870085e-06
+    },
+    {
+      "id": "mp-1190699",
+      "split": "train",
+      "reference_m_norm": 0.00027918872241112824,
+      "predicted_m_norm": 0.058207438875187124,
+      "magnetic_loss_target_squared_share": 1.2051033169980623e-08,
+      "m_to_charge_norm": 2.6112466231184507e-06
+    },
+    {
+      "id": "mp-1192619",
+      "split": "train",
+      "reference_m_norm": 2.8717990399845745,
+      "predicted_m_norm": 0.08307784205389383,
+      "magnetic_loss_target_squared_share": 0.141999129771201,
+      "m_to_charge_norm": 0.04342000329408916
+    },
+    {
+      "id": "mp-1193580",
+      "split": "train",
+      "reference_m_norm": 0.0007071869070846221,
+      "predicted_m_norm": 0.07267720386724309,
+      "magnetic_loss_target_squared_share": 4.997550269234947e-08,
+      "m_to_charge_norm": 7.613928699494494e-06
+    },
+    {
+      "id": "mp-1194028",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.10446830976701452,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1194227",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.02849621632457432,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1195106",
+      "split": "validation",
+      "reference_m_norm": 0.0001494354634941387,
+      "predicted_m_norm": 0.03828102791101871,
+      "magnetic_loss_target_squared_share": 3.352901106400351e-09,
+      "m_to_charge_norm": 3.134290390622603e-06
+    },
+    {
+      "id": "mp-1196253",
+      "split": "train",
+      "reference_m_norm": 8.33829805967495e-05,
+      "predicted_m_norm": 0.045326484343426135,
+      "magnetic_loss_target_squared_share": 1.339354946755132e-09,
+      "m_to_charge_norm": 1.4159199067567291e-06
+    },
+    {
+      "id": "mp-1197051",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.055476498686595516,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1197148",
+      "split": "train",
+      "reference_m_norm": 0.0006851908875649682,
+      "predicted_m_norm": 0.07327459986311807,
+      "magnetic_loss_target_squared_share": 5.6051950399809817e-08,
+      "m_to_charge_norm": 6.918626621065908e-06
+    },
+    {
+      "id": "mp-1197543",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04351641027313032,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1197681",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03399342845356222,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1198447",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.013945133823830618,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1198679",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.02795800672688534,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1198776",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03936757400902085,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1199197",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.0324304486401554,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1199386",
+      "split": "test",
+      "reference_m_norm": 0.0007717461287054749,
+      "predicted_m_norm": 0.07511239429525811,
+      "magnetic_loss_target_squared_share": 6.141319904724762e-08,
+      "m_to_charge_norm": 7.565294979737931e-06
+    },
+    {
+      "id": "mp-1200465",
+      "split": "test",
+      "reference_m_norm": 9.91645800653218e-05,
+      "predicted_m_norm": 0.04472554509656545,
+      "magnetic_loss_target_squared_share": 2.1411299395607685e-09,
+      "m_to_charge_norm": 1.4998701631512656e-06
+    },
+    {
+      "id": "mp-1200473",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.034127382440196745,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1200776",
+      "split": "train",
+      "reference_m_norm": 0.00010295292537711895,
+      "predicted_m_norm": 0.049024617681220094,
+      "magnetic_loss_target_squared_share": 2.657594939720859e-09,
+      "m_to_charge_norm": 1.7092474515818597e-06
+    },
+    {
+      "id": "mp-1200980",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.027428557109469485,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1201465",
+      "split": "validation",
+      "reference_m_norm": 8.979540222110879e-05,
+      "predicted_m_norm": 0.05093689717528478,
+      "magnetic_loss_target_squared_share": 1.1546463032373181e-09,
+      "m_to_charge_norm": 1.2709137987067133e-06
+    },
+    {
+      "id": "mp-1201974",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.0394822629544776,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1202134",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.053883935675499,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1202251",
+      "split": "test",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.032659617056488933,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1203058",
+      "split": "train",
+      "reference_m_norm": 0.0007283429510658936,
+      "predicted_m_norm": 0.05715581624938867,
+      "magnetic_loss_target_squared_share": 5.391367396450682e-08,
+      "m_to_charge_norm": 7.658891168356132e-06
+    },
+    {
+      "id": "mp-1203308",
+      "split": "train",
+      "reference_m_norm": 0.00019935287836422779,
+      "predicted_m_norm": 0.05920505843844434,
+      "magnetic_loss_target_squared_share": 5.842409938929707e-09,
+      "m_to_charge_norm": 2.8674493919278115e-06
+    },
+    {
+      "id": "mp-1204579",
+      "split": "train",
+      "reference_m_norm": 3.266949387074425,
+      "predicted_m_norm": 0.04652743245161873,
+      "magnetic_loss_target_squared_share": 0.21187471602168093,
+      "m_to_charge_norm": 0.06177522415339314
+    },
+    {
+      "id": "mp-1204989",
+      "split": "train",
+      "reference_m_norm": 7.558981946811364e-05,
+      "predicted_m_norm": 0.12188538674439321,
+      "magnetic_loss_target_squared_share": 6.321459772868165e-10,
+      "m_to_charge_norm": 1.092995242301726e-06
+    },
+    {
+      "id": "mp-1205283",
+      "split": "train",
+      "reference_m_norm": 4.2494687218695046e-05,
+      "predicted_m_norm": 0.04292827930670612,
+      "magnetic_loss_target_squared_share": 2.497869488021771e-10,
+      "m_to_charge_norm": 7.409210455662397e-07
+    },
+    {
+      "id": "mp-1205417",
+      "split": "train",
+      "reference_m_norm": 0.0006810131335746488,
+      "predicted_m_norm": 0.06762597955719235,
+      "magnetic_loss_target_squared_share": 8.644746002575387e-08,
+      "m_to_charge_norm": 1.3853713722018805e-05
+    },
+    {
+      "id": "mp-12103",
+      "split": "train",
+      "reference_m_norm": 18.97642337101407,
+      "predicted_m_norm": 0.22107961714732077,
+      "magnetic_loss_target_squared_share": 0.9939758015885888,
+      "m_to_charge_norm": 0.6045580885569946
+    },
+    {
+      "id": "mp-1212478",
+      "split": "train",
+      "reference_m_norm": 0.0004184716774468184,
+      "predicted_m_norm": 0.06531571119483445,
+      "magnetic_loss_target_squared_share": 2.4899417867460193e-08,
+      "m_to_charge_norm": 4.360503836647493e-06
+    },
+    {
+      "id": "mp-1212506",
+      "split": "train",
+      "reference_m_norm": 11.871964659100069,
+      "predicted_m_norm": 0.15007738940909074,
+      "magnetic_loss_target_squared_share": 0.6003597054749261,
+      "m_to_charge_norm": 0.23811234415119487
+    },
+    {
+      "id": "mp-1212515",
+      "split": "train",
+      "reference_m_norm": 0.00043771605245059974,
+      "predicted_m_norm": 0.03547902994713863,
+      "magnetic_loss_target_squared_share": 4.701265436136177e-08,
+      "m_to_charge_norm": 7.317064788889801e-06
+    },
+    {
+      "id": "mp-1212522",
+      "split": "validation",
+      "reference_m_norm": 0.0002148933380339599,
+      "predicted_m_norm": 0.027160623398716183,
+      "magnetic_loss_target_squared_share": 2.11212784179694e-08,
+      "m_to_charge_norm": 5.690477743224416e-06
+    },
+    {
+      "id": "mp-1212532",
+      "split": "validation",
+      "reference_m_norm": 0.0006840891628798903,
+      "predicted_m_norm": 0.06370390033535203,
+      "magnetic_loss_target_squared_share": 6.2814370044932e-08,
+      "m_to_charge_norm": 8.003187114817286e-06
+    },
+    {
+      "id": "mp-1212539",
+      "split": "train",
+      "reference_m_norm": 0.00010277275431119372,
+      "predicted_m_norm": 0.07560793033030509,
+      "magnetic_loss_target_squared_share": 1.4272235939118457e-09,
+      "m_to_charge_norm": 1.4377317927973057e-06
+    },
+    {
+      "id": "mp-1212551",
+      "split": "train",
+      "reference_m_norm": 0.00018295857913339884,
+      "predicted_m_norm": 0.04821435423390122,
+      "magnetic_loss_target_squared_share": 8.44407910006811e-09,
+      "m_to_charge_norm": 3.1647416544833543e-06
+    },
+    {
+      "id": "mp-1212560",
+      "split": "train",
+      "reference_m_norm": 0.0007843464616625555,
+      "predicted_m_norm": 0.051635945567309056,
+      "magnetic_loss_target_squared_share": 1.0039179744508267e-07,
+      "m_to_charge_norm": 1.0381661799272899e-05
+    },
+    {
+      "id": "mp-1212563",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04279059428633023,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1212577",
+      "split": "train",
+      "reference_m_norm": 0.000515021734042751,
+      "predicted_m_norm": 0.04007411279734919,
+      "magnetic_loss_target_squared_share": 7.46594318901327e-08,
+      "m_to_charge_norm": 8.366210193205937e-06
+    },
+    {
+      "id": "mp-1212579",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04715434832314936,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1212581",
+      "split": "train",
+      "reference_m_norm": 0.00018043580746164307,
+      "predicted_m_norm": 0.03796231120368562,
+      "magnetic_loss_target_squared_share": 9.207155044117186e-09,
+      "m_to_charge_norm": 4.523919835332099e-06
+    },
+    {
+      "id": "mp-1212607",
+      "split": "train",
+      "reference_m_norm": 0.00019904858205658667,
+      "predicted_m_norm": 0.04890599376364584,
+      "magnetic_loss_target_squared_share": 1.126898477232204e-08,
+      "m_to_charge_norm": 3.869459653971723e-06
+    },
+    {
+      "id": "mp-1212613",
+      "split": "validation",
+      "reference_m_norm": 0.0001978893780539445,
+      "predicted_m_norm": 0.05004352524696699,
+      "magnetic_loss_target_squared_share": 1.0573526867958387e-08,
+      "m_to_charge_norm": 4.12217163033836e-06
+    },
+    {
+      "id": "mp-1212626",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.054583676776949516,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1212629",
+      "split": "test",
+      "reference_m_norm": 0.0007003026256960912,
+      "predicted_m_norm": 0.07460615673324944,
+      "magnetic_loss_target_squared_share": 5.657052563169356e-08,
+      "m_to_charge_norm": 7.925477152358521e-06
+    },
+    {
+      "id": "mp-1212645",
+      "split": "validation",
+      "reference_m_norm": 0.0001596130922973662,
+      "predicted_m_norm": 0.05904042119622494,
+      "magnetic_loss_target_squared_share": 6.332325585024438e-09,
+      "m_to_charge_norm": 2.2943854514193917e-06
+    },
+    {
+      "id": "mp-1212710",
+      "split": "train",
+      "reference_m_norm": 7.068741494864525e-05,
+      "predicted_m_norm": 0.037786661722070895,
+      "magnetic_loss_target_squared_share": 1.4259238699645688e-09,
+      "m_to_charge_norm": 1.7944987504978631e-06
+    },
+    {
+      "id": "mp-1212762",
+      "split": "train",
+      "reference_m_norm": 0.00010258873839319201,
+      "predicted_m_norm": 0.02497132087614854,
+      "magnetic_loss_target_squared_share": 4.281231944013042e-09,
+      "m_to_charge_norm": 3.4918792953207328e-06
+    },
+    {
+      "id": "mp-1212804",
+      "split": "train",
+      "reference_m_norm": 4.83706761529555e-05,
+      "predicted_m_norm": 0.0473229222870963,
+      "magnetic_loss_target_squared_share": 4.229994033212239e-10,
+      "m_to_charge_norm": 9.517117311605871e-07
+    },
+    {
+      "id": "mp-1212807",
+      "split": "test",
+      "reference_m_norm": 7.430288213616271e-05,
+      "predicted_m_norm": 0.039724081631414075,
+      "magnetic_loss_target_squared_share": 1.4393574063330731e-09,
+      "m_to_charge_norm": 1.7313789151903841e-06
+    },
+    {
+      "id": "mp-1212918",
+      "split": "test",
+      "reference_m_norm": 1.2072609223391287e-05,
+      "predicted_m_norm": 0.023676785822432878,
+      "magnetic_loss_target_squared_share": 5.2012725473188966e-11,
+      "m_to_charge_norm": 4.11063523835982e-07
+    },
+    {
+      "id": "mp-1212999",
+      "split": "test",
+      "reference_m_norm": 0.00015044364076181603,
+      "predicted_m_norm": 0.039801685252180745,
+      "magnetic_loss_target_squared_share": 5.134529877438824e-09,
+      "m_to_charge_norm": 3.328910033362709e-06
+    },
+    {
+      "id": "mp-1214163",
+      "split": "train",
+      "reference_m_norm": 11.294576233948854,
+      "predicted_m_norm": 0.09241952394019678,
+      "magnetic_loss_target_squared_share": 0.5986400540645832,
+      "m_to_charge_norm": 0.20864679868034347
+    },
+    {
+      "id": "mp-1214250",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.058696740406233364,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1214309",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.041507737243685054,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1214325",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.06113194800841889,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1221446",
+      "split": "train",
+      "reference_m_norm": 0.0023738424768982736,
+      "predicted_m_norm": 0.09918700988205727,
+      "magnetic_loss_target_squared_share": 1.1492733806750346e-06,
+      "m_to_charge_norm": 2.520212042155857e-05
+    },
+    {
+      "id": "mp-1224501",
+      "split": "test",
+      "reference_m_norm": 0.0007041606807609834,
+      "predicted_m_norm": 0.043687653350666926,
+      "magnetic_loss_target_squared_share": 1.702319397119388e-07,
+      "m_to_charge_norm": 1.5471648934347608e-05
+    },
+    {
+      "id": "mp-1224588",
+      "split": "train",
+      "reference_m_norm": 0.0004005719505598831,
+      "predicted_m_norm": 0.027798730813248407,
+      "magnetic_loss_target_squared_share": 7.122073240514442e-08,
+      "m_to_charge_norm": 1.0556539499363984e-05
+    },
+    {
+      "id": "mp-1224772",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03786898741946078,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1225107",
+      "split": "test",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.07295342230796165,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-1225208",
+      "split": "validation",
+      "reference_m_norm": 0.00011842079441762388,
+      "predicted_m_norm": 0.03823736374822581,
+      "magnetic_loss_target_squared_share": 1.958388411836793e-09,
+      "m_to_charge_norm": 1.7555539662137632e-06
+    },
+    {
+      "id": "mp-1237215",
+      "split": "train",
+      "reference_m_norm": 0.0001635274849243916,
+      "predicted_m_norm": 0.03958270380351509,
+      "magnetic_loss_target_squared_share": 8.504733911726247e-09,
+      "m_to_charge_norm": 3.2889777285623514e-06
+    },
+    {
+      "id": "mp-1237354",
+      "split": "train",
+      "reference_m_norm": 0.0007439272511411138,
+      "predicted_m_norm": 0.043197631605554634,
+      "magnetic_loss_target_squared_share": 1.4662639489641376e-07,
+      "m_to_charge_norm": 1.2254924299097536e-05
+    },
+    {
+      "id": "mp-1238814",
+      "split": "train",
+      "reference_m_norm": 0.003973931814075029,
+      "predicted_m_norm": 0.27732183832897744,
+      "magnetic_loss_target_squared_share": 2.909399176873257e-06,
+      "m_to_charge_norm": 7.807909352572994e-05
+    },
+    {
+      "id": "mp-1244913",
+      "split": "validation",
+      "reference_m_norm": 1.3909323013670656,
+      "predicted_m_norm": 0.06503548209927404,
+      "magnetic_loss_target_squared_share": 0.05154451183652979,
+      "m_to_charge_norm": 0.020166539350070962
+    },
+    {
+      "id": "mp-1244964",
+      "split": "validation",
+      "reference_m_norm": 1.7523192740274853,
+      "predicted_m_norm": 0.061859065711161385,
+      "magnetic_loss_target_squared_share": 0.04374771050492021,
+      "m_to_charge_norm": 0.02470263476420749
+    },
+    {
+      "id": "mp-1245190",
+      "split": "train",
+      "reference_m_norm": 2.5062954376358246,
+      "predicted_m_norm": 0.06211140961274902,
+      "magnetic_loss_target_squared_share": 0.07409622532754057,
+      "m_to_charge_norm": 0.03528433846845893
+    },
+    {
+      "id": "mp-12957",
+      "split": "train",
+      "reference_m_norm": 0.04043741947546286,
+      "predicted_m_norm": 0.11942619010729182,
+      "magnetic_loss_target_squared_share": 0.00031917218883721534,
+      "m_to_charge_norm": 0.00030848076303784897
+    },
+    {
+      "id": "mp-154",
+      "split": "train",
+      "reference_m_norm": 0.00013459362082309412,
+      "predicted_m_norm": 0.1560657932543954,
+      "magnetic_loss_target_squared_share": 4.987185541418023e-09,
+      "m_to_charge_norm": 1.9701026882594343e-06
+    },
+    {
+      "id": "mp-169",
+      "split": "validation",
+      "reference_m_norm": 0.0036077287006758274,
+      "predicted_m_norm": 0.0667534088773972,
+      "magnetic_loss_target_squared_share": 1.163907621049901e-06,
+      "m_to_charge_norm": 4.850234535850266e-05
+    },
+    {
+      "id": "mp-1771",
+      "split": "train",
+      "reference_m_norm": 0.003296589075611281,
+      "predicted_m_norm": 0.08522549649168223,
+      "magnetic_loss_target_squared_share": 2.5349027420955297e-06,
+      "m_to_charge_norm": 3.347662222261391e-05
+    },
+    {
+      "id": "mp-1985",
+      "split": "train",
+      "reference_m_norm": 0.0017158173679750234,
+      "predicted_m_norm": 0.0700001978104271,
+      "magnetic_loss_target_squared_share": 3.6086034530051585e-07,
+      "m_to_charge_norm": 2.1347670860731906e-05
+    },
+    {
+      "id": "mp-20066",
+      "split": "train",
+      "reference_m_norm": 0.0036401080281397748,
+      "predicted_m_norm": 0.08444321854223436,
+      "magnetic_loss_target_squared_share": 2.245549592592451e-06,
+      "m_to_charge_norm": 3.443317277259741e-05
+    },
+    {
+      "id": "mp-23668",
+      "split": "train",
+      "reference_m_norm": 0.00013858172433676627,
+      "predicted_m_norm": 0.038742395681099245,
+      "magnetic_loss_target_squared_share": 3.740767421168569e-09,
+      "m_to_charge_norm": 2.3754324242225495e-06
+    },
+    {
+      "id": "mp-23680",
+      "split": "test",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.07731618446851324,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-23683",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.06544785105821559,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-23778",
+      "split": "train",
+      "reference_m_norm": 0.001631199736668802,
+      "predicted_m_norm": 0.07432455305390129,
+      "magnetic_loss_target_squared_share": 2.876046317613719e-07,
+      "m_to_charge_norm": 1.83419849155295e-05
+    },
+    {
+      "id": "mp-23790",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.06931631930288813,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-23907",
+      "split": "train",
+      "reference_m_norm": 6.178744170960481,
+      "predicted_m_norm": 0.607737194487457,
+      "magnetic_loss_target_squared_share": 0.99748176185064,
+      "m_to_charge_norm": 1.0000000062428256
+    },
+    {
+      "id": "mp-23922",
+      "split": "train",
+      "reference_m_norm": 0.00011253992087152518,
+      "predicted_m_norm": 0.05173051866850157,
+      "magnetic_loss_target_squared_share": 3.4109783425970665e-09,
+      "m_to_charge_norm": 2.083378591537828e-06
+    },
+    {
+      "id": "mp-23939",
+      "split": "test",
+      "reference_m_norm": 0.0005894584592131324,
+      "predicted_m_norm": 0.01789258482918643,
+      "magnetic_loss_target_squared_share": 2.109565769308161e-07,
+      "m_to_charge_norm": 1.4147263283485786e-05
+    },
+    {
+      "id": "mp-24",
+      "split": "train",
+      "reference_m_norm": 0.002319686429563869,
+      "predicted_m_norm": 0.10463914347635545,
+      "magnetic_loss_target_squared_share": 2.547065994639023e-07,
+      "m_to_charge_norm": 2.304230219776474e-05
+    },
+    {
+      "id": "mp-24043",
+      "split": "train",
+      "reference_m_norm": 0.0016795378239508566,
+      "predicted_m_norm": 0.0822775179054882,
+      "magnetic_loss_target_squared_share": 3.1810614738408336e-07,
+      "m_to_charge_norm": 1.6022932137455236e-05
+    },
+    {
+      "id": "mp-24207",
+      "split": "train",
+      "reference_m_norm": 0.00027613460872853306,
+      "predicted_m_norm": 0.03436952423347003,
+      "magnetic_loss_target_squared_share": 2.4509396222494348e-08,
+      "m_to_charge_norm": 6.0504373452955924e-06
+    },
+    {
+      "id": "mp-24230",
+      "split": "train",
+      "reference_m_norm": 0.0006605220936774498,
+      "predicted_m_norm": 0.08135210470533152,
+      "magnetic_loss_target_squared_share": 4.795418209273996e-08,
+      "m_to_charge_norm": 6.644384529678619e-06
+    },
+    {
+      "id": "mp-24232",
+      "split": "validation",
+      "reference_m_norm": 0.00042325482119218437,
+      "predicted_m_norm": 0.05102310780885441,
+      "magnetic_loss_target_squared_share": 2.0159947585667107e-08,
+      "m_to_charge_norm": 4.050906732156545e-06
+    },
+    {
+      "id": "mp-24332",
+      "split": "train",
+      "reference_m_norm": 0.00012398230495801917,
+      "predicted_m_norm": 0.04274093552937188,
+      "magnetic_loss_target_squared_share": 3.479579430954976e-09,
+      "m_to_charge_norm": 2.015949467759563e-06
+    },
+    {
+      "id": "mp-24504",
+      "split": "train",
+      "reference_m_norm": 0.0017221228513742029,
+      "predicted_m_norm": 0.08391197410393413,
+      "magnetic_loss_target_squared_share": 1.2634573687319436e-06,
+      "m_to_charge_norm": 8.671508775003276e-05
+    },
+    {
+      "id": "mp-24834",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03966574606515146,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-25",
+      "split": "train",
+      "reference_m_norm": 0.00012652974596085955,
+      "predicted_m_norm": 0.15790172776493266,
+      "magnetic_loss_target_squared_share": 4.313173065652999e-09,
+      "m_to_charge_norm": 1.8442226714366728e-06
+    },
+    {
+      "id": "mp-2646980",
+      "split": "train",
+      "reference_m_norm": 0.0002505506441621765,
+      "predicted_m_norm": 0.04406446559555352,
+      "magnetic_loss_target_squared_share": 1.0721990224740423e-08,
+      "m_to_charge_norm": 4.769903808791321e-06
+    },
+    {
+      "id": "mp-2647017",
+      "split": "validation",
+      "reference_m_norm": 7.87839146538966e-05,
+      "predicted_m_norm": 0.026368413996321668,
+      "magnetic_loss_target_squared_share": 2.47004246650977e-09,
+      "m_to_charge_norm": 2.254981843176372e-06
+    },
+    {
+      "id": "mp-2647151",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.08454275718189853,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-27461",
+      "split": "train",
+      "reference_m_norm": 0.0002581811551985753,
+      "predicted_m_norm": 0.14348421253482713,
+      "magnetic_loss_target_squared_share": 1.163438164790576e-08,
+      "m_to_charge_norm": 3.877898585002463e-06
+    },
+    {
+      "id": "mp-2789",
+      "split": "train",
+      "reference_m_norm": 0.0002111873884831613,
+      "predicted_m_norm": 0.07633548434044136,
+      "magnetic_loss_target_squared_share": 7.3490487562418255e-09,
+      "m_to_charge_norm": 1.8515669272805326e-06
+    },
+    {
+      "id": "mp-28015",
+      "split": "train",
+      "reference_m_norm": 0.002905978116790961,
+      "predicted_m_norm": 0.04406617514751818,
+      "magnetic_loss_target_squared_share": 2.235112551789837e-06,
+      "m_to_charge_norm": 4.076435991315242e-05
+    },
+    {
+      "id": "mp-28349",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.0347539701736433,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-2852",
+      "split": "train",
+      "reference_m_norm": 0.0030576130980861293,
+      "predicted_m_norm": 0.11865322390115705,
+      "magnetic_loss_target_squared_share": 4.38990779412286e-07,
+      "m_to_charge_norm": 2.3708456945657054e-05
+    },
+    {
+      "id": "mp-28551",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03887271911919303,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-28643",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04554826386258777,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-29145",
+      "split": "train",
+      "reference_m_norm": 0.000381425905753209,
+      "predicted_m_norm": 0.17571030799796125,
+      "magnetic_loss_target_squared_share": 1.8046733297396567e-08,
+      "m_to_charge_norm": 5.688897132493456e-06
+    },
+    {
+      "id": "mp-29943",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.056104794462980924,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-30094",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.038916619711547924,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-30168",
+      "split": "train",
+      "reference_m_norm": 0.00020289972099738968,
+      "predicted_m_norm": 0.054800875488630586,
+      "magnetic_loss_target_squared_share": 5.720443692840988e-09,
+      "m_to_charge_norm": 4.314819898194209e-06
+    },
+    {
+      "id": "mp-30184",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.027285594440562343,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-31000",
+      "split": "train",
+      "reference_m_norm": 7.753450439749918,
+      "predicted_m_norm": 0.07680498653345896,
+      "magnetic_loss_target_squared_share": 0.6049946103480889,
+      "m_to_charge_norm": 0.09998975821684561
+    },
+    {
+      "id": "mp-32854",
+      "split": "train",
+      "reference_m_norm": 2.1953126741477718,
+      "predicted_m_norm": 0.035134048564395566,
+      "magnetic_loss_target_squared_share": 0.1276910348243551,
+      "m_to_charge_norm": 0.0533902457949134
+    },
+    {
+      "id": "mp-32959",
+      "split": "validation",
+      "reference_m_norm": 0.0025383853405763278,
+      "predicted_m_norm": 0.10730172631148832,
+      "magnetic_loss_target_squared_share": 5.710213281300423e-07,
+      "m_to_charge_norm": 2.1934118237819113e-05
+    },
+    {
+      "id": "mp-47",
+      "split": "validation",
+      "reference_m_norm": 0.0001491688242318028,
+      "predicted_m_norm": 0.053982815589861864,
+      "magnetic_loss_target_squared_share": 2.2659216387419963e-09,
+      "m_to_charge_norm": 2.2128518536124812e-06
+    },
+    {
+      "id": "mp-48",
+      "split": "train",
+      "reference_m_norm": 6.78694509559621e-06,
+      "predicted_m_norm": 0.023794800227557644,
+      "magnetic_loss_target_squared_share": 4.099299749419502e-11,
+      "m_to_charge_norm": 2.8444914964531117e-07
+    },
+    {
+      "id": "mp-504422",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03481822803115571,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-504769",
+      "split": "train",
+      "reference_m_norm": 0.006209816452328084,
+      "predicted_m_norm": 0.07567415047563239,
+      "magnetic_loss_target_squared_share": 4.744094738271034e-06,
+      "m_to_charge_norm": 4.892934879038604e-05
+    },
+    {
+      "id": "mp-510458",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04693385550180743,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-542782",
+      "split": "train",
+      "reference_m_norm": 0.000119052674943935,
+      "predicted_m_norm": 0.03411604359449717,
+      "magnetic_loss_target_squared_share": 5.236942715901078e-09,
+      "m_to_charge_norm": 3.83818846593212e-06
+    },
+    {
+      "id": "mp-554659",
+      "split": "train",
+      "reference_m_norm": 0.0003420523440422316,
+      "predicted_m_norm": 0.04362135540297959,
+      "magnetic_loss_target_squared_share": 2.151615507617636e-08,
+      "m_to_charge_norm": 6.490562233273909e-06
+    },
+    {
+      "id": "mp-555128",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04750327555229424,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-555229",
+      "split": "train",
+      "reference_m_norm": 0.0008713378431406971,
+      "predicted_m_norm": 0.030241897844398583,
+      "magnetic_loss_target_squared_share": 2.949040321863878e-07,
+      "m_to_charge_norm": 1.7535850237469498e-05
+    },
+    {
+      "id": "mp-555516",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04799770144702007,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-555711",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.06209766306723666,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-556034",
+      "split": "train",
+      "reference_m_norm": 0.003165537267040656,
+      "predicted_m_norm": 0.04924095719079695,
+      "magnetic_loss_target_squared_share": 2.9426632659539614e-06,
+      "m_to_charge_norm": 3.961756595488313e-05
+    },
+    {
+      "id": "mp-556151",
+      "split": "train",
+      "reference_m_norm": 0.0003996505611836703,
+      "predicted_m_norm": 0.041711790795205726,
+      "magnetic_loss_target_squared_share": 3.32851778065734e-08,
+      "m_to_charge_norm": 7.0973877747505075e-06
+    },
+    {
+      "id": "mp-556451",
+      "split": "test",
+      "reference_m_norm": 0.00023117878026078007,
+      "predicted_m_norm": 0.046942969547732964,
+      "magnetic_loss_target_squared_share": 8.124185950324838e-09,
+      "m_to_charge_norm": 3.8829916938988444e-06
+    },
+    {
+      "id": "mp-556660",
+      "split": "train",
+      "reference_m_norm": 0.0005126204463141186,
+      "predicted_m_norm": 0.11204931784393918,
+      "magnetic_loss_target_squared_share": 6.130528659226038e-08,
+      "m_to_charge_norm": 6.34252886013258e-06
+    },
+    {
+      "id": "mp-557248",
+      "split": "validation",
+      "reference_m_norm": 0.0008861431134955524,
+      "predicted_m_norm": 0.03766342478337616,
+      "magnetic_loss_target_squared_share": 1.907265410746768e-07,
+      "m_to_charge_norm": 1.5712343573767324e-05
+    },
+    {
+      "id": "mp-557263",
+      "split": "train",
+      "reference_m_norm": 0.00018215799464639648,
+      "predicted_m_norm": 0.04294159108777245,
+      "magnetic_loss_target_squared_share": 7.088140884748199e-09,
+      "m_to_charge_norm": 2.841341594857252e-06
+    },
+    {
+      "id": "mp-557825",
+      "split": "train",
+      "reference_m_norm": 0.001066084975208138,
+      "predicted_m_norm": 0.09308250291438988,
+      "magnetic_loss_target_squared_share": 1.2610618481096127e-07,
+      "m_to_charge_norm": 1.2116347931772007e-05
+    },
+    {
+      "id": "mp-557865",
+      "split": "validation",
+      "reference_m_norm": 0.00021309425484450814,
+      "predicted_m_norm": 0.10423749237362981,
+      "magnetic_loss_target_squared_share": 8.662092969808609e-09,
+      "m_to_charge_norm": 2.0259765772645667e-06
+    },
+    {
+      "id": "mp-558226",
+      "split": "train",
+      "reference_m_norm": 0.001455274744152317,
+      "predicted_m_norm": 0.04269182248410753,
+      "magnetic_loss_target_squared_share": 4.3288483322031613e-07,
+      "m_to_charge_norm": 1.892573646845426e-05
+    },
+    {
+      "id": "mp-558412",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03537296396607521,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-558863",
+      "split": "validation",
+      "reference_m_norm": 0.000130722597351119,
+      "predicted_m_norm": 0.04811026077932921,
+      "magnetic_loss_target_squared_share": 3.0616231979925722e-09,
+      "m_to_charge_norm": 2.2355120403559682e-06
+    },
+    {
+      "id": "mp-559139",
+      "split": "validation",
+      "reference_m_norm": 0.00016035133851029947,
+      "predicted_m_norm": 0.04884948889615894,
+      "magnetic_loss_target_squared_share": 3.8383802183112805e-09,
+      "m_to_charge_norm": 2.501517696755724e-06
+    },
+    {
+      "id": "mp-560121",
+      "split": "validation",
+      "reference_m_norm": 0.0005204896401493442,
+      "predicted_m_norm": 0.04670304534640779,
+      "magnetic_loss_target_squared_share": 3.428799875234816e-08,
+      "m_to_charge_norm": 5.700767334924949e-06
+    },
+    {
+      "id": "mp-560323",
+      "split": "validation",
+      "reference_m_norm": 0.0005727944546811732,
+      "predicted_m_norm": 0.04322372215999219,
+      "magnetic_loss_target_squared_share": 6.217520966816917e-08,
+      "m_to_charge_norm": 7.445995369020839e-06
+    },
+    {
+      "id": "mp-560602",
+      "split": "train",
+      "reference_m_norm": 0.0023344983507202384,
+      "predicted_m_norm": 0.1005758949085384,
+      "magnetic_loss_target_squared_share": 7.873422826019295e-07,
+      "m_to_charge_norm": 1.9555483511454326e-05
+    },
+    {
+      "id": "mp-560961",
+      "split": "train",
+      "reference_m_norm": 4.895874475343929e-05,
+      "predicted_m_norm": 0.04362922014813482,
+      "magnetic_loss_target_squared_share": 4.4801260094904235e-10,
+      "m_to_charge_norm": 8.947495552005044e-07
+    },
+    {
+      "id": "mp-561848",
+      "split": "validation",
+      "reference_m_norm": 0.00029677954051543677,
+      "predicted_m_norm": 0.04524852205212499,
+      "magnetic_loss_target_squared_share": 2.1942485397349847e-08,
+      "m_to_charge_norm": 5.8805235177577975e-06
+    },
+    {
+      "id": "mp-563",
+      "split": "train",
+      "reference_m_norm": 0.003651869195100149,
+      "predicted_m_norm": 0.11179892066428787,
+      "magnetic_loss_target_squared_share": 7.398015858092912e-07,
+      "m_to_charge_norm": 2.8453333806345968e-05
+    },
+    {
+      "id": "mp-567885",
+      "split": "validation",
+      "reference_m_norm": 0.00031140380917232845,
+      "predicted_m_norm": 0.04932919281064657,
+      "magnetic_loss_target_squared_share": 1.9788962558214228e-08,
+      "m_to_charge_norm": 4.782807451327805e-06
+    },
+    {
+      "id": "mp-568028",
+      "split": "train",
+      "reference_m_norm": 3.686565558735081e-05,
+      "predicted_m_norm": 0.04068925411954993,
+      "magnetic_loss_target_squared_share": 2.254017729486877e-10,
+      "m_to_charge_norm": 7.075564404682636e-07
+    },
+    {
+      "id": "mp-568286",
+      "split": "test",
+      "reference_m_norm": 0.001039091483327378,
+      "predicted_m_norm": 0.02528488649920301,
+      "magnetic_loss_target_squared_share": 8.854719692134266e-07,
+      "m_to_charge_norm": 4.186444957073293e-05
+    },
+    {
+      "id": "mp-568363",
+      "split": "train",
+      "reference_m_norm": 0.005357866882414541,
+      "predicted_m_norm": 0.025241655158506227,
+      "magnetic_loss_target_squared_share": 2.3675337671539872e-05,
+      "m_to_charge_norm": 0.00021756687277300668
+    },
+    {
+      "id": "mp-568410",
+      "split": "validation",
+      "reference_m_norm": 0.010264167176657481,
+      "predicted_m_norm": 0.06490206476290812,
+      "magnetic_loss_target_squared_share": 6.320457215507631e-06,
+      "m_to_charge_norm": 0.00011531273857418182
+    },
+    {
+      "id": "mp-568584",
+      "split": "train",
+      "reference_m_norm": 0.00044768144710771523,
+      "predicted_m_norm": 0.11980882978088235,
+      "magnetic_loss_target_squared_share": 4.3297301263572626e-08,
+      "m_to_charge_norm": 5.917363988598379e-06
+    },
+    {
+      "id": "mp-568806",
+      "split": "train",
+      "reference_m_norm": 0.35523371611718313,
+      "predicted_m_norm": 0.03512355843785094,
+      "magnetic_loss_target_squared_share": 0.019678445535517706,
+      "m_to_charge_norm": 0.006984614868183856
+    },
+    {
+      "id": "mp-569304",
+      "split": "train",
+      "reference_m_norm": 0.00038819251095921454,
+      "predicted_m_norm": 0.08823428897219923,
+      "magnetic_loss_target_squared_share": 1.9083333035457007e-08,
+      "m_to_charge_norm": 6.344800519394703e-06
+    },
+    {
+      "id": "mp-569416",
+      "split": "train",
+      "reference_m_norm": 1.105248743189395,
+      "predicted_m_norm": 0.1016851390295475,
+      "magnetic_loss_target_squared_share": 0.05833030148487091,
+      "m_to_charge_norm": 0.01628774663491483
+    },
+    {
+      "id": "mp-569517",
+      "split": "train",
+      "reference_m_norm": 0.011568928082727985,
+      "predicted_m_norm": 0.10857256977571299,
+      "magnetic_loss_target_squared_share": 5.976753095312952e-06,
+      "m_to_charge_norm": 0.00011430609467999465
+    },
+    {
+      "id": "mp-569567",
+      "split": "validation",
+      "reference_m_norm": 0.0009503006726495058,
+      "predicted_m_norm": 0.07540866950948483,
+      "magnetic_loss_target_squared_share": 4.077126062972844e-08,
+      "m_to_charge_norm": 9.408234110966975e-06
+    },
+    {
+      "id": "mp-570002",
+      "split": "train",
+      "reference_m_norm": 0.0004972400277375771,
+      "predicted_m_norm": 0.06257242757474536,
+      "magnetic_loss_target_squared_share": 1.4597452475731059e-08,
+      "m_to_charge_norm": 5.597765673565928e-06
+    },
+    {
+      "id": "mp-570572",
+      "split": "validation",
+      "reference_m_norm": 0.009438463865534456,
+      "predicted_m_norm": 0.0818998918669481,
+      "magnetic_loss_target_squared_share": 8.085765926316684e-06,
+      "m_to_charge_norm": 9.703800665185539e-05
+    },
+    {
+      "id": "mp-570747",
+      "split": "validation",
+      "reference_m_norm": 0.000313030166153782,
+      "predicted_m_norm": 0.15164711057982114,
+      "magnetic_loss_target_squared_share": 4.185077422105017e-08,
+      "m_to_charge_norm": 5.695535156013174e-06
+    },
+    {
+      "id": "mp-570752",
+      "split": "train",
+      "reference_m_norm": 7.894654712678855,
+      "predicted_m_norm": 1.0430643995364224,
+      "magnetic_loss_target_squared_share": 0.9979219305163071,
+      "m_to_charge_norm": 0.9999999923459904
+    },
+    {
+      "id": "mp-571653",
+      "split": "train",
+      "reference_m_norm": 0.0026386883698372512,
+      "predicted_m_norm": 0.10908370734610418,
+      "magnetic_loss_target_squared_share": 3.3534183154415954e-07,
+      "m_to_charge_norm": 2.078661032568037e-05
+    },
+    {
+      "id": "mp-579909",
+      "split": "train",
+      "reference_m_norm": 0.0012481283057123671,
+      "predicted_m_norm": 0.052003381079893087,
+      "magnetic_loss_target_squared_share": 4.29748436321643e-07,
+      "m_to_charge_norm": 2.920201974889016e-05
+    },
+    {
+      "id": "mp-583606",
+      "split": "train",
+      "reference_m_norm": 0.00021167162625953834,
+      "predicted_m_norm": 0.048127912201804214,
+      "magnetic_loss_target_squared_share": 1.1248488356247244e-08,
+      "m_to_charge_norm": 4.4381330317850886e-06
+    },
+    {
+      "id": "mp-601178",
+      "split": "train",
+      "reference_m_norm": 0.00021828949434609806,
+      "predicted_m_norm": 0.05326484510959513,
+      "magnetic_loss_target_squared_share": 7.2377128625553836e-09,
+      "m_to_charge_norm": 3.421995386344241e-06
+    },
+    {
+      "id": "mp-601210",
+      "split": "train",
+      "reference_m_norm": 0.00012828925110531188,
+      "predicted_m_norm": 0.03374880275284104,
+      "magnetic_loss_target_squared_share": 5.363228999570733e-09,
+      "m_to_charge_norm": 2.8184580263897336e-06
+    },
+    {
+      "id": "mp-603334",
+      "split": "train",
+      "reference_m_norm": 7.716288216445014e-05,
+      "predicted_m_norm": 0.0273678842069258,
+      "magnetic_loss_target_squared_share": 2.1832216650652746e-09,
+      "m_to_charge_norm": 2.5954251327682884e-06
+    },
+    {
+      "id": "mp-606949",
+      "split": "test",
+      "reference_m_norm": 0.00017614415927012962,
+      "predicted_m_norm": 0.04510516816021283,
+      "magnetic_loss_target_squared_share": 7.515706535124699e-08,
+      "m_to_charge_norm": 1.7407224432182136e-05
+    },
+    {
+      "id": "mp-607540",
+      "split": "validation",
+      "reference_m_norm": 0.00017762200849781993,
+      "predicted_m_norm": 0.060660473036011436,
+      "magnetic_loss_target_squared_share": 1.5220247592356354e-08,
+      "m_to_charge_norm": 2.1087904711464383e-06
+    },
+    {
+      "id": "mp-608071",
+      "split": "train",
+      "reference_m_norm": 8.130083168391124,
+      "predicted_m_norm": 0.07725879956320772,
+      "magnetic_loss_target_squared_share": 0.4518031367322824,
+      "m_to_charge_norm": 0.0834181576984983
+    },
+    {
+      "id": "mp-610917",
+      "split": "train",
+      "reference_m_norm": 22.84027001616401,
+      "predicted_m_norm": 0.16293461410270227,
+      "magnetic_loss_target_squared_share": 0.7272069896587625,
+      "m_to_charge_norm": 0.20235727169622184
+    },
+    {
+      "id": "mp-611426",
+      "split": "train",
+      "reference_m_norm": 0.003042253915213766,
+      "predicted_m_norm": 0.04177207491432658,
+      "magnetic_loss_target_squared_share": 3.7729251470280073e-06,
+      "m_to_charge_norm": 9.021613084440258e-05
+    },
+    {
+      "id": "mp-611448",
+      "split": "validation",
+      "reference_m_norm": 0.0016955022762071604,
+      "predicted_m_norm": 0.03483628491000157,
+      "magnetic_loss_target_squared_share": 2.0646499593381133e-06,
+      "m_to_charge_norm": 6.712271863429552e-05
+    },
+    {
+      "id": "mp-611836",
+      "split": "test",
+      "reference_m_norm": 22.616419262213718,
+      "predicted_m_norm": 0.16411034738149077,
+      "magnetic_loss_target_squared_share": 0.7279490587434307,
+      "m_to_charge_norm": 0.20231421548798498
+    },
+    {
+      "id": "mp-616407",
+      "split": "train",
+      "reference_m_norm": 0.001026338344815452,
+      "predicted_m_norm": 0.04971729618149386,
+      "magnetic_loss_target_squared_share": 3.309098388687792e-07,
+      "m_to_charge_norm": 1.3860984239033434e-05
+    },
+    {
+      "id": "mp-616440",
+      "split": "test",
+      "reference_m_norm": 0.00021101054679819654,
+      "predicted_m_norm": 0.01709148821963144,
+      "magnetic_loss_target_squared_share": 7.856921233445487e-08,
+      "m_to_charge_norm": 1.2591581149213657e-05
+    },
+    {
+      "id": "mp-624889",
+      "split": "validation",
+      "reference_m_norm": 0.002519060264638183,
+      "predicted_m_norm": 0.04743060219818929,
+      "magnetic_loss_target_squared_share": 8.798540289180598e-07,
+      "m_to_charge_norm": 4.150244957491372e-05
+    },
+    {
+      "id": "mp-625082",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.019987089398679356,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625104",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.029075032242479263,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625105",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.032734432475758,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625108",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.07808193511709327,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625109",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.09808282842567823,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625347",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.058000511224902775,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625365",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.05215815322903609,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625374",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.02621993422885548,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625377",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.08020840253925399,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625385",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.0813495083901024,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625619",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.11813876370405922,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625631",
+      "split": "test",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.10199967636571602,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625635",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.13763022998596766,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625664",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.12742638944795825,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625676",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.05308038253206942,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625686",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.0693265742910713,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625790",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.0703621853899683,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625815",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.07417304387255697,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625819",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.045623094671470625,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625850",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03807940902262653,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625861",
+      "split": "test",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04289807512691859,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625868",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04045787733855083,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625924",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04654888905653485,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625927",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.05269247616719184,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625948",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04251103784908805,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-625994",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.13898021041169134,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626006",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.1454408534711461,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626046",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03858349674388341,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626066",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.040969544041592934,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626093",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04101318742735662,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626112",
+      "split": "test",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04023998976863359,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626113",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.07765903495612504,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626127",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04126904762050743,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626155",
+      "split": "test",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.1152170601979496,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626256",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04068657518318143,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626259",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.047633046527763144,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626289",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03738670717435399,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626354",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.050229406773745,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626392",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03966226383095315,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626529",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04026870148729217,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626534",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.05538342659335095,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626542",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.08033548610895368,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-626543",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.07192087723604841,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-630227",
+      "split": "train",
+      "reference_m_norm": 0.000217013818020109,
+      "predicted_m_norm": 0.08041810756708268,
+      "magnetic_loss_target_squared_share": 4.123085413463599e-09,
+      "m_to_charge_norm": 2.9357107323178225e-06
+    },
+    {
+      "id": "mp-632172",
+      "split": "train",
+      "reference_m_norm": 0.0044071336181936505,
+      "predicted_m_norm": 0.1713783487133471,
+      "magnetic_loss_target_squared_share": 6.6436234547921435e-06,
+      "m_to_charge_norm": 0.00019646882644319135
+    },
+    {
+      "id": "mp-632250",
+      "split": "validation",
+      "reference_m_norm": 7.1024820568947975,
+      "predicted_m_norm": 1.3546123151669391,
+      "magnetic_loss_target_squared_share": 0.9985703475169867,
+      "m_to_charge_norm": 0.9999999708530335
+    },
+    {
+      "id": "mp-632291",
+      "split": "train",
+      "reference_m_norm": 0.001973649213952965,
+      "predicted_m_norm": 0.10147279354189935,
+      "magnetic_loss_target_squared_share": 9.55445601995621e-07,
+      "m_to_charge_norm": 7.621769586410156e-05
+    },
+    {
+      "id": "mp-632329",
+      "split": "train",
+      "reference_m_norm": 0.0007445114006522459,
+      "predicted_m_norm": 0.04132697892893036,
+      "magnetic_loss_target_squared_share": 1.0328569721846614e-07,
+      "m_to_charge_norm": 1.4450256473916905e-05
+    },
+    {
+      "id": "mp-632734",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.07399315922573858,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-634429",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.06958129771460486,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-634659",
+      "split": "train",
+      "reference_m_norm": 9.490535872157533,
+      "predicted_m_norm": 0.8188196325786076,
+      "magnetic_loss_target_squared_share": 0.9981927841827064,
+      "m_to_charge_norm": 0.9999999950548231
+    },
+    {
+      "id": "mp-634812",
+      "split": "test",
+      "reference_m_norm": 0.0018374913275715004,
+      "predicted_m_norm": 0.044326876858409116,
+      "magnetic_loss_target_squared_share": 9.506152730571618e-07,
+      "m_to_charge_norm": 2.6601586514271806e-05
+    },
+    {
+      "id": "mp-643099",
+      "split": "train",
+      "reference_m_norm": 0.0007980827625458258,
+      "predicted_m_norm": 0.08509880845607783,
+      "magnetic_loss_target_squared_share": 1.809455905946035e-07,
+      "m_to_charge_norm": 1.2871944755003326e-05
+    },
+    {
+      "id": "mp-643432",
+      "split": "train",
+      "reference_m_norm": 0.0006444911890970457,
+      "predicted_m_norm": 0.12289987137189856,
+      "magnetic_loss_target_squared_share": 7.195685730505359e-08,
+      "m_to_charge_norm": 1.156500973068371e-05
+    },
+    {
+      "id": "mp-644272",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.2412620765578137,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-644330",
+      "split": "train",
+      "reference_m_norm": 0.0008694218149281531,
+      "predicted_m_norm": 0.07378101941415463,
+      "magnetic_loss_target_squared_share": 7.762456477770398e-08,
+      "m_to_charge_norm": 1.1279908675893044e-05
+    },
+    {
+      "id": "mp-644385",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.22750356825255366,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-644607",
+      "split": "train",
+      "reference_m_norm": 0.005667212996351847,
+      "predicted_m_norm": 0.08517571466587674,
+      "magnetic_loss_target_squared_share": 7.4078040822382465e-06,
+      "m_to_charge_norm": 6.300227275648109e-05
+    },
+    {
+      "id": "mp-66",
+      "split": "train",
+      "reference_m_norm": 2.2623738077681306e-05,
+      "predicted_m_norm": 0.07080949119650157,
+      "magnetic_loss_target_squared_share": 2.3037455850161386e-11,
+      "m_to_charge_norm": 2.2336523946793995e-07
+    },
+    {
+      "id": "mp-667273",
+      "split": "train",
+      "reference_m_norm": 0.0002202673341288986,
+      "predicted_m_norm": 0.07248957349066182,
+      "magnetic_loss_target_squared_share": 4.6461992896646195e-09,
+      "m_to_charge_norm": 3.1024294844099038e-06
+    },
+    {
+      "id": "mp-672233",
+      "split": "train",
+      "reference_m_norm": 0.0005063285136441337,
+      "predicted_m_norm": 0.10824802703849846,
+      "magnetic_loss_target_squared_share": 1.5231252183549832e-07,
+      "m_to_charge_norm": 1.0738075641807516e-05
+    },
+    {
+      "id": "mp-672234",
+      "split": "train",
+      "reference_m_norm": 28.25877896409349,
+      "predicted_m_norm": 0.336987344499449,
+      "magnetic_loss_target_squared_share": 0.9966601153816855,
+      "m_to_charge_norm": 0.6046566966978475
+    },
+    {
+      "id": "mp-673658",
+      "split": "validation",
+      "reference_m_norm": 0.0011492682621102018,
+      "predicted_m_norm": 0.0735124733766445,
+      "magnetic_loss_target_squared_share": 1.665178561862238e-07,
+      "m_to_charge_norm": 1.1339191178908636e-05
+    },
+    {
+      "id": "mp-675784",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.07625821728973292,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-676050",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.08324190723690877,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-680372",
+      "split": "train",
+      "reference_m_norm": 0.00020943514585558442,
+      "predicted_m_norm": 0.061973396397629985,
+      "magnetic_loss_target_squared_share": 3.6360883382547408e-09,
+      "m_to_charge_norm": 2.765089858338676e-06
+    },
+    {
+      "id": "mp-684592",
+      "split": "validation",
+      "reference_m_norm": 0.0022441922697515604,
+      "predicted_m_norm": 0.0803293215785509,
+      "magnetic_loss_target_squared_share": 4.28285689813151e-07,
+      "m_to_charge_norm": 2.32041867484459e-05
+    },
+    {
+      "id": "mp-684678",
+      "split": "train",
+      "reference_m_norm": 8.473192621451721,
+      "predicted_m_norm": 0.10104934694756297,
+      "magnetic_loss_target_squared_share": 0.18321689508710773,
+      "m_to_charge_norm": 0.08603484035252576
+    },
+    {
+      "id": "mp-684704",
+      "split": "train",
+      "reference_m_norm": 0.0031731708378992985,
+      "predicted_m_norm": 0.04566031646838323,
+      "magnetic_loss_target_squared_share": 3.6550920963488608e-06,
+      "m_to_charge_norm": 5.456241533645306e-05
+    },
+    {
+      "id": "mp-696658",
+      "split": "train",
+      "reference_m_norm": 0.00017405925437360614,
+      "predicted_m_norm": 0.02895324138561404,
+      "magnetic_loss_target_squared_share": 8.776613069221368e-09,
+      "m_to_charge_norm": 3.5037163464763665e-06
+    },
+    {
+      "id": "mp-696659",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.06257615492028282,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-696717",
+      "split": "validation",
+      "reference_m_norm": 9.196514517859788,
+      "predicted_m_norm": 0.059367103177032345,
+      "magnetic_loss_target_squared_share": 0.4362077420107984,
+      "m_to_charge_norm": 0.08494370251639312
+    },
+    {
+      "id": "mp-696735",
+      "split": "train",
+      "reference_m_norm": 0.0005509090250487771,
+      "predicted_m_norm": 0.078603718915652,
+      "magnetic_loss_target_squared_share": 3.642977614692764e-08,
+      "m_to_charge_norm": 5.379448952368074e-06
+    },
+    {
+      "id": "mp-697085",
+      "split": "train",
+      "reference_m_norm": 0.0005502761376667041,
+      "predicted_m_norm": 0.06844736506510406,
+      "magnetic_loss_target_squared_share": 2.644915280144256e-08,
+      "m_to_charge_norm": 4.692996321902009e-06
+    },
+    {
+      "id": "mp-697111",
+      "split": "validation",
+      "reference_m_norm": 0.0033652345129577595,
+      "predicted_m_norm": 0.05263768148724914,
+      "magnetic_loss_target_squared_share": 3.990592900920104e-06,
+      "m_to_charge_norm": 5.487235135920237e-05
+    },
+    {
+      "id": "mp-697242",
+      "split": "train",
+      "reference_m_norm": 0.0004830074826605993,
+      "predicted_m_norm": 0.054934009952307385,
+      "magnetic_loss_target_squared_share": 2.8141562584797626e-08,
+      "m_to_charge_norm": 6.290694942538739e-06
+    },
+    {
+      "id": "mp-697408",
+      "split": "train",
+      "reference_m_norm": 0.0002526709653984109,
+      "predicted_m_norm": 0.029688513128464974,
+      "magnetic_loss_target_squared_share": 1.8402713034534775e-08,
+      "m_to_charge_norm": 4.4049186845002445e-06
+    },
+    {
+      "id": "mp-703459",
+      "split": "train",
+      "reference_m_norm": 0.0005348815034286283,
+      "predicted_m_norm": 0.07408108983016032,
+      "magnetic_loss_target_squared_share": 4.246758730949865e-08,
+      "m_to_charge_norm": 5.680471111377554e-06
+    },
+    {
+      "id": "mp-703527",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04973021319640163,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-706430",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04537472079446518,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-707104",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.0402598894861168,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-707289",
+      "split": "validation",
+      "reference_m_norm": 2.550320088833098e-05,
+      "predicted_m_norm": 0.013994940544604095,
+      "magnetic_loss_target_squared_share": 4.683684660785723e-10,
+      "m_to_charge_norm": 1.550235562980608e-06
+    },
+    {
+      "id": "mp-707535",
+      "split": "train",
+      "reference_m_norm": 0.00023417262465866715,
+      "predicted_m_norm": 0.050769705680732476,
+      "magnetic_loss_target_squared_share": 1.0771545919319246e-08,
+      "m_to_charge_norm": 3.3926687133021198e-06
+    },
+    {
+      "id": "mp-707543",
+      "split": "train",
+      "reference_m_norm": 0.0008259871642361859,
+      "predicted_m_norm": 0.06000707036523385,
+      "magnetic_loss_target_squared_share": 8.092543169454663e-08,
+      "m_to_charge_norm": 8.852394383430042e-06
+    },
+    {
+      "id": "mp-707727",
+      "split": "train",
+      "reference_m_norm": 0.0006169941514716949,
+      "predicted_m_norm": 0.055844977288058456,
+      "magnetic_loss_target_squared_share": 8.358014385474602e-08,
+      "m_to_charge_norm": 9.771036980630789e-06
+    },
+    {
+      "id": "mp-707910",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.08724960344003588,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-707917",
+      "split": "train",
+      "reference_m_norm": 0.00011286586928539753,
+      "predicted_m_norm": 0.05217496614223992,
+      "magnetic_loss_target_squared_share": 2.5463751028757332e-09,
+      "m_to_charge_norm": 1.8098343761749532e-06
+    },
+    {
+      "id": "mp-708965",
+      "split": "validation",
+      "reference_m_norm": 0.0004786329935231957,
+      "predicted_m_norm": 0.06297333742335737,
+      "magnetic_loss_target_squared_share": 2.721319857840594e-08,
+      "m_to_charge_norm": 5.583143099105429e-06
+    },
+    {
+      "id": "mp-7139",
+      "split": "train",
+      "reference_m_norm": 0.002082095052472304,
+      "predicted_m_norm": 0.1072030984709033,
+      "magnetic_loss_target_squared_share": 1.0048828295126413e-06,
+      "m_to_charge_norm": 2.2100317808348843e-05
+    },
+    {
+      "id": "mp-720515",
+      "split": "validation",
+      "reference_m_norm": 0.0006253754086716267,
+      "predicted_m_norm": 0.029895791933808338,
+      "magnetic_loss_target_squared_share": 1.4725578465137134e-07,
+      "m_to_charge_norm": 1.4844721315448674e-05
+    },
+    {
+      "id": "mp-720869",
+      "split": "train",
+      "reference_m_norm": 0.00014475639806315604,
+      "predicted_m_norm": 0.044464073732472104,
+      "magnetic_loss_target_squared_share": 2.6027623887354517e-09,
+      "m_to_charge_norm": 1.7928165605536662e-06
+    },
+    {
+      "id": "mp-721707",
+      "split": "validation",
+      "reference_m_norm": 1.7908103284000715e-05,
+      "predicted_m_norm": 0.015347043055960337,
+      "magnetic_loss_target_squared_share": 1.8340581675419038e-10,
+      "m_to_charge_norm": 7.892899713001424e-07
+    },
+    {
+      "id": "mp-721759",
+      "split": "test",
+      "reference_m_norm": 0.0008546663272390975,
+      "predicted_m_norm": 0.2521132638573293,
+      "magnetic_loss_target_squared_share": 2.8087882539083353e-07,
+      "m_to_charge_norm": 7.361164363586849e-06
+    },
+    {
+      "id": "mp-723285",
+      "split": "train",
+      "reference_m_norm": 10.675677982862423,
+      "predicted_m_norm": 0.05151116822129967,
+      "magnetic_loss_target_squared_share": 0.6688720922597193,
+      "m_to_charge_norm": 0.20085611835262238
+    },
+    {
+      "id": "mp-723638",
+      "split": "train",
+      "reference_m_norm": 5.1698273959559525e-05,
+      "predicted_m_norm": 0.03378771814093993,
+      "magnetic_loss_target_squared_share": 1.3342387630476442e-09,
+      "m_to_charge_norm": 1.790924015101633e-06
+    },
+    {
+      "id": "mp-725609",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.06515674260500474,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-726720",
+      "split": "train",
+      "reference_m_norm": 18.61661068984405,
+      "predicted_m_norm": 0.1697110683984647,
+      "magnetic_loss_target_squared_share": 0.65187903265572,
+      "m_to_charge_norm": 0.2017952182357037
+    },
+    {
+      "id": "mp-729513",
+      "split": "test",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.03657862016052827,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-729728",
+      "split": "test",
+      "reference_m_norm": 0.00037440568969138383,
+      "predicted_m_norm": 0.03329949462065089,
+      "magnetic_loss_target_squared_share": 1.0208521506300587e-07,
+      "m_to_charge_norm": 9.490483775966317e-06
+    },
+    {
+      "id": "mp-729933",
+      "split": "train",
+      "reference_m_norm": 0.001926675328659929,
+      "predicted_m_norm": 0.08536422642415817,
+      "magnetic_loss_target_squared_share": 2.0270450959683654e-06,
+      "m_to_charge_norm": 3.6777803010811766e-05
+    },
+    {
+      "id": "mp-730101",
+      "split": "train",
+      "reference_m_norm": 0.00019197191559036024,
+      "predicted_m_norm": 0.7379832042609349,
+      "magnetic_loss_target_squared_share": 3.942223871606038e-08,
+      "m_to_charge_norm": 1.4810795429569522e-05
+    },
+    {
+      "id": "mp-731594",
+      "split": "train",
+      "reference_m_norm": 0.006649318190972941,
+      "predicted_m_norm": 0.053931928518165535,
+      "magnetic_loss_target_squared_share": 9.714496413808484e-06,
+      "m_to_charge_norm": 0.00013524070743938538
+    },
+    {
+      "id": "mp-731827",
+      "split": "test",
+      "reference_m_norm": 0.00015893512530176833,
+      "predicted_m_norm": 0.1298941110224099,
+      "magnetic_loss_target_squared_share": 2.2070697150540144e-08,
+      "m_to_charge_norm": 1.2565178876424084e-05
+    },
+    {
+      "id": "mp-733610",
+      "split": "train",
+      "reference_m_norm": 0.0002207880844913669,
+      "predicted_m_norm": 0.06911561583240856,
+      "magnetic_loss_target_squared_share": 7.024703352699288e-09,
+      "m_to_charge_norm": 2.5600250067167804e-06
+    },
+    {
+      "id": "mp-734030",
+      "split": "test",
+      "reference_m_norm": 18.491081513239966,
+      "predicted_m_norm": 0.1315394075098444,
+      "magnetic_loss_target_squared_share": 0.6460581179175843,
+      "m_to_charge_norm": 0.1983503178610526
+    },
+    {
+      "id": "mp-734124",
+      "split": "train",
+      "reference_m_norm": 0.0010979252818035285,
+      "predicted_m_norm": 0.046485192159241344,
+      "magnetic_loss_target_squared_share": 1.6981841227518433e-07,
+      "m_to_charge_norm": 1.3963681923549219e-05
+    },
+    {
+      "id": "mp-734137",
+      "split": "train",
+      "reference_m_norm": 0.00011802965468509694,
+      "predicted_m_norm": 0.04307099809890889,
+      "magnetic_loss_target_squared_share": 2.4050457336983186e-09,
+      "m_to_charge_norm": 1.972245375302568e-06
+    },
+    {
+      "id": "mp-734416",
+      "split": "train",
+      "reference_m_norm": 2.649581510887879,
+      "predicted_m_norm": 0.051829920449035095,
+      "magnetic_loss_target_squared_share": 0.16820296385746608,
+      "m_to_charge_norm": 0.048081899267958125
+    },
+    {
+      "id": "mp-736227",
+      "split": "train",
+      "reference_m_norm": 5.890584586896155,
+      "predicted_m_norm": 0.0430273314812037,
+      "magnetic_loss_target_squared_share": 0.4192743955748901,
+      "m_to_charge_norm": 0.22875561710917694
+    },
+    {
+      "id": "mp-738409",
+      "split": "validation",
+      "reference_m_norm": 0.0009834681195683452,
+      "predicted_m_norm": 0.1502847970503124,
+      "magnetic_loss_target_squared_share": 3.1224267084475405e-07,
+      "m_to_charge_norm": 4.425291749738838e-05
+    },
+    {
+      "id": "mp-738670",
+      "split": "validation",
+      "reference_m_norm": 0.00016382519851100268,
+      "predicted_m_norm": 0.09929723090410363,
+      "magnetic_loss_target_squared_share": 1.5806461485072743e-09,
+      "m_to_charge_norm": 1.7287795973733942e-06
+    },
+    {
+      "id": "mp-754417",
+      "split": "train",
+      "reference_m_norm": 0.0012876002174764148,
+      "predicted_m_norm": 0.02830667872048012,
+      "magnetic_loss_target_squared_share": 9.282304412818022e-07,
+      "m_to_charge_norm": 7.023757437303846e-05
+    },
+    {
+      "id": "mp-754514",
+      "split": "validation",
+      "reference_m_norm": 0.014045408336089702,
+      "predicted_m_norm": 0.1349630964341198,
+      "magnetic_loss_target_squared_share": 3.007224164825402e-05,
+      "m_to_charge_norm": 0.00015371334891917405
+    },
+    {
+      "id": "mp-758097",
+      "split": "train",
+      "reference_m_norm": 0.0012614978066105387,
+      "predicted_m_norm": 0.04533774919047488,
+      "magnetic_loss_target_squared_share": 3.7193600288946044e-07,
+      "m_to_charge_norm": 2.2807886032568177e-05
+    },
+    {
+      "id": "mp-766262",
+      "split": "train",
+      "reference_m_norm": 0.0008767381427388348,
+      "predicted_m_norm": 0.05917193968312749,
+      "magnetic_loss_target_squared_share": 1.0765754045142429e-07,
+      "m_to_charge_norm": 1.0326728951589541e-05
+    },
+    {
+      "id": "mp-774616",
+      "split": "train",
+      "reference_m_norm": 0.0004433640632633251,
+      "predicted_m_norm": 0.0384685465098457,
+      "magnetic_loss_target_squared_share": 5.0994316005229503e-08,
+      "m_to_charge_norm": 8.5199005387587e-06
+    },
+    {
+      "id": "mp-779689",
+      "split": "train",
+      "reference_m_norm": 0.0027169384535782434,
+      "predicted_m_norm": 0.14627339852114962,
+      "magnetic_loss_target_squared_share": 1.023433643657783e-06,
+      "m_to_charge_norm": 4.312737403664741e-05
+    },
+    {
+      "id": "mp-849229",
+      "split": "test",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.040047136800764646,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-850274",
+      "split": "train",
+      "reference_m_norm": 0.002252633455217841,
+      "predicted_m_norm": 0.08488286594732976,
+      "magnetic_loss_target_squared_share": 1.192982640679115e-06,
+      "m_to_charge_norm": 8.554561234556318e-05
+    },
+    {
+      "id": "mp-866659",
+      "split": "train",
+      "reference_m_norm": 0.00038941770514674815,
+      "predicted_m_norm": 0.04492987179760992,
+      "magnetic_loss_target_squared_share": 2.025234018646088e-08,
+      "m_to_charge_norm": 8.137902651756705e-06
+    },
+    {
+      "id": "mp-937760",
+      "split": "train",
+      "reference_m_norm": 0.000712116044413303,
+      "predicted_m_norm": 0.06377778491924603,
+      "magnetic_loss_target_squared_share": 9.020108338771171e-08,
+      "m_to_charge_norm": 1.3485240138396188e-05
+    },
+    {
+      "id": "mp-9410",
+      "split": "validation",
+      "reference_m_norm": 0.00102792902527251,
+      "predicted_m_norm": 0.09609707168332543,
+      "magnetic_loss_target_squared_share": 7.245464997026402e-08,
+      "m_to_charge_norm": 9.532620344280484e-06
+    },
+    {
+      "id": "mp-971684",
+      "split": "train",
+      "reference_m_norm": 0.0007452246150432376,
+      "predicted_m_norm": 0.06919080519531079,
+      "magnetic_loss_target_squared_share": 5.740696795019509e-08,
+      "m_to_charge_norm": 8.077472366535654e-06
+    },
+    {
+      "id": "mp-973783",
+      "split": "train",
+      "reference_m_norm": 0.0010735512613032122,
+      "predicted_m_norm": 0.08011115902909721,
+      "magnetic_loss_target_squared_share": 2.5697298864629465e-07,
+      "m_to_charge_norm": 3.986697861929279e-05
+    },
+    {
+      "id": "mp-976247",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.07973383438846358,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-976707",
+      "split": "train",
+      "reference_m_norm": 0.001409588514141553,
+      "predicted_m_norm": 0.05305882854440246,
+      "magnetic_loss_target_squared_share": 3.3897246695546436e-07,
+      "m_to_charge_norm": 1.9889112486504085e-05
+    },
+    {
+      "id": "mp-985782",
+      "split": "train",
+      "reference_m_norm": 0.002337613242408381,
+      "predicted_m_norm": 0.051680921786178315,
+      "magnetic_loss_target_squared_share": 1.6990845861772545e-06,
+      "m_to_charge_norm": 7.254050114712844e-05
+    },
+    {
+      "id": "mp-990424",
+      "split": "train",
+      "reference_m_norm": 1.593760466659201e-06,
+      "predicted_m_norm": 0.029773502338313374,
+      "magnetic_loss_target_squared_share": 1.1916042358527137e-11,
+      "m_to_charge_norm": 2.408424439648626e-07
+    },
+    {
+      "id": "mp-990441",
+      "split": "train",
+      "reference_m_norm": 5.976731760814192,
+      "predicted_m_norm": 0.07844009730935565,
+      "magnetic_loss_target_squared_share": 0.3253322173177383,
+      "m_to_charge_norm": 0.05911644711134588
+    },
+    {
+      "id": "mp-990448",
+      "split": "validation",
+      "reference_m_norm": 0.09059426575713816,
+      "predicted_m_norm": 0.026098615229380135,
+      "magnetic_loss_target_squared_share": 0.023195454386200236,
+      "m_to_charge_norm": 0.007692802284732858
+    },
+    {
+      "id": "mp-995183",
+      "split": "train",
+      "reference_m_norm": 0.05648714471952407,
+      "predicted_m_norm": 0.029544923944703053,
+      "magnetic_loss_target_squared_share": 0.0015840829696762166,
+      "m_to_charge_norm": 0.0010875471946253064
+    },
+    {
+      "id": "mp-995184",
+      "split": "test",
+      "reference_m_norm": 0.0010513036687915327,
+      "predicted_m_norm": 0.07059775784387515,
+      "magnetic_loss_target_squared_share": 1.9160422992032547e-07,
+      "m_to_charge_norm": 2.1014694698131017e-05
+    },
+    {
+      "id": "mp-995195",
+      "split": "train",
+      "reference_m_norm": 0.0036316126726511507,
+      "predicted_m_norm": 0.10358142634754451,
+      "magnetic_loss_target_squared_share": 2.791929926435604e-06,
+      "m_to_charge_norm": 8.393560374849211e-05
+    },
+    {
+      "id": "mp-995196",
+      "split": "validation",
+      "reference_m_norm": 0.016426805677830034,
+      "predicted_m_norm": 0.1318219726337799,
+      "magnetic_loss_target_squared_share": 4.11211862418654e-05,
+      "m_to_charge_norm": 0.00012979976692524138
+    },
+    {
+      "id": "mp-995197",
+      "split": "train",
+      "reference_m_norm": 0.004836308511586294,
+      "predicted_m_norm": 0.05998355924445447,
+      "magnetic_loss_target_squared_share": 3.391140958884134e-06,
+      "m_to_charge_norm": 9.328267286257179e-05
+    },
+    {
+      "id": "mp-995198",
+      "split": "validation",
+      "reference_m_norm": 0.0007741103680680454,
+      "predicted_m_norm": 0.031681769789327914,
+      "magnetic_loss_target_squared_share": 3.470230011595866e-07,
+      "m_to_charge_norm": 1.5436975696806057e-05
+    },
+    {
+      "id": "mp-995200",
+      "split": "train",
+      "reference_m_norm": 0.0008753251540250652,
+      "predicted_m_norm": 0.029174321014586585,
+      "magnetic_loss_target_squared_share": 4.060646363067983e-07,
+      "m_to_charge_norm": 3.0233492419703757e-05
+    },
+    {
+      "id": "mp-995202",
+      "split": "train",
+      "reference_m_norm": 0.00047257657133160317,
+      "predicted_m_norm": 0.018129961258459185,
+      "magnetic_loss_target_squared_share": 3.186557159003423e-07,
+      "m_to_charge_norm": 2.723334340103748e-05
+    },
+    {
+      "id": "mp-995204",
+      "split": "test",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.040761848969099894,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995206",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.07386734330194536,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995217",
+      "split": "train",
+      "reference_m_norm": 0.00037553891165539383,
+      "predicted_m_norm": 0.05506274601803234,
+      "magnetic_loss_target_squared_share": 2.6468512264835042e-08,
+      "m_to_charge_norm": 7.95168515473381e-06
+    },
+    {
+      "id": "mp-995218",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.04413749137724162,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995219",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.14212076444838817,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995220",
+      "split": "validation",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.02163730744858789,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995224",
+      "split": "train",
+      "reference_m_norm": 0.0009293573613193802,
+      "predicted_m_norm": 0.07779653835480872,
+      "magnetic_loss_target_squared_share": 1.1090880805747168e-07,
+      "m_to_charge_norm": 8.157654978081124e-06
+    },
+    {
+      "id": "mp-995226",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.0681270682203195,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-995234",
+      "split": "train",
+      "reference_m_norm": 0.0,
+      "predicted_m_norm": 0.0293826834952285,
+      "magnetic_loss_target_squared_share": 0.0,
+      "m_to_charge_norm": 0.0
+    },
+    {
+      "id": "mp-997182",
+      "split": "train",
+      "reference_m_norm": 0.00528318011241171,
+      "predicted_m_norm": 0.009724704169847154,
+      "magnetic_loss_target_squared_share": 0.00012297916572428337,
+      "m_to_charge_norm": 0.0005859486824966173
+    },
+    {
+      "id": "mp-998866",
+      "split": "test",
+      "reference_m_norm": 0.00835765881995527,
+      "predicted_m_norm": 0.08387359340629313,
+      "magnetic_loss_target_squared_share": 6.984568686095709e-06,
+      "m_to_charge_norm": 8.764874481599557e-05
+    },
+    {
+      "id": "mp-998880",
+      "split": "test",
+      "reference_m_norm": 0.0002094108920292163,
+      "predicted_m_norm": 0.046236540656863674,
+      "magnetic_loss_target_squared_share": 8.313082924389155e-09,
+      "m_to_charge_norm": 4.016482981793001e-06
+    },
+    {
+      "id": "mp-999498",
+      "split": "train",
+      "reference_m_norm": 0.012059168922569077,
+      "predicted_m_norm": 0.12008466000201504,
+      "magnetic_loss_target_squared_share": 8.658442868183173e-06,
+      "m_to_charge_norm": 9.087444477092907e-05
+    }
+  ]
+}

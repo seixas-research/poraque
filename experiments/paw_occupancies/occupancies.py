@@ -11,7 +11,7 @@ What can predict a Pt atom's PAW augmentation occupancies, and in what form?
 
 The target of ``ext2paw`` beside the pseudo-density: per atom, the 138 numbers
 :math:`\rho(\ell\ell'LM)` VASP writes after the grid, one set for the total and
-one for the magnetisation. Two conventions are pinned from the data before
+one for the magnetization. Two conventions are pinned from the data before
 anything is fitted, because every model below depends on them:
 
 * the **channel order** is the POTCAR's projector order, d d s s p p (the
@@ -49,14 +49,14 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 CHANNELS = (2, 2, 0, 0, 1, 1)
 LMAX = 4
 
-#: Neighbour expansion: Gaussian radial functions (Ang) under a cosine cutoff.
-NEIGHBOUR_CUTOFF = 6.0
-NEIGHBOUR_CENTRES = np.linspace(2.2, 5.8, 10)
-NEIGHBOUR_WIDTH = 0.3
+#: Neighbor expansion: Gaussian radial functions (Ang) under a cosine cutoff.
+NEIGHBOR_CUTOFF = 6.0
+NEIGHBOR_CENTERS = np.linspace(2.2, 5.8, 10)
+NEIGHBOR_WIDTH = 0.3
 
 #: Grid projection around each nucleus: the augmentation sphere and a little.
 PROJECTION_RADIUS = 2.0
-PROJECTION_CENTRES = np.linspace(0.0, 2.0, 9)
+PROJECTION_CENTERS = np.linspace(0.0, 2.0, 9)
 PROJECTION_WIDTH = 0.2
 
 #: The same projection computed from the Fourier coefficients inside one sphere
@@ -131,7 +131,7 @@ def family(natoms, lengths):
     return "slab"
 
 
-def neighbour_expansion(cell, frac):
+def neighbor_expansion(cell, frac):
     """
     ``{L: (atoms, n, 2L+1)}`` = sum_j R_n(r_aj) Y_LM(r_aj): the first-order
     atomic density expansion (ACE body order 2), equivariant by construction.
@@ -139,16 +139,16 @@ def neighbour_expansion(cell, frac):
     cart = frac @ cell
     images = np.array([[i, j, k] for i in (-1, 0, 1) for j in (-1, 0, 1)
                        for k in (-1, 0, 1)], dtype=float) @ cell
-    out = {L: np.zeros((len(frac), len(NEIGHBOUR_CENTRES), 2 * L + 1))
+    out = {L: np.zeros((len(frac), len(NEIGHBOR_CENTERS), 2 * L + 1))
            for L in range(LMAX + 1)}
     for a, origin in enumerate(cart):
         d = (cart[None, :, :] + images[:, None, :] - origin).reshape(-1, 3)
         r = np.linalg.norm(d, axis=1)
-        keep = (r > 0.1) & (r < NEIGHBOUR_CUTOFF)
+        keep = (r > 0.1) & (r < NEIGHBOR_CUTOFF)
         d, r = d[keep], r[keep]
-        cutoff = 0.5 * (np.cos(np.pi * r / NEIGHBOUR_CUTOFF) + 1.0)
-        radial = np.exp(-(r[:, None] - NEIGHBOUR_CENTRES) ** 2
-                        / (2 * NEIGHBOUR_WIDTH ** 2)) * cutoff[:, None]
+        cutoff = 0.5 * (np.cos(np.pi * r / NEIGHBOR_CUTOFF) + 1.0)
+        radial = np.exp(-(r[:, None] - NEIGHBOR_CENTERS) ** 2
+                        / (2 * NEIGHBOR_WIDTH ** 2)) * cutoff[:, None]
         unit = d / r[:, None]
         for L in range(LMAX + 1):
             out[L][a] = radial.T @ real_sh(L, unit)
@@ -168,11 +168,11 @@ def grid_projection(values, cell, frac):
     reciprocal = np.linalg.inv(cell).T
     half = np.ceil(PROJECTION_RADIUS * np.linalg.norm(reciprocal, axis=1)
                    * shape).astype(int)
-    out = {L: np.zeros((len(frac), len(PROJECTION_CENTRES), 2 * L + 1))
+    out = {L: np.zeros((len(frac), len(PROJECTION_CENTERS), 2 * L + 1))
            for L in range(LMAX + 1)}
     for a, f in enumerate(frac % 1.0):
-        centre = np.rint(f * shape).astype(int)
-        axes = [np.arange(c - h, c + h + 1) for c, h in zip(centre, half)]
+        center = np.rint(f * shape).astype(int)
+        axes = [np.arange(c - h, c + h + 1) for c, h in zip(center, half)]
         offsets = [ax / n - fi for ax, n, fi in zip(axes, shape, f)]
         du, dv, dw = np.meshgrid(*offsets, indexing="ij")
         d = np.stack([du, dv, dw], axis=-1).reshape(-1, 3) @ cell
@@ -181,7 +181,7 @@ def grid_projection(values, cell, frac):
                               axes[2] % shape[2])].reshape(-1)
         keep = r < PROJECTION_RADIUS
         d, r, local = d[keep], r[keep], local[keep]
-        radial = np.exp(-(r[:, None] - PROJECTION_CENTRES) ** 2
+        radial = np.exp(-(r[:, None] - PROJECTION_CENTERS) ** 2
                         / (2 * PROJECTION_WIDTH ** 2))
         radial *= 0.5 * (np.cos(np.pi * r / PROJECTION_RADIUS) + 1.0)[:, None]
         weighted = radial * local[:, None] * dV
@@ -203,10 +203,10 @@ def _radial_transforms(gmax=SPECTRAL_GMAX, points=1500):
     """
     G = np.linspace(0.0, gmax * 1.001, points)
     r = np.linspace(0.0, PROJECTION_RADIUS, 801)
-    radial = np.exp(-(r[:, None] - PROJECTION_CENTRES) ** 2
+    radial = np.exp(-(r[:, None] - PROJECTION_CENTERS) ** 2
                     / (2 * PROJECTION_WIDTH ** 2))
     radial *= 0.5 * (np.cos(np.pi * r / PROJECTION_RADIUS) + 1.0)[:, None]
-    integrals = np.empty((len(PROJECTION_CENTRES), LMAX + 1, points))
+    integrals = np.empty((len(PROJECTION_CENTERS), LMAX + 1, points))
     for L in range(LMAX + 1):
         bessel = spherical_jn(L, np.outer(G, r))                 # (k, r)
         integrand = radial.T[:, None, :] * bessel[None] * r ** 2  # (n, k, r)
@@ -299,7 +299,7 @@ def extract(cache, work):
         arrays["family"] += [kind] * len(frac)
         arrays["atom"] += list(range(len(frac)))
         for key, value in (
-                ("positions", neighbour_expansion(cell, frac)),
+                ("positions", neighbor_expansion(cell, frac)),
                 ("density", grid_projection(density.data, cell, frac)),
                 ("potential", grid_projection(potential.data, cell, frac)),
                 ("density_spectral", spectral_projection(density.data, cell,
@@ -489,7 +489,7 @@ def representation(data):
 
     blocks = irreps_index()
     report = {}
-    for spin_set, label in ((0, "total"), (1, "magnetisation")):
+    for spin_set, label in ((0, "total"), (1, "magnetization")):
         records = data["records"][:, spin_set, :]
         irreps = to_irreps(records, blocks)
         energy = {L: float((v ** 2).sum()) for L, v in irreps.items()}
@@ -544,9 +544,9 @@ def representation(data):
     report["round_trip"] = {
         "regroup_bit_exact": bool(np.array_equal(regrouped, records)),
         "regroup_scale_text_identical": bool(identical(rescaled, records)),
-        "centre_rotate_max_abs": float(np.abs(back - records).max()),
-        "centre_rotate_text_identical": bool(identical(back, records)),
-        "centre_rotate_text_identical_above_1e-12": bool(identical(
+        "center_rotate_max_abs": float(np.abs(back - records).max()),
+        "center_rotate_text_identical": bool(identical(back, records)),
+        "center_rotate_text_identical_above_1e-12": bool(identical(
             np.where(tiny, 0.0, back), np.where(tiny, 0.0, records))),
         "symmetry_zero_fraction": float(tiny.mean()),
     }
@@ -575,7 +575,7 @@ def main():
     print(json.dumps(rep, indent=1))
 
     results = {"representation": rep}
-    for spin_set, label in ((0, "total"), (1, "magnetisation")):
+    for spin_set, label in ((0, "total"), (1, "magnetization")):
         print(f"\nmodels, {label} set (relative RMS error, held-out structures)")
         results[label] = evaluate(data, spin_set)
 

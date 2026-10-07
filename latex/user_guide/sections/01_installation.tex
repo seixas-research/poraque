@@ -59,12 +59,12 @@ store out as a \file{CHGCAR} \\
 They are the two halves of one loop, and they differ in the data they run on
 --- which decides everything else.
 
-\opt{poraque-committee} runs on a \textbf{labelled} dataset (inputs
+\opt{poraque-committee} runs on a \textbf{labeled} dataset (inputs
 \emph{and} targets), so the true error is available to correlate the
 disagreement against. It answers \emph{is this measure worth trusting?} and
 produces a Spearman coefficient. It costs nothing: the DFT is already done.
 
-\opt{poraque-active-learning} runs on an \textbf{unlabelled} pool (inputs
+\opt{poraque-active-learning} runs on an \textbf{unlabeled} pool (inputs
 only, targets not yet computed). It answers \emph{which structures do I
 compute next?} and produces a ranking and a transfer into the training set.
 It costs the DFT runs it selects.
@@ -256,7 +256,7 @@ its own describe the group it actually formed.
 
 Three things to know before reading a scaling number. The \textbf{effective
 batch size is \opt{batch\_size} times the world size}, so a four-rank run is
-not the same optimiser as the one-rank run it is compared against. \textbf{Rank
+not the same optimizer as the one-rank run it is compared against. \textbf{Rank
 0 alone writes} the checkpoint, the metrics, the figures and the PDF, and alone
 prints. And \textbf{\opt{num\_workers} gets worse, not better}: each rank is
 already a process with a field cache of its own. One rank per GPU, cache on, no
@@ -299,7 +299,7 @@ sbatch --dependency=afterok:${cache} scripts/slurm/poraque_ddp.sbatch configs/tr
 
 The first script runs \opt{poraque-train --config configs/train.yaml
 --cache-only}, which builds the cache exactly as a training run would and
-then stops --- before a model, an optimiser, a process group or a training
+then stops --- before a model, an optimizer, a process group or a training
 loop exists --- with exit status 0 and a summary:
 
 \begin{lstlisting}

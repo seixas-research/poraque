@@ -4,7 +4,7 @@
 Tests for :mod:`poraque.ml.distributed` and the distributed batch sampler.
 
 **Nothing here forms a process group.** NCCL is a CUDA library, the module
-refuses to initialise without one, and the machine this was written on has no
+refuses to initialize without one, and the machine this was written on has no
 CUDA at all — so what is tested is everything that can be decided *before* a
 collective: the Slurm hostlist expansion, the port derivation, which launcher
 is believed, the fallbacks, and the partitioning of shape-bucketed batches
@@ -330,7 +330,7 @@ class TestADisabledContextIsANoOp:
         Without it the assertion passes on a workstation and **fails inside
         any Slurm allocation**, because :func:`describe` then correctly appends
         the lines saying an allocation is present with no group formed — the
-        behaviour the very next test asserts. Reproduced on the LNCC login
+        behavior the very next test asserts. Reproduced on the LNCC login
         node, where it was the only failure outside the ``gpu`` marker and so
         made ``pytest -m "not gpu"``, the CI command, fail on the cluster for a
         reason unrelated to GPUs. This test is about a disabled context, not
@@ -430,7 +430,7 @@ class TestTheBatchesAreSplitNotTheSamples:
         The honest version of the property above, and the one that holds on
         real data: 43 + 11 materials at ``batch_size`` 10 is 7 batches, which
         four ranks do not divide. ``DistributedSampler`` wraps to the front to
-        equalise the counts, so somebody sees a batch twice — and the excess is
+        equalize the counts, so somebody sees a batch twice — and the excess is
         exactly the padding, never more.
 
         Stated as a bound rather than as "no overlap" because the alternative

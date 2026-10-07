@@ -16,7 +16,7 @@ fields already on the grid they will be trained on::
     cache/res32/mp-124/{EXTCAR,CHGCAR}
 
 :func:`build_field_cache` produces that from anything
-:mod:`poraque.data.sources` recognises — DFT run trees, ``poraque-mp``
+:mod:`poraque.data.sources` recognizes — DFT run trees, ``poraque-mp``
 downloads, several of each — so the trainer sees one layout no matter what it
 was given.
 
@@ -43,8 +43,6 @@ import contextlib
 import json
 import os
 import time
-
-import numpy as np
 
 from ..fields import FieldGrid
 from ..fields.hdf5 import DEFAULT_FILENAME
@@ -121,7 +119,7 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
                       gaussian_blur=None, blur_method="spectral", pattern=None,
                       format="auto", spin=False, limit=None,
                       storage="files", compression=None, compression_level=4,
-                      strict_potcar=False, log=None):
+                      strict_potcar=False, log=None, max_spacing=None):
     r"""
     Downsample every material under ``paths`` into one prepared cache.
 
@@ -159,7 +157,7 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
     format : str, optional
         ``"vasp"``, or ``"auto"`` to detect the code from the files present.
     spin : {"auto", True, False}, optional
-        Whether to cache the magnetisation channel alongside the total density.
+        Whether to cache the magnetization channel alongside the total density.
         ``"auto"`` — the default everywhere above this function — **reads the
         sources** and carries it whenever any of them is ``ISPIN = 2``. ``True``
         demands it and raises if the data has none; ``False`` is a deliberate
@@ -228,7 +226,7 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
         raise ValueError(
             f"compression={compression!r} was requested with storage="
             f"{storage!r}. Compression is an HDF5 dataset filter; a text cache "
-            f"has no equivalent, and honouring the flag silently by ignoring "
+            f"has no equivalent, and honoring the flag silently by ignoring "
             f"it would report a saving that never happened. Set "
             f"data.storage: hdf5, or drop the compression setting.")
 
@@ -236,18 +234,19 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
     os.makedirs(cache, exist_ok=True)
     _check_fingerprint(cache, _fingerprint(paths, resolution, fields,
                                            options, spin, storage, compression,
-                                           compression_level, potcar_source))
+                                           compression_level, potcar_source,
+                                           max_spacing))
 
     summary = _load_summary(cache)
     table = _CacheTable([record.identifier for record in records], fields, emit)
     table.header()
     try:
-        for record in records:
+        for position, record in enumerate(records, start=1):
             entry = _build_one(record, cache, resolution, fields, spin,
                                summary.get(record.identifier), storage,
-                               compression, compression_level)
+                               compression, compression_level, max_spacing)
             summary[record.identifier] = entry
-            table.row(record.identifier, entry)
+            table.row(position, record.identifier, entry)
     finally:
         # Written even when the build aborts partway. The record of what did
         # get cached is the most useful thing to survive a failure, and losing
@@ -334,14 +333,14 @@ def _resolve_spin(requested, records, emit):
     Turn ``spin="auto"`` into a decision, by looking at the data.
 
     This is the *first* of the two places that ask whether a dataset is
-    spin-polarised, and it is the one that matters: the second
+    spin-polarized, and it is the one that matters: the second
     (:meth:`~poraque.ml.data.FieldPairDataset._resolve_spin`) inspects the
     **cache**, so whatever is dropped here is invisible to it. The two agreeing
     is not evidence of anything if the first one threw the answer away.
 
     Regression: this function did not exist, and the caller passed
     ``spin=data.spin is True``. With the default ``"auto"`` that is ``False``,
-    so every ``ISPIN = 2`` magnetisation block was discarded on the way into
+    so every ``ISPIN = 2`` magnetization block was discarded on the way into
     the cache and the dataset then reported, truthfully, that the cache held
     no spin. Two layers of auto-detection, and the first was an identity test
     against ``True``.
@@ -349,10 +348,10 @@ def _resolve_spin(requested, records, emit):
     The decision is taken **once for the whole dataset**, not per material: the
     ML layer sizes one operator for one channel count, so a cache with two
     blocks for some materials and one for others could not be trained from. A
-    mixed set therefore resolves to spin, and the unpolarised members get
+    mixed set therefore resolves to spin, and the unpolarized members get
     :math:`m \equiv 0` — which :class:`~poraque.fields.SpinDensity` documents
     as meaningful rather than wasted, since it makes an ``ISPIN = 2`` operator
-    a strict generalisation of an ``ISPIN = 1`` one.
+    a strict generalization of an ``ISPIN = 1`` one.
 
     Parameters
     ----------
@@ -367,7 +366,7 @@ def _resolve_spin(requested, records, emit):
     Raises
     ------
     ValueError
-        When ``spin=True`` is asked of a dataset that carries no magnetisation
+        When ``spin=True`` is asked of a dataset that carries no magnetization
         anywhere -- a channel the data has no values for cannot be trained.
     """
     polarized = [record for record in records
@@ -377,7 +376,7 @@ def _resolve_spin(requested, records, emit):
         if not polarized:
             raise ValueError(
                 "data.spin: true was requested, but none of the "
-                f"{len(records)} material(s) has a magnetisation block. "
+                f"{len(records)} material(s) has a magnetization block. "
                 "Training a channel the data has no values for would fit "
                 "noise to zero. Use data.spin: auto, or check ISPIN in the "
                 "INCARs that produced these densities.")
@@ -385,7 +384,7 @@ def _resolve_spin(requested, records, emit):
     elif requested is False:
         resolved = False
         if polarized:
-            emit(f"  spin: DISCARDING the magnetisation block of "
+            emit(f"  spin: DISCARDING the magnetization block of "
                  f"{len(polarized)} of {len(records)} material(s) "
                  f"(data.spin: false). The cache will hold the total density "
                  f"only.")
@@ -394,7 +393,7 @@ def _resolve_spin(requested, records, emit):
 
     if resolved:
         extra = len(records) - len(polarized)
-        note = (f"; {extra} unpolarised material(s) get m = 0"
+        note = (f"; {extra} unpolarized material(s) get m = 0"
                 if extra else "")
         emit(f"  spin: ISPIN = 2 in {len(polarized)} of {len(records)} "
              f"material(s){note}")
@@ -414,11 +413,12 @@ class _CacheTable:
     up front — the identifiers are all known before the first row, and the rest
     are numeric fields of known width.
 
-    Columns are the two grid shapes, which say what the downsampling did, and
-    the value range of every cached field, which is the cheapest check that it
+    The first column counts the materials, ``i/N``, so a long build says how
+    far it has got. Then the two grid shapes, which say what the downsampling
+    did, and the value range of every cached field, which is the cheapest check that it
     did it correctly: a density that reaches zero, a potential that does not
     straddle zero, or a range differing by orders of magnitude from its
-    neighbours are all visible at a glance and all mean something.
+    neighbors are all visible at a glance and all mean something.
     """
 
     #: "-1.23e+02 .. 4.56e+01" and a little slack.
@@ -427,11 +427,14 @@ class _CacheTable:
     def __init__(self, identifiers, fields, emit):
         self.fields = tuple(fields)
         self.emit = emit
+        self.total = len(identifiers)
+        self.count_width = max(len("file"), 2 * len(str(self.total)) + 1)
         self.label_width = max([len("material")]
                                + [len(name) for name in identifiers])
 
     def header(self):
-        columns = [f"{'material':<{self.label_width}s}",
+        columns = [f"{'file':>{self.count_width}s}",
+                   f"{'material':<{self.label_width}s}",
                    f"{'native grid':>14s}", f"{'cached grid':>13s}"]
         columns += [f"{f'{name} [{FIELD_UNITS[name]}]':<{self.RANGE_WIDTH}s}"
                     for name in self.fields]
@@ -441,8 +444,10 @@ class _CacheTable:
         self.emit(line)
         self.emit("  " + "-" * (len(line) - 2))
 
-    def row(self, identifier, entry):
-        columns = [f"{identifier:<{self.label_width}s}",
+    def row(self, position, identifier, entry):
+        count = f"{position}/{self.total}"
+        columns = [f"{count:>{self.count_width}s}",
+                   f"{identifier:<{self.label_width}s}",
                    f"{_shape_text(entry.get('native')):>14s}",
                    f"{_shape_text(entry.get('shape')):>13s}"]
         for name in self.fields:
@@ -451,8 +456,6 @@ class _CacheTable:
         columns.append("cached" if entry.get("reused")
                        else f"{entry.get('seconds', 0.0):.1f} s")
         self.emit("  " + "  ".join(columns).rstrip())
-        for message in entry.get("warnings", ()):
-            self.emit(f"      note: {message}")
 
     def footer(self):
         self.emit("")
@@ -475,10 +478,10 @@ def _range_text(bounds):
 
 def _fingerprint(paths, resolution, fields, options, spin,
                  storage="files", compression=None, compression_level=4,
-                 potcar_source=None):
+                 potcar_source=None, max_spacing=None):
     """Everything that decides what a cache directory's files contain."""
     potcar_dir = options.get("potcar_dir")
-    return {
+    fingerprint = {
         # What the library actually served, per element, against `potcar_dir`
         # just below, which is only what it was asked for. A run on a node
         # where the library was not mounted builds a cache of analytic
@@ -509,6 +512,11 @@ def _fingerprint(paths, resolution, fields, options, spin,
         "compression_level": (int(compression_level)
                               if compression else None),
     }
+    # Only when set, so every cache built before the key existed keeps a
+    # fingerprint that still matches its own.
+    if max_spacing:
+        fingerprint["max_spacing"] = float(max_spacing)
+    return fingerprint
 
 
 def _check_fingerprint(cache, fingerprint):
@@ -608,7 +616,8 @@ def _write_summary(cache, summary):
 
 
 def _build_one(record, cache, resolution, fields, spin, remembered=None,
-               storage="files", compression=None, compression_level=4):
+               storage="files", compression=None, compression_level=4,
+               max_spacing=None):
     """
     Downsample and write one material, unless it is already there.
 
@@ -616,7 +625,7 @@ def _build_one(record, cache, resolution, fields, spin, remembered=None,
     -------
     dict
         ``native`` and ``shape`` grid shapes, the ``ranges`` of every field
-        written, any Gibbs ``warnings``, and either ``seconds`` or
+        written, and either ``seconds`` or
         ``reused``.
     """
     source = record.source
@@ -630,10 +639,10 @@ def _build_one(record, cache, resolution, fields, spin, remembered=None,
 
     started = time.time()
     native = source.grid(record)
-    reduced = downsampled_grid(native, resolution)
+    reduced = downsampled_grid(native, resolution, max_spacing)
 
     os.makedirs(destination, exist_ok=True)
-    ranges, warnings = {}, []
+    ranges = {}
 
     # Every field is written under a temporary name in its own directory and
     # moved into place with `os.replace`, which is atomic. Two processes
@@ -682,21 +691,12 @@ def _build_one(record, cache, resolution, fields, spin, remembered=None,
                 pending[temporary] = targets[name]
                 reduced_field.write(temporary, augmentation=records or None)
 
+            # The range column shows a band-limited density dipping below
+            # zero (Gibbs ringing around the core peaks), which is an artifact
+            # of the truncation and why the dataset uses the sign-tolerant
+            # asinh transform; it is not reported separately.
             data = reduced_field.data
             ranges[name] = [float(data.min()), float(data.max())]
-
-            # rho and tau are non-negative, but band-limiting a field with
-            # sharp core peaks rings (Gibbs) and can undershoot slightly. That
-            # is an artefact of the truncation, not of the data, and it is why
-            # the dataset uses the sign-tolerant `asinh` normalization.
-            if name in ("CHGCAR", "TAUCAR") and field.data.min() >= 0:
-                negative = int(np.count_nonzero(data < 0))
-                if negative:
-                    warnings.append(
-                        f"{name}: {negative} of {data.size} points "
-                        f"({100 * negative / data.size:.2f}%) went negative, "
-                        f"min {data.min():.3g} (Gibbs ringing from "
-                        f"band-limiting)")
     except BaseException:
         # A half-written temporary is litter, not a cache entry, and it names
         # a process that is no longer running.
@@ -709,7 +709,7 @@ def _build_one(record, cache, resolution, fields, spin, remembered=None,
         os.replace(temporary, final)
 
     return {"native": list(native.shape), "shape": list(reduced.shape),
-            "ranges": ranges, "warnings": warnings,
+            "ranges": ranges,
             "seconds": time.time() - started}
 
 
@@ -724,8 +724,8 @@ def _augmentation_for(record, density):
     only per-atom target the data carries.
 
     One set per density channel, because that is how the cached file is laid
-    out: a spin-polarised density is written as two grid blocks with a set
-    after each, a density read as one channel from a spin-polarised run keeps
+    out: a spin-polarized density is written as two grid blocks with a set
+    after each, a density read as one channel from a spin-polarized run keeps
     the total's set alone. The first set keeps the ``MAGMOM`` line VASP writes
     after it, which a reader skips by the declared record lengths and a VASP
     restart expects to find.
@@ -801,7 +801,7 @@ def _describe_cached(destination, wanted, record, remembered,
     the recomputed entry is written back.
     """
     if remembered and set(remembered.get("ranges", {})) >= set(wanted):
-        return {**remembered, "warnings": [], "reused": True}
+        return {**remembered, "reused": True}
 
     from .sources import FIELD_CLASSES
 
@@ -825,7 +825,7 @@ def _describe_cached(destination, wanted, record, remembered,
             native = None
 
     return {"native": native, "shape": shape, "ranges": ranges,
-            "warnings": [], "reused": True}
+            "reused": True}
 
 
 # ---------------------------------------------------------------------- #
@@ -836,7 +836,7 @@ def build_paw_reference(records, cache, log=None, library=None,
     r"""
     The per-element PAW augmentation table the model bundle carries.
 
-    The one-centre terms are contractions over the converged wavefunctions, so
+    The one-center terms are contractions over the converged wavefunctions, so
     no grid-based model predicts them — but ``ICHARG=1`` needs them, and a
     prediction for a structure with no reference calculation of its own has to
     get them from somewhere. Two somewheres, and which one is right depends on
@@ -852,7 +852,7 @@ def build_paw_reference(records, cache, log=None, library=None,
         surface atoms.
 
     ``source="material"``
-        The previous behaviour: average the training calculations' records per
+        The previous behavior: average the training calculations' records per
         element. More accurate *for an element the training set covers* — on
         this project's platinum data a free-atom record sat 86.6 % RMS from a bulk
         site against 9.9 % for the average — and that gap is the honest cost of
@@ -893,7 +893,7 @@ def build_paw_reference(records, cache, log=None, library=None,
         # wins and the file is rebuilt.
         wanted = "isolated atoms" if source == "atomic" else "training-set average"
         # And a table built before records were read to their declared length
-        # is not reused at all: on spin-polarised data its records carry the
+        # is not reused at all: on spin-polarized data its records carry the
         # MAGMOM line, so it is the wrong length whichever source built it.
         current = all(isinstance(entry, dict)
                       and entry.get("schema", 0) >= RECORD_SCHEMA
@@ -1100,7 +1100,7 @@ def load_paw_profiles(cache):
     * the **core density** from :func:`build_paw_profiles` (``r``,
       ``core_density``, ``pseudo_core_density``, ...);
     * the **augmentation occupancies** from :func:`build_paw_reference`, under
-      ``"augmentation"`` --- the one-centre records ``--add-paw`` writes.
+      ``"augmentation"`` --- the one-center records ``--add-paw`` writes.
 
     An element may carry either or both: a Gaussian-potential dataset has
     augmentation records from its CHGCARs and no POTCAR to take a core from.

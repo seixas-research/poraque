@@ -78,7 +78,7 @@ model as physics.
 ### Feature schemes and templates
 
 Two independent knobs: `features` picks the **input variables**, `template`
-picks how the **target is factorised**.
+picks how the **target is factorized**.
 
 | `features` | Variables given to the engine |
 | --- | --- |

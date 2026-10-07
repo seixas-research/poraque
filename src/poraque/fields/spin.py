@@ -7,9 +7,9 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-Spin-polarised densities (``ISPIN = 2``).
+Spin-polarized densities (``ISPIN = 2``).
 
-A spin-polarised ``CHGCAR`` carries **two** grid blocks rather than one:
+A spin-polarized ``CHGCAR`` carries **two** grid blocks rather than one:
 
 .. code-block:: text
 
@@ -18,7 +18,7 @@ A spin-polarised ``CHGCAR`` carries **two** grid blocks rather than one:
     <block 1>                  rho_up + rho_down   (total)
     augmentation occupancies   ...
     NGXF NGYF NGZF
-    <block 2>                  rho_up - rho_down   (magnetisation)
+    <block 2>                  rho_up - rho_down   (magnetization)
 
 :class:`SpinDensity` stores exactly that pair, in that order, because it is
 what VASP writes and what VASP reads back. The
@@ -26,7 +26,7 @@ what VASP writes and what VASP reads back. The
 (:attr:`up`, :attr:`down`) rather than stored, so a round trip through disk
 cannot silently change convention.
 
-Why the total/magnetisation basis is also the right one to *learn*
+Why the total/magnetization basis is also the right one to *learn*
 ------------------------------------------------------------------
 The two channels are wildly different in scale — :math:`m` integrates to the
 cell's magnetic moment, often a few :math:`\mu_B` against hundreds of
@@ -39,7 +39,7 @@ error can be measured, and keeps the electron count in a single channel that
 
 A non-magnetic system is representable here: :math:`m \equiv 0`. That is a
 useful property rather than a wasted channel, because it makes an
-``ISPIN = 2`` model a strict generalisation of an ``ISPIN = 1`` one, and lets
+``ISPIN = 2`` model a strict generalization of an ``ISPIN = 1`` one, and lets
 a mixed dataset train a single operator.
 """
 
@@ -54,9 +54,9 @@ from .vasp.volumetric import (_open_text, read_volumetric,
 
 def is_spin_polarized(path):
     """
-    Whether a ``CHGCAR``-format file carries a second (magnetisation) block.
+    Whether a ``CHGCAR``-format file carries a second (magnetization) block.
 
-    Reads the file rather than trusting a neighbouring ``INCAR``: the question
+    Reads the file rather than trusting a neighboring ``INCAR``: the question
     is what this file contains, and a directory can hold an ``INCAR`` from a
     different run.
 
@@ -72,7 +72,7 @@ def is_spin_polarized(path):
 
     if is_hdf5_path(path):
         # The store answers this from its own key list, without reading a
-        # value: a magnetisation channel is a `<name>_extra0` dataset.
+        # value: a magnetization channel is a `<name>_extra0` dataset.
         from .hdf5 import is_spin_polarized as hdf5_is_spin_polarized
 
         return hdf5_is_spin_polarized(path)
@@ -87,7 +87,7 @@ def _text_has_second_block(path):
     Scanned rather than parsed. The obvious implementation --
     ``read_volumetric(path, read_all=True)`` and count the blocks -- converts
     every value in the file to a float to answer a yes/no: 0.44 s on a 108³
-    spin-polarised ``CHGCAR``, which the cache builder pays once per material
+    spin-polarized ``CHGCAR``, which the cache builder pays once per material
     and then again to name the cache directory. Looking for the marker instead
     costs a linear scan with no float conversion.
 
@@ -126,7 +126,7 @@ def _text_has_second_block(path):
 
 class SpinDensity:
     r"""
-    Valence density of a spin-polarised calculation.
+    Valence density of a spin-polarized calculation.
 
     Parameters
     ----------
@@ -154,7 +154,7 @@ class SpinDensity:
     (32.0, 2.0)
     """
 
-    name = "spin-polarised valence charge density"
+    name = "spin-polarized valence charge density"
     default_filename = "CHGCAR"
     unit = "e/Ang^3"
     volume_scaled = True
@@ -225,8 +225,8 @@ class SpinDensity:
         The total density alone, as a :class:`~poraque.fields.ChargeDensity`.
 
         Everything in :mod:`poraque.physics` that predates spin support takes
-        the total density, so this is the adapter that lets a spin-polarised
-        prediction be fed to it unchanged. Note that an ``LSDA``/spin-polarised
+        the total density, so this is the adapter that lets a spin-polarized
+        prediction be fed to it unchanged. Note that an ``LSDA``/spin-polarized
         exchange-correlation energy needs both channels and is **not**
         obtainable this way; see :func:`~poraque.physics.energy.xc_energy`.
         """
@@ -248,11 +248,11 @@ class SpinDensity:
         r"""
         Rescale the **total** channel to ``n_electrons``.
 
-        The magnetisation is scaled by the same factor rather than left alone,
+        The magnetization is scaled by the same factor rather than left alone,
         so that :math:`\rho_\uparrow` and :math:`\rho_\downarrow` stay
-        non-negative and their ratio — the physical polarisation at each point
+        non-negative and their ratio — the physical polarization at each point
         — is untouched. Rescaling :math:`\rho` alone would change the local
-        polarisation :math:`m/\rho` everywhere, which is not a normalisation
+        polarization :math:`m/\rho` everywhere, which is not a normalization
         but a different prediction.
 
         See :meth:`~poraque.fields.ChargeDensity.normalized` for why the
@@ -302,7 +302,7 @@ class SpinDensity:
     @classmethod
     def read(cls, path, grid=None):
         """
-        Read a spin-polarised ``CHGCAR``.
+        Read a spin-polarized ``CHGCAR``.
 
         Parameters
         ----------
@@ -317,15 +317,15 @@ class SpinDensity:
         Raises
         ------
         ValueError
-            When the file has only one grid block. A non-spin-polarised file
-            read as spin-polarised would otherwise silently acquire a zero
-            magnetisation, which is a physical claim the file does not make.
+            When the file has only one grid block. A non-spin-polarized file
+            read as spin-polarized would otherwise silently acquire a zero
+            magnetization, which is a physical claim the file does not make.
         """
         structure, raw, extra = read_volumetric(path, read_all=True)
         if not extra:
             raise ValueError(
                 f"{path} carries a single grid block, so it is not a "
-                f"spin-polarised CHGCAR. Read it with ChargeDensity.read, or "
+                f"spin-polarized CHGCAR. Read it with ChargeDensity.read, or "
                 f"check ISPIN in the INCAR that produced it."
             )
 
@@ -362,7 +362,7 @@ class SpinDensity:
     def write(self, path=None, comment=None, columns=5, width=17, decimals=11,
               augmentation=None):
         """
-        Write both blocks in VASP's spin-polarised ``CHGCAR`` layout.
+        Write both blocks in VASP's spin-polarized ``CHGCAR`` layout.
 
         Parameters
         ----------
@@ -372,7 +372,7 @@ class SpinDensity:
             Passed through to
             :func:`~poraque.fields.vasp.volumetric.write_volumetric`.
         augmentation : sequence, optional
-            PAW records. A spin-polarised ``CHGCAR`` carries **two** sets, one
+            PAW records. A spin-polarized ``CHGCAR`` carries **two** sets, one
             after each grid block, because the occupancies are resolved by
             spin channel exactly as the densities are; pass them as a list of
             two blocks, from

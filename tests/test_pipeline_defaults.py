@@ -66,7 +66,7 @@ needs_pt_atom = pytest.mark.skipif(
 # Fixtures
 # ---------------------------------------------------------------------- #
 def gaussian_atom(grid, position, n_electrons=10.0, sigma=0.7):
-    """A normalised Gaussian at a fractional position, in e/Å³."""
+    """A normalized Gaussian at a fractional position, in e/Å³."""
     coords = grid.cartesian_coordinates()
     cell = np.asarray(grid.cell, dtype=float)
     delta = coords - np.asarray(position, dtype=float) @ cell
@@ -127,7 +127,7 @@ def _is_ringing_not_leakage(vacuum, peak, tolerance=1e-3):
 
     **Ringing** — the form factor is tabulated to a finite ``g_max``, so the
     superposition is a band-limited reconstruction and oscillates about zero
-    wherever the true field has a sharp edge. Harmless, an artefact of the
+    wherever the true field has a sharp edge. Harmless, an artifact of the
     representation, and it shrinks as the reference atom's own grid gets finer:
     measured at 3.3e-4 of the peak with this file's 40³/8 Å synthetic atom and
     8.9e-5 with the real 140³/10 Å Pt one.
@@ -168,7 +168,7 @@ def synthetic_library(element="Pt", n_electrons=10.0, augmentation=True):
 class TestDeltaDensityIsTheDefaultTarget:
     def test_the_config_default_is_on(self):
         """
-        The behaviour change itself. Asserted on the dataclass rather than on a
+        The behavior change itself. Asserted on the dataclass rather than on a
         parsed YAML, because a config that states nothing is the case that
         matters — every committed config in this repo states nothing.
         """
@@ -380,7 +380,7 @@ class TestThePawRecordsComeFromTheIsolatedAtom:
         The cached table from the *other* source is not this run's table.
 
         Same failure `cache_tag` exists to prevent one level up: a silently
-        reused artefact answers a question nobody asked.
+        reused artifact answers a question nobody asked.
         """
         (tmp_path / "paw_reference.json").write_text(json.dumps(
             {"Pt": {"values": [9.0], "atoms": 32, "structures": 1}}))
@@ -460,7 +460,7 @@ class TestTheExternalPotentialIsComputedNotRead:
         field = source.read(record, "EXTCAR", grid)
 
         assert not np.allclose(field.data, -999.0)
-        # The computed potential is a neutralised lattice sum: zero mean.
+        # The computed potential is a neutralized lattice sum: zero mean.
         assert abs(field.data.mean()) < 1e-8 * max(np.abs(field.data).max(), 1.0)
 
     def test_the_computed_field_is_the_same_with_or_without_the_decoy(self,
@@ -520,7 +520,7 @@ class TestTheShippedPlatinumAtom:
         assert np.abs(vacuum).max() < 5e-4 * density.data.max()
         assert vacuum.min() < 0.0 < vacuum.max()
 
-    def test_the_ingest_is_memoised_into_the_cache(self, tmp_path):
+    def test_the_ingest_is_memoized_into_the_cache(self, tmp_path):
         first = resolve_library(PT_ATOM, cache=str(tmp_path))
         assert os.path.exists(tmp_path / "atomic_reference.json")
 
@@ -530,9 +530,9 @@ class TestTheShippedPlatinumAtom:
         assert second.fingerprint == first.fingerprint
         assert not any("ingesting" in line for line in lines)
 
-    def test_the_spin_polarised_chgcar_yields_one_augmentation_record(self):
+    def test_the_spin_polarized_chgcar_yields_one_augmentation_record(self):
         """
-        ``ISPIN = 2`` writes the records twice — total, then magnetisation.
+        ``ISPIN = 2`` writes the records twice — total, then magnetization.
         Only the first belongs to a density.
         """
         library = resolve_library(PT_ATOM)

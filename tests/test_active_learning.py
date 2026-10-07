@@ -53,7 +53,7 @@ def structure():
 
 @pytest.fixture
 def pool(tmp_path, grid, structure):
-    """Four candidates carrying only an EXTCAR — an unlabelled pool."""
+    """Four candidates carrying only an EXTCAR — an unlabeled pool."""
     root = tmp_path / "pool"
     rng = np.random.default_rng(0)
     for name in ("mp-001", "mp-002", "mp-003", "mp-004"):
@@ -111,7 +111,7 @@ def tagged_load(monkeypatch):
 class TestDiscoverPool:
     def test_finds_candidates_carrying_only_the_input_field(self, pool):
         """
-        The whole point of an unlabelled pool: the target is what the DFT run
+        The whole point of an unlabeled pool: the target is what the DFT run
         would produce. Requiring a complete pair would find nothing.
         """
         found = discover_pool(pool, "ext2chg")
@@ -169,7 +169,7 @@ class TestScoreCandidate:
     def test_the_l2_and_integral_spreads_ride_alongside(self, members, grid,
                                                         structure, monkeypatch):
         """
-        The JSD normalises each member, so it is blind to the electron-count
+        The JSD normalizes each member, so it is blind to the electron-count
         drift. Reporting it alone would hide exactly the quantity the energy
         needs.
         """
@@ -187,7 +187,7 @@ class TestScoreCandidate:
     def test_a_signed_prediction_withholds_the_jsd(self, members, grid,
                                                    structure):
         """
-        Real behaviour: an untrained operator predicts a density negative over
+        Real behavior: an untrained operator predicts a density negative over
         much of the cell. That is not a probability distribution, and flooring
         it into one would return a number that looks meaningful.
         """
@@ -440,7 +440,7 @@ class TestSelection:
         assert [r["material"] for r in select_top_k(records, 3)] == ["c"]
 
     def test_ranking_table_is_ordered_and_truncated(self):
-        records = [{"material": name, "jsd": value, "jsd_normalised": value,
+        records = [{"material": name, "jsd": value, "jsd_normalized": value,
                     "relative": 0.1, "integral_relative": 0.2}
                    for name, value in [("a", 0.1), ("b", 0.9), ("c", 0.5)]]
         rows = format_ranking(records, limit=2).splitlines()[2:]
@@ -466,7 +466,7 @@ class TestPromote:
         assert os.path.isdir(os.path.join(pool, "mp-001"))
         assert all(not entry["transferred"] for entry in moved)
 
-    def test_move_leaves_the_pool_holding_only_the_unlabelled(self, selection,
+    def test_move_leaves_the_pool_holding_only_the_unlabeled(self, selection,
                                                               pool, tmp_path):
         train = tmp_path / "train"
         promote(selection, str(train), mode="move")
@@ -591,7 +591,7 @@ class TestRunRound:
         with pytest.raises(ValueError, match="no candidate could be scored"):
             run_round(Committee(members), pool, "ext2chg")
 
-    def test_the_result_is_json_serialisable(self, committee, pool):
+    def test_the_result_is_json_serializable(self, committee, pool):
         result = run_round(committee, pool, "ext2chg", n_select=2)
         payload = json.dumps(round_to_dict(result), default=float)
         assert "mp-002" in payload
@@ -630,7 +630,7 @@ class TestRankingTable:
     ``poraque-active-learning`` and ``poraque-committee`` print the same
     measure over the same committee. They had drifted into two hand-written
     tables: different widths, different precision on the same number, a rule a
-    character short of its heading, and the normalisation labelled ``JSD/lnM``
+    character short of its heading, and the normalization labeled ``JSD/lnM``
     in one and ``JSD/lnK`` in the other -- while ``K`` separately names the
     top-K selection in the very same output.
     """
@@ -638,9 +638,9 @@ class TestRankingTable:
     @staticmethod
     def _records(error=False):
         records = [
-            {"material": "cand_04", "jsd": 5.1862e-2, "jsd_normalised": 0.0748,
+            {"material": "cand_04", "jsd": 5.1862e-2, "jsd_normalized": 0.0748,
              "relative": 0.6033, "integral_relative": 0.3316},
-            {"material": "cand_02", "jsd": 4.2185e-2, "jsd_normalised": 0.0609,
+            {"material": "cand_02", "jsd": 4.2185e-2, "jsd_normalized": 0.0609,
              "relative": 0.5150, "integral_relative": 0.3601},
         ]
         if error:

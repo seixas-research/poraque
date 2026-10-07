@@ -121,7 +121,7 @@ class TestClosedFormIdentities:
         assert x > 5 * c
 
 
-class TestNumericalBehaviour:
+class TestNumericalBehavior:
     def test_vacuum_does_not_produce_nan(self):
         """
         Vacuum is where this breaks if it breaks: r_s diverges as rho goes to
@@ -473,8 +473,8 @@ class TestFunctionalIsDeclarable:
     def test_an_unimplemented_functional_warns_rather_than_lying(self,
                                                                 tmp_path):
         """
-        PW91 is recognised and not implemented. Substituting PBE silently
-        would put a mislabelled potential into the Euler-Lagrange residual.
+        PW91 is recognized and not implemented. Substituting PBE silently
+        would put a mislabeled potential into the Euler-Lagrange residual.
         """
         from poraque.fields.io import resolve_xc
 

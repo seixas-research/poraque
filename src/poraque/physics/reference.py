@@ -11,7 +11,7 @@ Isolated-atom reference energies, for cohesive energies.
 
 A total energy is only meaningful against a reference state. Poraquê's own
 totals sit :math:`\approx 10^3` eV per atom away from VASP's because the PAW
-one-centre terms and VASP's ``EATOM`` are absent, and a DFT total energy is in
+one-center terms and VASP's ``EATOM`` are absent, and a DFT total energy is in
 any case referenced to whatever the pseudopotential generator chose. Neither
 number means anything on its own.
 
@@ -224,7 +224,7 @@ class ReferenceEnergies:
             The default is not a convenience. A cohesive energy is only
             meaningful when the two energies being subtracted carry the *same*
             systematic error, and Poraquê's totals sit :math:`\approx 10^3` eV
-            per atom away from VASP's because the PAW one-centre terms are
+            per atom away from VASP's because the PAW one-center terms are
             absent. Subtracting VASP's atomic energy from Poraquê's total
             leaves that offset entirely intact; subtracting Poraquê's own
             atomic energy cancels it, because the same terms are missing from

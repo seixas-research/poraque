@@ -351,7 +351,7 @@ class TestTheObjectiveIsReportedAsOneNumber:
     """
     The log and the report carry the **total** objective and nothing else.
 
-    A physics-informed run's total is what the optimiser stepped on: data
+    A physics-informed run's total is what the optimizer stepped on: data
     fidelity plus every weighted constraint. The per-term split used to be
     logged beside it, in unweighted units that do not sum to the total, which
     made the table three columns wide and two of them incomparable with any
@@ -395,13 +395,13 @@ class TestTheObjectiveIsReportedAsOneNumber:
 class TestTheValidationColumnNamesItsOwnNorm:
     r"""
     ``loss: sobolev`` constrains the gradient as well as the values, so the
-    number watched during training has to be the one being minimised.
+    number watched during training has to be the one being minimized.
 
     The regression this pins is a label, but not only a label. The column read
     ``val rel L2`` whatever the objective was, and the quantity behind it was a
-    plain :math:`L^2` — so a Sobolev run reported a number the optimiser was
+    plain :math:`L^2` — so a Sobolev run reported a number the optimizer was
     not stepping on, plotted it as the validation curve, and *selected the
-    checkpoint on it*. Early stopping was choosing the model that minimised the
+    checkpoint on it*. Early stopping was choosing the model that minimized the
     wrong functional.
 
     The final per-structure table is deliberately untouched: it reports
@@ -456,9 +456,9 @@ class TestTheValidationColumnNamesItsOwnNorm:
         legend = " ".join(lines)
         assert "abs H1 = abs L2 + 0.5 x the absolute L2 of the gradient" in legend
 
-    def test_the_number_is_not_the_l2_relabelled(self, toy):
+    def test_the_number_is_not_the_l2_relabeled(self, toy):
         """
-        The whole point: an H1 error is a different number. Relabelling the
+        The whole point: an H1 error is a different number. Relabeling the
         same value would satisfy a test on the header and none of the reason
         the header was wrong.
         """
@@ -586,7 +586,7 @@ class TestLossSummaryRows:
 # ===================================================================== #
 # Writing the history into the JSON summary
 # ===================================================================== #
-class TestHistorySerialisation:
+class TestHistorySerialization:
     """
     `train` returns per-epoch curves and scalar summaries in one dict, and the
     scalars appear whenever a validation split does — which is the default. A
@@ -628,7 +628,7 @@ class TestTheCostMeasurementsAreNotResults:
     `train` records what a run cost beside what it achieved, and
     `split_history` sorts by *type* rather than by meaning: a list becomes a
     plotted loss curve and a scalar becomes an early-stopping summary. Left in
-    place, `seconds_per_epoch` would be serialised as a second loss curve and a
+    place, `seconds_per_epoch` would be serialized as a second loss curve and a
     VRAM byte count would be filed under early stopping.
     """
 
@@ -647,7 +647,7 @@ class TestTheCostMeasurementsAreNotResults:
         assert set(resources) == {"seconds_per_epoch", "peak_vram_bytes",
                                   "peak_vram_reserved_bytes"}
 
-    def test_what_is_left_still_serialises(self, toy):
+    def test_what_is_left_still_serializes(self, toy):
         history = _train_toy(toy, epochs=3, eval_every=1, validate=True)
         resources = poraque_train.extract_resource_usage(history)
         curves, stopping = poraque_train.split_history(history)
@@ -682,7 +682,7 @@ class TestTorchCompileIsGoneAndSaysSo:
     breaks are still paid for: +7.9 % and +9.4 % per epoch over two modes and
     two repetitions, 200-314 s of cold compilation on top, a validation error
     that moved reproducibly in both arms, and -- on four DDP ranks -- an
-    eighteen-minute first epoch with no output, cancelled.
+    eighteen-minute first epoch with no output, canceled.
 
     The three keys are *retired* rather than accepted-and-ignored. A config
     that still sets them was written to ask for something, and answering "yes"
@@ -842,7 +842,7 @@ class TestFineTuning:
         """
         AdamW's decoupled weight decay applies without a gradient, so frozen
         weights would shrink every step unless they are kept out of the
-        optimiser entirely.
+        optimizer entirely.
         """
         from poraque.ml.training import freeze_lifting_layers
 
@@ -1030,7 +1030,7 @@ class TestFineTuningValidation:
         # Two tasks cannot share one report name.
         assert poraque_train.report_filename(config, "ext2chg", 2) == \
             "ag_au_pt_v2_ext2chg_report.pdf"
-        # A fine-tune never lands on the general model it specialises.
+        # A fine-tune never lands on the general model it specializes.
         config.fine_tuning.enable = True
         assert poraque_train.bundle_path(config) != \
             os.path.join(str(tmp_path), "ag_au_pt_v2.poraque")
@@ -1133,7 +1133,7 @@ class TestStandardOutputTables:
     def test_the_aggregate_is_printed_for_both_splits(self):
         """
         Quoting only the training aggregate is how a training fit gets read as
-        a generalisation estimate.
+        a generalization estimate.
         """
         lines = []
         poraque_train.format_aggregate("ext2chg: training", [self.METRICS],
@@ -1168,8 +1168,8 @@ class TestTheFiveMetricsTheSplitTableReports:
     guessing a lattice.
 
     ``relative_h1`` is deliberately **not** the :math:`H^1` objective
-    :class:`~poraque.ml.losses.SobolevLoss` minimises. That one is two
-    separately-normalised terms combined with ``training.sobolev_weight``, so
+    :class:`~poraque.ml.losses.SobolevLoss` minimizes. That one is two
+    separately-normalized terms combined with ``training.sobolev_weight``, so
     its value depends on a run setting and two runs cannot be compared through
     it. This is the textbook relative Sobolev norm, which has no free
     parameter --- the same discipline
@@ -1280,13 +1280,13 @@ class TestTheFiveMetricsTheSplitTableReports:
 
 class TestTheReportedMetricsAreTheDensityChannel:
     """
-    A spin-polarised prediction is a ``(2, ...)`` stack, and the table is not.
+    A spin-polarized prediction is a ``(2, ...)`` stack, and the table is not.
 
     ``operator.predict`` returns a :class:`~poraque.fields.SpinDensity`
     whenever ``data.spin`` resolved on -- every model trained on the platinum
     data -- and the per-structure metrics were taken over that stack, in a
     table whose unit column says ``e/Ang^3``. A prediction *exact* in rho and
-    wrong only in the magnetisation was measured reporting ``relative_l2``
+    wrong only in the magnetization was measured reporting ``relative_l2``
     1.3e-3, ``mae`` 7.9e-4 and ``max_abs`` 6.1e-3: a density error that does
     not exist. The two new integral metrics fared differently and no better --
     a ``(2, ...)`` shape is not the grid's, so both came back ``None`` and
@@ -1297,7 +1297,7 @@ class TestTheReportedMetricsAreTheDensityChannel:
     """
 
     @staticmethod
-    def _pair(magnetisation_factor=3.0):
+    def _pair(magnetization_factor=3.0):
         import numpy as np
 
         from poraque.fields import SpinDensity
@@ -1310,7 +1310,7 @@ class TestTheReportedMetricsAreTheDensityChannel:
         rng = np.random.RandomState(0)
         density = rng.rand(8, 8, 8) + 1.0
         moment = 1e-3 * rng.randn(8, 8, 8)
-        return (SpinDensity(density, moment * magnetisation_factor, grid,
+        return (SpinDensity(density, moment * magnetization_factor, grid,
                             structure),
                 SpinDensity(density, moment, grid, structure))
 
@@ -1330,17 +1330,17 @@ class TestTheReportedMetricsAreTheDensityChannel:
         assert stacked["relative_h1"] is None
         assert stacked["integral_error"] is None
 
-    def test_the_magnetisation_is_measured_rather_than_dropped(self):
+    def test_the_magnetization_is_measured_rather_than_dropped(self):
         """
         Reducing to rho must not leave half a two-channel model unmeasured ---
         that is the mirror of the mistake being fixed.
         """
-        prediction, target = self._pair(magnetisation_factor=3.0)
+        prediction, target = self._pair(magnetization_factor=3.0)
         values = poraque_train.compare_fields(prediction, target)
         # predicted 3m against m: ||2m|| / ||m|| = 2.
-        assert values["magnetisation_relative_l2"] == pytest.approx(2.0)
+        assert values["magnetization_relative_l2"] == pytest.approx(2.0)
 
-    def test_a_one_channel_field_reports_no_magnetisation_at_all(self):
+    def test_a_one_channel_field_reports_no_magnetization_at_all(self):
         import numpy as np
 
         from poraque.fields import ChargeDensity
@@ -1352,4 +1352,4 @@ class TestTheReportedMetricsAreTheDensityChannel:
         structure = Structure(cell, ["Pt"], [1], np.zeros((1, 3)))
         field = ChargeDensity(np.ones((8, 8, 8)), grid, structure)
         values = poraque_train.compare_fields(field, field)
-        assert "magnetisation_relative_l2" not in values
+        assert "magnetization_relative_l2" not in values

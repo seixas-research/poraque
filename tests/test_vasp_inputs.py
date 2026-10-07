@@ -196,7 +196,7 @@ class TestTheTotalEnergyDeck:
 # The k-point mesh
 # ===================================================================== #
 class TestTheAutomaticMesh:
-    def test_it_is_gamma_centred_by_default(self):
+    def test_it_is_gamma_centered_by_default(self):
         lines = automatic_kpoints((8, 8, 8)).splitlines()
         assert lines[1].strip() == "0"
         assert lines[2].strip() == "Gamma"
@@ -432,14 +432,14 @@ class TestTheOldSpellingStillWorks:
     """
 
     def test_a_bare_path_is_read_as_the_band_mode(self, density):
-        argv, implied = poraque_vasp._normalise([density, "--encut", "400"])
+        argv, implied = poraque_vasp._normalize([density, "--encut", "400"])
         assert implied and argv[0] == "bands"
 
     def test_an_explicit_mode_is_left_alone(self, density):
-        argv, implied = poraque_vasp._normalise(["dos", density])
+        argv, implied = poraque_vasp._normalize(["dos", density])
         assert not implied and argv[0] == "dos"
 
     def test_a_missing_file_is_not_silently_turned_into_a_mode(self):
         """Otherwise a typo'd mode becomes a confusing `bands` failure."""
-        argv, implied = poraque_vasp._normalise(["dosx", "CHGCAR"])
+        argv, implied = poraque_vasp._normalize(["dosx", "CHGCAR"])
         assert not implied and argv[0] == "dosx"

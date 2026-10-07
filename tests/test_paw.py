@@ -93,7 +93,7 @@ def kpoint_lines(text):
 
 
 def gaussian_atom(grid, position, n_electrons=4.0, sigma=0.7):
-    """A normalised Gaussian at a fractional position, in e/Å³."""
+    """A normalized Gaussian at a fractional position, in e/Å³."""
     coords = grid.cartesian_coordinates()
     cell = np.asarray(grid.cell, dtype=float)
     delta = coords - np.asarray(position, dtype=float) @ cell

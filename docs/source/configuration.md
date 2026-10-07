@@ -47,8 +47,8 @@ the settings it governs:
     <setting>: <value>
 ```
 
-There are four: `model.equivariant`, `training.physics_informed`,
-`symbolic.physics` and `fine_tuning`. A setting inside a block is read **only
+There are six: `model.equivariant`, `model.paw`, `model.structure_input`,
+`training.physics_informed`, `symbolic.physics` and `fine_tuning`. A setting inside a block is read **only
 when `enable` is on**; naming one beside a switch that is off warns rather than
 acting, and an unknown one raises, naming the block it was in.
 
@@ -83,7 +83,7 @@ otherwise take minutes of downsampling to report.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `type` | `all` | which map to train: `ext2chg`, `chg2tau`, `all` for both in sequence, or `ext2paw` — see [`paw`](#paw) |
+| `type` | `all` | which map to train: `ext2chg`, `chg2tau`, `all` for both in sequence, `ext2paw` — see [`paw`](#paw) — or `paw2tau` — see [`paw2tau`](#paw2tau) |
 | `name` | `poraque_models` | stem of every file the run writes |
 
 ```yaml
@@ -92,7 +92,7 @@ task:
   name: mp_ag_au_pt
 ```
 
-`name` is the one string every artefact is built from:
+`name` is the one string every artifact is built from:
 
 | | |
 | --- | --- |
@@ -104,7 +104,7 @@ A `task: all` run trains two models and so writes two reports, which are then
 `<name>_ext2chg_report.pdf` and `<name>_chg2tau_report.pdf` — one name cannot
 serve both. Cross-validation writes `<name>_kfold_report.pdf`, and a fine-tune
 writes its weights to `<name>_finetuned.poraque` rather than over the general
-model it specialises.
+model it specializes.
 
 ```{important}
 Two runs that share a `name` share their output files, and the second wins.
@@ -128,13 +128,15 @@ task: ext2chg          # identical to {type: ext2chg}, with the default name
 | `pattern` | `""` | prefix filter on the material subdirectories; empty takes all of them |
 | `format` | `auto` | `vasp`, or `auto` to detect the code from the files present |
 | `resolution` | `32` | longest grid axis after spectral downsampling |
+| `max_spacing` | `null` | largest grid spacing in Å after downsampling — [see below](max-spacing) |
+| `target_scale` | `null` | fixed asinh scale of the density target in e/Å³ — [see below](target-scale) |
 | `potcar_dir` | `null` | POTCAR library, used where the data ships no pseudopotentials |
 | `strict_potcar` | `false` | refuse the Gaussian fallback when a configured library cannot serve an element |
 | `sigma` | `null` | Gaussian pseudo-ion width in Å, where the Gaussian model is reached |
 | `gaussian_blur` | `null` | Gaussian blur width in Å applied to the computed potential |
 | `blur_method` | `spectral` | `spectral` or `ndimage` |
 | `cache_in_memory` | `auto` | keep decoded fields in RAM between epochs — see below |
-| `spin` | `auto` | train on the magnetisation as a second channel — [see below](spin-key) |
+| `spin` | `auto` | train on the magnetization as a second channel — [see below](spin-key) |
 
 (cache-in-memory)=
 ### `cache_in_memory`
@@ -146,16 +148,30 @@ With it off, **every epoch reopens, decompresses and re-parses every field from
 disk**. That produces exactly the same numbers as caching does — and takes
 about ten times as long. Measured on a V100 with 115 structures at 32³:
 `__getitem__` was 59 % of the training loop, 78.9 s over 483 calls, while the
-GPU sat at 2–4 % utilisation waiting on `zlib` and `numpy.array` over a text
+GPU sat at 2–4 % utilization waiting on `zlib` and `numpy.array` over a text
 generator. Turning the cache on took twenty epochs from **168.0 s to 16.3 s**,
 with the validation error identical to five decimals.
 
 It is not a GPU setting. The parse is the same on Apple Silicon and on the CPU;
 what an accelerator adds is a fast device left idle by it.
 
-`auto` estimates the decoded size — grid points × itemsize × channels, over the
-input and target fields — and enables the cache below 4 GiB, logging what it
-decided and what it costs:
+**The cache keeps the normalized sample, not only the field.** Removing the
+parse left the transforms: every epoch still ran the input and target
+normalizations — an asinh over every voxel of every channel — on the CPU, and
+on a fast GPU that, not the operator, was the training loop. Measured on an
+RTX 5060 Ti with the CHONPS set at 48³, the GPU sat at about 2 % utilization
+with every decoded field already in RAM; memoizing the normalized samples took
+an epoch from ~60 s to ~8 s and the GPU to ~99 %, for the same arithmetic. The
+memo cannot go stale, because a dataset's transforms are properties: assigning
+either one — `fit_transforms`, or a validation split handed the training
+split's — empties it, so no sample normalized by a superseded transform
+survives the change.
+
+`auto` estimates what the cache will hold — grid points × itemsize × channels
+over the input and target fields, three times over (the decoded fields, the
+tensors made from them, and the normalized samples described below), plus the
+atomic baseline in δ-density mode — and enables the cache below 4 GiB, logging
+what it decided and what it costs:
 
 ```
   field cache         : in RAM, ~61.3 MiB (data.cache_in_memory: auto)
@@ -244,6 +260,41 @@ be exactly what the pipeline produces at inference time, when no such file
 exists. Standard VASP does not write one anyway.
 ```
 
+(max-spacing)=
+### `max_spacing`
+
+`resolution` caps the **longest** axis, and the others are reduced in
+proportion. That is right for a compact cell and wrong for a long, thin one.
+On the CHONPS set a 3 × 4 × 35 Å cell kept 6 and 8 points on its short axes —
+0.6 Å spacing, where the median cell had 0.2 Å — and such cells were the
+worst-predicted of the validation split by a factor of five. `max_spacing` is
+the second bound, in Å: an axis that `resolution` would leave coarser than it
+is refined to the smallest FFT-friendly count that meets it, but **never past
+its native grid**, since a truncation cannot invent coefficients the
+calculation never had. `null`, the default, is `resolution` alone.
+
+The value is part of the cache tag (`res32_h0.25_potcar`) and of the
+fingerprint, so a cache built with one bound is never read under another, and
+like `resolution` it belongs to the set of keys a `--cache-only` job and the
+GPU job after it must agree on.
+
+(target-scale)=
+### `target_scale`
+
+The density target of `ext2chg` and `ext2paw` is trained through an asinh,
+$y = \operatorname{asinh}(x/s)$, whose scale $s$ is by default fitted to the
+median of the target — of $|\delta
+ho|$ in δ-density mode. The median is a
+statement about the typical voxel, and the typical voxel of a crystal is
+interstitial: on the CHONPS set it is 0.014 e/Å³, which puts most of the target
+in the logarithmic regime, where the objective weighs the near-zero residual
+between atoms about as much as the bonding charge that dominates the physical
+error. `target_scale` fixes $s$ instead, in e/Å³, for every channel of a
+`CHGCAR` target (the magnetization included); 0.1 lowered the held-out
+relative $L^2$ of $
+ho$ there at equal epochs. It has no effect on `chg2tau`
+or `paw2tau`, whose target is $	au$. `null`, the default, fits the median.
+
 (potcar-dir-and-the-gaussian-fallback)=
 ### `potcar_dir` and the Gaussian fallback
 
@@ -259,7 +310,7 @@ data:
 ```
 
 `.gz` and `.Z` entries are read directly, and a flat `POTCAR.Ag` / `Ag.POTCAR`
-layout is recognised too. A run that has its own `POTCAR` ignores the library
+layout is recognized too. A run that has its own `POTCAR` ignores the library
 entirely — it is a fallback, not an override.
 
 Which construction results is the **most consequential single property of a
@@ -344,7 +395,7 @@ of it.
 ```{warning}
 `ndimage` uses `scipy.ndimage.gaussian_filter`, which blurs along *grid* axes
 and is therefore anisotropic in Cartesian space unless the cell is orthogonal —
-on a face-centred cubic cell the two methods differ by 2–6%. `spectral`
+on a face-centered cubic cell the two methods differ by 2–6%. `spectral`
 multiplies by $e^{-G^2\sigma^2/2}$ using the true reciprocal metric and stays
 isotropic on any cell.
 ```
@@ -363,17 +414,17 @@ changing them cannot silently reuse a cache built with different settings.
 | Value | What happens |
 | --- | --- |
 | `auto` | ask the sources whether their `CHGCAR`s carry a second grid block, and settle the channel count for the whole dataset before the cache is written |
-| `true` | demand one: a dataset with no magnetisation **raises** |
+| `true` | demand one: a dataset with no magnetization **raises** |
 | `false` | drop it deliberately, and say so in the log |
 
-This is the switch for spin-polarised training, and there is no other. A
+This is the switch for spin-polarized training, and there is no other. A
 `CHGCAR` from an `ISPIN = 2` run stores two grids, the total density $\rho$ and
-the magnetisation $m = \rho_\uparrow - \rho_\downarrow$; with `spin` resolved
+the magnetization $m = \rho_\uparrow - \rho_\downarrow$; with `spin` resolved
 on, both reach the cache, `ext2chg` predicts them as channels 0 and 1 of one
 output, and `chg2tau` reads both. How many channels there are is a property of
 the data, not of the architecture, which is why the key lives in `data` and why
 `model` has no second one: two switches could disagree, and one of them would
-then be quietly ignored. An unpolarised member of a spin set carries
+then be quietly ignored. An unpolarized member of a spin set carries
 $m \equiv 0$, so a mixed archive trains one two-channel operator rather than
 two datasets. The cache tag says which it holds (`res48_potcar_spin`).
 
@@ -388,7 +439,7 @@ says how it divides:
 ```
 
 `charge` is the data term with the prediction substituted into the density
-channel alone, the magnetisation left at its reference; `mag` is the same the
+channel alone, the magnetization left at its reference; `mag` is the same the
 other way round. Both keep the objective's norm and **its denominator**, the
 norm of the whole $(\rho, m)$ target. That choice is forced rather than
 convenient: a relative error of $m$ on its own divides by $m$, which is
@@ -399,14 +450,14 @@ $\text{data} = \sqrt{\text{charge}^2 + \text{mag}^2}$ per sample, and the
 columns say where the error lives. An $H^1$ objective adds its gradient term
 rather than combining in quadrature, so there the columns rank the channels
 without summing to anything; the log's legend states which case applies.
-`train loss` remains the total the optimiser stepped on, physics terms
+`train loss` remains the total the optimizer stepped on, physics terms
 included.
 
 Both parts are in the metrics JSON's `history`, as `train_loss_charge` and
-`train_loss_magnetisation`, and exist only for a two-channel `ext2chg` target —
-a one-channel run prints neither column. The magnetisation gets its own parity
-figure, `<task>_parity_magnetisation`, on linear axes because $m$ changes sign,
-and its own held-out number, `magnetisation_relative_l2`; the report's
+`train_loss_magnetization`, and exist only for a two-channel `ext2chg` target —
+a one-channel run prints neither column. The magnetization gets its own parity
+figure, `<task>_parity_magnetization`, on linear axes because $m$ changes sign,
+and its own held-out number, `magnetization_relative_l2`; the report's
 performance table stays on the density channel.
 
 ## `model` — the operator's shape
@@ -425,10 +476,12 @@ performance table stays on the density channel.
 | `mode_selection` | `fixed` | `fixed` mode index, or `physical` at constant $G_\mathrm{max}$ |
 | `g_max` | `null` | cutoff wavevector in Å⁻¹; required by `mode_selection: physical` |
 | `equivariant` | `{enable: false}` | rotation-equivariant radial kernel — one block, see below |
+| `structure_input` | `{enable: false}` | structure channels beside $V_\mathrm{ext}$ for `ext2chg` and `ext2paw` — one block, see below |
 | `paw` | `{enable: false}` | the `ext2paw` operator: pseudo-density plus PAW occupancies — one block, see below |
+| `occupancy_channels` | `8` | `paw2tau` only: field channels the input occupancies are written into — see [`paw2tau`](#paw2tau) |
 | `pauli_residual` | `false` | structural $\tau\ge\tau_\mathrm{vW}$ for `chg2tau` |
 | `pauli_scale` | `null` | initial Pauli scale in eV/Å³; `null` fits it from the training split |
-| `learn_pauli_scale` | `true` | optimise that scale alongside the backbone |
+| `learn_pauli_scale` | `true` | optimize that scale alongside the backbone |
 
 ### `width`, `modes`, `n_layers`
 
@@ -446,7 +499,7 @@ serves materials whose grids differ in size.
 `silu`, `gelu`, `relu` and `tanh` are stateless: one fixed function, no
 parameters, nothing to learn. `kan` is the Kolmogorov-Arnold family, where
 **each channel learns its own** function, applied elementwise to every voxel of
-that channel. Which one, and how it is parameterised, comes from `kan_setup`:
+that channel. Which one, and how it is parameterized, comes from `kan_setup`:
 
 ```yaml
 model:
@@ -459,7 +512,7 @@ model:
 The block is read **only** when `activation: kan`; given beside a stateless
 activation it warns rather than being silently ignored, and an unknown key
 inside it raises. Omitting `variant` gives `bspline`, the original KAN paper's
-own parameterisation.
+own parameterization.
 
 Six of the seven hyperparameters are read by one variant each — `grid_size`,
 `spline_order` and `grid_range` by `bspline` (and the first and third by `rbf`,
@@ -485,6 +538,56 @@ carry.
 Without it the operator sees the field but not the cell it lives in, and cannot
 distinguish two materials whose grids agree while their lattice vectors do not.
 Keep both on unless deliberately ablating them.
+
+(structure-input)=
+### `structure_input`
+
+One block — see [Optional features are blocks](#enable-blocks):
+
+```yaml
+model:
+  structure_input:
+    enable: true
+    superposition: true    # rho_sup, the delta-density baseline, as a channel
+    elements: auto         # one superposition per element of the data, or a list
+```
+
+The operator of `ext2chg` is handed $V_\mathrm{ext}$ and must work out from
+it, voxel by voxel, *which* atoms surround a point and how far away they are
+before it can say anything about the bonding charge there. The potential
+carries that information, but only implicitly, in the shape of each ion's
+local pseudopotential, and a network of a few layers spends much of its depth
+decoding it. This block states it outright, as extra input channels after the
+potential:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enable` | `false` | the potential alone, or the potential and the channels below |
+| `superposition` | `true` | lead with $\rho_\mathrm{sup}$, the superposition of isolated atoms the δ-density baseline already builds |
+| `elements` | `auto` | one channel per element — that element's atoms alone, superposed; `auto` is every element of the training data, a list names them, `[]` gives none |
+
+The per-element channels sum to $\rho_\mathrm{sup}$, and an element absent
+from a structure is a channel of zeros. All of them share one asinh scale, the
+median of $|\rho_\mathrm{sup}|$, because a scale fitted to a channel that is
+mostly zeros would be its noise floor.
+
+Every channel is a scalar field built from radial form factors of the
+isolated-atom library, so the operator that reads them stays equivariant under
+rotations, inversion and translations, and every one is a function of the
+geometry alone: at inference they are rebuilt from the structure exactly as the
+potential is, and a caller still hands over a potential and nothing else. The
+library is therefore required — `data.atomic_reference`, with
+`data.delta_density` on — and the block applies only to the two tasks whose
+input is $V_\mathrm{ext}$, `ext2chg` and `ext2paw`. The checkpoint records
+the resolved block, element list included, because an input-channel count
+alone cannot say which channels the weights expect; a structure holding an
+element outside that list is refused at inference rather than having its atoms
+silently vanish from the per-element channels while remaining in the potential.
+
+Measured on 785 CHONPS cells with the same backbone, the channels took the
+held-out relative $L^2$ of $\rho$ from 4.4 % to 3.7 % at epoch 10 — one
+comparison, early in training, so a reason to try the block rather than a
+settled number.
 
 ### `mode_selection` and `g_max`
 
@@ -669,17 +772,20 @@ model:
 | `width` | `64` | the FNO backbone's channels, as `model.width` |
 | `modes` | `16` | its retained Fourier modes per axis, as `model.modes` |
 | `n_layers` | `4` | its Fourier layers, as `model.n_layers` |
-| `readout_g_max` | `auto` | the band in Å⁻¹ read at each atom; `auto` is 95 % of the coarsest training grid's Nyquist frequency |
+| `readout_g_max` | `auto` | the band in Å⁻¹ read at each atom; `auto` is 95 % of the coarsest Nyquist frequency over the training and validation grids |
 | `occupancy_weight` | `1.0` | the per-atom term against the field objective, in training and in the validation score alike |
+| `neighbor_min` | `2.2` | first of ten neighbor-kernel centers in Å, below the fixed last center at 5.8 Å; 0.6 also covers short CHON bonds |
+| `magnetization_weight` | `1.0` | weight of the magnetization record set in the occupancy loss and score, against the charge set's |
+| `readout_cache_mib` | `1024` | device memory for the readout's spectral kernels; a runtime setting, not in the checkpoint |
 
 `ext2paw` maps $V_\mathrm{ext}$ to two things at once: the pseudo-density on the
 grid, as `ext2chg` does, and every atom's **augmentation occupancies**
-$\rho(\ell\ell'LM)$ — the one-centre PAW terms VASP writes after the grid, which
+$\rho(\ell\ell'LM)$ — the one-center PAW terms VASP writes after the grid, which
 together with the pseudo-density are what an all-electron density is
 reconstructed from. They are not a field. There are 138 per atom for
 `PAW_PBE Pt` — projector channels d, d, s, s, p, p, in the POTCAR's order —
-and one set per density channel, so a spin-polarised dataset keeps the
-magnetisation's set as well.
+and one set per density channel, so a spin-polarized dataset keeps the
+magnetization's set as well.
 
 `ext2paw` is not a link of the chain — `all` still means `ext2chg` followed by
 `chg2tau` — and the two switches are checked against each other rather than
@@ -699,11 +805,34 @@ unchanged.
 onto solid-harmonic Gaussians $r^L Y_{LM}(\hat r)\,e^{-r^2/2s_n^2}$. It is the
 decoder half of a graph neural operator, with one constraint that was not
 optional. The fields are first restricted to one band
-$|\mathbf G| \le$ `readout_g_max` and resampled to a common spacing, so every
-cell is integrated with the same quadrature. A readout of the DFT density
+$|\mathbf G| \le$ `readout_g_max`. At low bands, Fourier-wave angular integrals
+and radial Gauss-Legendre quadrature resolve the narrow kernels without a huge
+spatial grid. At higher bands the original common-spacing spatial quadrature
+is retained. Resolving the field alone does not guarantee resolving the kernel.
+A readout of the DFT density
 integrated on each grid as it came scored 3 % on nanoparticles it had seen and
 184 % on held-out ones, whose grid spacing differs; over one band, 4.9 %. A grid
 too coarse to supply the band **raises**, at training and at inference.
+
+`auto` takes the band from the validation grids as well as the training ones.
+The band is a property of the geometry, not of any target, and a held-out cell
+coarser than every training cell would otherwise stop the run at its first
+validation pass rather than before the first epoch.
+
+The readout's kernels depend only on a cell and its grid, so they are built
+once per geometry — on the CPU, with SciPy's Bessel functions — and kept on the
+device, least recently used evicted first, within `readout_cache_mib`. A
+training split whose kernels exceed the budget rebuilds the evicted ones every
+epoch, and that rebuild then dominates the epoch: 64 MiB was far below the
+~360 MB the 785 CHONPS geometries need at a 6 Å⁻¹ band, and the 1024 MiB
+default holds them all. The setting changes how often a kernel is computed,
+never what it is, so it is not part of the checkpoint.
+
+The geometric neighbor features retain ten Gaussian channels of width 0.3 Å,
+under a 6 Å cutoff. `neighbor_min` changes their first center, preserving the
+original 2.2–5.8 Å range by default. The experiment in `experiments/chon_ext2paw`
+tests 0.6–5.8 Å for shorter covalent bonds. Their actual centers are checkpoint
+buffers; loading an older checkpoint preserves its features.
 
 **An equivariant head per element.** Each L block of the record is one map
 shared across M, gated by an MLP over the invariants, with a linear path beside
@@ -712,10 +841,21 @@ rotates its predicted occupancies with the crystal, measured to 7e-15 in double
 precision. The layout of each element's record comes from the POTCAR's
 `Non local Part`, so a dataset without POTCARs cannot train it.
 
-**An invertible target.** The records train with L = 0 centred and every
+**An invertible target.** The records train with L = 0 centered and every
 (set, L, pair) block scaled to unit RMS — both fitted on the training split,
 stored in the checkpoint and inverted at prediction — and every L block weighs
 the same in the loss. On raw records the loss would be 99 % the L = 0 block.
+
+**One weight per record set.** A spin-polarized density carries a second set,
+the magnetization's, and with every (set, L) block weighed alike its L > 0
+blocks — 0.005 % of the occupancy norm on the CHONPS set, and as unpredictable
+from the potential as the field magnetization is (98 % held-out error at
+L = 1) — were most of the occupancy loss and of the score the best epoch is
+chosen on. `magnetization_weight` scales that set against the charge set's;
+below one, the charge blocks drive both. The weights are normalized to their
+mean, so the default of 1.0 is the unweighted loss to the bit, and the
+normalization and its inverse do not depend on them. A one-channel dataset has
+no second set and ignores the key.
 
 The training log gains two columns: `val occ`, the relative RMS of the
 held-out occupancies in physical units, and `occ loss`, the training term on the
@@ -732,8 +872,12 @@ A bundle holding an `ext2paw` operator gives `poraque-inference --add-paw` a
 fourth PAW source, `model`. `auto` prefers it to the averaged table.
 
 The cache carries the records; a cache built before 16 September 2026 dropped
-them, so delete it and let it rebuild. A dataset built for `ext2paw` yields,
-beside the usual `input` and `target`:
+them, so delete it and let it rebuild. `FieldPairDataset.site_records(i)`
+returns one structure's — occupancies, record lengths, atomic numbers and
+fractional positions, in the file's atom order — for both tasks that carry
+them: as the target of `ext2paw` and as the input of
+[`paw2tau`](#paw2tau). A dataset built for either yields, beside the usual
+`input` and `target`:
 
 | Key | Shape | |
 | --- | --- | --- |
@@ -747,6 +891,58 @@ beside the usual `input` and `target`:
 Not yet supported, and refused before the cache: `--kfold` (the transform is
 fitted per split, not per fold), fine-tuning (a pretrained bundle has no
 occupancy head to adapt), and an f-channel element, whose records reach L = 6.
+```
+
+(paw2tau)=
+### `occupancy_channels` and the `paw2tau` task
+
+`paw2tau` is the second link of the chain for a PAW density: the kinetic
+energy density from the pseudo-density **and** every atom's augmentation
+occupancies, the on-site part the grid cannot hold, entering as input.
+
+```yaml
+task:
+  type: paw2tau
+model:
+  occupancy_channels: 8     # field channels the occupancies are written into
+```
+
+What `ext2paw` predicts is exactly what `paw2tau` reads, which is the route
+this project takes to a total energy:
+$V_\mathrm{ext}\to(\tilde\rho,\rho^a_{ij})\to\tau$. The data is the same as `chg2tau`'s — a material needs
+a `CHGCAR` with its records and a `TAUCAR` — and the records come from the
+input density, read by the same `site_records`.
+
+The operator is the ordinary FNO with more input channels. A
+{class}`~poraque.ml.paw.SiteWriter`, the transpose of the `ext2paw` readout,
+writes each atom's normalized record as a field: atom-centered solid-harmonic
+Gaussians $r^L Y_{LM}(\hat r)\,e^{-r^2/2s^2}$ at three widths (0.25, 0.45 and
+0.8 Å), with coefficients from one learned map per element and L, **shared
+across M**. A rotation of the atom's occupancies therefore rotates the kernel
+it writes, the written field is a scalar field, and the operator reading it
+stays equivariant. The field is built in reciprocal space, where it is exact:
+by Hobson's theorem the Fourier transform of a solid harmonic times a Gaussian
+is the same solid harmonic of $\mathbf G$ times a Gaussian, so each atom is a
+phase $e^{-i\mathbf G\cdot\mathbf R_a}$, the periodic sum over images comes
+free with the inverse FFT, and nothing depends on the grid but the band it can
+hold. The `occupancy_channels` written fields are concatenated after the
+density, and an {class}`~poraque.ml.paw.OccupancyInputModel` hands the whole
+stack to {class}`~poraque.ml.fno.FNO3d`. The records are normalized as
+`ext2paw` normalizes its target — the same `OccupancyTransform`, fitted on the
+training split and stored in the checkpoint — and their layouts come from the
+POTCAR, so here too a dataset without POTCARs cannot train it.
+
+`occupancy_channels` is read by `paw2tau` alone. Its operator cannot predict
+from a density by itself: `FieldOperator.predict(field, sites=...)` needs the
+structure's records, a dataset's `site_records(i)` or occupancies, species
+and positions assembled by hand, and raises without them.
+
+```{warning}
+`paw2tau` is refused under `--kfold` and under fine-tuning, as `ext2paw` is
+and for the same reasons. It is not yet wired into `poraque-inference` or the
+ASE calculator, which still run `ext2chg` then `chg2tau`; chaining `ext2paw`
+into `paw2tau` for a total energy is the next step, not a feature of this
+release.
 ```
 
 ### `pauli_residual` and its scale
@@ -778,11 +974,12 @@ the training log reports any reference points that violate it.
 | `early_stopping` | `100` | stop after N epochs without validation improvement; `0` disables |
 | `epochs` | `300` | passes over the training set |
 | `batch_size` | `4` | maximum samples per grid-shape bucket |
+| `samples_per_step` | `0` | structures per optimizer step, accumulated across buckets; `0` steps once per batch |
 | `learning_rate` | `0.002` | AdamW step size |
 | `weight_decay` | `0.0001` | AdamW weight decay |
 | `scheduler` | `cosine` | cosine decay, or `null` for a constant rate |
 | `grad_clip` | `1.0` | global gradient-norm clip; `0` disables |
-| `seed` | `0` | weight initialisation, batch order and fold shuffling |
+| `seed` | `0` | weight initialization, batch order and fold shuffling |
 | `device` | `auto` | `auto`, `cuda`, `mps` or `cpu` |
 | `strict_device` | `false` | abort instead of falling back to the CPU — see below |
 | `distributed` | `auto` | `auto` or `off`; multi-GPU over NCCL when the launcher describes a group |
@@ -854,7 +1051,7 @@ first epoch — the parse the cache removes is paid N times instead of once.
 Raise `num_workers` only when the data genuinely does not fit in RAM, which is
 the case `cache_in_memory: false` exists for.
 
-`pin_memory` is a CUDA transfer optimisation and nothing else: `auto` is `true`
+`pin_memory` is a CUDA transfer optimization and nothing else: `auto` is `true`
 there and `false` everywhere, since it does not help on Metal and some PyTorch
 versions warn when asked for it.
 
@@ -901,7 +1098,7 @@ of their timing.
 On four ranks it did not merely lose. With `--distributed auto` and 60 epochs,
 in the same allocation as an uncompiled four-rank run that finished in 86.6 s,
 the compiled run sat **eighteen minutes in the first epoch without printing an
-epoch line** and was cancelled. A configuration key whose failure mode is a
+epoch line** and was canceled. A configuration key whose failure mode is a
 silent deadlock inside a queue allocation is the hazard
 [`strict_device`](strict-device) exists to remove, pointing the other way.
 
@@ -941,10 +1138,10 @@ result is bisected against a single-device baseline.
 Three consequences, all of them visible in the run log:
 
 - The **effective batch size is `batch_size` × the world size**. A four-rank
-  run at `batch_size: 10` steps on 40 samples, so it is not the same optimiser
+  run at `batch_size: 10` steps on 40 samples, so it is not the same optimizer
   as the one-rank run it is compared against — halve the learning rate or
   quarter the batch size if the comparison is meant to be of the same
-  optimisation.
+  optimization.
 - **Rank 0 alone writes** the checkpoint, the metrics, the figures and the PDF,
   and alone prints.
 - **The batches are split, not the samples.** `ShapeBucketSampler` groups
@@ -981,7 +1178,7 @@ select, no structures to name.
 
 `enable_kfold` swaps that for K-fold cross-validation: each fold trains a fresh
 model on *K*−1 groups and scores it on the group held out. It answers a
-different question — whether the architecture generalises — and produces *K*
+different question — whether the architecture generalizes — and produces *K*
 models rather than one to deploy. `valid_fraction` is ignored, since the folds
 define the splits. Setting `k_folds` to the number of structures gives
 leave-one-out.
@@ -989,21 +1186,21 @@ leave-one-out.
 ```{tip}
 Splitting is always at the *structure* level: whole materials move together. A
 voxel-level split would place the same crystal on both sides, and since
-neighbouring voxels are strongly correlated the score would look excellent
+neighboring voxels are strongly correlated the score would look excellent
 while saying nothing about transfer to a new material.
 ```
 
 ```{important}
 `valid_fraction` defaults to **0.2**, so an ordinary run reports a genuine
 held-out score and `early_stopping` is active. The trade-off is that the model
-has then seen only 80% of the data. For the final deployable artefact set
+has then seen only 80% of the data. For the final deployable artifact set
 `valid_fraction: 0` — accepting that its own metrics become a training fit —
-and quote a separate `--kfold` run for the generalisation number.
+and quote a separate `--kfold` run for the generalization number.
 ```
 
 ```{warning}
 With `valid_fraction: 0` the reported metrics are **training fit**, carrying no
-generalisation claim. On the reference dataset they are about four times better
+generalization claim. On the reference dataset they are about four times better
 than the cross-validated score. Quote the cross-validated numbers.
 ```
 
@@ -1077,15 +1274,36 @@ identical time. With the field cache on, throughput responded to the batch up
 to 16 and was flat thereafter.
 
 `peak_vram_bytes` and `seconds_per_epoch` in the metrics JSON are what a sweep
-over this should be read from; before they were recorded there, the only route
+over `batch_size` should be read from; before they were recorded there, the only route
 to either was sampling `nvidia-smi` from outside the process. The whole run's
 cost, stage by stage, closes the log ([the resource profile](resource-profile)).
+
+### `samples_per_step`
+
+One optimizer step per batch weighs every *batch* alike, and so a structure by
+the inverse of its batch's size. On a dataset whose grid shapes are mostly
+unique that is far from neutral: a structure alone in its bucket moves the
+weights as far as four structures sharing the commonest shape do together, at
+the default `batch_size: 4`, and the cells that happen to have odd shapes are
+fitted at the expense of the rest.
+
+`samples_per_step: N` accumulates gradients over consecutive shape-bucketed
+batches until at least N **structures** have been seen, then takes one step.
+Each batch's loss is weighted by its size, so every structure carries the
+same weight whatever bucket it fell in. Bucketing is untouched — no batch ever
+mixes shapes — and it is only the step that spans several of them. The
+gradient of a step is the mean over its structures, and the epoch's remainder,
+fewer than N, takes a step of its own rescaled to remain a mean. `0`, the
+default, keeps the one-step-per-batch behavior. The optimizer then takes about
+one step per N structures rather than one per batch, which is a change of
+schedule as well as of weighting; compare against a baseline at matched steps,
+not only at matched epochs.
 
 ### `loss` and `sobolev_weight`
 
 Four objectives, on two named axes:
 
-| `loss` | normalised per sample | gradients in the objective |
+| `loss` | normalized per sample | gradients in the objective |
 | --- | --- | --- |
 | `absolute_l2` | no | no |
 | `relative_l2` | yes | no |
@@ -1119,7 +1337,7 @@ on the held-out set:
 
 That is not only a label. Early stopping and the checkpoint are decided on this
 number, and while it read `val rel L2` regardless a gradient-constrained run
-was selecting the model that minimised a functional it was not training on. The
+was selecting the model that minimized a functional it was not training on. The
 four are not comparable with each other — which is why the **per-structure
 table at the end of a run reports relative $L^2$ whatever the objective was**.
 That is the number to quote, and the one that lets two runs be put side by
@@ -1127,7 +1345,7 @@ side.
 
 ```{note}
 `loss: sobolev` was renamed on 2026-08-31. It named the gradient term and left
-the norm implicit, and offered no unnormalised form at all. It now raises,
+the norm implicit, and offered no unnormalized form at all. It now raises,
 naming `relative_h1` (what it did) and `absolute_h1` as its replacements.
 ```
 
@@ -1142,10 +1360,10 @@ training:
     electron_count_weight: 0.1
 ```
 
-| Key | Constraint it penalises the violation of | Shipped |
+| Key | Constraint it penalizes the violation of | Shipped |
 | --- | --- | --- |
 | `enable` | — whether any of the below is evaluated | `auto` |
-| `electron_count_weight` | $\int\rho\,d\mathbf{r} = N$ (`ext2chg`) | `0.1` |
+| `electron_count_weight` | $\int\rho\,d\mathbf{r} = N$ (`ext2chg`, `ext2paw`) | `0.1` |
 | `positivity_weight` | non-negativity of the predicted field | `0.0` |
 | `von_weizsacker_weight` | $\tau \ge \tau_\mathrm{vW}$ (`chg2tau`) | `0.0` |
 | `euler_lagrange_weight` | orbital-free stationarity residual (`ext2chg`) | `0.0` |
@@ -1163,7 +1381,7 @@ dimensionless, so a single weight can serve a heterogeneous dataset.
 
 `true`
 : **raises** when no weight is set. A run that declares physics-informed
-  training and silently optimises the supervised baseline has an entirely
+  training and silently optimizes the supervised baseline has an entirely
   ordinary loss curve and a report that says otherwise; nothing anywhere would
   contradict it.
 
@@ -1202,6 +1420,28 @@ things make it the first constraint to reach for:
 own integral. That is what lets it work on an archive that publishes $\rho$ and
 nothing else.
 
+For `ext2paw`, this constrains the total charge channel of the grid density.
+The [VASP CHGCAR convention](https://vasp.at/wiki/index.php/CHGCAR) defines its
+integral as `NELECT`; the PAW occupancy records are separate targets and are
+not summed into that integral. Magnetization is not constrained by this term.
+The loss uses physical units after the inverse transform and restoration of
+the atomic baseline in `delta_density` mode. Using the reference integral
+also preserves the electron count of charged training structures.
+
+This is a **soft penalty**, so a positive weight does not guarantee exact
+conservation. The validation score includes the weighted mean squared count
+error; the log reports `val |dN/N|` before output normalization. The JSON history
+contains `train_electron_count_loss`, `val_electron_count_loss`, and
+`val_electron_count_error` (a relative fraction, not a percentage).
+
+`configs/train_ext2paw_chon_charge.yaml` enables this term with weight `1.0`
+using the CHON architecture selected by the earlier benchmark. This initial
+weight has not been selected by a hyperparameter sweep:
+
+```bash
+poraque-train --config configs/train_ext2paw_chon_charge.yaml
+```
+
 *It fixes what the data term cannot.* A relative $L^2$ is indifferent to a
 percent of charge spread thinly through the interstitial region, and a total
 energy is not. Across a chemical space where $N$ runs from ten to ninety
@@ -1209,14 +1449,14 @@ electrons per cell, nothing else pins the scale per material.
 
 At `0.1` the constraint sits an order of magnitude below the data term, which
 is the intended balance: the physics guides, the data decides. The training log
-reports one number, `train loss`: the **total** objective the optimiser stepped
+reports one number, `train loss`: the **total** objective the optimizer stepped
 on, data fidelity plus every weighted constraint. That total is the only
 quantity comparable between two runs — the individual terms are reported by the
 loss unweighted, so they do not sum to it.
 
 ```{warning}
 Introduce them one at a time against a measured baseline, and only once the
-data term has converged — a physics residual evaluated at random initialisation
+data term has converged — a physics residual evaluated at random initialization
 is noise. A badly scaled constraint degrades accuracy while looking principled.
 ```
 
@@ -1257,17 +1497,17 @@ One row per split — `train`, `validation`, `all` — and five columns:
 | $\lvert\Delta N\rvert$ | Conservation. For `ext2chg` this is the electron-count error in electrons, and it is the metric a pointwise loss controls worst. |
 
 The `train` and `validation` rows read against each other **are** the
-generalisation gap. That is the single most useful thing the table says, and it
+generalization gap. That is the single most useful thing the table says, and it
 is why the splits are rows.
 
 ```{note}
 The rel. $H^1$ here is the textbook relative Sobolev norm, which has no free
-parameter — **not** the $H^1$ objective `loss: relative_h1` minimises, whose
+parameter — **not** the $H^1$ objective `loss: relative_h1` minimizes, whose
 value depends on `sobolev_weight` and so cannot be compared between two runs.
 Every column is computed without consulting the loss, for exactly that reason.
 
 For a two-channel model every number is the **density** channel; the
-magnetisation is measured separately, as `magnetisation_relative_l2` in the
+magnetization is measured separately, as `magnetization_relative_l2` in the
 metrics JSON, and the report says so in its caveats.
 
 The table lists *splits*, not structures: it used to print one row per
@@ -1283,8 +1523,7 @@ individually. The per-structure figures — and `mse`, `rmse`, `r2`,
 The last thing `poraque-train` prints is what the run cost:
 
 ```text
-RESOURCE PROFILING SUMMARY
-==============================================================================
+[RESOURCES]
   stage                               wall time     peak RSS
   ----------------------------------------------------------
   cache                                   0.0 s    222.6 MiB
@@ -1303,8 +1542,9 @@ RESOURCE PROFILING SUMMARY
   peak RSS: the process's high-water resident set so far (getrusage), so it never falls between rows
 ```
 
-(That is a synthetic smoke run; the shape is what matters.) Each stage is timed
-after a device synchronisation, so a GPU stage is charged for its compute
+(That is a synthetic smoke run; the shape is what matters. Like every block of
+the log it opens with its `[NAME]` header — see {doc}`output`.) Each stage is timed
+after a device synchronization, so a GPU stage is charged for its compute
 rather than for the kernels it queued. The memory columns answer the question an
 allocation is sized from:
 
@@ -1333,7 +1573,7 @@ cross-validation of each task as one stage.
 ### `save_raw_plot_data`
 
 A figure is an argument someone will later want to make differently — in a
-journal's colours, at a journal's size, with two runs on one axis. Re-running
+journal's colors, at a journal's size, with two runs on one axis. Re-running
 the model to recover the numbers is the expensive way to do that, so with this
 on each figure method writes what it drew, beside what it drew:
 
@@ -1355,19 +1595,19 @@ read back.
   `val_abs_h1` for an `absolute_h1` run). Epochs on which validation was not
   measured leave that cell **empty** rather than interpolated — filling them
   would put points in the file the run never measured. There is no physics
-  column: `train_loss` is the total the optimiser stepped on, and the per-term
+  column: `train_loss` is the total the optimizer stepped on, and the per-term
   breakdown is not recorded.
 - **The parity plot** is one row per *occupied* bin: `split`, `reference`,
   `prediction`, `count`, `density`. Long format, because that pivots straight
   back into a `pcolormesh`; occupied bins only, because a 200-bin grid is
   40 000 cells of which a few thousand carry anything. The bin edges go in
-  their own file, since a log axis makes them unrecoverable from the centres.
+  their own file, since a log axis makes them unrecoverable from the centers.
   `count` is what the figure drew, so on log axes it leaves out every sampled
   voxel at which reference or prediction is not positive; the panel titles give
-  the sample itself. A spin-polarised run writes the same pair again for $m$,
-  as `<task>_parity_magnetisation`.
+  the sample itself. A spin-polarized run writes the same pair again for $m$,
+  as `<task>_parity_magnetization`.
 - **The slice figure** stores the three panels as arrays — `reference`,
-  `prediction`, `error` — with the colour limits the figure used. The error is
+  `prediction`, `error` — with the color limits the figure used. The error is
   *stored*, not left to be recomputed: a reader who reconstructs it and gets
   something else then knows the file is inconsistent, rather than trusting
   their own subtraction.
@@ -1390,7 +1630,7 @@ model:    {pauli_residual: true}
 training: {valid_fraction: 0, epochs: 200}
 ```
 
-Measure generalisation:
+Measure generalization:
 
 ```yaml
 task:     {type: all, name: poraque_models_cv}

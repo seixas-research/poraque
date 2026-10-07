@@ -11,13 +11,13 @@ first release made the checkpoint carry the PAW data an inference run needs.
 The second turned the occupancies into a training target, measured what
 predicts them, and built an operator for them. The third is unrelated to PAW:
 it makes a training run report its own cost, draw its parity over every
-structure, and split a spin-polarised loss into its two channels.
+structure, and split a spin-polarized loss into its two channels.
 
 | release | what it holds | tests after |
 | --- | --- | --- |
 | `v26.9.12` | `--from-incar` implies `--to-vasp --add-paw`; checkpoint = `{model_state_dict, config, paw_profiles}` with POTCAR core densities | 2144 passed, 81 skipped |
 | `v26.9.13` | augmentation records through cache and batch; `ext2paw` task and `model.paw` block; the occupancy experiment; the `ext2paw` operator | 2215 passed |
-| `v26.9.14` | resource profile; parity over every structure; charge and magnetisation parts of the loss | 2234 passed, 83 skipped |
+| `v26.9.14` | resource profile; parity over every structure; charge and magnetization parts of the loss | 2234 passed, 83 skipped |
 
 Every count is with `PORAQUE_TEST_POTCAR_DIR` set and `-m "not gpu"`.
 
@@ -50,7 +50,7 @@ checkpoint = {"model_state_dict": ..., "config": ..., "paw_profiles": ...}
 
 - `model_state_dict` maps each task to `FieldOperator.state()`: the weights and
   everything that rebuilds the model around them (architecture record,
-  normalising transforms, δ-density baseline). Without the transforms a
+  normalizing transforms, δ-density baseline). Without the transforms a
   prediction comes out in the wrong units, so they are not optional.
 - `config` is the resolved `TrainingConfig.to_dict()`; resolution, epochs and
   fine-tuning provenance live there rather than in ad hoc keys.
@@ -86,7 +86,7 @@ the 97 Pt cells the table builds in 0.3 s.
 
 **Two consequences to keep in view.** Nothing downstream reads the core density
 yet; inference still takes V_ext, the electron count and the energy report from
-a POTCAR. And the POTCAR header forbids redistribution without a VASP licence,
+a POTCAR. And the POTCAR header forbids redistribution without a VASP license,
 so a checkpoint trained on POTCAR-bearing data now carries licensed data
 (CLAUDE.md pitfall 13).
 
@@ -102,7 +102,7 @@ tests in `tests/test_paw_profiles.py` (19), `tests/test_inference.py`,
 
 ### The parser bug found on the way in
 
-A spin-polarised `CHGCAR` writes one line of per-ion `MAGMOM` values after its
+A spin-polarized `CHGCAR` writes one line of per-ion `MAGMOM` values after its
 first set of augmentation records. The parser read each record up to the next
 header, so those values were folded into the last atom's record: 170 values
 instead of 138 for atom 32 of a Pt cell, and 139 for the free atom. The damage
@@ -133,15 +133,15 @@ For a task whose `site_target` is `"augmentation"` a sample gains:
 
 | key | shape | meaning |
 | --- | --- | --- |
-| `paw` | `(A, S, L)` | records per atom, per set (total, magnetisation) |
+| `paw` | `(A, S, L)` | records per atom, per set (total, magnetization) |
 | `paw_lengths` | `(A,)` | record length, which depends on the element |
 | `species` | `(A,)` | atomic numbers |
 | `positions` | `(A, 3)` | fractional coordinates |
 
 `collate_fields` pads atoms and values to `paw (B, A, S, L)` and adds
 `paw_mask (B, A, L)` and `atom_mask (B, A)`. A member of a spin set with no
-magnetisation records gets zeros, as its grid gets m ≡ 0. Both sets are kept
-because VASP misreads a spin-polarised `CHGCAR` written with only the first.
+magnetization records gets zeros, as its grid gets m ≡ 0. Both sets are kept
+because VASP misreads a spin-polarized `CHGCAR` written with only the first.
 
 ### The task and its switch
 
@@ -182,7 +182,7 @@ symmetry requires. The components are **standard real spherical harmonics,
 M = −L…L**: every bulk d–d L = 4 block is Y₄₀ + √(5/7) Y₄₄ to seven digits. The
 138 values per atom therefore regroup into 9×L0 + 8×L1 + 10×L2 + 4×L3 + 3×L4
 blocks, and a model can be exactly rotation-equivariant. 99 % of Σ‖ρ‖² is
-L = 0, effectively two numbers, yet the magnetisation set is 17 % of the record
+L = 0, effectively two numbers, yet the magnetization set is 17 % of the record
 norm in the nanoparticles and cannot be dropped.
 
 ### An invertible training form, fitted per run
@@ -192,7 +192,7 @@ block by its RMS leaves the `CHGCAR` text identical; centring L = 0 and
 rotating each pair space to its principal axes loses only the ~1e-17 noise VASP
 prints for symmetry zeros, and keeps 99.9 % of the signal in 17 numbers per
 atom. The recommendation was to keep the cache verbatim and fit the form on the
-training split, stored in the checkpoint like the field normalisations; baked
+training split, stored in the checkpoint like the field normalizations; baked
 into the cache, one split's statistics would leak into every other.
 
 ### Linear, equivariant models, held out
@@ -212,7 +212,7 @@ the lesson `mode_selection: physical` taught the field operator, reappearing in
 the readout. V_ext is a weak input (its arbitrary constant breaks held-out
 families; ∇²V_ext is stable but no better than positions), a nonlinear kernel
 on L = 0 does worse than the linear map, and 98 % of the remaining error is in
-L > 0. The magnetisation set could not be predicted from a one-channel cache
+L > 0. The magnetization set could not be predicted from a one-channel cache
 (26 % on nanoparticles at best).
 
 ### The operator families
@@ -243,7 +243,7 @@ V_ext grid ──► FNO3d.encode ──► latent ──► 1×1 conv ──►
                      │                                                    ├─► SiteReadout ──┐
                      └──► FNO3d.project ──► pseudo-density ρ̃ ─────────────┘   (per atom)    │
                                                │                                            ├─► EquivariantHead ──► ρ(ll′LM)
-atom positions + cell ─────────────────────────┼──────────────────► NeighbourExpansion ─────┘   (one per element)
+atom positions + cell ─────────────────────────┼──────────────────► NeighborExpansion ─────┘   (one per element)
                                                └──► density loss, as in ext2chg
 ```
 
@@ -261,7 +261,7 @@ atom positions + cell ───────────────────�
    features match direct quadrature to 4e-7 at L = 0 and 6e-4 at L = 4; a grid
    too coarse for the band raises. `readout_g_max: auto` is 95 % of the coarsest
    training grid's Nyquist frequency.
-3. **`NeighbourExpansion`.** A fixed sum over neighbours within 6 Å,
+3. **`NeighborExpansion`.** A fixed sum over neighbors within 6 Å,
    Σ_j R_n(r_aj) Y_LM(r̂_aj), ten Gaussian radial functions from 2.2 to 5.8 Å.
 4. **`EquivariantHead`, one per element.** An invariant path (L = 0 features
    and the norms of the L > 0 channels, through LayerNorm and a two-layer MLP)
@@ -271,7 +271,7 @@ atom positions + cell ───────────────────�
    record order using the layout parsed from the POTCAR's `Non local Part`
    headers (`PotcarSingle.projector_channels`): d d s s p p for Pt, p p d d s s
    for `Fe_pv`, read per element rather than hard-coded.
-5. **Target and loss.** `OccupancyTransform` centres L = 0 and scales each
+5. **Target and loss.** `OccupancyTransform` centers L = 0 and scales each
    (set, L, pair) block by its RMS, fitted on the training split and stored in
    the checkpoint's `site` record with the layouts and the band. The loss is a
    masked squared error in which every L block weighs the same, added to the
@@ -287,10 +287,10 @@ backbone's multipliers depend only on |G| with real coefficients, so the latent
 field and ρ̃ rotate as scalars; without it the backbone, and so the whole model,
 is not equivariant. The readout band is a sphere and the resampling grid lives
 in the cell's fractional coordinates, so each L block of projections transforms
-by the real Wigner matrix D^L (1e-15), as does the neighbour expansion. The
+by the real Wigner matrix D^L (1e-15), as does the neighbor expansion. The
 head never mixes M or different L: its linear maps act on the channel index
 only, L > 0 maps carry no bias, and gates and the MLP see only invariants. The
-target transform centres only L = 0 and scales per block, shared over M. End
+target transform centers only L = 0 and scales per block, shared over M. End
 to end, a quarter turn of a cubic cell rotates the predicted occupancies by D^L
 to 7e-15 in float64.
 
@@ -369,7 +369,7 @@ RESOURCE PROFILING SUMMARY
 
 `ResourceProfile` (`src/poraque/ml/profiling.py`) is created by `run()` and
 passed to `run_task` and `run_task_kfold`, which mark stages imperatively:
-`begin` closes whatever stage is open, synchronises the device and resets the
+`begin` closes whatever stage is open, synchronizes the device and resets the
 CUDA peak. The stages are `cache`, then per task `setup`, `training`,
 `evaluation and figures`, `symbolic distillation` (when enabled) and
 `PDF report` (or one `k-fold cross-validation` stage under `--kfold`), then
@@ -421,11 +421,11 @@ back to linear when under 1 % of sampled voxels are positive in both reference
 and prediction; on log axes the CSV `count` excludes the non-positive voxels
 the figure cannot draw, which for an undertrained model can be many.
 
-### Charge and magnetisation in the training log
+### Charge and magnetization in the training log
 
 The request asked for a parser of the second `CHGCAR` block, a
 `model.spin_polarized.enable` switch and a two-channel `ext2chg`. The first and
-third already existed: `SpinDensity` reads the magnetisation block, and
+third already existed: `SpinDensity` reads the magnetization block, and
 `data.spin: auto|true|false` settles the channel count dataset-wide, from which
 the operator's `out_channels` follows. A second switch under `model` could only
 disagree with the data, so none was added; `data.spin` was instead documented in
@@ -438,7 +438,7 @@ the Manual's `data` table, where it had been missing. What was new is the log:
 ```
 
 `charge` is `data_error` with the prediction substituted into the density
-channel alone, the magnetisation left at its reference, and `mag` the reverse.
+channel alone, the magnetization left at its reference, and `mag` the reverse.
 Both keep the objective's norm **and its denominator**, the norm of the whole
 (ρ, m) target. That is forced: a relative error of m alone divides by m, which
 is identically zero on every non-magnetic cell, and so on the whole Pt set. For
@@ -448,9 +448,9 @@ sample, exactly (on the synthetic spin run above, √(0.73227² + 0.90121²) =
 term instead, so there the columns rank the channels without summing, and the
 legend says which case applies. The parts are computed under `no_grad`, never
 enter the gradient, are all-reduced under DDP like the loss, and are recorded
-as `history["train_loss_charge"]` and `["train_loss_magnetisation"]` only for a
+as `history["train_loss_charge"]` and `["train_loss_magnetization"]` only for a
 two-channel `CHGCAR` target. A spin run also draws
-`<task>_parity_magnetisation`, on linear axes because m changes sign.
+`<task>_parity_magnetization`, on linear axes because m changes sign.
 
 **Files:** `src/poraque/ml/profiling.py` (new), `src/poraque/vis/parity.py`
 (new), `src/poraque/vis/report.py`, `src/poraque/vis/pdf_report.py`,

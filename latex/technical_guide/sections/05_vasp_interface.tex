@@ -19,7 +19,7 @@ The choice of \opt{OUTPOT} rather than \opt{OUTCHG} is what makes \file{EXTCAR}
 a \emph{potential} file in the \file{LOCPOT} sense: \textbf{no multiplication by
 $\Omega$}. The source comment states the conventions directly: values in eV,
 no volume scaling, $\GG=0$ set to zero, a single spin-independent block, no PAW
-one-centre terms and no non-local projector contribution.
+one-center terms and no non-local projector contribution.
 
 \subsection{The formula}
 
@@ -185,7 +185,7 @@ $\opt{HSQDTM}=\hbar^2/2m_e$.
 \file{TAUCAR} stores $\tau\Omega$, exactly as \file{CHGCAR} stores $\rho\Omega$,
 so that $\sum_\rr \file{TAUCAR}(\rr)/(N_1N_2N_3)$ is the plane-wave kinetic
 energy of the cell in eV. For \opt{ISPIN=2} the two blocks are (total,
-magnetisation), matching the \file{CHGCAR} layout.
+magnetization), matching the \file{CHGCAR} layout.
 
 \subsection{Verdict}
 
@@ -195,7 +195,7 @@ plane-wave-only content all matched already. That $\tau$ is the pseudo quantity
 also explains an earlier observation --- the bound~\eqref{eq:hobound} was found
 to hold at essentially every grid point (one violation in $32768$, at the single
 voxel where spectral downsampling had rung $\tau$ slightly negative), because
-$\tau$ and $\rho$ are pseudised \emph{consistently}. The bound is strictly
+$\tau$ and $\rho$ are pseudized \emph{consistently}. The bound is strictly
 guaranteed only for all-electron quantities, so this was worth measuring rather
 than assuming.
 
@@ -205,7 +205,7 @@ Worth stating explicitly, because it bounds what the first learned map can be
 asked to do:
 
 \begin{itemize}
-  \item no PAW one-centre terms --- \file{EXTCAR} is a pseudo quantity;
+  \item no PAW one-center terms --- \file{EXTCAR} is a pseudo quantity;
   \item no non-local projectors --- not local functions of $\rr$, so they
     cannot appear in a volumetric file even in principle;
   \item no Hartree and no exchange--correlation, unlike \file{LOCPOT} which is

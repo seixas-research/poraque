@@ -246,7 +246,7 @@ class TestTheSearchIsReproducible:
     """
     A seed is a promise, and this engine can keep it unconditionally.
 
-    PySR needed serial evaluation to honour one and warned when handed a seed
+    PySR needed serial evaluation to honor one and warned when handed a seed
     it could not keep a promise about, which is why ``deterministic`` existed
     as a *trade* against parallelism. This runs in one process, so the trade is
     gone and the key is accepted and ignored.

@@ -12,7 +12,7 @@ Format detection, and training across a mixture of them.
 The fixtures below build the three layouts side by side — a DFT calculation
 directory, a bulk archive of standalone densities, and a prepared cache — so
 the tests exercise the thing that actually matters: that a directory is
-recognised for what it is, that a field is *offered* only when it can really be
+recognized for what it is, that a field is *offered* only when it can really be
 produced, and that a mixture reaches the model as one dataset.
 """
 
@@ -501,7 +501,7 @@ class TestOneSchemaForEveryOrigin:
     def test_tau_is_optional_material_by_material(self, tmp_path):
         """
         Not directory by directory. One calculation in a tree may have written
-        a TAUCAR while its neighbour did not, and the one that did should still
+        a TAUCAR while its neighbor did not, and the one that did should still
         reach `chg2tau`.
         """
         root = tmp_path / "runs"
@@ -615,7 +615,7 @@ m val}` from them; the
                           potcar=os.path.join(potcar_library, "Pt", "POTCAR"))
         source = resolve_source(str(tmp_path / "runs"))
 
-        assert source._modelled_charges(source.discover()[0]) is None
+        assert source._modeled_charges(source.discover()[0]) is None
 
 
 # ---------------------------------------------------------------------- #
@@ -778,7 +778,7 @@ class TestPotcarLibrary:
 
         difference = np.linalg.norm(tabulated.data - gaussian.data)
         assert difference / np.linalg.norm(tabulated.data) > 0.01
-        # Both are neutralised the same way, so both average to zero.
+        # Both are neutralized the same way, so both average to zero.
         assert tabulated.data.mean() == pytest.approx(0.0, abs=1e-8)
 
     def test_charges_come_from_the_library_rather_than_inference(
@@ -1391,10 +1391,10 @@ class TestACacheEntryAppearsWholeOrNotAtAll:
         def torn(self, path=None, *args, **kwargs):
             with open(path, "w") as handle:
                 handle.write("half a header\n")
-            raise RuntimeError("the job was cancelled mid-write")
+            raise RuntimeError("the job was canceled mid-write")
 
         monkeypatch.setattr(ScalarField, "write", torn)
-        with pytest.raises(RuntimeError, match="cancelled mid-write"):
+        with pytest.raises(RuntimeError, match="canceled mid-write"):
             build_field_cache(bulk, tmp_path / "out", resolution=8,
                               charges=CHARGES)
 
@@ -1403,7 +1403,7 @@ class TestACacheEntryAppearsWholeOrNotAtAll:
         assert glob.glob(os.path.join(out, "*", "CHGCAR")) == []
         assert glob.glob(os.path.join(out, "*", "EXTCAR")) == []
 
-    def test_the_temporary_keeps_the_suffix_a_store_is_recognised_by(
+    def test_the_temporary_keeps_the_suffix_a_store_is_recognized_by(
             self, bulk, tmp_path, monkeypatch):
         """
         ``fields.partial-1234.h5``, never ``fields.h5.partial-1234``.

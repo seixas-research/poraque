@@ -318,7 +318,7 @@ class TestMPChargeDensityDataset:
         # `derived_from` was a label the removed bulk source wrote and there is
         # no second geometry left for it to distinguish this one from.
         assert np.allclose(potential.structure.cell, density.structure.cell)
-        # A neutralising background fixes the cell average at zero.
+        # A neutralizing background fixes the cell average at zero.
         assert potential.data.mean() == pytest.approx(0.0, abs=1e-8)
 
     def test_native_resolution_keeps_the_mp_grid(self, mp_download):
@@ -372,7 +372,7 @@ class TestMPChargeDensityDataset:
         assert both.channels == (1, 2)
 
     def test_spin_true_on_collinear_data_is_an_error(self, mp_download):
-        with pytest.raises(ValueError, match="no magnetisation block"):
+        with pytest.raises(ValueError, match="no magnetization block"):
             MPChargeDensityDataset(mp_download, spin=True)
 
 

@@ -188,10 +188,10 @@ class Channelwise(FieldTransform):
     One transform per channel, applied along the channel axis.
 
     Needed as soon as a field has more than one channel whose components live
-    on different scales. The spin-polarised density is the motivating case:
+    on different scales. The spin-polarized density is the motivating case:
     :math:`\rho` integrates to hundreds of electrons while :math:`m` integrates
     to a few :math:`\mu_B`, so a single :class:`Asinh` scale fitted on both at
-    once lands in between and normalizes neither. The magnetisation would
+    once lands in between and normalizes neither. The magnetization would
     arrive at the network an order of magnitude below unity, contribute almost
     nothing to the loss, and be learned as approximately zero — which is a
     plausible-looking answer for a weakly magnetic system and wrong for

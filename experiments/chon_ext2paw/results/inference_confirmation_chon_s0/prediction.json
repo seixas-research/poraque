@@ -1,0 +1,34 @@
+{
+  "directory": "/Users/leseixas/Library/CloudStorage/Dropbox/Repositories/seixas-research/poraque/experiments/chon_ext2paw/results/inference_input_chon",
+  "formula": "H10C4N6O6",
+  "natoms": 26,
+  "volume": 241.8250279608153,
+  "grid": [
+    8,
+    10,
+    24
+  ],
+  "device": "cpu",
+  "outputs": {
+    "EXTCAR": "experiments/chon_ext2paw/results/inference_confirmation_chon_s0/EXTCAR",
+    "CHGCAR": "experiments/chon_ext2paw/results/inference_confirmation_chon_s0/CHGCAR"
+  },
+  "magnetic_moment": 0.09772943111012485,
+  "electrons_raw": 90.8715584735627,
+  "normalized": false,
+  "paw_augmentation": {
+    "records": 52,
+    "sets": 2,
+    "source": "model"
+  },
+  "electrons": 90.8715584735627,
+  "electrons_expected": 92.0,
+  "comparison": {
+    "CHGCAR": {
+      "relative_l2": 0.0787995300025684,
+      "mae": 0.04767028914188488,
+      "rmse": 0.06791211190494374,
+      "pearson_r": 0.9961995540713033
+    }
+  }
+}

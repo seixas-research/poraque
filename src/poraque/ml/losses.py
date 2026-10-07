@@ -71,7 +71,7 @@ class AbsoluteL2Loss(nn.Module):
     Per-sample **absolute** :math:`L^2` error,
     :math:`\lVert \hat f - f\rVert_2`.
 
-    The unnormalised counterpart of :class:`RelativeL2Loss`, and the honest
+    The unnormalized counterpart of :class:`RelativeL2Loss`, and the honest
     choice for a dataset whose materials are genuinely comparable in magnitude:
     it weights every *voxel* equally rather than every *material* equally, so a
     system with a larger field contributes proportionally more gradient.
@@ -79,7 +79,7 @@ class AbsoluteL2Loss(nn.Module):
     On a heterogeneous set that is usually wrong — fields differ by orders of
     magnitude between materials, and a handful of dense systems would dominate
     — which is why the relative form is the default. It is offered because
-    "which of these two the optimiser stepped on" is a real question about a
+    "which of these two the optimizer stepped on" is a real question about a
     run, and it should be answerable from the config rather than inferred.
 
     Parameters
@@ -126,7 +126,7 @@ class SobolevLoss(nn.Module):
         Weight of the gradient term relative to the value term
         (``training.sobolev_weight``).
     relative : bool, optional
-        Normalise each term by the target's own norm (the default).
+        Normalize each term by the target's own norm (the default).
     epsilon : float, optional
         Floor on the target norms, used only when ``relative``.
     """
@@ -145,9 +145,9 @@ class SobolevLoss(nn.Module):
 
         Every channel contributes its own gradient. This is a *data* term, not
         a physical constraint: whatever the operator predicts is part of the
-        target and should be as smooth as the target is, so a spin-polarised
+        target and should be as smooth as the target is, so a spin-polarized
         run constrains :math:`\nabla m` alongside :math:`\nabla\rho` rather
-        than leaving the magnetisation free. That is the opposite of what
+        than leaving the magnetization free. That is the opposite of what
         :func:`~poraque.ml.physics.von_weizsacker_tau` wants, which is a
         functional of :math:`\rho` alone and takes channel 0.
         """
@@ -172,10 +172,10 @@ def _gradient_error(prediction, target, cell, relative=True, epsilon=1e-8):
 #: The objectives ``training.loss`` accepts, and what each one is.
 #:
 #: Two axes, named rather than implied: **absolute or relative** (is each
-#: sample normalised by its own target norm?) and **L2 or H1** (are spatial
+#: sample normalized by its own target norm?) and **L2 or H1** (are spatial
 #: gradients part of the objective?). The old spelling had one axis explicit
 #: and the other hidden — ``"sobolev"`` said "gradients" and said nothing about
-#: the norm, and there was no way to ask for an unnormalised error at all.
+#: the norm, and there was no way to ask for an unnormalized error at all.
 #:
 #: ``sobolev_weight`` scales the gradient term of the two :math:`H^1` forms and
 #: is ignored by the two :math:`L^2` ones.
@@ -205,7 +205,7 @@ def resolve_data_loss(name):
     if key == "sobolev":
         hint = (" 'sobolev' was renamed: it named the gradient term and not "
                 "the norm. Use 'relative_h1' for what it did, or "
-                "'absolute_h1' for the unnormalised form.")
+                "'absolute_h1' for the unnormalized form.")
     raise ValueError(
         f"Unknown loss {name!r}; expected one of {sorted(DATA_LOSSES)}.{hint}")
 
@@ -232,9 +232,9 @@ def build_data_loss(name="relative_l2", sobolev_weight=0.1):
 
 def _total_density(field):
     r"""
-    The channel carrying :math:`\rho`, dropping the magnetisation if present.
+    The channel carrying :math:`\rho`, dropping the magnetization if present.
 
-    A spin-polarised density is stored as :math:`(\rho, m)` and only the first
+    A spin-polarized density is stored as :math:`(\rho, m)` and only the first
     channel integrates to the electron count — :math:`\int m` is the net
     moment. Charge conservation is a statement about the first alone.
     """
@@ -262,7 +262,7 @@ class PhysicsInformedLoss(nn.Module):
     Parameters
     ----------
     task : str, optional
-        ``"ext2chg"`` or ``"chg2tau"``; selects which constraints are
+        ``"ext2chg"``, ``"ext2paw"``, ``"chg2tau"`` or ``"paw2tau"``; selects which constraints are
         applicable.
     data_loss : nn.Module, optional
         Fidelity term; defaults to :class:`RelativeL2Loss`.
@@ -272,7 +272,7 @@ class PhysicsInformedLoss(nn.Module):
         Gradient weight for the two :math:`H^1` forms; ignored by the others.
     electron_count_weight : float, optional
         Weight of the **charge-conservation** term :math:`\int\rho = N`
-        (``ext2chg`` only). :math:`N` is taken from ``n_electrons`` when the
+        (``ext2chg`` and ``ext2paw``). :math:`N` is taken from ``n_electrons`` when the
         caller knows it and otherwise from the integral of the reference
         density, which every batch carries — so the constraint needs no extra
         labels and works on an archive that publishes densities and nothing
@@ -424,14 +424,19 @@ class PhysicsInformedLoss(nn.Module):
         if not self.physics_informed or physical_prediction is None:
             return {"total": total, **terms}
 
-        if self.positivity_weight > 0.0 and self.task in ("ext2chg", "chg2tau"):
-            # Only rho is sign-constrained: the magnetisation channel of a
-            # spin-polarised prediction is legitimately negative.
+        # tau >= 0 holds for the pseudo kinetic energy density of paw2tau as
+        # for chg2tau. The von Weizsacker bound below is left to chg2tau: a
+        # PAW pseudo-density carries the compensation charge, which no pseudo
+        # orbital's kinetic energy is bounded by.
+        if self.positivity_weight > 0.0 and self.task in ("ext2chg", "chg2tau",
+                                                           "paw2tau"):
+            # Only rho is sign-constrained: the magnetization channel of a
+            # spin-polarized prediction is legitimately negative.
             value = positivity_loss(_total_density(physical_prediction))
             total = total + self.positivity_weight * value
             terms["positivity"] = value.detach()
 
-        if self.task == "ext2chg":
+        if self.task in ("ext2chg", "ext2paw"):
             if self.electron_count_weight > 0.0:
                 # The reference density is in every batch, so its integral is
                 # always available as the target electron count. Requiring the
@@ -448,6 +453,7 @@ class PhysicsInformedLoss(nn.Module):
                     total = total + self.electron_count_weight * value
                     terms["electron_count"] = value.detach()
 
+        if self.task == "ext2chg":
             if self.euler_lagrange_weight > 0.0 and physical_input is not None:
                 value = euler_lagrange_loss(physical_prediction, physical_input,
                                             cell, lam=self.euler_lagrange_lambda)
@@ -480,15 +486,15 @@ def relative_error(prediction, target):
 def data_error(prediction, target, cell=None, loss="relative_l2",
                sobolev_weight=0.1, epsilon=1e-8):
     r"""
-    Per-sample held-out error **in the norm the run is optimising**.
+    Per-sample held-out error **in the norm the run is optimizing**.
 
-    The same combination :func:`build_data_loss` minimises, evaluated per
+    The same combination :func:`build_data_loss` minimizes, evaluated per
     sample rather than reduced — that identity is the point. A run should be
-    *watched* on the quantity it is minimising, so the validation curve and the
+    *watched* on the quantity it is minimizing, so the validation curve and the
     training curve describe the same thing and early stopping selects the model
     the objective prefers. Reporting a relative :math:`L^2` for an
     :math:`H^1` run means the checkpoint is chosen against a functional the
-    optimiser never saw.
+    optimizer never saw.
 
     Parameters
     ----------
@@ -522,5 +528,4 @@ def data_error(prediction, target, cell=None, loss="relative_l2",
                          f"spectral and cannot be taken without one.")
     return value + sobolev_weight * _gradient_error(
         prediction, target, cell, relative=spec["relative"], epsilon=epsilon)
-
 

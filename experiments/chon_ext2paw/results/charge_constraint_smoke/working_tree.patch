@@ -1,0 +1,462 @@
+diff --git a/scripts/poraque_inference.py b/scripts/poraque_inference.py
+index 54d569d..ff67e2c 100644
+--- a/scripts/poraque_inference.py
++++ b/scripts/poraque_inference.py
+@@ -72,6 +72,10 @@ command and runs from any directory::
+ 
+     poraque-inference new_structure/ --output predictions/new
+ 
++    # Input and output default to the current directory
++    poraque-inference --model best.poraque --from-incar INCAR \
++        --paw-source model
++
+     # explicit bundle, and a coarser grid
+     poraque-inference new_structure/ \
+         --models models/poraque_models.poraque --encut 300
+@@ -1086,17 +1090,19 @@ def build_parser():
+         description="Predict CHGCAR and TAUCAR for a new structure from its "
+                     "geometry, using the trained Fourier Neural Operators.",
+     )
+-    parser.add_argument("directory",
+-                        help="directory with POSCAR/INCAR/POTCAR of the new structure")
+-    parser.add_argument("--models", "-m",
++    parser.add_argument("directory", nargs="?", default=".",
++                        help="directory with POSCAR/INCAR/POTCAR of the new "
++                             "structure (default: current directory)")
++    parser.add_argument("--models", "--model", "-m",
+                         default=os.path.join("models", "poraque_models",
+                                              BUNDLE_FILENAME),
+                         help=f"unified checkpoint holding both operators "
+                              f"(default: models/poraque_models/"
+                              f"{BUNDLE_FILENAME}, where an unnamed "
+                              f"poraque-train run writes it)")
+-    parser.add_argument("--output", "-o", default="predictions",
+-                        help="directory for the predicted volumetric files")
++    parser.add_argument("--output", "-o", default=".",
++                        help="directory for the predicted volumetric files "
++                             "(default: current directory)")
+ 
+     parser.add_argument("--code", default="auto", help="DFT code, or 'auto'")
+     parser.add_argument("--encut", type=float, default=DEFAULT_ENCUT,
+diff --git a/scripts/poraque_train.py b/scripts/poraque_train.py
+index 1c6b134..ab63bfb 100644
+--- a/scripts/poraque_train.py
++++ b/scripts/poraque_train.py
+@@ -1320,7 +1320,8 @@ def resolve_occupancy_head(train_set, config, log, sets):
+ 
+     return {"width": settings["width"], "modes": settings["modes"],
+             "n_layers": settings["n_layers"], "site_layouts": layouts,
+-            "readout_g_max": float(band), "site_transform": transform}
++            "readout_g_max": float(band), "site_transform": transform,
++            "neighbour_min": settings["neighbour_min"]}
+ 
+ 
+ def report_occupancies(operator, train_set, train_records, validation,
+diff --git a/src/poraque/ml/config.py b/src/poraque/ml/config.py
+index 9e503e0..e019b7d 100644
+--- a/src/poraque/ml/config.py
++++ b/src/poraque/ml/config.py
+@@ -664,7 +664,8 @@ EQUIVARIANT_SETUP_KEYS = {
+ #: names for the same three decisions, so they mean one thing everywhere in this
+ #: schema; the other two belong to the occupancy head alone.
+ PAW_DEFAULTS = {"width": 64, "modes": 16, "n_layers": 4,
+-                "readout_g_max": "auto", "occupancy_weight": 1.0}
++                "readout_g_max": "auto", "occupancy_weight": 1.0,
++                "neighbour_min": 2.2}
+ PAW_SETUP_KEYS = tuple(PAW_DEFAULTS)
+ 
+ #: ``training.physics_informed`` settings: the weight of each constraint on the
+@@ -1235,6 +1236,11 @@ class ModelConfig:
+             validation score the best epoch is chosen on is the same sum on
+             the held-out split, so one number means one thing. 1.0 by
+             default.
++        ``neighbour_min``
++            First of ten geometric neighbour-kernel centres, in Å; the last
++            stays at 5.8 Å. Default 2.2 preserves the Pt basis. Smaller values
++            such as 0.6 resolve short covalent bonds in CHON. Must be at least
++            zero and below 5.8. The checkpoint preserves the actual centres.
+ 
+         See :mod:`poraque.ml.paw` for the operator, and
+         ``experiments/paw_occupancies`` for the measurements it was designed
+@@ -1391,6 +1397,12 @@ class ModelConfig:
+             raise ValueError(
+                 f"model.paw.occupancy_weight is {weight!r}; expected a "
+                 f"non-negative number.")
++        minimum = settings["neighbour_min"]
++        if isinstance(minimum, bool) or not isinstance(minimum, (int, float)) \
++                or not 0 <= minimum < 5.8:
++            raise ValueError(
++                f"model.paw.neighbour_min is {minimum!r}; expected a number "
++                f"from 0 (inclusive) to 5.8 (exclusive), in Ang.")
+         return settings
+ 
+     def activation_kwargs(self):
+@@ -1758,15 +1770,15 @@ class TrainingConfig_:
+         another run's.
+ 
+         **Which term applies to which model.** They are not all available to
+-        both operators, and a weight set for the wrong task is silently inert:
++        every operator, and a weight set for the wrong task is silently inert:
+ 
+         .. code-block:: text
+ 
+-            weight                   ext2chg  chg2tau  needs
+-            positivity_weight           x        x     nothing
+-            electron_count_weight       x        -     N, or a reference rho
+-            euler_lagrange_weight       x        -     v_ext (the input)
+-            von_weizsacker_weight       -        x     rho   (the input)
++            weight                   ext2chg  ext2paw  chg2tau  needs
++            positivity_weight           x        -        x     nothing
++            electron_count_weight       x        x        -     N, or a reference rho
++            euler_lagrange_weight       x        -        -     v_ext (the input)
++            von_weizsacker_weight       -        -        x     rho   (the input)
+ 
+         ``positivity_weight`` — *both models.*
+ 
+@@ -1783,7 +1795,7 @@ class TrainingConfig_:
+         a constraint that cannot be violated beats one that is merely
+         expensive to violate.
+ 
+-        ``electron_count_weight`` — *``ext2chg`` only.*
++        ``electron_count_weight`` — *``ext2chg`` and ``ext2paw``.*
+ 
+         .. math::
+ 
+@@ -1803,6 +1815,13 @@ class TrainingConfig_:
+         fallback is what keeps the term active on an archive that ships
+         densities and no valence table — which is every public one.
+ 
++        With residual targets, both densities are decoded and the atomic
++        superposition is restored before integration. Only the total-charge
++        channel is constrained, never magnetisation or PAW occupancy records.
++        This is a soft penalty; it does not impose an exact integral. The
++        validation score includes the weighted squared count error, and the
++        history records the mean absolute relative count error separately.
++
+         ``von_weizsacker_weight`` — *``chg2tau`` only.*
+ 
+         .. math::
+diff --git a/src/poraque/ml/losses.py b/src/poraque/ml/losses.py
+index 7fc0228..2251937 100644
+--- a/src/poraque/ml/losses.py
++++ b/src/poraque/ml/losses.py
+@@ -262,7 +262,7 @@ class PhysicsInformedLoss(nn.Module):
+     Parameters
+     ----------
+     task : str, optional
+-        ``"ext2chg"`` or ``"chg2tau"``; selects which constraints are
++        ``"ext2chg"``, ``"ext2paw"`` or ``"chg2tau"``; selects which constraints are
+         applicable.
+     data_loss : nn.Module, optional
+         Fidelity term; defaults to :class:`RelativeL2Loss`.
+@@ -272,7 +272,7 @@ class PhysicsInformedLoss(nn.Module):
+         Gradient weight for the two :math:`H^1` forms; ignored by the others.
+     electron_count_weight : float, optional
+         Weight of the **charge-conservation** term :math:`\int\rho = N`
+-        (``ext2chg`` only). :math:`N` is taken from ``n_electrons`` when the
++        (``ext2chg`` and ``ext2paw``). :math:`N` is taken from ``n_electrons`` when the
+         caller knows it and otherwise from the integral of the reference
+         density, which every batch carries — so the constraint needs no extra
+         labels and works on an archive that publishes densities and nothing
+@@ -431,7 +431,7 @@ class PhysicsInformedLoss(nn.Module):
+             total = total + self.positivity_weight * value
+             terms["positivity"] = value.detach()
+ 
+-        if self.task == "ext2chg":
++        if self.task in ("ext2chg", "ext2paw"):
+             if self.electron_count_weight > 0.0:
+                 # The reference density is in every batch, so its integral is
+                 # always available as the target electron count. Requiring the
+@@ -448,6 +448,7 @@ class PhysicsInformedLoss(nn.Module):
+                     total = total + self.electron_count_weight * value
+                     terms["electron_count"] = value.detach()
+ 
++        if self.task == "ext2chg":
+             if self.euler_lagrange_weight > 0.0 and physical_input is not None:
+                 value = euler_lagrange_loss(physical_prediction, physical_input,
+                                             cell, lam=self.euler_lagrange_lambda)
+@@ -523,4 +524,3 @@ def data_error(prediction, target, cell=None, loss="relative_l2",
+     return value + sobolev_weight * _gradient_error(
+         prediction, target, cell, relative=spec["relative"], epsilon=epsilon)
+ 
+-
+diff --git a/src/poraque/ml/paw.py b/src/poraque/ml/paw.py
+index 83c5bd7..265ba5c 100644
+--- a/src/poraque/ml/paw.py
++++ b/src/poraque/ml/paw.py
+@@ -393,10 +393,16 @@ class NeighbourExpansion(nn.Module):
+     images within :data:`NEIGHBOUR_CUTOFF`: ``{L: (A, n, 2L+1)}``.
+     """
+ 
+-    def __init__(self, lmax=MAX_L):
++    def __init__(self, lmax=MAX_L, minimum=None):
+         super().__init__()
+         self.lmax = int(lmax)
+-        self.register_buffer("centres", torch.tensor(NEIGHBOUR_CENTRES))
++        centres = torch.tensor(NEIGHBOUR_CENTRES)
++        if minimum is not None and minimum != NEIGHBOUR_CENTRES[0]:
++            if isinstance(minimum, bool) or not 0 <= float(minimum) < NEIGHBOUR_CENTRES[-1]:
++                raise ValueError("neighbour minimum must be non-negative and below 5.8 Ang")
++            centres = torch.linspace(float(minimum), float(centres[-1]),
++                                     len(NEIGHBOUR_CENTRES), dtype=centres.dtype)
++        self.register_buffer("centres", centres)
+ 
+     @property
+     def size(self):
+@@ -515,7 +521,7 @@ class PAWOperatorModel(nn.Module):
+         The readout band, Å⁻¹.
+     """
+ 
+-    def __init__(self, backbone, layouts, g_max):
++    def __init__(self, backbone, layouts, g_max, neighbour_min=None):
+         super().__init__()
+         from ..fields.vasp.augmentation import irreps_blocks
+ 
+@@ -530,7 +536,7 @@ class PAWOperatorModel(nn.Module):
+         self.lmax = max(layout_lmax(channels)
+                         for channels in self.layouts.values())
+         self.readout = SiteReadout(self.g_max, self.lmax)
+-        self.neighbours = NeighbourExpansion(self.lmax)
++        self.neighbours = NeighbourExpansion(self.lmax, minimum=neighbour_min)
+         self.reduce = nn.Conv3d(backbone.width, READOUT_CHANNELS, kernel_size=1)
+ 
+         read = (READOUT_CHANNELS + backbone.out_channels) * self.readout.size
+diff --git a/src/poraque/ml/training.py b/src/poraque/ml/training.py
+index 5d1484b..0e1a34c 100644
+--- a/src/poraque/ml/training.py
++++ b/src/poraque/ml/training.py
+@@ -182,6 +182,9 @@ class FieldOperator:
+     readout_g_max : float, optional
+         The band in Å⁻¹ the occupancy head reads the fields over; required with
+         ``site_layouts``.
++    neighbour_min : float, optional
++        First geometric neighbour-kernel centre in Å. Defaults to the
++        original 2.2 Å; 0.6 Å also resolves short covalent bonds.
+     site_transform : OccupancyTransform, optional
+         The occupancies' training form, fitted on the training split. Stored
+         in the checkpoint, and what :meth:`predict_occupancies` inverts.
+@@ -194,7 +197,7 @@ class FieldOperator:
+                  pauli_scale=1.0, learn_pauli_scale=True,
+                  training_resolution=None, init_seed=None, baseline=None,
+                  strict_device=False, site_layouts=None, readout_g_max=None,
+-                 site_transform=None, **model_kwargs):
++                 site_transform=None, neighbour_min=None, **model_kwargs):
+         self.task = resolve_task(task)
+         self.device = resolve_device(device, strict=strict_device)
+         self.input_transform = input_transform or Identity()
+@@ -239,7 +242,8 @@ class FieldOperator:
+                         f"reads, 1/Ang).")
+                 from .paw import PAWOperatorModel
+ 
+-                return PAWOperatorModel(network, site_layouts, readout_g_max)
++                return PAWOperatorModel(network, site_layouts, readout_g_max,
++                                        neighbour_min=neighbour_min)
+ 
+             if self.init_seed is None:
+                 backbone = build()
+@@ -581,6 +585,7 @@ class FieldOperator:
+                 "layouts": {str(z): list(channels) for z, channels
+                             in self.model.layouts.items()},
+                 "readout_g_max": self.model.g_max,
++                "neighbour_min": float(self.model.neighbours.centres[0]),
+                 "transform": (None if self.site_transform is None
+                               else self.site_transform.state_dict()),
+             }),
+@@ -654,6 +659,7 @@ class FieldOperator:
+             inferred["site_layouts"] = {int(z): channels for z, channels
+                                         in site["layouts"].items()}
+             inferred["readout_g_max"] = site["readout_g_max"]
++            inferred["neighbour_min"] = site.get("neighbour_min")
+             if site.get("transform"):
+                 inferred["site_transform"] = OccupancyTransform.from_state_dict(
+                     site["transform"])
+@@ -1467,6 +1473,13 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
+     # saving comes from `PhysicsInformedLoss` itself answering False, which it
+     # does whenever no weight is set -- the default configuration.
+     physics_informed = bool(getattr(criterion, "physics_informed", True))
++    electron_count_weight = (float(getattr(criterion, "electron_count_weight", 0.0))
++                             if physics_informed and operator.task.name in
++                             ("ext2chg", "ext2paw") else 0.0)
++    if electron_count_weight > 0.0:
++        history["train_electron_count_loss"] = []
++        history["val_electron_count_error"] = []
++        history["val_electron_count_loss"] = []
+     val_metric = str(getattr(criterion, "metric_label", "rel L2"))
+     # One number for the objective, whatever it is made of. A physics-informed
+     # run's `train loss` is the total the optimiser actually stepped on --
+@@ -1475,10 +1488,16 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
+     header = f"    {'epoch':>11s}  {'train loss':>13s}"
+     if channel_parts:
+         header += f"  {'charge':>9s}  {'mag':>9s}"
++    if electron_count_weight > 0.0:
++        header += f"  {'train N loss':>12s}"
+     if validating:
+         header += f"  {f'val {val_metric}':>13s}"
+         if sites_task:
+-            header += f"  {'val occ':>9s}  {'occ loss':>9s}  {'score':>9s}"
++            header += f"  {'val occ':>9s}  {'occ loss':>9s}"
++        if electron_count_weight > 0.0:
++            header += f"  {'val |dN/N|':>12s}"
++        if sites_task or electron_count_weight > 0.0:
++            header += f"  {'score':>9s}"
+     if verbose:
+         legend = f"    train loss: mean {type(criterion).__name__} per batch"
+         if validating:
+@@ -1509,6 +1528,13 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
+                        f"density and magnetisation channels, same norm and "
+                        f"denominator as the objective{quadrature}; train "
+                        f"loss is the total, with any physics terms")
++        if electron_count_weight > 0.0:
++            legend += (f"\n    train N loss: mean squared relative electron-count "
++                       f"error, on decoded absolute charge density; weight "
++                       f"{electron_count_weight:g}. val |dN/N|: mean absolute "
++                       f"relative error before output normalisation. The "
++                       f"validation score includes {electron_count_weight:g} "
++                       f"x the mean squared count error.")
+         emit(legend)
+         if validating and (checkpoint or early_stopping):
+             emit("    * marks an epoch that improved on the best score so far")
+@@ -1530,6 +1556,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
+         # read until the epoch ends. One `.item()` below is enough.
+         running = torch.zeros((), device=operator.device)
+         running_channels = torch.zeros(2, device=operator.device)
++        running_count = torch.zeros((), device=operator.device)
+         batches = 0
+         for batch in loader:
+             # non_blocking only does anything with pin_memory, and is harmless
+@@ -1567,7 +1594,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
+                 # The reference in physical units serves two terms: it is rho
+                 # for the von Weizsacker bound on chg2tau -- where the *input*
+                 # is the density -- and its integral is the electron count the
+-                # charge-conservation term on ext2chg is measured against.
++                # charge-conservation term on ext2chg/ext2paw is measured against.
+                 physical_target = batch["target_physical"].to(
+                     operator.device, non_blocking=pin_memory)
+                 physical_prediction = operator.target_transform.inverse(
+@@ -1625,6 +1652,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
+             # the optimiser stepped on, and the parts are reported *unweighted*
+             # so they do not sum to it.
+             running += total.detach()
++            if electron_count_weight > 0.0:
++                running_count += terms["electron_count"]
+             batches += 1
+ 
+         if lr_schedule is not None:
+@@ -1641,6 +1670,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
+         # above exists to reduce the count of.
+         mean_loss = float(running)
+         history["train_loss"].append(mean_loss)
++        if electron_count_weight > 0.0:
++            history["train_electron_count_loss"].append(float(
++                all_reduce_mean(running_count / divisor, context)))
+         if channel_parts:
+             parts = all_reduce_mean(running_channels / divisor, context)
+             history["train_loss_charge"].append(float(parts[0]))
+@@ -1663,11 +1695,17 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
+         if channel_parts:
+             message += (f"  {history['train_loss_charge'][-1]:>9.5f}"
+                         f"  {history['train_loss_magnetisation'][-1]:>9.5f}")
++        if electron_count_weight > 0.0:
++            message += f"  {history['train_electron_count_loss'][-1]:>12.5e}"
+         exhausted = False
+         if validating:
+             error = evaluate(operator, validation_loader,
+                              loss=data_loss_name,
+-                             sobolev_weight=sobolev_weight)
++                             sobolev_weight=sobolev_weight,
++                             return_metrics=electron_count_weight > 0.0)
++            count_metrics = error if electron_count_weight > 0.0 else None
++            if count_metrics is not None:
++                error = count_metrics["field_error"]
+             message += f"  {error:>13.5f}"
+             if sites_task:
+                 occupancy_error, occupancy_loss = validate_occupancies(
+@@ -1677,7 +1715,16 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
+                 history["val_occupancy_loss"].append(occupancy_loss)
+                 error = error + occupancy_weight * occupancy_loss
+                 message += (f"  {occupancy_error:>9.5f}  "
+-                            f"{occupancy_loss:>9.5f}  {error:>9.5f}")
++                            f"{occupancy_loss:>9.5f}")
++            if count_metrics is not None:
++                history["val_electron_count_error"].append(
++                    count_metrics["electron_count_error"])
++                history["val_electron_count_loss"].append(
++                    count_metrics["electron_count_loss"])
++                error += electron_count_weight * count_metrics["electron_count_loss"]
++                message += f"  {count_metrics['electron_count_error']:>12.5e}"
++            if sites_task or count_metrics is not None:
++                message += f"  {error:>9.5f}"
+             history["val_error"].append(error)
+             history["val_epoch"].append(epoch + 1)
+ 
+@@ -1710,6 +1757,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
+         if verbose and not stopped_early and best_epoch != len(history["train_loss"]):
+             scored = (f"val {val_metric}" if not sites_task else
+                       f"score {val_metric} + {occupancy_weight:g} x occ loss")
++            if electron_count_weight > 0.0:
++                scored += f" + {electron_count_weight:g} x N loss"
+             emit(f"    restored the best weights, from epoch {best_epoch} "
+                  f"({scored} {best_error:.5f})")
+ 
+@@ -1722,6 +1771,8 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
+         history["val_metric"] = (val_metric if not sites_task else
+                                  f"{val_metric} + {occupancy_weight:g} x occ "
+                                  f"loss")
++        if electron_count_weight > 0.0:
++            history["val_metric"] += f" + {electron_count_weight:g} x N loss"
+ 
+     # Reported in the run's own JSON rather than sampled from outside it with
+     # `nvidia-smi`, which is how every number in the CUDA work list had to be
+@@ -1816,7 +1867,8 @@ def validate_occupancies(operator, loader):
+ 
+ 
+ @torch.no_grad()
+-def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0):
++def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0,
++             return_metrics=False):
+     r"""
+     Mean held-out error over a loader, in *physical* units.
+ 
+@@ -1833,13 +1885,19 @@ def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0):
+         checkpoint and early stopping are decided on it.
+     sobolev_weight : float, optional
+         Gradient weight, for the two :math:`H^1` forms.
++    return_metrics : bool, optional
++        Return the field error and the mean absolute and mean squared relative
++        electron-count errors in a dict. Counts use the total charge channel
++        of the decoded absolute density and its reference, before any output
++        normalisation; only use with charge-density tasks.
+ 
+     Returns
+     -------
+-    float
++    float or dict
+     """
+     operator.model.eval()
+     errors = []
++    count_errors = []
+     for batch in loader:
+         inputs = batch["input"].to(operator.device)
+         cell = batch["cell"].to(operator.device)
+@@ -1864,5 +1922,19 @@ def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0):
+         errors.append(data_error(prediction, physical_target, cell,
+                                  loss=loss,
+                                  sobolev_weight=sobolev_weight))
+-
+-    return float(torch.cat(errors).mean()) if errors else float("nan")
++        if return_metrics:
++            from .physics import integrate
++
++            count = integrate(physical_target[:, :1], cell)
++            predicted_count = integrate(prediction[:, :1], cell)
++            count_errors.append((predicted_count - count) / count.clamp_min(1e-8))
++
++    error = float(torch.cat(errors).mean()) if errors else float("nan")
++    if return_metrics:
++        counts = torch.cat(count_errors) if count_errors else None
++        return {"field_error": error,
++                "electron_count_error": (float(counts.abs().mean())
++                                         if counts is not None else float("nan")),
++                "electron_count_loss": (float(counts.square().mean())
++                                        if counts is not None else float("nan"))}
++    return error

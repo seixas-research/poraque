@@ -138,7 +138,7 @@ float32 rounding, and `PORAQUE_C_BACKEND=0` turns it off. See the User Guide
 # 1. train one ext2chg and one chg2tau model on all structures
 poraque-train --config configs/train.yaml
 
-# 2. measure generalisation
+# 2. measure generalization
 poraque-train --config configs/train.yaml --kfold --k-folds 5
 
 # 3. predict a structure that has never been computed. --models points at
@@ -147,22 +147,22 @@ poraque-inference new_structure/ --output predictions/new_structure \
     --models models/pt_w16_m8_l3/pt_w16_m8_l3.poraque
 
 # 4. calibrate: does committee disagreement predict error? Run this on
-#    LABELLED data first -- it costs nothing and says whether step 5 means
+#    LABELED data first -- it costs nothing and says whether step 5 means
 #    anything. Read the Spearman coefficient. --cache is the tagged
 #    directory step 1 built (the tag encodes resolution and potentials).
 poraque-committee --models "models/committee_*" --task ext2chg \
     --cache data/cache/res32_potcar --against models/<name>/log/<name>.json
 
-# 5. select: which UNLABELLED structures to compute next. This one spends
+# 5. select: which UNLABELED structures to compute next. This one spends
 #    the DFT budget, so it is the one that needs step 4 to have passed.
 poraque-active-learning --models "models/committee_*" --task ext2chg \
     --pool data/pool --select 5
 ```
 
 Steps 4 and 5 are two halves of one loop, not two ways of doing the same
-thing. **`poraque-committee` runs on labelled data** and asks whether the
+thing. **`poraque-committee` runs on labeled data** and asks whether the
 disagreement measure predicts error at all — it costs nothing and produces a
-Spearman coefficient. **`poraque-active-learning` runs on an unlabelled pool**
+Spearman coefficient. **`poraque-active-learning` runs on an unlabeled pool**
 and turns that measure into a spending decision. Run the first one first.
 
 Every predicted field is written in `CHGCAR` format.
@@ -224,7 +224,7 @@ model: {precision: float32}    # what the operator computes in: float32 | float6
 
 `data.precision` is memory — a 160³ field is 16 MB in double and 8 MB in
 single. `model.precision: float64` roughly doubles time and memory and is for
-checking that a physical result is not a single-precision artefact; it needs
+checking that a physical result is not a single-precision artifact; it needs
 `training.device: cpu`, since Metal has no float64 at all.
 
 Or drive it from ASE:
@@ -303,7 +303,7 @@ poraque-mp --all --num-sites 1 12 --max-size-mb 20 \
 ```
 
 A sampled estimate still **projects** to the whole set — the sample mean times
-the number advertised — on its own line and labelled as a projection, because
+the number advertised — on its own line and labeled as a projection, because
 sizing the database is what you usually want to know *before* deciding to fetch
 a piece of it. Both numbers are printed; one alone would be read as the other.
 
@@ -342,8 +342,8 @@ directory from being mistaken for a VASP run now that it looks like one.
 `--hdf5` writes each density as a chunked, compressed field store instead of a
 `CHGCAR`. It is a re-encoding rather than a conversion — pymatgen already holds
 ρ·Ω, which is what the store keeps — and it carries **everything the text file
-does**: the magnetisation block of a spin-polarised density, and the PAW
-augmentation records, the one-centre terms `ICHARG = 1` will not restart
+does**: the magnetization block of a spin-polarized density, and the PAW
+augmentation records, the one-center terms `ICHARG = 1` will not restart
 without.
 
 What no store can do is be opened by VASP, so a run needs the density written
@@ -479,6 +479,14 @@ in its first lines.
   reached through `torch.fft`.
 
 ## Status
+
+The [CHON `ext2paw` experiment](experiments/chon_ext2paw/README.md) documents the
+432-material data audit, isolated-atom references, hyperparameter benchmark,
+PAW integration corrections, and limits of the charge and magnetic predictions.
+Its configurations, split, metrics and plots are available with the report.
+The recommended CHON model reaches 8.12% charge relative L2 and 4.94% PAW RMS
+on 41 held-out structures (mean of two initializations at working resolution 24).
+Magnetization remains poorly predicted; the report separates its errors.
 
 Seventeen platinum supercells — ten 27-atom cells and seven 32-atom cells, spanning
 four grid shapes. A single 80/20 split at `32³` working resolution, 300 epochs

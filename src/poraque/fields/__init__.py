@@ -9,7 +9,7 @@
 """
 3D scalar fields on a shared real-space grid.
 
-The organising idea of this package is that, for one material, *every* field —
+The organizing idea of this package is that, for one material, *every* field —
 the local external potential (``EXTCAR``), the valence charge density
 (``CHGCAR``) and the kinetic energy density (``TAUCAR``) — is sampled on a
 single :class:`FieldGrid` and serialized in a single (``CHGCAR``) format. That

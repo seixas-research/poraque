@@ -57,7 +57,7 @@ Two entry points, one implementation:
     Writes the same pairs, spectrally downsampled, into the per-material cache
     layout the standard trainer reads.
 
-Both are thin specialisations of the generic machinery, kept for the message a
+Both are thin specializations of the generic machinery, kept for the message a
 Materials Project user needs when a directory is empty: the one that names the
 downloader.
 """
@@ -144,7 +144,7 @@ class MPChargeDensityDataset(MixedFieldDataset):
     ``(V_ext, rho)`` pairs served straight from a Materials Project download.
 
     A :class:`~poraque.data.dataset.MixedFieldDataset` pinned to one download
-    directory: the external potential is synthesised from the structure each
+    directory: the external potential is synthesized from the structure each
     ``CHGCAR`` carries in its header, nothing but the density files is needed
     on disk, and they stay compressed.
 
@@ -177,8 +177,8 @@ class MPChargeDensityDataset(MixedFieldDataset):
     spin : bool, optional
         ``False`` (default) reads the total density only — one channel,
         matching what the rest of the pipeline caches. ``True`` also loads the
-        magnetisation block, giving a two-channel target. MP's static runs are
-        spin-polarised, so both are available; for the non-magnetic metals that
+        magnetization block, giving a two-channel target. MP's static runs are
+        spin-polarized, so both are available; for the non-magnetic metals that
         dominate the metallic chemical spaces the second channel is numerically
         zero and costs capacity for nothing.
     cache : bool, optional

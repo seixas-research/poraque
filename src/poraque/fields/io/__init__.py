@@ -117,7 +117,7 @@ def detect_reader(directory):
     Raises
     ------
     ValueError
-        If no registered reader recognises the directory.
+        If no registered reader recognizes the directory.
     """
     for reader_class in _READERS.values():
         if reader_class.detect(directory):
@@ -154,7 +154,7 @@ def resolve_reader(directory=None, code="auto"):
 #: can evaluate. Keys are upper-cased VASP ``GGA``/``LEXCH`` values and the
 #: labels other codes write.
 #:
-#: ``None`` marks a functional that is recognised but not implemented: the
+#: ``None`` marks a functional that is recognized but not implemented: the
 #: caller is warned and told what was substituted, rather than being handed a
 #: silent mislabel.
 XC_TAGS = {
@@ -166,7 +166,7 @@ XC_TAGS = {
     "AM": None, "B3LYP": None, "HSE": None, "SCAN": None,
 }
 
-#: Substituted for a recognised but unimplemented functional.
+#: Substituted for a recognized but unimplemented functional.
 XC_FALLBACK = "pbe"
 
 
@@ -198,7 +198,7 @@ def resolve_xc(directory=None, declared="auto", code="auto", warn=True):
     code : str, optional
         Passed to :func:`resolve_reader`.
     warn : bool, optional
-        Emit a warning when a recognised functional is not implemented, or
+        Emit a warning when a recognized functional is not implemented, or
         when detection fails and the default is used.
 
     Returns
@@ -247,7 +247,7 @@ def resolve_xc(directory=None, declared="auto", code="auto", warn=True):
     if key not in XC_TAGS:
         if warn:
             warnings.warn(
-                f"Unrecognised exchange-correlation tag {tag!r} from {source} "
+                f"Unrecognized exchange-correlation tag {tag!r} from {source} "
                 f"in {directory!r}; assuming {XC_FALLBACK!r}. Set data.xc "
                 f"explicitly.", RuntimeWarning, stacklevel=2)
         return XC_FALLBACK
@@ -258,7 +258,7 @@ def resolve_xc(directory=None, declared="auto", code="auto", warn=True):
             warnings.warn(
                 f"{tag!r} (from {source}) is not implemented; using "
                 f"{XC_FALLBACK!r} instead. The substitution is a real "
-                f"approximation, not a relabelling.",
+                f"approximation, not a relabeling.",
                 RuntimeWarning, stacklevel=2)
         return XC_FALLBACK
     return resolved

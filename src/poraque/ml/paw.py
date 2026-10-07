@@ -9,7 +9,7 @@
 r"""
 The ``ext2paw`` operator: the pseudo-density and every atom's PAW occupancies.
 
-A ``CHGCAR`` is a grid plus, per atom, the one-centre occupancies
+A ``CHGCAR`` is a grid plus, per atom, the one-center occupancies
 :math:`\rho(\ell\ell'LM)` VASP writes after it. The grid half is a field and an
 FNO predicts it, as ``ext2chg`` does. The per-atom half is not a field. It is a
 set of spherical tensors, up to L = 4 for a d-element, that no grid model sees,
@@ -32,7 +32,7 @@ The architecture follows directly:
     fields are first restricted to :math:`|\mathbf G| \le G_{\max}`. Low bands
     use Fourier-space kernel integrals, so even the narrowest Gaussian is
     resolved. Higher bands use the existing dense spatial quadrature.
-:class:`NeighbourExpansion`
+:class:`NeighborExpansion`
     :math:`\sum_j R_n(r_{aj})\,Y_{LM}(\hat r_{aj})`: the geometry, first order.
 :class:`EquivariantHead`
     Per element: invariants (L = 0 features and the norms of the others) through
@@ -40,13 +40,13 @@ The architecture follows directly:
     Linear skip paths on every block, so the head starts at least as expressive
     as the linear readout that was measured.
 :class:`OccupancyTransform`
-    The invertible training form: centre L = 0, scale each (set, L, pair), fitted
+    The invertible training form: center L = 0, scale each (set, L, pair), fitted
     on the training split and stored in the checkpoint. Regrouping into L blocks
     happens in the head, through :func:`~poraque.fields.vasp.augmentation.irreps_blocks`.
 
 The whole operator is rotation-equivariant exactly when its FNO backbone is
 (``model.equivariant.enable`` with ``use_coordinates: false``); the readout,
-the neighbour expansion and the head are equivariant by construction.
+the neighbor expansion and the head are equivariant by construction.
 """
 
 import math
@@ -66,10 +66,10 @@ READOUT_RADIUS = 2.5
 #: Widths s_n in Å of the Gaussian radial factors, geometric.
 READOUT_WIDTHS = tuple(float(s) for s in np.geomspace(0.2, 0.8, 8))
 
-#: Neighbour expansion: Gaussian radial functions under a cosine cutoff.
-NEIGHBOUR_CUTOFF = 6.0
-NEIGHBOUR_CENTRES = tuple(float(c) for c in np.linspace(2.2, 5.8, 10))
-NEIGHBOUR_WIDTH = 0.3
+#: Neighbor expansion: Gaussian radial functions under a cosine cutoff.
+NEIGHBOR_CUTOFF = 6.0
+NEIGHBOR_CENTERS = tuple(float(c) for c in np.linspace(2.2, 5.8, 10))
+NEIGHBOR_WIDTH = 0.3
 
 #: Head sizes.
 HEAD_HIDDEN = 32
@@ -155,7 +155,7 @@ def layout_lmax(channels):
 # ---------------------------------------------------------------------- #
 class SiteReadout(nn.Module):
     r"""
-    Project fields onto atom-centred solid-harmonic Gaussians, over one band.
+    Project fields onto atom-centered solid-harmonic Gaussians, over one band.
 
     .. math::
 
@@ -185,6 +185,16 @@ class SiteReadout(nn.Module):
     lmax : int
     """
 
+    #: Bytes of spectral kernels kept per readout, on the model's device. The
+    #: kernels are one per geometry (cell and grid), computed on the CPU with
+    #: scipy's Bessel functions; once a training split's kernels exceed the
+    #: budget the least recent are evicted and recomputed every epoch. 64 MiB
+    #: was far below the ~360 MB the 785 CHONPS geometries need at a 6 1/Ang
+    #: band, and recomputing them dominated the epoch; 1 GiB holds them all.
+    #: The default for :attr:`cache_bytes`; ``model.paw.readout_cache_mib``
+    #: sets it per run.
+    SPECTRAL_CACHE_BYTES = 1024 ** 3
+
     def __init__(self, g_max, lmax=MAX_L):
         super().__init__()
         self.g_max = float(g_max)
@@ -200,6 +210,10 @@ class SiteReadout(nn.Module):
         # Geometry only; not checkpoint state. Bound memory across diverse cells.
         self._spectral_cache = OrderedDict()
         self._spectral_cache_bytes = 0
+        #: The kernel budget in bytes. A runtime setting, not architecture: it
+        #: changes how often kernels are recomputed, never what they are, so
+        #: it is not in the checkpoint.
+        self.cache_bytes = int(self.SPECTRAL_CACHE_BYTES)
 
     @property
     def size(self):
@@ -259,7 +273,7 @@ class SiteReadout(nn.Module):
                       kernels)
             size = sum(t.numel() * t.element_size() for t in
                        (cached[0], cached[1], *kernels))
-            limit = 64 * 1024 ** 2
+            limit = int(self.cache_bytes)
             while self._spectral_cache and self._spectral_cache_bytes + size > limit:
                 _, old = self._spectral_cache.popitem(last=False)
                 self._spectral_cache_bytes -= sum(t.numel() * t.element_size()
@@ -356,8 +370,8 @@ class SiteReadout(nn.Module):
         stencil = torch.stack([ox, oy, oz], -1).reshape(-1, 3)      # (P, 3)
 
         frac = frac % 1.0
-        centre = torch.round(frac * shape_t.to(frac.dtype)).long()  # (A, 3)
-        index = centre[:, None, :] + stencil[None]                  # (A, P, 3)
+        center = torch.round(frac * shape_t.to(frac.dtype)).long()  # (A, 3)
+        index = center[:, None, :] + stencil[None]                  # (A, P, 3)
         displacement = (index.to(frac.dtype) / shape_t.to(frac.dtype)
                         - frac[:, None, :]) @ cell                  # (A, P, 3)
         wrapped = index % shape_t
@@ -387,24 +401,30 @@ class SiteReadout(nn.Module):
         return out
 
 
-class NeighbourExpansion(nn.Module):
+class NeighborExpansion(nn.Module):
     r"""
     :math:`\sum_j R_n(r_{aj})\,Y_{LM}(\hat{\mathbf r}_{aj})` over periodic
-    images within :data:`NEIGHBOUR_CUTOFF`: ``{L: (A, n, 2L+1)}``.
+    images within :data:`NEIGHBOR_CUTOFF`: ``{L: (A, n, 2L+1)}``.
     """
 
-    def __init__(self, lmax=MAX_L):
+    def __init__(self, lmax=MAX_L, minimum=None):
         super().__init__()
         self.lmax = int(lmax)
-        self.register_buffer("centres", torch.tensor(NEIGHBOUR_CENTRES))
+        centers = torch.tensor(NEIGHBOR_CENTERS)
+        if minimum is not None and minimum != NEIGHBOR_CENTERS[0]:
+            if isinstance(minimum, bool) or not 0 <= float(minimum) < NEIGHBOR_CENTERS[-1]:
+                raise ValueError("neighbor minimum must be non-negative and below 5.8 Ang")
+            centers = torch.linspace(float(minimum), float(centers[-1]),
+                                     len(NEIGHBOR_CENTERS), dtype=centers.dtype)
+        self.register_buffer("centers", centers)
 
     @property
     def size(self):
-        return len(NEIGHBOUR_CENTRES)
+        return len(NEIGHBOR_CENTERS)
 
     def forward(self, cell, frac):
         reciprocal = torch.linalg.inv(cell).T
-        reach = [int(math.ceil(NEIGHBOUR_CUTOFF
+        reach = [int(math.ceil(NEIGHBOR_CUTOFF
                                * float(torch.linalg.vector_norm(reciprocal[i]))))
                  for i in range(3)]
         ranges = [torch.arange(-m, m + 1, device=cell.device) for m in reach]
@@ -415,14 +435,14 @@ class NeighbourExpansion(nn.Module):
         d = (cart[None, :, None, :] + shifts[None, None, :, :]
              - cart[:, None, None, :]).reshape(len(frac), -1, 3)      # (A, AT, 3)
         r = torch.linalg.vector_norm(d, dim=-1)
-        active = (r > 1e-3) & (r < NEIGHBOUR_CUTOFF)
+        active = (r > 1e-3) & (r < NEIGHBOR_CUTOFF)
         safe = torch.where(active, r, torch.ones_like(r))
         unit = d / safe[..., None]
         cutoff = torch.where(active, 0.5 * (torch.cos(
-            math.pi * r / NEIGHBOUR_CUTOFF) + 1.0), torch.zeros_like(r))
-        centres = self.centres.to(r.dtype)
-        radial = torch.exp(-(r[..., None] - centres) ** 2
-                           / (2 * NEIGHBOUR_WIDTH ** 2)) * cutoff[..., None]
+            math.pi * r / NEIGHBOR_CUTOFF) + 1.0), torch.zeros_like(r))
+        centers = self.centers.to(r.dtype)
+        radial = torch.exp(-(r[..., None] - centers) ** 2
+                           / (2 * NEIGHBOR_WIDTH ** 2)) * cutoff[..., None]
         harmonics = solid_harmonics(unit, self.lmax)
         return {L: torch.einsum("apn,apm->anm", radial, harmonics[L])
                 for L in range(self.lmax + 1)}
@@ -502,7 +522,7 @@ class PAWOperatorModel(nn.Module):
     Called as ``model(x, cell)`` it is the field operator and returns the
     density, so everything that treats a model as field-to-field --- prediction,
     evaluation, the architecture record --- works unchanged. Called with
-    ``sites`` it also returns the occupancies, normalised as the
+    ``sites`` it also returns the occupancies, normalized as the
     :class:`OccupancyTransform` defines, flattened into file order:
     ``(B, A, sets, record_length)``.
 
@@ -515,7 +535,7 @@ class PAWOperatorModel(nn.Module):
         The readout band, Å⁻¹.
     """
 
-    def __init__(self, backbone, layouts, g_max):
+    def __init__(self, backbone, layouts, g_max, neighbor_min=None):
         super().__init__()
         from ..fields.vasp.augmentation import irreps_blocks
 
@@ -530,11 +550,11 @@ class PAWOperatorModel(nn.Module):
         self.lmax = max(layout_lmax(channels)
                         for channels in self.layouts.values())
         self.readout = SiteReadout(self.g_max, self.lmax)
-        self.neighbours = NeighbourExpansion(self.lmax)
+        self.neighbors = NeighborExpansion(self.lmax, minimum=neighbor_min)
         self.reduce = nn.Conv3d(backbone.width, READOUT_CHANNELS, kernel_size=1)
 
         read = (READOUT_CHANNELS + backbone.out_channels) * self.readout.size
-        inputs = {L: read + self.neighbours.size
+        inputs = {L: read + self.neighbors.size
                   for L in range(self.lmax + 1)}
         self.heads = nn.ModuleDict()
         self._blocks = {}
@@ -585,7 +605,7 @@ class PAWOperatorModel(nn.Module):
                 continue
             frac = positions[b, :count].to(reads.dtype)
             features = self.readout(reads[b], cell[b].to(reads.dtype), frac)
-            geometry = self.neighbours(cell[b].to(reads.dtype), frac)
+            geometry = self.neighbors(cell[b].to(reads.dtype), frac)
             features = {L: torch.cat([features[L], geometry[L]], dim=1)
                         for L in features}
             for z in torch.unique(species[b, :count]).tolist():
@@ -604,6 +624,263 @@ class PAWOperatorModel(nn.Module):
                         len(chosen), self.sets, -1)
                 out[b, chosen] = flat
         return out
+
+
+# ---------------------------------------------------------------------- #
+# Occupancies as input: the paw2tau operator
+# ---------------------------------------------------------------------- #
+#: Widths s_n in Å of the Gaussians the occupancies are written with.
+WRITER_WIDTHS = (0.25, 0.45, 0.8)
+
+#: Field channels the occupancies are written into, by default.
+WRITER_CHANNELS = 8
+
+
+class SiteWriter(nn.Module):
+    r"""
+    Per-atom occupancy records to scalar fields: the transpose of the readout.
+
+    Each atom :math:`a` of element :math:`Z` contributes to channel :math:`k`
+
+    .. math::
+
+        f_k(\mathbf r) = \sum_a \sum_{nLM} c^a_{knLM}\,
+            N_{nL}\, S_{LM}(\mathbf r - \mathbf R_a)\,
+            e^{-|\mathbf r - \mathbf R_a|^2 / 2 s_n^2},
+        \qquad
+        c^a_{knLM} = \sum_q W^{Z,L}_{kn,q}\, z^a_{q,M},
+
+    where :math:`S_{LM}(\mathbf d) = d^L Y_{LM}(\hat{\mathbf d})` is a solid
+    harmonic (:func:`solid_harmonics`), :math:`z^a` the atom's normalized record
+    regrouped into L blocks (:func:`~poraque.fields.vasp.augmentation.irreps_blocks`;
+    ``q`` runs over the record sets and the projector pairs of the block) and
+    :math:`W^{Z,L}` one learned matrix per element and L, **shared across M**.
+    A rotation of the atom's occupancies by the Wigner matrix :math:`D^L`
+    therefore rotates the kernel it writes, and the field is a scalar field:
+    the operator reading it stays equivariant.
+
+    The field is built in reciprocal space, where it is exact. By Hobson's
+    theorem the Fourier transform of a solid harmonic times a Gaussian is the
+    same solid harmonic of :math:`\mathbf G`,
+
+    .. math::
+
+        \int S_{LM}(\mathbf d)\, e^{-d^2/2s^2}\, e^{-i\mathbf G\cdot\mathbf d}\,
+            d^3d = (2\pi)^{3/2} s^{2L+3} (-i)^L S_{LM}(\mathbf G)\,
+            e^{-s^2 G^2/2},
+
+    so each atom is a phase :math:`e^{-i\mathbf G\cdot\mathbf R_a}` and the
+    periodic sum over images comes free with the inverse FFT. Nothing depends on
+    the grid but the band it can hold.
+
+    Parameters
+    ----------
+    layouts : dict
+        ``{atomic number: projector channels}``, as for the readout.
+    sets : int
+        Record sets per atom: one per density channel of the input.
+    channels : int, optional
+        Field channels written.
+    widths : sequence of float, optional
+        Gaussian widths in Å.
+    """
+
+    def __init__(self, layouts, sets, channels=WRITER_CHANNELS,
+                 widths=WRITER_WIDTHS):
+        super().__init__()
+        from ..fields.vasp.augmentation import irreps_blocks
+
+        self.layouts = {int(z): tuple(int(degree) for degree in degrees)
+                        for z, degrees in layouts.items()}
+        self.sets = int(sets)
+        self.channels = int(channels)
+        self.widths = tuple(float(s) for s in widths)
+        self.lmax = max(layout_lmax(degrees)
+                        for degrees in self.layouts.values())
+        self._blocks = {}
+        self.maps = nn.ModuleDict()
+        out = self.channels * len(self.widths)
+        for z, degrees in self.layouts.items():
+            blocks = irreps_blocks(degrees)
+            self._blocks[z] = {L: torch.as_tensor(index)
+                               for L, index in blocks.items()}
+            self.maps[str(z)] = nn.ModuleDict({
+                str(L): nn.Linear(self.sets * index.shape[0], out, bias=False)
+                for L, index in blocks.items()})
+        # Unit-norm kernels, so the coefficients are of order one whatever the
+        # width: the same normalization the readout's kernels carry.
+        norms = [[1.0 / math.sqrt(math.gamma(L + 1.5) * s ** (2 * L + 3) / 2.0)
+                  for s in self.widths] for L in range(self.lmax + 1)]
+        self.register_buffer("norms", torch.tensor(norms))
+
+    def coefficients(self, records, species, count):
+        r"""
+        ``{L: (A, channels, widths, 2L+1)}`` for the first ``count`` atoms.
+
+        Parameters
+        ----------
+        records : torch.Tensor
+            ``(A, S, R)`` normalized records in file order, padded.
+        species : torch.Tensor
+            ``(A,)`` atomic numbers.
+        """
+        out = {L: records.new_zeros(count, self.channels, len(self.widths),
+                                    2 * L + 1)
+               for L in range(self.lmax + 1)}
+        for z in torch.unique(species[:count]).tolist():
+            z = int(z)
+            if z not in self.layouts:
+                raise KeyError(
+                    f"atomic number {z} has no occupancy layout; this operator "
+                    f"writes {sorted(self.layouts)}.")
+            chosen = (species[:count] == z).nonzero(as_tuple=True)[0]
+            for L, index in self._blocks[z].items():
+                index = index.to(records.device)
+                block = records[chosen][:, :, index]       # (n, S, P, 2L+1)
+                n, sets, pairs, components = block.shape
+                block = block.permute(0, 3, 1, 2).reshape(n, components,
+                                                          sets * pairs)
+                value = self.maps[str(z)][str(L)](block)   # (n, 2L+1, C*W)
+                out[L][chosen] = value.reshape(
+                    n, components, self.channels, len(self.widths)
+                ).permute(0, 2, 3, 1)
+        return out
+
+    def forward(self, records, species, positions, atom_mask, cell, shape):
+        """
+        The written fields, ``(B, channels, Nx, Ny, Nz)``.
+
+        Parameters
+        ----------
+        records : torch.Tensor
+            ``(B, A, S, R)`` normalized records.
+        species, positions, atom_mask : torch.Tensor
+            ``(B, A)``, ``(B, A, 3)`` fractional, ``(B, A)``.
+        cell : torch.Tensor
+            ``(B, 3, 3)`` in Å.
+        shape : tuple of int
+            The grid.
+        """
+        nx, ny, nz = (int(n) for n in shape)
+        dtype = records.dtype
+        device = records.device
+        k = [torch.fft.fftfreq(nx, 1.0 / nx, device=device, dtype=dtype),
+             torch.fft.fftfreq(ny, 1.0 / ny, device=device, dtype=dtype),
+             torch.fft.rfftfreq(nz, 1.0 / nz, device=device, dtype=dtype)]
+        integers = torch.stack(torch.meshgrid(*k, indexing="ij"), -1)
+        integers = integers.reshape(-1, 3)                  # (G, 3)
+        fields = []
+        for b in range(records.shape[0]):
+            count = int(atom_mask[b].sum())
+            geometry = cell[b].to(dtype)
+            # Rows as vectors, `frac @ cell = cart`: G = 2 pi k . inv(cell)^T.
+            reciprocal = 2.0 * math.pi * torch.linalg.inv(geometry).T
+            vectors = integers @ reciprocal                 # (G, 3)
+            g2 = (vectors ** 2).sum(-1)
+            harmonics = solid_harmonics(vectors, self.lmax)
+            spectrum_re = records.new_zeros(self.channels, integers.shape[0])
+            spectrum_im = torch.zeros_like(spectrum_re)
+            if count:
+                coefficients = self.coefficients(records[b], species[b], count)
+                phase = 2.0 * math.pi * (positions[b, :count].to(dtype)
+                                         @ integers.T)      # (A, G)
+                cosine, sine = torch.cos(phase), torch.sin(phase)
+                widths = torch.tensor(self.widths, dtype=dtype, device=device)
+                for L in range(self.lmax + 1):
+                    # sum over atoms first: (C, W, M, G), real and imaginary
+                    # parts of sum_a c_a exp(-i G.R_a)
+                    c = coefficients[L]
+                    real = torch.einsum("acwm,ag->cwmg", c, cosine)
+                    imag = -torch.einsum("acwm,ag->cwmg", c, sine)
+                    radial = ((2.0 * math.pi) ** 1.5
+                              * widths[:, None] ** (2 * L + 3)
+                              * torch.exp(-0.5 * widths[:, None] ** 2
+                                          * g2[None])
+                              * self.norms[L].to(dtype)[:, None])   # (W, G)
+                    kernel = radial[:, None, :] * harmonics[L].T[None]  # (W,M,G)
+                    real = (real * kernel[None]).sum((1, 2))
+                    imag = (imag * kernel[None]).sum((1, 2))
+                    # times (-i)^L
+                    turn = L % 4
+                    if turn == 1:
+                        real, imag = imag, -real
+                    elif turn == 2:
+                        real, imag = -real, -imag
+                    elif turn == 3:
+                        real, imag = -imag, real
+                    spectrum_re = spectrum_re + real
+                    spectrum_im = spectrum_im + imag
+            from .physics import cell_volume
+
+            volume = cell_volume(geometry, dtype=dtype).reshape(-1)[0]
+            spectrum = torch.complex(spectrum_re, spectrum_im) / volume
+            fields.append(torch.fft.irfftn(
+                spectrum.reshape(self.channels, nx, ny, nz // 2 + 1),
+                s=(nx, ny, nz), dim=(-3, -2, -1), norm="forward"))
+        return torch.stack(fields)
+
+
+class OccupancyInputModel(nn.Module):
+    """
+    An FNO whose input is a field **and** every atom's PAW occupancies.
+
+    The occupancies are written into :attr:`writer` channels by
+    :class:`SiteWriter` and concatenated after the input field, so the backbone
+    is an ordinary :class:`~poraque.ml.fno.FNO3d` over ``in_channels +
+    writer.channels`` inputs. Called as ``model(x, cell, sites=...)``; ``sites``
+    carries ``records`` (normalized, ``(B, A, S, R)``), ``species``,
+    ``positions`` and ``atom_mask``, as collated.
+
+    Parameters
+    ----------
+    backbone : FNO3d
+        Built for the field channels plus the written ones.
+    layouts : dict
+        ``{atomic number: projector channels}``.
+    sets : int
+        Record sets per atom.
+    channels : int, optional
+        Written channels.
+    """
+
+    def __init__(self, backbone, layouts, sets, channels=WRITER_CHANNELS):
+        super().__init__()
+        self.backbone = backbone
+        self.writer = SiteWriter(layouts, sets, channels)
+        self.layouts = self.writer.layouts
+        if backbone.in_channels <= self.writer.channels:
+            raise ValueError(
+                f"the backbone takes {backbone.in_channels} input channels, "
+                f"which leaves none for the field beside the "
+                f"{self.writer.channels} written ones.")
+
+    @property
+    def in_channels(self):
+        """The field channels, without the written ones."""
+        return self.backbone.in_channels - self.writer.channels
+
+    @property
+    def out_channels(self):
+        return self.backbone.out_channels
+
+    @property
+    def use_coordinates(self):
+        return self.backbone.use_coordinates
+
+    def n_parameters(self):
+        return sum(p.numel() * (2 if p.is_complex() else 1)
+                   for p in self.parameters() if p.requires_grad)
+
+    def forward(self, x, cell=None, sites=None):
+        if sites is None or "records" not in sites:
+            raise ValueError(
+                "this operator reads every atom's PAW occupancies beside the "
+                "field; call it with sites={'records', 'species', "
+                "'positions', 'atom_mask'}.")
+        written = self.writer(sites["records"].to(x.dtype), sites["species"],
+                              sites["positions"], sites["atom_mask"], cell,
+                              tuple(x.shape[-3:]))
+        return self.backbone(torch.cat([x, written.to(x.dtype)], dim=1), cell)
 
 
 # ---------------------------------------------------------------------- #
@@ -631,6 +908,16 @@ class OccupancyTransform:
     sets : int
     mean, scale : dict
         ``{atomic number: (sets, record_length) array}``.
+    set_weights : sequence of float, optional
+        Weight of each record set in :meth:`loss`, ``1`` for every set by
+        default. The second set of a spin-polarized density is the
+        magnetization's, and its L > 0 blocks hold 0.005 % of the occupancy
+        norm on the CHONPS set while being as unpredictable from the potential
+        as the field magnetization is (98 % held-out error at L = 1): with
+        every block weighted alike, those blocks were most of the occupancy
+        loss and of the score the best epoch was chosen on. A weight below one
+        on that set lets the charge blocks drive both. The transform itself
+        --- normalization and inverse --- does not depend on it.
     """
 
     #: A block whose RMS is below this fraction of its element's largest is
@@ -638,19 +925,27 @@ class OccupancyTransform:
     #: divided by its own round-off.
     FLOOR = 1e-6
 
-    def __init__(self, layouts, sets, mean, scale):
+    def __init__(self, layouts, sets, mean, scale, set_weights=None):
         self.layouts = {int(z): tuple(int(degree) for degree in channels)
                         for z, channels in layouts.items()}
         self.sets = int(sets)
+        weights = [1.0] * self.sets if set_weights is None \
+            else [float(w) for w in set_weights]
+        if len(weights) != self.sets or any(w < 0 for w in weights) \
+                or not any(w > 0 for w in weights):
+            raise ValueError(
+                f"set_weights {set_weights!r}: expected {self.sets} "
+                f"non-negative weight(s), not all zero.")
+        self.set_weights = weights
         self.mean = {int(z): np.asarray(v, dtype=float) for z, v in mean.items()}
         self.scale = {int(z): np.asarray(v, dtype=float)
                       for z, v in scale.items()}
         self._tables = {}
 
     @classmethod
-    def fit(cls, dataset, layouts, sets):
+    def fit(cls, dataset, layouts, sets, set_weights=None):
         """
-        Fit on a dataset's ``site_targets``, which should be the training split.
+        Fit on a dataset's ``site_records``, which should be the training split.
 
         Raises
         ------
@@ -662,7 +957,7 @@ class OccupancyTransform:
 
         records = {}
         for index in range(len(dataset)):
-            sites = dataset.site_targets(index)
+            sites = dataset.site_records(index)
             for atom, z in enumerate(sites["species"]):
                 length = int(sites["lengths"][atom])
                 records.setdefault(int(z), []).append(
@@ -689,17 +984,18 @@ class OccupancyTransform:
             if 0 in blocks:
                 index = blocks[0][:, 0]
                 mu[:, index] = stack[:, :, index].mean(axis=0)
-            centred = stack - mu
+            centered = stack - mu
             rms = {}
             for L, index in blocks.items():
-                block = centred[:, :, index]                # (N, S, P, M)
+                block = centered[:, :, index]                # (N, S, P, M)
                 rms[L] = np.sqrt((block ** 2).mean(axis=(0, 3)))    # (S, P)
             largest = max(float(v.max()) for v in rms.values()) or 1.0
             for L, index in blocks.items():
                 value = np.maximum(rms[L], cls.FLOOR * largest)
                 sigma[:, index] = value[:, :, None]
             mean[z], scale[z] = mu, sigma
-        return cls({z: layouts[z] for z in records}, sets, mean, scale)
+        return cls({z: layouts[z] for z in records}, sets, mean, scale,
+                   set_weights=set_weights)
 
     # -- tensor tables, keyed by atomic number ---------------------------- #
     def _table(self, device, dtype):
@@ -742,7 +1038,7 @@ class OccupancyTransform:
         return z * scale[..., :n] + mean[..., :n]
 
     def loss(self, predicted, target, species, atom_mask):
-        """Mean squared error in the normalised form, each L block weighted
+        """Mean squared error in the normalized form, each L block weighted
         equally, averaged over real atoms and sets."""
         # The model pads to its longest element; a shape bucket containing
         # only shorter records (e.g. H in a CHON model) pads to less.
@@ -752,6 +1048,12 @@ class OccupancyTransform:
         _, _, weight = self._lookup(species, predicted.device, predicted.dtype)
         n = predicted.shape[-1]
         error = ((predicted - target) ** 2) * weight[..., :n]
+        # Per-set weights, normalized to their mean so the default (all ones)
+        # is the unweighted loss to the bit and a weighted one keeps its scale.
+        sets = torch.as_tensor(self.set_weights, dtype=predicted.dtype,
+                               device=predicted.device)
+        sets = (sets / sets.mean())[:predicted.shape[2]]
+        error = error * sets[:, None]
         atoms = atom_mask.sum().clamp(min=1) * predicted.shape[2]
         return (error * atom_mask[..., None, None]).sum() / atoms
 
@@ -759,14 +1061,16 @@ class OccupancyTransform:
         return {"layouts": {str(z): list(v) for z, v in self.layouts.items()},
                 "sets": self.sets,
                 "mean": {str(z): v.tolist() for z, v in self.mean.items()},
-                "scale": {str(z): v.tolist() for z, v in self.scale.items()}}
+                "scale": {str(z): v.tolist() for z, v in self.scale.items()},
+                "set_weights": list(self.set_weights)}
 
     @classmethod
     def from_state_dict(cls, state):
         return cls({int(z): v for z, v in state["layouts"].items()},
                    state["sets"],
                    {int(z): v for z, v in state["mean"].items()},
-                   {int(z): v for z, v in state["scale"].items()})
+                   {int(z): v for z, v in state["scale"].items()},
+                   set_weights=state.get("set_weights"))
 
 
 def occupancy_error(predicted, target, paw_mask):

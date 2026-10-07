@@ -39,7 +39,7 @@ One file per material, one dataset per field::
                                         scaled_positions, selective_dynamics
         /CHGCAR                  (Nx, Ny, Nz) float64  attrs: units,
                                                               volume_scaled
-        /CHGCAR_extra0           the magnetisation block of a spin-polarised
+        /CHGCAR_extra0           the magnetization block of a spin-polarized
                                  density
         /CHGCAR_augmentation0    the PAW records that follow the block above it
         /CHGCAR_augmentation1    ... and the ones that follow ``_extra0``
@@ -53,13 +53,13 @@ offer them as fields and nothing downstream can mistake one for an input.
 The PAW records
 ---------------
 A ``CHGCAR`` is more than a grid: after each density block come the **PAW
-augmentation occupancies**, the one-centre terms living inside the core radius
+augmentation occupancies**, the one-center terms living inside the core radius
 that no plane-wave grid represents. ``ICHARG = 1`` will not restart without
 them.
 
 They are stored here as the **text** they are, one variable-length string per
 line, under ``<field>_augmentationN`` --- one block per grid block, so a
-spin-polarised density has two. Text rather than parsed numbers for the same
+spin-polarized density has two. Text rather than parsed numbers for the same
 reason :func:`~poraque.fields.vasp.volumetric.write_volumetric` appends them
 verbatim: they are a fixed-format Fortran read on VASP's side, and copying the
 characters is the only transformation that cannot produce a file VASP declines
@@ -108,7 +108,7 @@ from datetime import datetime, UTC
 
 import numpy as np
 
-#: Suffixes recognised as HDF5, with or without a ``::dataset`` selector.
+#: Suffixes recognized as HDF5, with or without a ``::dataset`` selector.
 HDF5_SUFFIXES = (".h5", ".hdf5", ".he5")
 
 #: Separator between the file and the dataset inside it.
@@ -206,7 +206,7 @@ def is_hdf5_path(path):
 # ---------------------------------------------------------------------- #
 def compression_options(compression=None, level=4, shuffle=True):
     """
-    Normalise a compression request into h5py dataset keywords.
+    Normalize a compression request into h5py dataset keywords.
 
     Parameters
     ----------
@@ -222,7 +222,7 @@ def compression_options(compression=None, level=4, shuffle=True):
         HDF5's byte-shuffle filter, on by default whenever a codec is active.
         It regroups the bytes of a chunk by significance before compressing,
         which matters here because the thing being compressed is an array of
-        doubles: the exponent bytes of neighbouring grid points are nearly
+        doubles: the exponent bytes of neighboring grid points are nearly
         identical and the low mantissa bytes are nearly random, and shuffling
         puts each kind together instead of interleaving them.
 
@@ -403,21 +403,21 @@ def write_field(path, name, field, compression=None, level=4, chunks=True,
         ``True`` for :func:`chunk_shape`, an explicit tuple, or ``False`` for a
         contiguous dataset (which HDF5 requires when there is no filter).
     extra : sequence of numpy.ndarray, optional
-        Additional blocks on the same grid — the magnetisation channel of a
-        spin-polarised density — stored as ``<name>_extra0``, ``_extra1``, ...
+        Additional blocks on the same grid — the magnetization channel of a
+        spin-polarized density — stored as ``<name>_extra0``, ``_extra1``, ...
     attributes : dict, optional
         Extra dataset attributes, recorded verbatim.
     values : numpy.ndarray, optional
         Written instead of ``field.to_file_values()``. Used by
         :func:`write_fields` to store the two channels of a spin density as a
-        main block and an extra one, which is how a spin-polarised ``CHGCAR``
+        main block and an extra one, which is how a spin-polarized ``CHGCAR``
         carries them too.
     augmentation : sequence, optional
         PAW augmentation records, as the verbatim text lines
         :func:`~poraque.fields.vasp.volumetric.read_augmentation` returns.
         Either one block --- a flat sequence of ``str`` --- or one block per
-        grid block, which is what a spin-polarised ``CHGCAR`` carries: a set
-        of records after the total and another after the magnetisation. They
+        grid block, which is what a spin-polarized ``CHGCAR`` carries: a set
+        of records after the total and another after the magnetization. They
         are stored as ``<name>_augmentation0``, ``_augmentation1``, ...,
         indexed to match the grid block each one follows.
 
@@ -493,10 +493,10 @@ def write_field(path, name, field, compression=None, level=4, chunks=True,
 
 def augmentation_blocks(augmentation):
     """
-    Normalise augmentation records to a list of blocks.
+    Normalize augmentation records to a list of blocks.
 
     A caller may hand over one block --- a flat sequence of lines, which is
-    what a spin-unpolarised ``CHGCAR`` has and what
+    what a spin-unpolarized ``CHGCAR`` has and what
     :func:`~poraque.fields.vasp.volumetric.read_augmentation` returns --- or
     a sequence of such blocks, one per grid block. Both spellings are
     accepted, because requiring the nested one for the overwhelmingly common
@@ -576,8 +576,8 @@ def write_fields(path, fields, compression=None, level=4, chunks=True,
         The ``.h5`` file.
     fields : dict
         ``{name: ScalarField}``. A :class:`~poraque.fields.spin.SpinDensity`
-        contributes its magnetisation channel as an ``_extra0`` block, exactly
-        as a spin-polarised ``CHGCAR`` carries it as a second grid block.
+        contributes its magnetization channel as an ``_extra0`` block, exactly
+        as a spin-polarized ``CHGCAR`` carries it as a second grid block.
     compression, level, chunks, shuffle
         See :func:`write_field`.
     augmentation : dict, optional
@@ -691,7 +691,7 @@ def read_augmentation(path):
         reader's contract exactly.
     blocks : list of list of str
         One block of verbatim record lines per grid block --- one for a
-        spin-unpolarised density, two for a spin-polarised one. Empty when the
+        spin-unpolarized density, two for a spin-polarized one. Empty when the
         store carries none, which is what a ``TAUCAR``, an ``EXTCAR`` and any
         density written before this became storable all have.
     """
@@ -811,7 +811,7 @@ def peek_shape(path):
 
 
 def is_spin_polarized(path):
-    """Whether the addressed field carries a magnetisation block."""
+    """Whether the addressed field carries a magnetization block."""
     h5py = _h5py()
     filename, dataset_name = split_target(path)
     if not os.path.exists(filename):

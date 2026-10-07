@@ -3,7 +3,7 @@
 ## The shared-grid invariant
 
 For one material, *every* field lives on a single
-{py:class}`~poraque.fields.FieldGrid` and is serialised in a single format.
+{py:class}`~poraque.fields.FieldGrid` and is serialized in a single format.
 That invariant is what makes the fields comparable, composable, and usable as
 aligned input/target pairs.
 
@@ -37,7 +37,7 @@ V_\mathrm{ext}(\mathbf G) = \frac{1}{\Omega}\sum_s S_s(\mathbf G)
 \qquad V_\mathrm{ext}(\mathbf 0) \equiv 0 .
 $$
 
-Dropping the $\mathbf G = 0$ term is the neutralising-background convention of
+Dropping the $\mathbf G = 0$ term is the neutralizing-background convention of
 periodic plane-wave codes; it fixes the cell average of the potential to zero.
 The real-space field follows from one inverse FFT, so the construction is
 $\mathcal O(N\log N)$, exactly periodic, and free of any Ewald parameter.
@@ -102,8 +102,8 @@ the cell boundary, and shift the integral.
 ```{note}
 Band-limiting a strictly positive field with sharp core peaks rings slightly
 (Gibbs), so a small number of voxels can go marginally negative. That is an
-artefact of the truncation, and it is why the dataset uses a sign-tolerant
-`asinh` normalisation rather than a logarithm.
+artifact of the truncation, and it is why the dataset uses a sign-tolerant
+`asinh` normalization rather than a logarithm.
 ```
 
 ## Ingesting other codes
@@ -118,7 +118,7 @@ datasets and models. A reader implements four methods:
 | `read_pseudopotentials` | `{element: PseudopotentialInfo}` |
 | `read_field` / `write_field` | {py:class}`~poraque.fields.ScalarField` |
 
-Units are normalised at the boundary, so a Quantum ESPRESSO reader converts its
+Units are normalized at the boundary, so a Quantum ESPRESSO reader converts its
 Rydberg `ecutwfc` there and nothing downstream needs to know. Field kinds are
 referred to by neutral names (`external`, `density`, `kinetic`) rather than by
 filename.

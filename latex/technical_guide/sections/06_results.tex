@@ -6,11 +6,11 @@
 
 \section{The data set}
 
-Three platinum structures, each a $3\times3\times3$ supercell of the face-centred
+Three platinum structures, each a $3\times3\times3$ supercell of the face-centered
 cubic primitive cell ($27$ atoms, $Z^{\mathrm{val}}=11$, so $297$ valence
 electrons), computed with VASP~6.2.0 at
 $E_{\mathrm{cut}}=450$\,eV, \opt{PREC=Accurate}, and a $5\times5\times5$
-$\Gamma$-centred $k$-mesh.
+$\Gamma$-centered $k$-mesh.
 
 \begin{center}
 \begin{tabular}{@{}llrl@{}}
@@ -88,7 +88,7 @@ baseline: mean density & $0.5199$ & $0.7589$ & $0.7779$ & $0.0000$ \\
 The learned map is a factor of $20$ better than predicting a constant density.
 The electron count, which nothing in the objective constrains, is recovered to
 $1.1$--$2.2\,\%$ --- precisely the single global degree of freedom that the
-charge-normalisation head of Section~\ref{sec:pauli-head} would fix exactly and
+charge-normalization head of Section~\ref{sec:pauli-head} would fix exactly and
 for free.
 
 \section{Model 2: \texorpdfstring{$\rho \mapsto \tau$}{rho to tau}}
@@ -228,7 +228,7 @@ What \emph{is} established independently of data-set size:
   \item one set of weights serves three different grid shapes, with
     CPU/accelerator agreement at $10^{-6}$;
   \item the von Weizsäcker bound is structural, verified at random
-    initialisation and under adversarial optimisation;
+    initialization and under adversarial optimization;
   \item the classical functionals' failure on this system is quantified rather
     than asserted.
 \end{itemize}

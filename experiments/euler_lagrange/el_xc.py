@@ -7,7 +7,7 @@ it reported was not the error of the kinetic functional at all: it was the
 difference between two exchange-correlation potentials, of order 1 eV in a
 valence region, sitting in a total of 1.7 eV.
 
-This re-runs the same measurement with each functional so the mislabelled part
+This re-runs the same measurement with each functional so the mislabeled part
 can be separated out. If PBE lowers the floor, the earlier number was
 pessimistic and part of the measured shortfall was our own bookkeeping
 error.

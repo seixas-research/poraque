@@ -165,7 +165,7 @@ computed potential. \\
 \opt{blur\_method} & \opt{spectral} & \opt{spectral} or \opt{ndimage}. \\
 \opt{cache\_in\_memory} & \opt{auto} & Keep decoded fields in RAM between
 epochs --- see below. \\
-\opt{spin} & \opt{auto} & Train on the magnetisation as a second channel
+\opt{spin} & \opt{auto} & Train on the magnetization as a second channel
 (Section~\ref{sec:spin}). \\
 \bottomrule
 \end{tabular}
@@ -181,7 +181,7 @@ With it off, \textbf{every epoch reopens, decompresses and re-parses every
 field from disk}. That produces exactly the same numbers as caching does ---
 and takes about ten times as long. Measured on a V100 with 115 structures at
 $32^3$: \opt{\_\_getitem\_\_} was 59\,\% of the training loop, 78.9\,s over 483
-calls, while the GPU sat at 2--4\,\% utilisation waiting on \opt{zlib} and
+calls, while the GPU sat at 2--4\,\% utilization waiting on \opt{zlib} and
 \opt{numpy.array} over a text generator. Turning the cache on took twenty
 epochs from \textbf{168.0\,s to 16.3\,s}, with the validation error identical
 to five decimals.
@@ -304,7 +304,7 @@ the tabulated pseudopotential, never in place of it.
 \begin{pwarn}
 \opt{ndimage} uses \opt{scipy.ndimage.gaussian\_filter}, which blurs along
 \emph{grid} axes and is therefore anisotropic in Cartesian space unless the
-cell is orthogonal --- on a face-centred cubic cell the two methods differ by
+cell is orthogonal --- on a face-centered cubic cell the two methods differ by
 $2$--$6\,\%$. \opt{spectral} multiplies by $e^{-G^{2}\sigma^{2}/2}$ using the
 true reciprocal metric and stays isotropic on any cell. Prefer the default.
 \end{pwarn}
@@ -333,20 +333,20 @@ Value & What happens \\
 \opt{auto} & Ask the sources whether their \file{CHGCAR}s carry a second grid
 block, and settle the channel count for the whole dataset before the cache is
 written. \\
-\opt{true} & Demand one: a dataset with no magnetisation \textbf{raises}. \\
+\opt{true} & Demand one: a dataset with no magnetization \textbf{raises}. \\
 \opt{false} & Drop it deliberately, and say so in the log. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-This is the switch for spin-polarised training, and there is no other. A
+This is the switch for spin-polarized training, and there is no other. A
 \file{CHGCAR} from an \mbox{\opt{ISPIN = 2}} run stores two grids, the total density
-$\rho$ and the magnetisation $m = \rho_\uparrow - \rho_\downarrow$; with
+$\rho$ and the magnetization $m = \rho_\uparrow - \rho_\downarrow$; with
 \opt{spin} resolved on, both reach the cache, \opt{ext2chg} predicts them as
 channels 0 and 1 of one output, and \opt{chg2tau} reads both. How many channels
 there are is a property of the data, not of the architecture, which is why the
 key lives in \opt{data} and why \opt{model} has no second one: two switches
-could disagree, and one of them would then be quietly ignored. An unpolarised
+could disagree, and one of them would then be quietly ignored. An unpolarized
 member of a spin set carries $m \equiv 0$, so a mixed archive trains one
 two-channel operator rather than two datasets. The cache tag says which it
 holds (\file{res48\_potcar\_spin}).
@@ -362,7 +362,7 @@ says how it divides:
 \end{lstlisting}
 
 \opt{charge} is the data term with the prediction substituted into the density
-channel alone, the magnetisation left at its reference; \opt{mag} is the same
+channel alone, the magnetization left at its reference; \opt{mag} is the same
 the other way round. Both keep the objective's norm and \textbf{its
 denominator}, the norm of the whole $(\rho, m)$ target. That choice is forced
 rather than convenient: a relative error of $m$ on its own divides by $m$,
@@ -373,16 +373,16 @@ $\mathrm{data} = \sqrt{\mathrm{charge}^2 + \mathrm{mag}^2}$ per sample, and the
 columns say where the error lives. An $H^1$ objective adds its gradient term
 rather than combining in quadrature, so there the columns rank the channels
 without summing to anything; the log's legend states which case applies.
-\opt{train loss} remains the total the optimiser stepped on, physics terms
+\opt{train loss} remains the total the optimizer stepped on, physics terms
 included.
 
 \begin{pnote}
 Both parts are in the metrics JSON's \opt{history}, as
-\opt{train\_loss\_charge} and \opt{train\_loss\_magnetisation}, and exist only
+\opt{train\_loss\_charge} and \opt{train\_loss\_magnetization}, and exist only
 for a two-channel \opt{ext2chg} target --- a one-channel run prints neither
-column. The magnetisation gets its own parity figure,
-\file{<task>\_parity\_magnetisation}, on linear axes because $m$ changes sign,
-and its own held-out number, \opt{magnetisation\_relative\_l2}; the report's
+column. The magnetization gets its own parity figure,
+\file{<task>\_parity\_magnetization}, on linear axes because $m$ changes sign,
+and its own held-out number, \opt{magnetization\_relative\_l2}; the report's
 performance table stays on the density channel.
 \end{pnote}
 
@@ -421,10 +421,10 @@ one block, see below. \\
 \opt{chg2tau}. \\
 \opt{pauli\_scale} & \opt{null} & Initial Pauli scale in eV/\AA$^{3}$;
 \opt{null} fits it from the training split. \\
-\opt{learn\_pauli\_scale} & \opt{true} & Optimise that scale alongside the
+\opt{learn\_pauli\_scale} & \opt{true} & Optimize that scale alongside the
 backbone. \\
 \opt{precision} & \opt{float32} & Dtype the operator computes in;
-\opt{float64} for checking a result is not a single-precision artefact. \\
+\opt{float64} for checking a result is not a single-precision artifact. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -583,11 +583,11 @@ model:
 
 \opt{ext2paw} maps $\vext$ to two things at once: the pseudo-density on the
 grid, as \opt{ext2chg} does, and every atom's \textbf{augmentation occupancies}
-$\rho(\ell\ell'LM)$ --- the one-centre PAW terms VASP writes after the grid,
+$\rho(\ell\ell'LM)$ --- the one-center PAW terms VASP writes after the grid,
 which with the pseudo-density are what an all-electron density is rebuilt from.
 They are not a field. There are 138 per atom for \opt{PAW\_PBE Pt}, whose
 projector channels are d, d, s, s, p, p in the POTCAR's order, and one set per
-density channel, so a spin-polarised dataset keeps the magnetisation's set too.
+density channel, so a spin-polarized dataset keeps the magnetization's set too.
 
 \begin{center}
 \begin{tabular}{@{}llp{7.0cm}@{}}
@@ -630,7 +630,7 @@ differs; over one band it scored 4.9\,\%. A grid too coarse to supply the band
 therefore raises, at training and at inference.
 \end{pwarn}
 
-The records train with L = 0 centred and every (set, L, pair) block scaled to
+The records train with L = 0 centered and every (set, L, pair) block scaled to
 unit RMS, fitted on the training split and inverted from the checkpoint, and
 every L block weighs the same in the loss. The log gains a \opt{val occ}
 column, the relative RMS in physical units, and an \opt{occ loss} column, the
@@ -714,7 +714,7 @@ $|\nabla\rho|^{2}/8\rho$, roughly $31\,\%$ of $\tau$. Recommended.
 
 \opt{pauli\_scale} sets the initial magnitude $s$; \opt{null} fits it from the
 training split, which is the sensible default. \opt{learn\_pauli\_scale}
-lets the optimiser refine it.
+lets the optimizer refine it.
 
 \begin{pwarn}
 The bound is a theorem for all-electron densities, whereas \file{CHGCAR} and
@@ -746,7 +746,7 @@ values. Drop to \opt{float32} when the field is on its way into a network that
 computes in single precision anyway.
 
 \opt{model.precision: float64} roughly doubles time and memory and exists to
-check that a physical result is not a single-precision artefact: an energy
+check that a physical result is not a single-precision artifact: an energy
 difference of a few meV assembled from $N^3$ voxel sums has no obvious margin
 in float32.
 
@@ -778,7 +778,7 @@ validation improvement; \opt{0} disables. \\
 \opt{scheduler} & \opt{cosine} & \opt{cosine} decay, or \opt{null} for a
 constant rate. \\
 \opt{grad\_clip} & \opt{1.0} & Global gradient-norm clip; \opt{0} disables. \\
-\opt{seed} & \opt{0} & Weight initialisation, batch order and fold shuffling. \\
+\opt{seed} & \opt{0} & Weight initialization, batch order and fold shuffling. \\
 \opt{device} & \opt{auto} & \opt{auto}, \opt{cuda}, \opt{mps} or \opt{cpu}. \\
 \opt{strict\_device} & \opt{false} & Abort instead of falling back to the CPU;
 see below. \\
@@ -812,7 +812,7 @@ it --- no mode to select, no structures to name.
 
 \opt{enable\_kfold} swaps that for K-fold cross-validation: each fold trains a
 fresh model on $K-1$ groups and scores it on the group held out. It answers a
-different question --- whether the architecture generalises --- and produces
+different question --- whether the architecture generalizes --- and produces
 $K$ models rather than one to deploy. \opt{valid\_fraction} is ignored, since
 the folds define the splits. Setting \opt{k\_folds} to the number of structures
 gives leave-one-out.
@@ -820,7 +820,7 @@ gives leave-one-out.
 \begin{ptip}
 Splitting is always at the \emph{structure} level: whole materials move
 together. A voxel-level split would place the same crystal on both sides, and
-since neighbouring voxels are strongly correlated the score would look
+since neighboring voxels are strongly correlated the score would look
 excellent while saying nothing about transfer to a new material.
 \end{ptip}
 
@@ -828,8 +828,8 @@ excellent while saying nothing about transfer to a new material.
 \opt{valid\_fraction} defaults to \textbf{0.2}, so an ordinary run reports a
 genuine held-out score and \opt{early\_stopping} is active. The trade-off is
 that the model has then seen only $80\,\%$ of the data. For the final
-deployable artefact set \opt{valid\_fraction: 0} --- accepting that its own
-metrics become a \textbf{training fit} carrying no generalisation claim, about
+deployable artifact set \opt{valid\_fraction: 0} --- accepting that its own
+metrics become a \textbf{training fit} carrying no generalization claim, about
 four times better than the cross-validated score on the reference dataset ---
 and quote a separate \opt{--kfold} run for the number.
 \end{pwarn}
@@ -964,7 +964,7 @@ its first epoch --- the parse the cache removes is paid $N$ times instead of
 once. Raise \opt{num\_workers} only when the data genuinely does not fit in
 RAM, which is the case \opt{cache\_in\_memory: false} exists for.
 
-\opt{pin\_memory} is a CUDA transfer optimisation and nothing else: \opt{auto}
+\opt{pin\_memory} is a CUDA transfer optimization and nothing else: \opt{auto}
 is true there and false everywhere, since it does not help on Metal and some
 PyTorch versions warn when asked for it.
 
@@ -1011,7 +1011,7 @@ of their timing.
 On four ranks it did not merely lose. With \opt{--distributed auto} and 60
 epochs, in the same allocation as an uncompiled four-rank run that finished in
 86.6\,s, the compiled run sat \textbf{eighteen minutes in the first epoch
-without printing an epoch line} and was cancelled. A configuration key whose
+without printing an epoch line} and was canceled. A configuration key whose
 failure mode is a silent deadlock inside a queue allocation is the hazard
 \opt{strict\_device} exists to remove, pointing the other way.
 
@@ -1042,9 +1042,9 @@ result is bisected against a single-device baseline.
 
 Three consequences, all visible in the run log. The \textbf{effective batch
 size is \opt{batch\_size} times the world size}, so a four-rank run at
-\opt{batch\_size: 10} steps on 40 samples and is not the same optimiser as the
+\opt{batch\_size: 10} steps on 40 samples and is not the same optimizer as the
 one-rank run it is compared against --- halve the learning rate or quarter the
-batch size if the comparison is meant to be of the same optimisation.
+batch size if the comparison is meant to be of the same optimization.
 \textbf{Rank 0 alone writes} the checkpoint, the metrics, the figures and the
 PDF, and alone prints. And \textbf{the batches are split, not the samples}:
 \opt{ShapeBucketSampler} groups materials by grid shape so no padding ever
@@ -1076,7 +1076,7 @@ Four objectives, on two named axes:
 \begin{center}
 \begin{tabular}{@{}lll@{}}
 \toprule
-\opt{loss} & normalised per sample & gradients in the objective \\
+\opt{loss} & normalized per sample & gradients in the objective \\
 \midrule
 \opt{absolute\_l2} & no  & no  \\
 \opt{relative\_l2} & yes & no  \\
@@ -1114,7 +1114,7 @@ objective's own data term evaluated on the held-out set:
 
 That is not only a label. Early stopping and the checkpoint are decided on this
 number, and while it read \opt{val rel L2} regardless a gradient-constrained run
-was selecting the model that minimised a functional it was not training on. The
+was selecting the model that minimized a functional it was not training on. The
 four are not comparable with each other --- which is why the
 \emph{per-structure table at the end of a run reports relative $L^2$ whatever
 the objective was}. That is the number to quote, and the one that lets two runs
@@ -1122,7 +1122,7 @@ be put side by side.
 
 \begin{pnote}
 \opt{loss: sobolev} was renamed on 2026-08-31. It named the gradient term and
-left the norm implicit, and offered no unnormalised form at all. It now raises,
+left the norm implicit, and offered no unnormalized form at all. It now raises,
 naming \opt{relative\_h1} (what it did) and \opt{absolute\_h1} as its
 replacements.
 \end{pnote}
@@ -1141,7 +1141,7 @@ training:
 \begin{center}
 \begin{tabular}{@{}lp{8.2cm}@{}}
 \toprule
-Key & Constraint it penalises the violation of \\
+Key & Constraint it penalizes the violation of \\
 \midrule
 \opt{enable} & --- decides whether any of the below is evaluated \\
 \opt{electron\_count\_weight} & $\int\rho\,\mathrm{d}\rr = N$
@@ -1163,7 +1163,7 @@ single weight can serve a heterogeneous dataset.
 physics-informed if and only if one of them is positive, which is what every
 configuration written before the switch existed already meant. \opt{true}
 \textbf{raises} when no weight is set: a run that declares physics-informed
-training and silently optimises the supervised baseline has an entirely
+training and silently optimizes the supervised baseline has an entirely
 ordinary loss curve and a report that says otherwise. \opt{false} zeroes the
 weights and warns if one was live, and also skips the per-batch decode the
 constraints act on --- measured at 2.4\,\% of a step on Apple Metal and
@@ -1179,7 +1179,7 @@ in Python, so a config saying \opt{off} would have switched the constraints
 \begin{pwarn}
 Introduce them one at a time against a measured baseline, and only once the
 data term has converged --- a physics residual evaluated at random
-initialisation is noise. A badly scaled constraint degrades accuracy while
+initialization is noise. A badly scaled constraint degrades accuracy while
 looking principled.
 \end{pwarn}
 
@@ -1239,7 +1239,7 @@ RESOURCE PROFILING SUMMARY
 
 \noindent
 That is a synthetic smoke run; the shape is what matters. Each stage is timed
-after a device synchronisation, so a GPU stage is charged for its compute rather
+after a device synchronization, so a GPU stage is charged for its compute rather
 than for the kernels it queued. The memory columns answer the question an
 allocation is sized from:
 
@@ -1275,7 +1275,7 @@ times the whole cross-validation of each task as one stage.
 \subsection{\opt{save\_raw\_plot\_data}}
 
 A figure is an argument someone will later want to make differently --- in a
-journal's colours, at a journal's size, with two runs on one axis. Re-running
+journal's colors, at a journal's size, with two runs on one axis. Re-running
 the model to get the numbers back is the expensive way to do that, so with this
 on each figure method writes what it drew, beside what it drew:
 
@@ -1299,19 +1299,19 @@ neither smaller nor easier to read back.
     Epochs on which validation was not measured leave that cell \textbf{empty}
     rather than interpolated: filling them would put points in the file the run
     never measured. There is no physics column --- \opt{train\_loss} is the
-    total the optimiser stepped on, and the per-term breakdown is not recorded.
+    total the optimizer stepped on, and the per-term breakdown is not recorded.
   \item[The parity plot] is one row per \emph{occupied} bin: \opt{split},
     \opt{reference}, \opt{prediction}, \opt{count}, \opt{density}. Long format,
     because that pivots straight back into a \opt{pcolormesh}; occupied bins
     only, because a 200-bin grid is 40\,000 cells of which a few thousand carry
     anything. The bin edges go in their own file, since a log axis makes them
-    unrecoverable from the centres. \opt{count} is what the figure drew, so on
+    unrecoverable from the centers. \opt{count} is what the figure drew, so on
     log axes it leaves out every sampled voxel at which reference or prediction
-    is not positive; the panel titles give the sample itself. A spin-polarised
+    is not positive; the panel titles give the sample itself. A spin-polarized
     run writes the same pair again for $m$, as
-    \file{<task>\_parity\_magnetisation}.
+    \file{<task>\_parity\_magnetization}.
   \item[The slice figure] stores the three panels as arrays --- \opt{reference},
-    \opt{prediction} and \opt{error} --- together with the colour limits the
+    \opt{prediction} and \opt{error} --- together with the color limits the
     figure used. The error is \emph{stored}, not left to be recomputed: a reader
     who reconstructs it and gets something else then knows the file is
     inconsistent, rather than trusting their own subtraction.
@@ -1359,9 +1359,9 @@ knob. \\
 worse-fitting expressions. \\
 \opt{n\_samples} & \opt{4000} & Voxels sampled across the dataset. \\
 \opt{seed} & \opt{0} & Seeds the sampling and the engine. \\
-\opt{template} & \opt{none} & How the target is factorised: \opt{none},
+\opt{template} & \opt{none} & How the target is factorized: \opt{none},
 \opt{thomas\_fermi} or \opt{pauli}. \\
-\opt{data\_loss} & \opt{mse} & The unpenalised part of the objective;
+\opt{data\_loss} & \opt{mse} & The unpenalized part of the objective;
 \opt{mae} is more robust on a density whose tails span orders of magnitude. \\
 \bottomrule
 \end{tabular}
@@ -1374,7 +1374,7 @@ worse-fitting expressions. \\
 \toprule
 Key & Default & Meaning \\
 \midrule
-\opt{enable} & \opt{true} & Penalise violations \emph{inside} the
+\opt{enable} & \opt{true} & Penalize violations \emph{inside} the
 evolutionary loop rather than filtering the front afterwards. \\
 \opt{positivity\_weight} & \opt{100.0} & $F \ge 0$, on the batch. \\
 \opt{thomas\_fermi\_weight} & \opt{100.0} & $F(0,0) = 1$: the uniform gas. \\
@@ -1437,7 +1437,7 @@ model:    {pauli_residual: true}
 training: {valid_fraction: 0, epochs: 200}
 \end{lstlisting}
 
-\paragraph{Measure generalisation.}
+\paragraph{Measure generalization.}
 \begin{lstlisting}
 task: all
 training: {enable_kfold: true, k_folds: 5}

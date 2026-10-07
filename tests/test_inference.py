@@ -5,14 +5,14 @@
 End-to-end tests of ``scripts/poraque_inference.py``.
 
 **The gap these fill was coverage, not knowledge.** ``poraque-inference``
-crashed on every spin-polarised model — every model this project has trained on
+crashed on every spin-polarized model — every model this project has trained on
 its own platinum data and on the six-metal Materials Project set — at
 ``density.integrate()``, which a :class:`~poraque.fields.SpinDensity`
 deliberately does not offer. Two other files in the tree, ``poraque_train.py``
 and ``calculator.py``, had already met that and each written its own
 ``hasattr`` check; the idiom was known and simply never reached here. Nothing
 drove ``run()`` with a two-channel model at all, so neither that crash nor its
-twin forty lines down on the normalisation branch was ever seen locally: both
+twin forty lines down on the normalization branch was ever seen locally: both
 were found by running the CLI on a V100 at LNCC against a real 400-epoch model.
 
 The models are built here with untrained weights. What is under test is the
@@ -96,7 +96,7 @@ def _bundle(tmp_path, channels, name=BUNDLE_FILENAME):
                                  training_resolution=8),
     }
     # An untrained operator predicts a signed field that integrates to a
-    # negative electron count, and `run()` skips the renormalisation when it
+    # negative electron count, and `run()` skips the renormalization when it
     # does (`electrons > 0`) -- so the branch these tests exist to reach would
     # never be entered. Offsetting the read-out bias makes the density
     # positive. It is not physics; it is the smallest thing that puts the code
@@ -123,7 +123,49 @@ def _run(structure_directory, bundle, tmp_path, *extra):
 # ===================================================================== #
 # The crash, and its twin
 # ===================================================================== #
-class TestInferenceRunsOnASpinPolarisedModel:
+class TestCurrentDirectory:
+    def test_omitted_directory_defaults_to_current_directory(self):
+        args = poraque_inference.build_parser().parse_args([
+            "--model", "../../../best.poraque", "--from-incar", "./INCAR",
+            "--paw-source", "model",
+        ])
+        assert args.directory == "."
+        assert args.output == "."
+        assert args.models == "../../../best.poraque"
+
+    @pytest.mark.parametrize("flag", ["--model", "--models", "-m"])
+    def test_model_aliases(self, flag):
+        args = poraque_inference.build_parser().parse_args([flag, "best.poraque"])
+        assert args.models == "best.poraque"
+
+    def test_explicit_directories_are_respected(self):
+        args = poraque_inference.build_parser().parse_args([
+            "other_structure", "--output", "other_predictions",
+        ])
+        assert args.directory == "other_structure"
+        assert args.output == "other_predictions"
+
+    def test_output_directory_does_not_select_input_directory(self):
+        args = poraque_inference.build_parser().parse_args([
+            "other_structure", "--output", ".",
+        ])
+        assert args.directory == "other_structure"
+        assert args.output == "."
+
+    def test_writes_chgcar_beside_poscar_without_input_or_output_argument(
+            self, structure_directory, tmp_path, monkeypatch):
+        bundle = _bundle(tmp_path, 2)
+        monkeypatch.chdir(structure_directory)
+        results = poraque_inference.predict([
+            "--model", bundle, "--grid", "8", "8", "8",
+            "--zval", "Pt=10", "--functional", "skip", "--device", "cpu",
+        ])
+        assert results["directory"] == structure_directory
+        assert os.path.exists("CHGCAR")
+        assert os.path.exists("inference.log")
+
+
+class TestInferenceRunsOnASpinPolarizedModel:
     """
     ``poraque-inference`` on any model trained with ``data.spin`` resolved on.
 
@@ -145,7 +187,7 @@ class TestInferenceRunsOnASpinPolarisedModel:
         for name in ("EXTCAR", "CHGCAR", "TAUCAR"):
             assert os.path.exists(results["outputs"][name])
 
-    def test_the_normalisation_branch_is_reached_too(self, structure_directory,
+    def test_the_normalization_branch_is_reached_too(self, structure_directory,
                                                      tmp_path):
         """
         Line 709 is on the ``--normalize`` branch, which is the default. A test
@@ -176,7 +218,7 @@ class TestInferenceRunsOnASpinPolarisedModel:
             self, structure_directory, tmp_path):
         """
         The repair must not be "convert to one channel and carry on". A
-        spin-polarised prediction is written as a spin-polarised CHGCAR, and
+        spin-polarized prediction is written as a spin-polarized CHGCAR, and
         the file VASP reads back has both grid blocks.
         """
         results = _run(structure_directory, _bundle(tmp_path, 2), tmp_path)
@@ -198,7 +240,7 @@ class TestInferenceRunsOnASpinPolarisedModel:
         from LNCC, because neither is reachable until the crash above is fixed:
         the subtraction would have broadcast a ``(2, ...)`` stack against a
         ``(...)`` reference and reported a relative L2 that averaged the
-        density error together with the magnetisation error, and the figure
+        density error together with the magnetization error, and the figure
         would have died on a three-axis "image".
         """
         matplotlib = pytest.importorskip("matplotlib")
@@ -220,7 +262,7 @@ class TestInferenceRunsOnASpinPolarisedModel:
 # ===================================================================== #
 # The silent half
 # ===================================================================== #
-class TestRenormalisationGoesThroughTheFieldsOwnMethod:
+class TestRenormalizationGoesThroughTheFieldsOwnMethod:
     """
     ``density.data = density.data * factor`` was the line after the crash.
 
@@ -233,8 +275,8 @@ class TestRenormalisationGoesThroughTheFieldsOwnMethod:
 
     The repair is to call the class's own :meth:`normalized`, which already
     knows what the hand-rolled multiply did not: that scaling :math:`\\rho`
-    alone would change the local polarisation :math:`m/\\rho` everywhere, which
-    is a different prediction rather than a normalisation, and that scaling the
+    alone would change the local polarization :math:`m/\\rho` everywhere, which
+    is a different prediction rather than a normalization, and that scaling the
     pair is what keeps :math:`\\rho_\\uparrow` and :math:`\\rho_\\downarrow`
     non-negative.
     """
@@ -244,7 +286,7 @@ class TestRenormalisationGoesThroughTheFieldsOwnMethod:
         results = _run(structure_directory, _bundle(tmp_path, 2), tmp_path)
         assert results["electrons"] == pytest.approx(20.0, rel=1e-9)
 
-    def test_the_local_polarisation_is_what_is_preserved(self):
+    def test_the_local_polarization_is_what_is_preserved(self):
         """
         Stated as physics, on the class rather than through the CLI, because
         this is the decision the inference path now inherits instead of making
@@ -279,22 +321,22 @@ class TestRenormalisationGoesThroughTheFieldsOwnMethod:
 # ===================================================================== #
 class TestTheDiagnosticsAreAboutTheDensityAlone:
     """
-    A valence density must be non-negative; a magnetisation must not.
+    A valence density must be non-negative; a magnetization must not.
 
     On a two-channel prediction the negative-voxel count ran over the stack, so
     every spin-down-majority voxel was reported as a defect and the ``range``
-    line's minimum was the most negative magnetisation rather than anything in
+    line's minimum was the most negative magnetization rather than anything in
     e/Ang^3. Loud and wrong, which is its own kind of harm: the natural
     reaction is to distrust a model that is fine.
     """
 
-    def test_the_negative_voxel_count_ignores_the_magnetisation(self, capsys,
+    def test_the_negative_voxel_count_ignores_the_magnetization(self, capsys,
                                                                 structure_directory,
                                                                 tmp_path):
         _run(structure_directory, _bundle(tmp_path, 2), tmp_path)
         printed = capsys.readouterr().out
 
-        # The magnetisation gets its own line, in mu_B, and the density's own
+        # The magnetization gets its own line, in mu_B, and the density's own
         # range line is still there and is still about e/Ang^3.
         assert "magnetization: integral" in printed
         assert "e/A^3" in printed
@@ -380,7 +422,7 @@ class TestAnIncarImpliesAVaspReadyOutput:
     forgotten fails late and somewhere else — without ``--to-vasp`` the grid
     follows the generic plane-wave rule and VASP refuses the ``CHGCAR`` on an
     ``ICHARG=1`` restart (a factor of two on a 27-atom platinum cell at
-    450 eV); without ``--add-paw`` the file has no one-centre records and VASP
+    450 eV); without ``--add-paw`` the file has no one-center records and VASP
     restarts from the plane-wave part alone. Neither failure shows up in
     ``poraque-inference``'s own output.
     """

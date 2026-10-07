@@ -40,14 +40,14 @@ grid, so :attr:`CalculationParameters.grid_shape` should always be populated
 and the cutoff-derived estimate never used.
 
 **Pseudopotentials** — ``calc.setups`` holds one setup per atom;
-``setup.Nv`` is the valence electron count (the ``ZVAL`` analogue) and
+``setup.Nv`` is the valence electron count (the ``ZVAL`` analog) and
 ``setup.rcut_j`` the projector radii in **Bohr**. Deduplicate by element,
 convert radii to Ångström.
 
 **Fields**
 
 * Density — ``calc.get_pseudo_density()`` (valence pseudo-density, the direct
-  analogue of VASP's ``CHGCAR``) or ``calc.get_all_electron_density()`` for
+  analog of VASP's ``CHGCAR``) or ``calc.get_all_electron_density()`` for
   the PAW-reconstructed one. Both are in :math:`e/\text{Å}^3` **already**, so
   there is nothing to convert: construct the field directly,
   ``field_class(values, grid, structure)``, and the VASP volume pre-factor
@@ -60,7 +60,7 @@ convert radii to Ångström.
   all-electron densities across a dataset would be a silent physics error,
   since they differ by orders of magnitude near the nuclei.
 * External potential — ``calc.get_electrostatic_potential()`` returns
-  :math:`v_H + v_{\rm ext}` in eV, i.e. the ``LOCPOT`` analogue, not the bare
+  :math:`v_H + v_{\rm ext}` in eV, i.e. the ``LOCPOT`` analog, not the bare
   ionic term. To obtain the ionic part alone, subtract the Hartree potential of
   the density (:func:`poraque.ml.physics.hartree_potential` computes it
   exactly), or generate it with

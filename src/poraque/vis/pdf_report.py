@@ -159,7 +159,7 @@ class ModelReport:
         The palette, the rules, the heading treatment and the header/footer are
         taken from ``latex/user_guide/poraque_user_guide.tex`` so that a
         generated report and the hand-written guides read as one family of
-        documents. The brand accent is ``poraquered``, the logo's own colour --
+        documents. The brand accent is ``poraquered``, the logo's own color --
         the earlier blue matched nothing.
 
         Two things stay deliberately different from the guide. The class is
@@ -349,11 +349,11 @@ class ModelReport:
         115-material run printed a hundred and fifteen lines of seven columns
         -- six pages of numbers nobody reads individually -- and the two
         questions a reader actually brings to it, *how big was the set* and
-        *did it generalise*, had to be answered by scrolling and averaging.
+        *did it generalize*, had to be answered by scrolling and averaging.
 
         Both are answered directly now. The counts are the dataset summary the
         report never had; and the ``train`` and ``validation`` rows side by
-        side are the generalisation gap, which is the single most useful thing
+        side are the generalization gap, which is the single most useful thing
         this table can say and was previously spread over a column of a hundred
         rows sorted by something else.
 
@@ -455,7 +455,7 @@ class ModelReport:
         Typeset the distilled expression and its accuracy/complexity front.
 
         Accepts either a :class:`~poraque.ml.symbolic.SymbolicResult` or the
-        plain dict it serialises to, so a report can be rebuilt from a run's
+        plain dict it serializes to, so a report can be rebuilt from a run's
         JSON summary without importing the ML stack.
         """
         get = (result.get if isinstance(result, dict)
@@ -580,7 +580,7 @@ class ModelReport:
             names = ", ".join(_escape(name.replace("_", " "))
                               for name in enforced)
             body.append(
-                f"The search was constrained: {names} were penalised inside "
+                f"The search was constrained: {names} were penalized inside "
                 f"the evolutionary loop rather than filtered afterwards, so "
                 f"the populations could not spend their budget on forms that "
                 f"had to be discarded. The loss column below is therefore that "
@@ -597,7 +597,7 @@ class ModelReport:
                         r"{@{}rrrc>{\raggedright\arraybackslash}p{7.0cm}@{}}"
                         r"\toprule" "\n")
             # `\endhead`, so a front long enough to turn the page keeps its
-            # column names. Without it the second page is four unlabelled
+            # column names. Without it the second page is four unlabeled
             # columns of numbers and a formula.
             body.append(r"Nodes & Loss & $d$ & Limits & Expression \\" "\n"
                         r"\midrule" "\n" r"\endhead" "\n")
@@ -726,7 +726,7 @@ class ModelReport:
         Per-atom populations and net charges, as a table.
 
         Accepts a :class:`~poraque.analysis.PartialCharges` or the dict it
-        serialises to, so a report can be rebuilt from a run's JSON summary
+        serializes to, so a report can be rebuilt from a run's JSON summary
         without importing the analysis stack.
         """
         get = (analysis.get if isinstance(analysis, dict)
@@ -858,16 +858,16 @@ class ModelReport:
         captions = {
             "loss_curves": "Training objective and validation error against epoch.",
             "field_slice": "Cross-section: DFT reference, prediction, and their "
-                           "difference on a shared colour scale.",
-            "parity_magnetisation": "Predicted against true magnetisation "
+                           "difference on a shared color scale.",
+            "parity_magnetization": "Predicted against true magnetization "
                                     "density, over every structure of each "
                                     "split, on linear axes: m is signed.",
             "parity": "Predicted against true voxel values over every "
                       "structure of each split, from a random sample of 10 000 "
                       "voxels per structure, with the identity line. The "
                       "validation set is drawn beside the training set on the "
-                      "same bins and colour scale: a wider cloud about the line "
-                      "is the generalisation gap.",
+                      "same bins and color scale: a wider cloud about the line "
+                      "is the generalization gap.",
         }
         if figures:
             body.append(r"\section*{Comparison with DFT}" "\n")
@@ -888,7 +888,7 @@ class ModelReport:
             # unbreakable box, so a long value -- `physics_informed` is 140
             # characters of nested dict -- ran straight past the right margin.
             #
-            # The widths are fractions of `\textwidth` rather than centimetres,
+            # The widths are fractions of `\textwidth` rather than centimeters,
             # so they survive a change of paper size or margin, and they are
             # sized to the *content*: see CONFIG_KEY_FRACTION. The two add to
             # one, less the single inter-column gap `@{}...@{}` leaves in the

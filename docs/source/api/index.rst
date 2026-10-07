@@ -136,6 +136,12 @@ Training
 .. automodule:: poraque.ml.backend
    :members:
 
+Command output
+--------------
+
+.. automodule:: poraque.utils.logging
+   :members:
+
 Physics operators and losses
 ----------------------------
 

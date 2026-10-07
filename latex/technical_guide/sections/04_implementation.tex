@@ -6,9 +6,9 @@
 
 \section{The shared-grid data model}
 
-The organising invariant of \pyclass{poraque.fields} is that, for one material,
+The organizing invariant of \pyclass{poraque.fields} is that, for one material,
 every scalar field lives on \emph{one} \pyclass{FieldGrid} instance and is
-serialised in \emph{one} format. Everything else follows.
+serialized in \emph{one} format. Everything else follows.
 
 \begin{center}
 \begin{tabular}{@{}lll@{}}
@@ -90,9 +90,9 @@ Implemented in \file{poraque/fields/resample.py}.
 \begin{pwarn}
 Band-limiting a strictly positive field with sharp core peaks rings slightly
 (the Gibbs phenomenon), so a small number of voxels can go marginally negative
---- one point in $32768$ for this data. It is an artefact of the truncation, not
+--- one point in $32768$ for this data. It is an artifact of the truncation, not
 of the data, and it is why the data pipeline uses a sign-tolerant
-$\operatorname{asinh}$ normalisation rather than a logarithm.
+$\operatorname{asinh}$ normalization rather than a logarithm.
 \end{pwarn}
 
 \section{Code-agnostic ingestion}
@@ -115,7 +115,7 @@ Method & Returns \\
 \end{tabular}
 \end{center}
 
-Units are normalised at the boundary: a Quantum ESPRESSO reader converts its
+Units are normalized at the boundary: a Quantum ESPRESSO reader converts its
 Rydberg \opt{ecutwfc} in \opt{read\_parameters}, and nothing downstream needs to
 know. Field kinds are referred to by neutral names (\opt{external},
 \opt{density}, \opt{kinetic}) rather than by filename, since \file{CHGCAR} has
@@ -156,7 +156,7 @@ tests:
     \emph{non-contiguous} complex tensor yields a strided real view over which
     MPS miscomputes \opt{einsum} --- with no error and results $40$--$90\,\%$
     off. The operands here are precisely such views (high-frequency corners
-    such as \opt{x\_ft[..., nx-m1:, ny-m2:, :m3]}). Materialising them first
+    such as \opt{x\_ft[..., nx-m1:, ny-m2:, :m3]}). Materializing them first
     reduces the error to $\sim10^{-7}$.
 \end{description}
 
@@ -178,7 +178,7 @@ $64^3$ & $262.2$\,ms & $45.9$\,ms & $5.71\times$ \\
 \end{tabular}
 \end{center}
 
-Forward pass, five-run average, synchronised. CPU and MPS agree to
+Forward pass, five-run average, synchronized. CPU and MPS agree to
 $\sim10^{-6}$ relative on a single forward pass with identical weights.
 
 \section{A C kernel for CPU inference}
@@ -209,7 +209,7 @@ And \opt{torch.einsum} runs it at roughly $3.4$\,GFLOP/s. The pattern
 \opt{bixyz,ioxyz->boxyz} reduces to a batched product over a layout whose
 reduction axis is strided by the whole mode block. Reordering the loops so the
 flattened mode index is innermost --- contiguous in all three operands --- is
-the whole optimisation, and it is not expressible through \opt{einsum}:
+the whole optimization, and it is not expressible through \opt{einsum}:
 
 \begin{lstlisting}
 for b, o:                       /* accumulator row stays in L1 */
@@ -268,7 +268,7 @@ Python, and the shared library is compiled on first use into
 \file{\textasciitilde/.cache/poraque} and reused. Every failure path --- no
 compiler, rejected flags, an unwritable cache, an unsupported dtype or device,
 \opt{PORAQUE\_C\_BACKEND=0} --- falls back to \opt{torch.einsum}. It is an
-optimisation and never a dependency.
+optimization and never a dependency.
 
 \begin{pwarn}
 The kernel writes into a plain tensor and records nothing on the autograd

@@ -116,7 +116,7 @@ result.total_charge     # ~0 for a neutral cell
 Each voxel goes wholly to its nearest atom, under the minimum-image
 convention. In a non-orthogonal cell the surrounding images are searched rather
 than trusting a wrap of the fractional coordinates — in a skewed lattice the
-nearest image can be a diagonal neighbour.
+nearest image can be a diagonal neighbor.
 
 Voxels exactly equidistant from several atoms are **shared equally** rather
 than awarded to the lowest atom index. This is rare on a real density and
@@ -165,10 +165,10 @@ partial_charges(rho, method="bader", backend="auto")      # external if present
 ```
 
 **Native** is a vectorized on-grid steepest ascent: every voxel points at
-whichever of its 26 neighbours gives the largest density increase *per unit
+whichever of its 26 neighbors gives the largest density increase *per unit
 distance*, and those pointers are followed to a local maximum by repeated
 pointer doubling. The distance weighting matters — without it the diagonal
-neighbours, $\sqrt3$ further away, win too often and the basins acquire a
+neighbors, $\sqrt3$ further away, win too often and the basins acquire a
 staircase bias along the cell diagonals.
 
 **External** writes a temporary `CHGCAR`, runs the Henkelman group's `bader`
@@ -189,7 +189,7 @@ All three partition the **pseudo** valence density. The PAW core is absent, so
 these are not all-electron populations: a Bader volume here is not the
 all-electron Bader volume, and the charges are systematically compressed toward
 zero. This matters most for Bader, whose basin boundaries are set by the
-density's topology near the nuclei — exactly where the pseudisation is largest.
+density's topology near the nuclei — exactly where the pseudization is largest.
 
 For a proper Bader analysis VASP's own guidance is to sum `AECCAR0` and
 `AECCAR2`; Poraquê does not predict those.

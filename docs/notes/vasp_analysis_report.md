@@ -1,6 +1,6 @@
 # Analysis of the VASP source: `EXTCAR` and `TAUCAR`
 
-**Source analysed:** `/Users/leseixas/Codes/vasp/6.2.0/build/std_taucar/`
+**Source analyzed:** `/Users/leseixas/Codes/vasp/6.2.0/build/std_taucar/`
 **Files:** `main.F`, `pot.F`, `pseudo.F`, `metagga.F`, `pseudo_struct.F`, `base.F`
 **Status:** discrepancy diagnosed **and fixed** — the Python implementation now reproduces VASP's `EXTCAR` to a relative $L^2$ of $2\times10^{-5}$.
 
@@ -52,7 +52,7 @@ The author's own comment states the intent precisely:
 
 > `V_ext(G) = 1/Omega sum_types S_type(G) v_loc^type(G)` … the tabulated short
 > ranged part of the POTCAR local potential **with the `-Z e^2/r` Coulomb tail
-> added back on**. It contains no PAW one-centre terms and no non-local
+> added back on**. It contains no PAW one-center terms and no non-local
 > projector contribution … as in LOCPOT the potential is written in eV (no
 > volume scaling, unlike the densities in CHGCAR/TAUCAR) and … the divergent
 > G=0 component is set to zero.
@@ -136,7 +136,7 @@ potential, since $V(\mathbf G=0)$ is zeroed.
 
 The comment is explicit, and it bounds what any learned model can be asked to do:
 
-- **no PAW one-centre terms** — `EXTCAR` is a pseudo quantity, consistent with
+- **no PAW one-center terms** — `EXTCAR` is a pseudo quantity, consistent with
   the pseudo `CHGCAR` and `TAUCAR`;
 - **no non-local projectors** — "not a local function of $\mathbf r$ at all",
   so they cannot appear in a volumetric file even in principle;
@@ -204,7 +204,7 @@ confirmed in code by `CTAUC=CTAUC*LATT_CUR%OMEGA` and the use of `OUTCHG`
 
 That the τ is the **plane-wave/pseudo** part also explains an earlier
 observation: the Hoffmann-Ostenhof bound $\tau\ge\tau_{\rm vW}[\rho]$ held at
-essentially every grid point, because $\tau$ and $\rho$ are pseudised
+essentially every grid point, because $\tau$ and $\rho$ are pseudized
 *consistently*. The bound is only guaranteed for all-electron quantities, so
 this was worth checking rather than assuming — and it holds here.
 
@@ -260,14 +260,14 @@ for training and is documented rather than chased.
    network is even reached.
 3. **Watch `PSGMAX` when changing `ENCUT`.** `pseudo.F:1286` warns
    "PSGMAX for local potential too small" when the grid outruns the table. Our
-   implementation mirrors VASP's truncation, so behaviour matches — but a
+   implementation mirrors VASP's truncation, so behavior matches — but a
    `PSGMAX` well below $|G|_{\max}$ means the reference itself is truncated.
 4. **Multi-species is untested.** The formula sums over species with per-species
    `PSGMAX`, and the implementation follows that, but this dataset is
    single-species (Pt). Validate on a binary before relying on it.
 5. **`ISPIN=2` is not handled.** Both `CHGCAR` and `TAUCAR` then carry a second
    (magnetization) block, which our reader currently ignores — it reads the
-   first block only. Fine for these non-spin-polarised runs (`ISPIN=1`), a
+   first block only. Fine for these non-spin-polarized runs (`ISPIN=1`), a
    silent truncation otherwise.
 
 ## 9. Source index

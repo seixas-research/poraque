@@ -204,7 +204,7 @@ atoms.calc = Poraque("models/poraque_models.poraque",
                      potcar_dir="/opt/vasp/potpaw_PBE")
 \end{lstlisting}
 
-Recognised layouts, in preference order --- each accepting a \file{.gz} or
+Recognized layouts, in preference order --- each accepting a \file{.gz} or
 \file{.Z} suffix:
 
 \begin{enumerate}
@@ -246,10 +246,10 @@ of the energy it differentiates to $10^{-7}$ eV/\AA.
 \begin{pwarn}
 The \emph{physics} is incomplete for PAW datasets. Hellmann--Feynman is the
 whole force only for a \emph{local} pseudopotential; a PAW calculation adds a
-projector force and a one-centre force, and neither is recoverable from $\rho$,
+projector force and a one-center force, and neither is recoverable from $\rho$,
 $\tau$ and $V_{\rm loc}$ on a grid. Measured against VASP on platinum, using
 VASP's own density: MAE $0.83$ eV/\AA\ against forces of $1.66$ eV/\AA. The
-magnitude is right, the direction is not, so \textbf{geometry optimisation and
+magnitude is right, the direction is not, so \textbf{geometry optimization and
 molecular dynamics remain unavailable}.
 
 The cancellation is why it is delicate: the electron--ion and ion--ion terms
@@ -270,7 +270,7 @@ no electronic smearing enters this pipeline, and ASE optimizers request
 
 A total energy means nothing on its own. It is referenced to whatever the
 pseudopotential generator chose, and Poraqu\^e's totals additionally carry an
-offset of order $10^{3}$ eV per atom from the absent PAW one-centre terms. The
+offset of order $10^{3}$ eV per atom from the absent PAW one-center terms. The
 \textbf{cohesive energy} removes the arbitrary part,
 
 \begin{equation*}
@@ -362,7 +362,7 @@ potential.write("LOCPOT")
 total = atoms.calc.get_hartree_potential(with_external=True)
 \end{lstlisting}
 
-The $\GG = 0$ term is set to zero --- the same neutralising-background
+The $\GG = 0$ term is set to zero --- the same neutralizing-background
 convention $\vext$ uses (\S\ref{sec:g0}), which is what makes the two
 potentials addable and what makes $E_{\rm H}$ of a uniform density come out at
 exactly zero rather than infinite.
@@ -386,7 +386,7 @@ grid.
 
 \paragraph{It is not a DFT total energy.} \file{CHGCAR} holds the valence
 \emph{pseudo} density and \file{TAUCAR} the valence pseudo kinetic energy
-density, so the PAW one-centre terms are absent entirely. For the 27-atom Pt
+density, so the PAW one-center terms are absent entirely. For the 27-atom Pt
 cell above the result is $\approx -31215$ eV against a VASP \opt{TOTEN} of
 order $-100$ eV. Nothing in this module can close that gap.
 
@@ -411,7 +411,7 @@ carries no information.
 
 The first row is the important one. It is measured with the model removed from
 the problem entirely, so it is not a training failure --- it is the neglected
-PAW one-centre and non-local energy, which is \emph{not} a per-atom constant.
+PAW one-center and non-local energy, which is \emph{not} a per-atom constant.
 The electrostatics themselves are correct: $E_{\alpha Z}$, Ewald and
 $E_{\rm H}$ reproduce VASP's \opt{PSCENC}, \opt{TEWEN} and \opt{DENC} to better
 than $0.01$ eV in a difference, and the Ewald sum reproduces exact Madelung
@@ -429,7 +429,7 @@ native $128^{3}$ mesh, and $\Ts$ and the electron count are preserved exactly
 --- spectral resampling is an exact band-limited projection.
 \end{pnote}
 
-\paragraph{Charge normalisation helps, and is on by default.} The shipped
+\paragraph{Charge normalization helps, and is on by default.} The shipped
 \opt{ext2chg} operator predicts densities whose electron count drifts by up to
 $1.7\,\%$ --- nearly five electrons out of $297$. Every electrostatic term is
 at least linear in $\rho$ and $E_{\rm H}$ is quadratic, so that drift alone

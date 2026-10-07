@@ -1,0 +1,44 @@
+# CHON architecture from the earlier benchmark, with a soft charge penalty.
+# electron_count_weight=1 is an initial setting, not a benchmark-selected optimum.
+# The experiment runner preserves the 303/88/41 split; the general CLI uses its own split.
+task:
+  type: ext2paw
+  name: chon_ext2paw_charge
+data:
+  data_paths:
+  - ./data/CHON
+  cache: ./data/cache/chon_charge
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+  strict_potcar: true
+  atomic_reference: ./data/CHON/isolated_atoms
+  delta_density: true
+  resolution: 24
+  storage: hdf5
+  cache_in_memory: true
+model:
+  use_coordinates: false
+  mode_selection: physical
+  g_max: 12
+  equivariant:
+    enable: true
+    n_radial: 8
+    g_basis: auto
+    spherical_cutoff: true
+  paw:
+    enable: true
+    width: 16
+    modes: 6
+    n_layers: 3
+    readout_g_max: 2.239576570351994
+    occupancy_weight: 3
+    neighbor_min: 0.6
+training:
+  epochs: 500
+  learning_rate: 0.003
+  eval_epoch: 5
+  early_stopping: 100
+  init_seed: 1
+  device: cpu
+  physics_informed:
+    enable: true
+    electron_count_weight: 1.0

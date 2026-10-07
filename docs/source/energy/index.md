@@ -179,7 +179,7 @@ atoms.calc = Poraque("models/poraque_models.poraque",
                      potcar_dir="/opt/vasp/potpaw_PBE")
 ```
 
-Recognised layouts, in preference order — each accepting a `.gz` or `.Z`
+Recognized layouts, in preference order — each accepting a `.gz` or `.Z`
 suffix:
 
 1. `<dir>/Pt/POTCAR` — what VASP ships;
@@ -217,10 +217,10 @@ of the energy it differentiates to $10^{-7}$ eV/Å.
 :::{warning}
 The **physics** is incomplete for PAW datasets. Hellmann-Feynman is the whole
 force only for a *local* pseudopotential; a PAW calculation adds a projector
-force and a one-centre force, and neither is recoverable from $\rho$, $\tau$
+force and a one-center force, and neither is recoverable from $\rho$, $\tau$
 and $V_\mathrm{loc}$ on a grid. Measured against VASP on platinum, using VASP's own
 density: MAE 0.83 eV/Å against forces of 1.66 eV/Å. The magnitude is right, the
-direction is not. **Geometry optimisation and molecular dynamics remain
+direction is not. **Geometry optimization and molecular dynamics remain
 unavailable.**
 
 The cancellation is why it is delicate: the electron-ion and ion-ion terms are
@@ -240,7 +240,7 @@ optimizers request `free_energy` by name.
 
 A total energy means nothing on its own — it is referenced to whatever the
 pseudopotential generator chose, and Poraquê's own totals additionally carry a
-$\approx 10^3$ eV per atom offset from the absent PAW one-centre terms. The
+$\approx 10^3$ eV per atom offset from the absent PAW one-center terms. The
 **cohesive energy** removes the arbitrary part:
 
 $$\Delta E = E_\mathrm{total} - E_\mathrm{ref},
@@ -349,7 +349,7 @@ The field accessors are symmetric — `get_external_potential()`,
 ## What the number is not
 
 **It is not a DFT total energy.** `CHGCAR` holds the valence *pseudo* density
-and `TAUCAR` the valence pseudo kinetic energy density, so the PAW one-centre
+and `TAUCAR` the valence pseudo kinetic energy density, so the PAW one-center
 terms are absent entirely. For the 27-atom Pt cell above the result is
 $\approx -31215$ eV against a VASP `TOTEN` of order $-100$ eV. Nothing in this
 module can close that gap.
@@ -369,7 +369,7 @@ carries no information.
 
 The first row is the important one: it is measured with the model removed from
 the problem entirely, so it is not a training failure. It is the neglected PAW
-one-centre and non-local energy, which is *not* a per-atom constant. The
+one-center and non-local energy, which is *not* a per-atom constant. The
 electrostatic terms themselves are correct — $E_{\alpha Z}$, Ewald and
 $E_\mathrm{H}$ reproduce VASP's `PSCENC`, `TEWEN` and `DENC` to better than
 0.01 eV in a difference.

@@ -12,7 +12,7 @@ V_\mathrm{ext}(\mathbf r) \;\longleftrightarrow\; \rho_0(\mathbf r).
 $$
 
 The second gives a universal functional $F[\rho]$ such that
-$E[\rho]=F[\rho]+\int V_\mathrm{ext}\rho\,\mathrm d^3r$ is minimised by the
+$E[\rho]=F[\rho]+\int V_\mathrm{ext}\rho\,\mathrm d^3r$ is minimized by the
 ground-state density.
 
 This is the formal footing of the `ext2chg` model: its target is not a fitted
@@ -69,7 +69,7 @@ trying to approximate.
 
 ## Orbital-free DFT
 
-Removing the orbitals entirely and minimising $E[\rho]$ under
+Removing the orbitals entirely and minimizing $E[\rho]$ under
 $\int\rho=N$ gives the Euler–Lagrange equation
 
 $$
@@ -117,5 +117,5 @@ $$
 The $\mathbf G = 0$ component diverges for any charged distribution. In a
 neutral periodic crystal that divergence cancels between the electron–electron,
 electron–ion and ion–ion terms; the standard convention is to zero each term's
-$\mathbf G=0$ component individually, which adds a uniform neutralising
+$\mathbf G=0$ component individually, which adds a uniform neutralizing
 background and leaves potentials defined up to a constant.

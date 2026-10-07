@@ -29,7 +29,7 @@ part that was never in doubt --- including nearly all of the dynamic range the
 ``data.delta_density: true`` switches that on and reads the database from
 ``data.atomic_reference``.
 
-**A last-resort source of PAW one-centre terms.** Each atom's own augmentation
+**A last-resort source of PAW one-center terms.** Each atom's own augmentation
 record travels with it, which is the only thing available for an element the
 training set has never seen. It is *not* the better source when the element
 **is** in the training set: measured here, a free Pt atom's record is 86.6 % RMS
@@ -72,12 +72,29 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 if os.path.isdir(_SRC):
     sys.path.insert(0, _SRC)
 
-from poraque.environment import banner                       # noqa: E402
 from poraque.fields.atomic import (                          # noqa: E402
     LIBRARY_FILENAME,
     AtomicReferenceLibrary,
     build_library,
 )
+from poraque.utils.logging import Logger, header, table_lines  # noqa: E402
+
+
+def _section(log, name):
+    """
+    Open the block ``name`` on ``log``, whatever ``log`` is.
+
+    The functions below take any callable, as they always have, so a test can
+    hand them ``list.append`` and read back what they said; only :func:`main`
+    hands them a :class:`~poraque.utils.logging.Logger`. A plain callable gets
+    exactly what :meth:`Logger.section` would have written --- a blank line and
+    the header --- so the layout does not depend on who is listening.
+    """
+    if isinstance(log, Logger):
+        log.section(name)
+    else:
+        log("")
+        log(header(name))
 
 
 def show(path, log=print):
@@ -95,25 +112,29 @@ def show(path, log=print):
     AtomicReferenceLibrary
     """
     library = AtomicReferenceLibrary.load(path)
+    _section(log, "database")
     if not len(library):
         log(f"  {path}: no isolated-atom references here.")
         return library
 
-    log(f"\n  {path}")
-    log(f"  fingerprint {library.fingerprint}")
-    log("")
-    header = (f"  {'element':<8s} {'Zval':>7s} {'g_max':>8s} {'points':>7s} "
-              f"{'anisotropy':>11s} {'aug':>5s}  potcar")
-    log(header)
-    log("  " + "-" * (len(header) - 2))
+    log(f"  path:        {path}")
+    log(f"  fingerprint: {library.fingerprint}")
+
+    _section(log, "entries")
+    rows = []
     for key in sorted(library.entries):
         entry = library.entries[key]
-        log(f"  {entry.element:<8s} {entry.valence_charge:7.3f} "
-            f"{entry.g_max:8.2f} {len(entry.g_grid):7d} "
-            f"{100 * entry.radial_scatter:10.2f}% "
-            f"{'yes' if entry.augmentation else 'no':>5s}  "
-            f"{entry.potcar_title or '(none)'}")
-    log("")
+        rows.append((entry.element, f"{entry.valence_charge:.3f}",
+                     f"{entry.g_max:.2f}", len(entry.g_grid),
+                     f"{100 * entry.radial_scatter:.2f}%",
+                     "yes" if entry.augmentation else "no",
+                     entry.potcar_title or "(none)"))
+    for line in table_lines(("element", "Zval", "g_max", "points",
+                             "anisotropy", "aug", "potcar"), rows,
+                            align="<>>>>><"):
+        log(line)
+
+    _section(log, "notes")
     log("  g_max is in 1/Ang; beyond it a species contributes zero rather than")
     log("  an extrapolation. anisotropy is the worst within-bin scatter of the")
     log("  form factor, i.e. how non-spherical the reference atom was.")
@@ -133,30 +154,35 @@ def build(args, log=print):
     -------
     AtomicReferenceLibrary
     """
+    _section(log, "input")
     existing = None
     if args.append:
         existing = AtomicReferenceLibrary.load(args.output)
         if len(existing):
             log(f"  extending {args.output} ({len(existing)} entry/entries)")
+    log(f"  reading isolated atoms from {len(args.directories)} path(s)")
 
-    log(f"\n  reading isolated atoms from {len(args.directories)} path(s)")
+    # One line per atom, written by the library as it ingests them: the block
+    # is the record of what went in, and what was skipped and why.
+    _section(log, "atoms")
     library = build_library(args.directories, filename=args.filename,
                             bins=args.bins, library=existing, log=log)
 
     if not len(library):
-        log("\n  Nothing ingested. A reference needs a single-atom CHGCAR; "
+        log("  Nothing ingested. A reference needs a single-atom CHGCAR; "
             "check that\n  the paths hold one, and that the cells really do "
             "hold one atom each.")
         return library
 
     path = library.save(args.output)
-    log(f"\n  {len(library)} entry/entries -> {path}")
+    _section(log, "output files")
+    log(f"  {len(library)} entry/entries -> {path}")
     log(f"  fingerprint {library.fingerprint}")
-    log("")
-    log("  Use it with:")
-    log("      data:")
-    log("        delta_density: true")
-    log(f"        atomic_reference: {path}")
+
+    _section(log, "usage")
+    log("  data:")
+    log("    delta_density: true")
+    log(f"    atomic_reference: {path}")
     return library
 
 
@@ -197,18 +223,21 @@ def main(argv=None):
     Returns a process exit status, because the ``[project.scripts]`` wrapper
     calls ``sys.exit(main())``.
     """
-    banner()
+    log = Logger()
+    log.banner()
     args = build_parser().parse_args(argv)
 
     if args.show:
-        show(args.show)
+        log.title("Isolated-atom database: contents")
+        show(args.show, log)
         return 0
 
     if not args.directories:
         build_parser().error(
             "give at least one isolated-atom directory, or --show a database")
 
-    library = build(args)
+    log.title("Isolated-atom database: build")
+    library = build(args, log)
     return 0 if len(library) else 1
 
 

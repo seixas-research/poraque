@@ -1,22 +1,42 @@
 # Neural operators
 
-## Two models, one system
+## Four maps, one system
 
 | Task | Map | Meaning |
 | --- | --- | --- |
 | `ext2chg` | $V_\mathrm{ext}\mapsto\rho$ | the Hohenberg–Kohn map |
 | `chg2tau` | $\rho\mapsto\tau$ | the kinetic energy density functional |
+| `ext2paw` | $V_\mathrm{ext}\mapsto(\tilde\rho,\rho^a_{ij})$ | the pseudo-density **and** every atom's PAW augmentation occupancies |
+| `paw2tau` | $(\tilde\rho,\rho^a_{ij})\mapsto\tau$ | the kinetic energy density from both |
 
 The first learns an object guaranteed to exist by theorem. The second learns
 the only term of the DFT total energy with no accurate explicit density
 functional — it *is* an orbital-free kinetic functional, since
 $T_s[\rho]=\int\tau[\rho]\,\mathrm d^3r$.
 
+The other two sit beside that chain rather than in it, and exist because a
+`CHGCAR` is not only a grid. The one-center PAW terms inside the augmentation
+spheres have no representation on the plane-wave mesh, and together with the
+pseudo-density they are what an all-electron density is reconstructed from.
+`ext2paw` predicts them — an FNO for the grid, a readout at each atom over one
+band of $|\mathbf G|$, and an equivariant head per element — and `paw2tau`
+reads them, written into extra input channels by an equivariant
+{class}`~poraque.ml.paw.SiteWriter` beside the density. What the one predicts is
+exactly what the other reads, which is the route this project takes to the
+total energy; `task: all` still means the chain alone. The
+{ref}`configuration reference <paw>` describes both operators and their keys.
+
+`ext2chg` and `ext2paw` can also be handed the structure explicitly, as
+superpositions of isolated atoms beside $V_\mathrm{ext}$
+({ref}`model.structure_input <structure-input>`): scalar fields, so the
+operator stays equivariant, and functions of the geometry alone, so inference
+rebuilds them from the structure as it rebuilds the potential.
+
 ## Why a Fourier neural operator
 
 A conventional network maps fixed-size vectors, which is fatal here: every
 material has a different grid. A **neural operator** learns a map between
-function spaces and is discretised only for evaluation, so one set of weights
+function spaces and is discretized only for evaluation, so one set of weights
 serves every grid.
 
 One Fourier layer is
@@ -45,7 +65,7 @@ Three mechanisms deliver grid independence:
 1. **Dynamic mode truncation.** Weights are allocated for `modes` coefficients
    per axis; each forward pass uses `min(modes, available)` and leaves the rest
    untouched.
-2. **Resolution-invariant normalisation.** Both transforms use
+2. **Resolution-invariant normalization.** Both transforms use
    `norm="forward"`, so coefficients approximate *continuous* Fourier-series
    coefficients and their magnitude does not drift with $N$. Under the default
    convention a $120^3$ field would enter a layer with amplitudes ~125× those
@@ -53,6 +73,9 @@ Three mechanisms deliver grid independence:
 3. **Shape-bucketed batching.** Samples of different shape cannot be stacked.
    Rather than pad — which wastes compute and injects fictitious vacuum into
    the FFT — materials are grouped by shape and batches drawn within a group.
+   One optimizer step per batch then weighs a structure by the inverse of its
+   bucket's batch size; `training.samples_per_step` accumulates gradients
+   across buckets so that every structure weighs the same.
 
 `GroupNorm` is used throughout: batch statistics are meaningless when every
 sample has a different spatial extent.
@@ -83,14 +106,14 @@ poraque-train --config configs/train.yaml --kfold
 ```{warning}
 With `valid_fraction: 0` nothing is held out and the reported metrics are
 **training fit**. They show the model can represent the data; they are not a
-generalisation estimate. That setting is for the final artefact, which uses all
+generalization estimate. That setting is for the final artifact, which uses all
 the data — quote a `--kfold` run for the number.
 ```
 
 ## Constraints enforced by construction
 
 A soft penalty trades accuracy against constraint satisfaction and achieves
-neither. Where a constraint can be built into the parameterisation it should
+neither. Where a constraint can be built into the parameterization it should
 be — it then holds for every weight configuration, with nothing to tune.
 
 For `chg2tau`, the exact decomposition $\tau=\tau_\mathrm{vW}+\tau_\mathrm{P}$
@@ -140,8 +163,8 @@ report is built in a temporary directory and only the PDF is moved out, so no
 
 The parity plot is drawn over **every structure** of each split, training and
 validation side by side, each panel titled with how many structures and voxels
-it holds and labelled with its relative $L^2$, $R^2$, MAE and RMSE. A held-out
-density visibly wider about the identity line is the generalisation gap: the
+it holds and labeled with its relative $L^2$, $R^2$, MAE and RMSE. A held-out
+density visibly wider about the identity line is the generalization gap: the
 same story the aggregate table tells, read off the figure instead of inferred
 from two numbers. Under `--kfold` the one panel is every structure as its own
 fold held it out, which no single fold can show.
@@ -164,8 +187,8 @@ sample — equally, for every grid larger than it — and is therefore not the
 table's mean of per-structure errors; read the two together rather than
 expecting them to agree.
 
-The panels share their axis limits, their bin edges and one colour scale, and
-each is normalised to the share of *its own* sampled voxels, because the
+The panels share their axis limits, their bin edges and one color scale, and
+each is normalized to the share of *its own* sampled voxels, because the
 training split is several times the validation one and raw counts would paint it
-denser for no physical reason. A spin-polarised run draws a second figure for
-the magnetisation, on linear axes since $m$ changes sign.
+denser for no physical reason. A spin-polarized run draws a second figure for
+the magnetization, on linear axes since $m$ changes sign.

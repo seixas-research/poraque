@@ -12,7 +12,7 @@ Sizing and fetching the Materials Project in bulk, with the API mocked out.
 **Nothing here touches the network.** Every test drives
 :class:`~poraque.data.materials_project.MPDataFetcher` against a fake rester
 and fake S3 sizes, which is the only way to test a bulk downloader at all: the
-behaviours worth pinning are precisely the ones that only appear at scale —
+behaviors worth pinning are precisely the ones that only appear at scale —
 what a resumed run skips, what a rate limit costs, what an estimate says when
 it measured twenty objects and is reporting about forty thousand.
 
@@ -1232,7 +1232,7 @@ class TestAnHdf5DownloadIsNotLossy:
     It did not until 2026-09-01. ``_store_density`` built a ``ChargeDensity``
     from ``data["total"]`` alone and wrote no augmentation, while the text path
     handed the whole object to pymatgen --- so one download produced two
-    different datasets. The magnetisation half is the one that reaches
+    different datasets. The magnetization half is the one that reaches
     training: ``data.spin: auto`` resolves against what is on disk, so the same
     materials trained a two-channel operator as CHGCARs and a one-channel one
     as stores. The PAW half is the one that reaches VASP: without the records
@@ -1311,7 +1311,7 @@ class TestRenderingThePymatgenRecords:
         """
         ``data_aug`` is keyed by VASP's 1-based atom index, and a JSON round
         trip turns those keys into strings. Sorting on the raw key would put
-        atom 10 before atom 2 and hand every atom its neighbour's occupancies.
+        atom 10 before atom 2 and hand every atom its neighbor's occupancies.
         """
         records = {str(i): np.full(2, float(i)) for i in range(1, 12)}
         block = augmentation_records(

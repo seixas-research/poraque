@@ -82,7 +82,7 @@ class MixedFieldDataset(FieldPairDataset):
     spin : bool, optional
         ``False`` (default) serves the total density as one channel. ``True``
         serves :math:`(\rho, m)` and requires every source to carry a
-        magnetisation block.
+        magnetization block.
     charges : dict, optional
         ``{element: Z_val}`` for materials with no ``POTCAR`` to read them
         from. Taken from ``potcar_dir`` when one is given, and inferred from
@@ -276,11 +276,11 @@ class MixedFieldDataset(FieldPairDataset):
         Relaxed relative to the base class, deliberately. There, ``spin=False``
         against a two-block file is an error, because a single VASP directory
         is expected to describe one calculation and a mismatch means the
-        dataset is mislabelled. Across a *mixture* that reasoning does not
-        hold: public archives are spin-polarised as a matter of policy while
+        dataset is mislabeled. Across a *mixture* that reasoning does not
+        hold: public archives are spin-polarized as a matter of policy while
         local runs often are not, and reading only the total block is a
         legitimate reduction of data that is present — unlike inventing a
-        magnetisation channel that is not.
+        magnetization channel that is not.
 
         So ``False`` serves :math:`\rho`, ``True`` requires and serves
         :math:`(\rho, m)` from every material, and ``"auto"`` follows the data
@@ -295,7 +295,7 @@ class MixedFieldDataset(FieldPairDataset):
         if requested == "auto":
             if len(polarized) > 1:
                 raise ValueError(
-                    "Some materials in this mixture are spin-polarised and "
+                    "Some materials in this mixture are spin-polarized and "
                     "some are not, so spin='auto' has no single answer. Pass "
                     "spin=False to train on the total density throughout, "
                     "which every one of them carries."
@@ -307,7 +307,7 @@ class MixedFieldDataset(FieldPairDataset):
                            if not record.source.is_spin_polarized(record)]
             raise ValueError(
                 f"spin=True was requested, but {len(unpolarized)} material(s) "
-                f"carry no magnetisation block ({unpolarized[:5]}...). There "
+                f"carry no magnetization block ({unpolarized[:5]}...). There "
                 f"are no values for a second channel."
             )
         return True
@@ -381,7 +381,7 @@ class MixedFieldDataset(FieldPairDataset):
         The split is at the **material** level and ignores which archive each
         came from, so a mixed dataset's validation set is a random sample of
         the mixture rather than one whole archive — which would measure
-        transfer between archives and report it as generalisation.
+        transfer between archives and report it as generalization.
         """
         rng = np.random.default_rng(seed)
         order = rng.permutation(len(self.materials))

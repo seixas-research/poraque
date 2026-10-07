@@ -10,14 +10,14 @@ r"""
 The data path of ``ext2paw``: PAW augmentation occupancies as per-atom targets.
 
 ``ext2paw`` maps :math:`V_{\rm ext}` to the pseudo-density *and* each atom's
-augmentation occupancies :math:`\rho(\ell\ell'LM)` --- the one-centre terms a
+augmentation occupancies :math:`\rho(\ell\ell'LM)` --- the one-center terms a
 ``CHGCAR`` carries after its grid. Everything between the file and a batch is
 here: reading the records, carrying them through the cache, yielding them as
 padded per-atom tensors, and the configuration that selects the task. The
 operator is not written, and the last class pins that ``poraque-train`` says
 so before building anything.
 
-Reading the records turned up a defect older than the task. A spin-polarised
+Reading the records turned up a defect older than the task. A spin-polarized
 ``CHGCAR`` writes a line of per-ion ``MAGMOM`` values after the first set of
 records, and the parser read each record up to the next header, so the last
 atom of every ``ISPIN = 2`` file gained ``NIONS`` extra values. On this
@@ -56,7 +56,7 @@ PLATINUM = os.path.join(_ROOT, "data", "vasp", "structures", "structure_0000",
 FREE_ATOM = os.path.join(_ROOT, "data", "vasp", "isolated_atoms", "Pt",
                          "CHGCAR")
 
-#: What VASP writes after the first record set of a spin-polarised CHGCAR: one
+#: What VASP writes after the first record set of a spin-polarized CHGCAR: one
 #: MAGMOM per ion, in the wider E20.12 field.
 MAGMOM_LINE = "  0.100000000000E+01  0.100000000000E+01"
 
@@ -70,7 +70,7 @@ def _with_records(directory, spin, length=6):
     """
     Rewrite a synthetic run's CHGCAR with augmentation records after the grid.
 
-    Two atoms, ``length`` values each; a spin-polarised file gets a second set
+    Two atoms, ``length`` values each; a spin-polarized file gets a second set
     and the MAGMOM line VASP writes between them.
     """
     path = os.path.join(str(directory), "CHGCAR")
@@ -94,7 +94,7 @@ class TestARecordIsReadToTheLengthItDeclares:
     """
     ``augmentation occupancies   1 138`` says 138, and 138 are read.
 
-    Reading to the next header let the MAGMOM line of a spin-polarised file
+    Reading to the next header let the MAGMOM line of a spin-polarized file
     into the last record of its first set.
     """
 
@@ -159,9 +159,9 @@ class TestOccupanciesBecomeOnePaddedArray:
         assert values.shape == (2, 1, 6)
         np.testing.assert_array_equal(values[1, 0], _records(2, 6)[1])
 
-    def test_an_unpolarised_member_of_a_spin_set_gets_zero_moments(self):
+    def test_an_unpolarized_member_of_a_spin_set_gets_zero_moments(self):
         """
-        Its grid carries m = 0, and its magnetisation occupancies vanish for
+        Its grid carries m = 0, and its magnetization occupancies vanish for
         the same reason.
         """
         values, _ = occupancy_arrays([format_augmentation(_records(2, 6))],
@@ -350,7 +350,7 @@ class TestTheDatasetYieldsPerAtomTargets:
                                    _records(2, 6, offset=0.5)[1], rtol=1e-6)
         assert tuple(sample["target"].shape) == (2, 8, 8, 8)
 
-    def test_the_field_tasks_carry_no_site_targets(self, tmp_path):
+    def test_the_field_tasks_carry_no_site_records(self, tmp_path):
         from poraque.ml.data import FieldPairDataset
 
         sample = FieldPairDataset(self._cache(tmp_path), "ext2chg")[0]
@@ -430,14 +430,20 @@ class TestTheTaskAndItsBlockAgree:
         model = self._config(model={"paw": {"enable": True, "width": 32}}).model
         assert model.paw_settings() == {"width": 32, "modes": 16,
                                         "n_layers": 4, "readout_g_max": "auto",
-                                        "occupancy_weight": 1.0}
+                                        "occupancy_weight": 1.0, "neighbor_min": 2.2,
+                                        "magnetization_weight": 1.0,
+                                        "readout_cache_mib": 1024}
         for bad in (0, -1, 2.5, True, "64"):
             with pytest.raises(ValueError, match="positive integer"):
                 self._config(model={"paw": {"enable": True,
                                             "modes": bad}}).model.paw_settings()
         for key, bad in (("readout_g_max", 0), ("readout_g_max", "atuo"),
                          ("occupancy_weight", -1.0),
-                         ("occupancy_weight", True)):
+                         ("occupancy_weight", True),
+                         ("neighbor_min", -0.1), ("neighbor_min", 5.8),
+                         ("neighbor_min", True), ("neighbor_min", float("nan")),
+                         ("readout_cache_mib", -1), ("readout_cache_mib", True),
+                         ("magnetization_weight", -0.5)):
             with pytest.raises(ValueError, match=key):
                 self._config(model={"paw": {"enable": True,
                                             key: bad}}).model.paw_settings()

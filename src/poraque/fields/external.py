@@ -71,7 +71,7 @@ The form factor :math:`f_s(G)` selects the pseudo-ion model:
 .. note::
    This is the *long-range, local* part of the ionic potential. It is not the
    full VASP ``PAW`` local pseudopotential: the short-range pseudization inside
-   :math:`R_{\rm core}` is modelled by :math:`f_s(G)` rather than read from the
+   :math:`R_{\rm core}` is modeled by :math:`f_s(G)` rather than read from the
    ``POTCAR`` table, and non-local projectors are outside the scope of a local
    field descriptor by construction. See
    :mod:`poraque.fields.vasp.potcar` for why the tabulated ``local part`` is

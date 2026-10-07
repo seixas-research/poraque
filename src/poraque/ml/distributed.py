@@ -41,7 +41,7 @@ shape-bucketed batch list on every rank (it is a pure function of ``seed`` and
 padding to an equal count comes for free, and that padding is not a nicety —
 see below.
 
-**2. Equal batch counts, or a hang.** DDP synchronises gradients inside each
+**2. Equal batch counts, or a hang.** DDP synchronizes gradients inside each
 ``backward()``. A rank that runs out of batches while another still has one
 leaves that other waiting on an all-reduce that will never be joined, and the
 job burns its wall clock in a collective rather than failing. ``DistributedSampler``
@@ -69,7 +69,7 @@ recorded.
 
 NCCL only
 ---------
-The backend is ``nccl`` and the module refuses to initialise without CUDA. Gloo
+The backend is ``nccl`` and the module refuses to initialize without CUDA. Gloo
 would work on CPU and would be a way to *test* the plumbing, but it would also
 let a misconfigured cluster job quietly run distributed on 96 CPU cores at a
 fraction of one GPU's speed, which is the same failure ``strict_device`` exists
@@ -351,7 +351,7 @@ def _slurm_context():
     if rank is None or world_size is None:
         return None
     if world_size < 2:
-        # One task is not a group. Initialising a world of one costs a NCCL
+        # One task is not a group. Initializing a world of one costs a NCCL
         # bootstrap and buys nothing, and every collective below would then be
         # a no-op reached through a wrapper.
         return None
@@ -478,7 +478,7 @@ def initialize(context, timeout_minutes=30):
     timeout_minutes : float, optional
         Collective timeout. The default is long because the first collective
         happens after every rank has built or read its cache, and a cold
-        Lustre read of a few hundred densities is minutes, not seconds. A
+        Luster read of a few hundred densities is minutes, not seconds. A
         timeout that fires there reports itself as a NCCL error and sends the
         reader looking at the network.
 

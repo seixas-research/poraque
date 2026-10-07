@@ -16,13 +16,13 @@ $$
 E[\rho] \;=\; \underbrace{T_s[\rho]}_{\textbf{Model 2}} \;+\; \int V_{\rm ext}\,\rho\,d^3r \;+\; E_H[\rho] \;+\; E_{xc}[\rho],
 $$
 
-and the ground state is the density that minimises it subject to
+and the ground state is the density that minimizes it subject to
 $\int\rho\,d^3r = N$. So:
 
 | | Model | Learns | Status in DFT |
 | --- | --- | --- | --- |
 | **1** | $V_{\rm ext}\mapsto\rho$ | the *solution* of the variational problem | a **theorem** (Hohenberg–Kohn); exists and is unique |
-| **2** | $\rho\mapsto\tau$ | the *functional* being minimised | the **open problem** of OF-DFT |
+| **2** | $\rho\mapsto\tau$ | the *functional* being minimized | the **open problem** of OF-DFT |
 
 That asymmetry is the single most important thing to understand about these
 two models, and it governs everything below.
@@ -59,7 +59,7 @@ $$
 
 to self-consistency. The density at a point depends on the potential
 *everywhere* — through the Hartree term, which is a $1/|\mathbf r - \mathbf r'|$
-convolution, and through the orbitals, which are delocalised Bloch states.
+convolution, and through the orbitals, which are delocalized Bloch states.
 
 This is precisely why an FNO is the right architecture rather than a CNN. A
 convolutional network has a finite receptive field and would have to be made
@@ -84,7 +84,7 @@ Same protocol, in e/Å³ on the held-out material:
 
 The electron count $\int\rho\,d^3r$ is recovered to within 2.3–2.8 % without
 any constraint enforcing it — which is precisely the degree of freedom the
-charge-normalisation head of `docs/notes/pi_fno.md` §3.2 would pin exactly, for free.
+charge-normalization head of `docs/notes/pi_fno.md` §3.2 would pin exactly, for free.
 
 ### 2.4 Two caveats worth stating plainly
 
@@ -151,7 +151,7 @@ $\tau_P \ge 0$ is the natural target: $\tau_{\rm vW}$ is known analytically
 from $\rho$, so a network that predicts only $\tau_P$ starts from a correct
 baseline instead of re-learning a closed-form expression. See §3 of
 `docs/notes/pi_fno.md` for the recommended $\tau = \tau_{\rm vW} + \mathrm{softplus}(f_\theta)$
-head, which makes the bound structural rather than penalised.
+head, which makes the bound structural rather than penalized.
 
 ### 3.3 Measured result
 
@@ -175,7 +175,7 @@ That is expected and is exactly the known failure of TF for a $d$-band metal
 with strong density inhomogeneity: TF is the uniform-gas limit, and platinum's
 core and $d$-shell regions are as far from uniform as matter gets. The learned
 operator beating it by an order of magnitude is the result that motivates the
-whole programme.
+whole program.
 
 **Caveat, stated once and meant:** with two closely related structures these
 numbers measure interpolation between two nearby geometries of one element.
@@ -188,7 +188,7 @@ not be quoted as if they did.
 ## 4. How the two models close into one physical loop
 
 Trained separately, the two models are useful. Coupled, they become an OF-DFT
-solver. The link is the Euler–Lagrange equation obtained by minimising
+solver. The link is the Euler–Lagrange equation obtained by minimizing
 $E[\rho]$ at fixed $N$:
 
 $$
@@ -213,7 +213,7 @@ $$
 is computable from the two networks and their own inputs, with **no additional
 labels**, and must vanish for a correct pair $(\rho, \tau)$.
 
-This is the concrete connection to the physics-informed programme:
+This is the concrete connection to the physics-informed program:
 
 ```
         ┌──────────── Euler–Lagrange residual (label-free) ────────────┐
@@ -226,11 +226,11 @@ This is the concrete connection to the physics-informed programme:
 
 Three consequences, in order of practical value:
 
-1. **Model 2 gets regularised on Model 1's output distribution.** A KEDF
+1. **Model 2 gets regularized on Model 1's output distribution.** A KEDF
    trained only on VASP-converged densities fails when placed inside an SCF
    loop, because it then sees *non-converged* densities it was never shown.
    Joint training on the residual exposes it to exactly that distribution.
-2. **The optimised quantity becomes the used quantity.** OF-DFT needs
+2. **The optimized quantity becomes the used quantity.** OF-DFT needs
    $\delta T_s/\delta\rho$, not $\tau$. A model with small error in $\tau$ can
    have a poor functional derivative. Training through the derivative fixes the
    objective mismatch.
@@ -273,7 +273,7 @@ All of the above is implemented and unit-tested in `poraque/ml/physics.py`;
   spectral convolution addresses directly.
 * **Model 2** learns the object orbital-free DFT is missing. It is constrained
   by exact theorems ($\tau \ge \tau_{\rm vW}$, the uniform-gas limit, coordinate
-  scaling) that should be built into the architecture rather than penalised.
+  scaling) that should be built into the architecture rather than penalized.
 * Measured on the 27-atom metal supercell, the learned KEDF beats Thomas-Fermi and von Weizsäcker by
   roughly an order of magnitude in relative $L^2$ — on two related structures,
   which bounds what may be concluded.

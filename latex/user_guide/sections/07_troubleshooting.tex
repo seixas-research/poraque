@@ -40,9 +40,9 @@
   \item[``Cannot batch mixed grid shapes''] Use the shape-bucketed loader
     (the training script does) or \opt{batch\_size: 1}.
   \item[A few negative voxels in \file{TAUCAR}] Band-limiting a strictly
-    positive field with sharp core peaks rings slightly. It is an artefact of
+    positive field with sharp core peaks rings slightly. It is an artifact of
     the downsampling, not of the data, and is why the pipeline uses a
-    sign-tolerant $\operatorname{asinh}$ normalisation.
+    sign-tolerant $\operatorname{asinh}$ normalization.
 \end{description}
 
 \section{Devices}
@@ -55,7 +55,7 @@
     $5.7\times$ at $64^3$.
   \item[Results differ slightly between devices] Expect $\sim10^{-6}$ relative
     on a single forward pass. Two \emph{independently trained} runs will differ
-    much more, because optimisation amplifies tiny differences --- that is not a
+    much more, because optimization amplifies tiny differences --- that is not a
     bug.
 \end{description}
 

@@ -9,7 +9,7 @@
 r"""
 Active learning: choose the next DFT calculations by committee disagreement.
 
-A reference structure costs a plane-wave run. Labelling an unlabelled pool at
+A reference structure costs a plane-wave run. Labeling an unlabeled pool at
 random spends that budget uniformly over structures the model already predicts
 well. Query by committee spends it where the model is *least determined*:
 
@@ -17,9 +17,9 @@ well. Query by committee spends it where the model is *least determined*:
 
     M members (same data, different init_seed)
               |
-              |  predict rho for every candidate in the unlabelled pool
+              |  predict rho for every candidate in the unlabeled pool
               v
-      normalise each to a probability density
+      normalize each to a probability density
               |
               v
     JSD = (1/M) sum_i D_KL( rho_i || rho_bar )     one number per candidate
@@ -29,7 +29,7 @@ well. Query by committee spends it where the model is *least determined*:
 
 The measure
 -----------
-Each member's prediction is first normalised to unit integral, which is what
+Each member's prediction is first normalized to unit integral, which is what
 makes a Kullback-Leibler divergence between them defined at all, and then
 
 .. math::
@@ -38,16 +38,16 @@ makes a Kullback-Leibler divergence between them defined at all, and then
     \qquad
     \mathrm{JSD} = \frac1M\sum_{i=1}^M D_{\rm KL}\!\left(\rho_i\,\|\,\bar\rho\right).
 
-This is the generalised Jensen-Shannon divergence, and it is exactly the mutual
+This is the generalized Jensen-Shannon divergence, and it is exactly the mutual
 information between the prediction and the member index — the quantity active
-learning maximises. It is symmetric, finite wherever the members are, and
+learning maximizes. It is symmetric, finite wherever the members are, and
 bounded by :math:`\ln M`, none of which a raw :math:`D_{\rm KL}` gives.
 :func:`~poraque.ml.committee.jensen_shannon_spread` computes it; this module is
 the loop around it.
 
 .. important::
 
-   Normalising discards magnitude, so the JSD measures **shape** disagreement
+   Normalizing discards magnitude, so the JSD measures **shape** disagreement
    and is blind to a common rescaling. The electron-count spread it throws away
    is reported beside it by
    :func:`~poraque.ml.committee.committee_integrals`, and both are recorded on
@@ -56,7 +56,7 @@ the loop around it.
 
 .. warning::
 
-   Members that differ only in initialisation explore optimisation variance,
+   Members that differ only in initialization explore optimization variance,
    which is a lower bound on the true error rather than a calibrated
    uncertainty. Validate the ranking before trusting a round of it:
    ``poraque-committee --against`` correlates the same measure against known
@@ -96,7 +96,7 @@ from .tasks import resolve_task
 #:
 #: ``"move"``
 #:     Rename it out of the pool. The pool then holds exactly the structures
-#:     still unlabelled, which is the invariant the next round depends on.
+#:     still unlabeled, which is the invariant the next round depends on.
 #: ``"copy"``
 #:     Duplicate it, leaving the pool untouched. Costs disk and lets the same
 #:     candidate be selected again next round.
@@ -111,9 +111,9 @@ TRANSFERS = ("move", "copy", "symlink")
 # ===================================================================== #
 def discover_pool(root, task, exclude=()):
     r"""
-    Find the unlabelled candidates under ``root``.
+    Find the unlabeled candidates under ``root``.
 
-    "Unlabelled" is the whole point: a candidate needs only the task's **input**
+    "Unlabeled" is the whole point: a candidate needs only the task's **input**
     field, since the target is what the DFT run would produce and has not been
     computed yet. That is what separates this from
     :func:`~poraque.ml.data.discover_materials`, which requires a complete
@@ -249,14 +249,14 @@ def _reduce(values, grid):
         "max_spread": float(spread["max_spread"]),
         "integral_relative": float(committee_integrals(values, grid)["relative"]),
         "jsd": None,
-        "jsd_normalised": None,
+        "jsd_normalized": None,
         "clipped": 0,
     }
 
     if _mostly_positive(values):
         divergence = jensen_shannon_spread(values, grid)
         record["jsd"] = float(divergence["jsd"])
-        record["jsd_normalised"] = float(divergence["normalised"])
+        record["jsd_normalized"] = float(divergence["normalized"])
         record["clipped"] = int(divergence["clipped"])
     return record
 
@@ -279,7 +279,7 @@ def score_candidate(committee, field, residency="all"):
     Returns
     -------
     dict
-        ``jsd`` (nats), ``jsd_normalised`` (:math:`\mathrm{JSD}/\ln M`, in
+        ``jsd`` (nats), ``jsd_normalized`` (:math:`\mathrm{JSD}/\ln M`, in
         :math:`[0,1]`), ``relative`` (the :math:`L^2` spread),
         ``integral_relative`` (the spread of the electron count, which the JSD
         deliberately discards), ``clipped`` and ``n_members``.
@@ -369,7 +369,7 @@ def score_pool(committee, records, task, batch_size=4, residency="all",
                 scored.append(entry)
                 del field
             # Once per chunk, not once per structure: releasing the allocator's
-            # blocks forces a resynchronisation, and doing it per structure
+            # blocks forces a resynchronization, and doing it per structure
             # costs more than the fragmentation it avoids.
             empty_cache(device)
             emit(f"    scored {min(start + batch_size, len(records))}"
@@ -525,7 +525,7 @@ def run_round(committee, pool_root, task, n_select=5, train_root=None,
     ----------
     committee : Committee
     pool_root : str
-        Directory of unlabelled candidates.
+        Directory of unlabeled candidates.
     task : str or TaskSpec
     n_select : int, optional
         How many structures this round buys.
@@ -565,7 +565,7 @@ def run_round(committee, pool_root, task, n_select=5, train_root=None,
     if not records:
         raise ValueError(
             f"no candidates under {pool_root!r} carrying a "
-            f"{task.input_field}; an unlabelled pool needs only the input "
+            f"{task.input_field}; an unlabeled pool needs only the input "
             f"field, so this is a path or a layout problem.")
 
     emit(f"  scoring {len(records)} candidates with {len(committee)} members "
@@ -628,14 +628,14 @@ def format_statistics(statistics, indent="    "):
 #: One definition, used by both ``poraque-active-learning`` and
 #: ``poraque-committee``, because the two print the same measure over the same
 #: committee and had drifted into two tables: different column widths, a
-#: different precision on the same number, and the normalisation labelled
+#: different precision on the same number, and the normalization labeled
 #: ``JSD/lnM`` in one and ``JSD/lnK`` in the other. ``M`` is the member count
 #: throughout; ``K`` is reserved for the size of the top-K selection, which is
 #: a different number that appears in the same output.
 RANKING_COLUMNS = (
     ("structure", "material", 18, "<18s"),
     ("JSD", "jsd", 12, "12.4e"),
-    ("JSD/lnM", "jsd_normalised", 9, "9.4f"),
+    ("JSD/lnM", "jsd_normalized", 9, "9.4f"),
     ("L2 spread", "relative", 10, "10.4f"),
     ("int spread", "integral_relative", 11, "11.4f"),
     ("error", "error", 9, "9.4f"),
@@ -688,7 +688,7 @@ def format_ranking(records, limit=None, indent="    ", columns=None):
 
 def round_to_dict(result):
     """
-    Serialisable form of a :func:`run_round` result.
+    Serializable form of a :func:`run_round` result.
 
     Returns
     -------

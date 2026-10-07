@@ -13,7 +13,7 @@
 # =====================================================================
 
 task:
-  type: all                     # all | ext2chg | chg2tau | ext2paw; only `all` reaches a total energy
+  type: all                     # all | ext2chg | chg2tau | ext2paw | paw2tau; only `all` reaches a total energy
   # `ext2paw` predicts the pseudo-density AND every atom's PAW augmentation
   # occupancies, from V_ext. It is not a link of the chain -- `all` means
   # ext2chg + chg2tau -- and `all` adds it only when model.paw.enable is true.
@@ -73,6 +73,8 @@ data:
                                 #   directory of per-material subdirectories, and what a
                                 #   material holds is read, not declared.
   resolution: 32                # longest grid axis after spectral downsampling
+  max_spacing: null             # Ang; refine any axis coarser than this (long thin cells), never past native
+  target_scale: null            # e/Ang^3; fixed asinh scale of the density target; null fits the median
   potcar_dir: null              # POTCAR library; without one V_ext falls back to the Gaussian model
   strict_potcar: false          # raise instead of falling back when a configured library cannot
                                 #   serve an element. What it DID serve is in the cache
@@ -116,7 +118,7 @@ model:
   g_max: null                   # cutoff in 1/Ang, required by mode_selection: physical
   # `physical` is right for a dataset spanning cell sizes; then set
   # modes = floor(g_max * L_max / 2pi) for the LARGEST cell, or the modes no
-  # small cell ever reached stay at their random initialisation and go live
+  # small cell ever reached stay at their random initialization and go live
   # on a large one.
   #
   # WORTH TRYING on such a dataset, and not only for tidiness. Measured at LNCC
@@ -235,9 +237,21 @@ model:
   embedding_dim: 32             # width of the cell embedding FiLM reads
   precision: float32            # float32 | float64; what the operator computes in
 
+  # ONE BLOCK: input channels describing the structure, appended after V_ext
+  # (ext2chg, ext2paw). Built from data.atomic_reference, rebuilt from the
+  # structure at inference, recorded in the checkpoint; scalar fields, so the
+  # equivariance is untouched. On 785 CHONPS cells, with the same backbone, it
+  # took the held-out rel L2 of rho from 4.4 % to 3.7 % at epoch 10.
+  structure_input:
+    enable: false               # true: the potential plus the channels below
+    # superposition: true       # rho_sup, the delta-density baseline, as a channel
+    # elements: auto            # one superposition per element; auto = every element in the data, or a list
+
+  occupancy_channels: 8         # paw2tau: field channels the PAW occupancies are written into (SiteWriter)
+
   pauli_residual: false         # chg2tau: predict tau = tau_vW + s*softplus(f), bound by construction
   pauli_scale: null             # initial Pauli scale in eV/Ang^3; null fits it from the training split
-  learn_pauli_scale: true       # optimise that scale alongside the backbone
+  learn_pauli_scale: true       # optimize that scale alongside the backbone
 
   # ONE BLOCK, the convention equivariant follows: the operator of the ext2paw
   # task, with the switch inside it.
@@ -248,17 +262,20 @@ model:
     # n_layers: 4               # its Fourier layers, as model.n_layers
     # readout_g_max: auto       # 1/Ang band read at each atom; auto = 95 % of the coarsest grid's Nyquist
     # occupancy_weight: 1.0     # per-atom term against the field objective, in training and val score alike
+    # neighbor_min: 2.2        # first of 10 neighbor kernel centers in Ang; 0.6 also covers short CHON bonds
+    # magnetization_weight: 1.0 # weight of the magnetization record set in the occupancy loss (and score)
+    # readout_cache_mib: 1024   # device memory for the readout's spectral kernels (one per cell+grid); runtime only
   #
   # task.type: ext2paw with enable false RAISES, and so does enable true beside
   # ext2chg or chg2tau: two switches for one decision are checked against each
   # other rather than left to disagree.
   #
   # The target is two things. The pseudo-density on the grid, as for ext2chg,
-  # and each atom's augmentation occupancies rho(ll'LM) -- the one-centre PAW
+  # and each atom's augmentation occupancies rho(ll'LM) -- the one-center PAW
   # terms inside the augmentation spheres, which VASP writes after the grid and
   # no grid model can see. 138 numbers per atom for PAW_PBE Pt (projector
   # channels d,d,s,s,p,p, in the POTCAR's order), one set per density channel:
-  # a spin-polarised dataset keeps the magnetisation's set as well. The cache
+  # a spin-polarized dataset keeps the magnetization's set as well. The cache
   # carries them verbatim; a cache built before 2026-09-16 dropped them, so
   # delete it and let it rebuild.
   #
@@ -272,7 +289,7 @@ model:
   #   - an equivariant head per element: one map per L shared across M, gated
   #     by invariants, so the prediction rotates with the atom. With
   #     model.equivariant on, the whole operator is rotation-equivariant.
-  # The records train in an invertible form (L = 0 centred, each block scaled),
+  # The records train in an invertible form (L = 0 centered, each block scaled),
   # fitted on the training split and stored in the checkpoint. The log gains a
   # `val occ` column (physical relative RMS, reported) and an `occ loss` column
   # (the training term on held-out data); the best epoch is chosen on val rel
@@ -288,6 +305,8 @@ model:
 training:
   epochs: 500                   # passes over the training set
   batch_size: 4                 # samples per batch within one grid-shape bucket
+  samples_per_step: 0           # >0: accumulate bucketed batches to this many structures per optimizer step,
+                                # every structure weighted alike; 0 steps once per batch (a lone shape counts more)
   learning_rate: 0.002
   weight_decay: 0.0001
   optimizer: adamw              # adamw | adam | sgd; identical to adam at weight_decay 0
@@ -335,7 +354,7 @@ training:
   # `off` runs single-GPU inside a multi-task allocation, which is how a
   # scaling result is bisected. Rank 0 alone prints and writes; the EFFECTIVE
   # BATCH SIZE is batch_size x world_size, so a four-rank run is not the same
-  # optimiser as the one-rank run it is compared against.
+  # optimizer as the one-rank run it is compared against.
   # See scripts/slurm/poraque_ddp.sbatch.
   distributed: auto             # auto | off
   distributed_timeout: 30.0     # minutes before a collective is declared failed.
@@ -351,7 +370,7 @@ training:
   # together back up to 18.8 s -- each worker is a process that re-parses the
   # whole set into a cache of its own.
   num_workers: 0                # DataLoader worker processes; 0 loads in the main process
-  pin_memory: auto              # auto = true on CUDA, false elsewhere (it is a CUDA optimisation)
+  pin_memory: auto              # auto = true on CUDA, false elsewhere (it is a CUDA optimization)
   tf32: true                    # TensorFloat-32 matmul/conv; CUDA only, and nothing before Ampere
 
   # There is no `compile:` key. torch.compile was measured on a V100 and
@@ -382,14 +401,14 @@ training:
   #   auto   physics-informed iff a weight below is positive. What every
   #          config written before this key existed already meant.
   #   true   RAISES when no weight is set. A run that says physics-informed and
-  #          quietly optimises the supervised baseline has an ordinary loss
+  #          quietly optimizes the supervised baseline has an ordinary loss
   #          curve and a report that claims otherwise; this is the guard.
   #   false  skips them, and warns if a weight below is non-zero -- a live
   #          weight under a switch that ignores it is the configuration someone
   #          later reads as evidence that it applied.
   physics_informed:
     enable: auto                # auto | true | false, as above
-    electron_count_weight: 0.0  # ext2chg: int(rho) must equal the known valence count
+    electron_count_weight: 0.0  # ext2chg/ext2paw: penalize relative error in int(rho) = N
     positivity_weight: 0.0      # rho, tau >= 0 (a Log head is the better fix)
     von_weizsacker_weight: 0.0  # chg2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
     euler_lagrange_weight: 0.0  # ext2chg: dTs/drho + v_ext + v_H + v_xc = const, on a surrogate Ts
@@ -413,7 +432,7 @@ output:
                                 #   left EMPTY rather than interpolated; parity -> CSV,
                                 #   one row per occupied bin plus a bin-edges file,
                                 #   since a log axis makes edges unrecoverable from
-                                #   centres; slices -> compressed .npz.
+                                #   centers; slices -> compressed .npz.
 
 symbolic:
   enable: false                 # minutes of CPU after the fit; needs only sympy, to report

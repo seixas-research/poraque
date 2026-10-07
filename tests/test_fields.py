@@ -246,12 +246,12 @@ class TestExternalPotential:
                                               widths={"H": sigma})
 
         coordinates = grid.cartesian_coordinates()
-        centre = structure.positions[0]
+        center = structure.positions[0]
         normalization = charge / (2 * np.pi * sigma ** 2) ** 1.5
         n_ion = np.zeros(grid.shape)
         for image in np.ndindex(3, 3, 3):
             offset = (np.asarray(image) - 1) * length
-            delta = coordinates - (centre + offset)
+            delta = coordinates - (center + offset)
             n_ion += normalization * np.exp(-np.sum(delta ** 2, axis=-1)
                                             / (2 * sigma ** 2))
         assert grid.integrate(n_ion) == pytest.approx(charge, abs=1e-6)
@@ -294,7 +294,7 @@ class TestExternalPotential:
                                          {"H": 3.0}, widths={"H": 0.6})
         assert np.abs(fine.data[::2, ::2, ::2] - coarse.data).max() < 1e-3
 
-    def test_shared_grid_is_honoured(self, vasp_dir):
+    def test_shared_grid_is_honored(self, vasp_dir):
         grid = FieldGrid((20, 20, 20), Poscar.from_string(POSCAR_TEXT).cell)
         assert ExternalPotential.from_vasp(vasp_dir, grid=grid).shape == (20, 20, 20)
 
@@ -401,9 +401,9 @@ class TestVolumetricIO:
     def test_the_two_taucar_blocks_are_spin_channels_and_are_summed(
             self, vasp_dir):
         """
-        A spin-polarised ``TAUCAR`` holds (tau_up, tau_down), not the
-        (total, magnetisation) pair a ``CHGCAR`` holds. Reading the first
-        block alone returned half of tau in an unpolarised cell -- a factor
+        A spin-polarized ``TAUCAR`` holds (tau_up, tau_down), not the
+        (total, magnetization) pair a ``CHGCAR`` holds. Reading the first
+        block alone returned half of tau in an unpolarized cell -- a factor
         that no round trip and no finite check on tau alone can see, and that
         the von Weizsaecker bound catches only because it is a theorem.
         """
@@ -437,7 +437,7 @@ class TestVolumetricIO:
             self, vasp_dir):
         """
         The counterpart guarantee: ``combine_blocks`` is opt-in per class, so
-        a spin-polarised ``CHGCAR``'s magnetisation stays out of the density.
+        a spin-polarized ``CHGCAR``'s magnetization stays out of the density.
         """
         grid = FieldGrid((12, 12, 12), Poscar.from_string(POSCAR_TEXT).cell)
         structure = Poscar.from_string(POSCAR_TEXT)
@@ -647,7 +647,7 @@ class TestSmoothing:
                                                      gaussian_blur=0.3)
         assert blurred.data.std() < sharp.data.std()
         assert blurred.metadata["gaussian_blur"] == 0.3
-        # smoothing must not shift the neutralising-background convention
+        # smoothing must not shift the neutralizing-background convention
         assert blurred.mean() == pytest.approx(0.0, abs=1e-10)
 
     def test_blur_is_off_by_default(self, vasp_dir):

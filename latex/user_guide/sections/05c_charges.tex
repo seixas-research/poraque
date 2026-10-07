@@ -51,7 +51,7 @@ uncorrected this moves totals by tens of eV, differently for each structure, so
 it does not cancel in a difference.
 \end{pwarn}
 
-\subsection{Automatic normalisation}
+\subsection{Automatic normalization}
 
 The calculator rescales the density to the exact count by default:
 
@@ -63,7 +63,7 @@ atoms.calc.verify_charge()          # passes by construction
 atoms.calc.raw_electron_drift       # what the operator actually did
 \end{lstlisting}
 
-With normalisation on, the check passes by construction, so the informative
+With normalization on, the check passes by construction, so the informative
 number afterwards is \opt{raw\_electron\_drift} --- the drift of the raw
 prediction, recorded before the repair. Set \opt{normalize\_density=False} to
 measure the operator rather than the repair.
@@ -122,7 +122,7 @@ valence subtracted, which promolecule or Bader backend was used --- is left on
 Each voxel goes wholly to its nearest atom under the minimum-image convention.
 In a non-orthogonal cell the surrounding images are searched rather than
 trusting a wrap of the fractional coordinates --- in a skewed lattice the
-nearest image can be a diagonal neighbour.
+nearest image can be a diagonal neighbor.
 
 Voxels exactly equidistant from several atoms are \textbf{shared equally}
 rather than awarded to the lowest atom index. That is rare on a real density
@@ -147,7 +147,7 @@ partial_charges(rho, method="hirshfeld", valence={"Pt": 11.0},
 
 Each \file{<references>/<Element>/CHGCAR} is spherically averaged into
 $\rho^{\rm at}(r)$. Where no reference exists the fallback is an exponential
-free atom, $\rho(r) = \frac{N}{8\pi a^3}e^{-r/a}$, normalised to the valence
+free atom, $\rho(r) = \frac{N}{8\pi a^3}e^{-r/a}$, normalized to the valence
 count with the decay length set from the covalent radius through
 $\langle r\rangle = 3a$. Which was used for each element is reported in
 \opt{details["promolecule"]} --- check it, because the fallback is crude.
@@ -170,11 +170,11 @@ partial_charges(rho, method="bader", backend="external")  # Henkelman `bader`
 partial_charges(rho, method="bader", backend="auto")      # external if present
 \end{lstlisting}
 
-\textbf{Native} is a vectorised on-grid steepest ascent: every voxel points at
-whichever of its 26 neighbours gives the largest density increase \emph{per
+\textbf{Native} is a vectorized on-grid steepest ascent: every voxel points at
+whichever of its 26 neighbors gives the largest density increase \emph{per
 unit distance}, and those pointers are followed to a local maximum by repeated
 pointer doubling. The distance weighting matters --- without it the diagonal
-neighbours, $\sqrt3$ further away, win too often and the basins acquire a
+neighbors, $\sqrt3$ further away, win too often and the basins acquire a
 staircase bias along the cell diagonals.
 
 \textbf{External} writes a temporary \file{CHGCAR}, runs the Henkelman group's
@@ -195,7 +195,7 @@ All three partition the \emph{pseudo} valence density. The PAW core is absent,
 so these are not all-electron populations: a Bader volume here is not the
 all-electron Bader volume, and the charges are systematically compressed toward
 zero. This matters most for Bader, whose basin boundaries are set by the
-density's topology near the nuclei --- exactly where the pseudisation is
+density's topology near the nuclei --- exactly where the pseudization is
 largest.
 
 For a proper Bader analysis VASP's own guidance is to sum \file{AECCAR0} and

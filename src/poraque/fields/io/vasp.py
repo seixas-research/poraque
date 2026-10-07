@@ -11,7 +11,7 @@ VASP implementation of the :class:`~poraque.fields.io.base.CalculationReader`
 contract.
 
 This is the reference implementation: it is what the Quantum ESPRESSO and GPAW
-readers should be modelled on. All the format-specific parsing lives in
+readers should be modeled on. All the format-specific parsing lives in
 :mod:`poraque.fields.vasp`; this module only adapts it to the neutral
 interface.
 """
@@ -28,7 +28,7 @@ class VaspReader(CalculationReader):
     """
     Ingest a VASP calculation directory.
 
-    Recognises ``POSCAR``/``CONTCAR`` for the geometry, ``INCAR`` for the
+    Recognizes ``POSCAR``/``CONTCAR`` for the geometry, ``INCAR`` for the
     cutoff and grid tags, ``POTCAR`` for valence charges, and the
     ``CHGCAR``-format volumetric files.
     """

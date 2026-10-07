@@ -7,7 +7,7 @@ python experiments/paw_occupancies/occupancies.py --refresh  # re-extract
 
 The per-atom half of the `ext2paw` target: the 138 numbers `ρ(ll′LM)` VASP
 writes after a `CHGCAR`'s grid, one set for the total density and one for the
-magnetisation. Measured on the 97 platinum cells of `data/vasp/structures`
+magnetization. Measured on the 97 platinum cells of `data/vasp/structures`
 (31 bulk, 33 slabs, 33 nanoparticles; 3720 atoms), with the records read from
 the native `CHGCAR`s and every field feature taken from `data/cache/res64_potcar`.
 Every error below is on **whole structures held out**: five folds stratified by
@@ -40,7 +40,7 @@ So a record is a set of spherical tensors, and nothing is lost by regrouping it:
 | 4 | 3 | 27 | 0.41 % | 2 / 2 / 3 |
 
 Two things follow. **The records are nearly all monopole**, and the nine L = 0
-numbers of a Pt atom are effectively two. And **the magnetisation set is not
+numbers of a Pt atom are effectively two. And **the magnetization set is not
 negligible on this data**: its record norm per atom is 1.0e-3 in bulk and
 1.5e-4 in slabs, but 1.41 in the nanoparticles, against 8.39 for their total set
 — 17 %.
@@ -51,13 +51,13 @@ negligible on this data**: its record norm per atom is 1.0e-3 in bulk and
 |---|---|
 | regroup into the L blocks above | **bit-exact** (a permutation) |
 | … and scale each (L, pair) by its RMS | `CHGCAR` text **identical** |
-| … and centre L = 0, rotate each L's pair space by its principal axes (shared across M) | 9.8e-15 absolute; text identical on every component above 1e-12 |
+| … and center L = 0, rotate each L's pair space by its principal axes (shared across M) | 9.8e-15 absolute; text identical on every component above 1e-12 |
 
 The 3.9 % of components below 1e-12 are the symmetry zeros VASP prints as
 `0.35E-17` noise, and the centring moves them by 1e-15; nothing reads them.
 
 Every one of these is equivariant: scales and rotations act on the pair index
-and are shared across M, and only L = 0 is centred. The rotation is also a
+and are shared across M, and only L = 0 is centered. The rotation is also a
 compressor — keeping the ranks in the table keeps 99.9 % of the signal in 17
 numbers per atom instead of 138.
 
@@ -67,7 +67,7 @@ cache keeps the records verbatim, as VASP wrote them, since they are what a
 The scales, the L = 0 mean and the rotation are *statistics of a training split*,
 exactly as `FieldTransform`'s are. They should be fitted per run and stored in the
 checkpoint, where inference inverts them. Baked into the cache, they would leak
-the held-out structures into the normalisation and pin every future split to the
+the held-out structures into the normalization and pin every future split to the
 one the cache was built for.
 
 A loss on the raw 138 numbers would also be 99 % an L = 0 loss. Per-block scaling
@@ -121,12 +121,12 @@ predicted to 21 %. They are orientation-dependent tensors, and a map linear in
 first-order features is the least capable equivariant model there is. This is
 where a real model has to earn its keep.
 
-**The magnetisation set is not predictable from these features.** The best
+**The magnetization set is not predictable from these features.** The best
 nanoparticle error is 26 % (ρ̃ spectral + positions), and a held-out nanoparticle
 family is 100 %, because bulk and slab carry no moment to learn from. Nothing
 above contains m(r): the res64 cache stores one density channel. A spin cache
 (`data.spin: auto`) supplies it. On this data, the nanoparticles' occupancies
-cannot be modelled without it.
+cannot be modeled without it.
 
 ## 4. Operator families
 
@@ -171,7 +171,7 @@ operator and its settings.*
   - The per-atom half reads the grid spectrally at each atom inside |G| ≤ G_max, adds the positions expansion, and maps each L block equivariantly.
   - Start with the linear maps measured here as the baseline. Give the L > 0 blocks a nonlinear equivariant head, since that is where 98 % of the remaining error is.
 - **Train in the invertible form of §2**, fitted on the training split and stored in the checkpoint. Weight the loss per L block.
-- **Use a spin-polarised cache** for anything containing the nanoparticles.
+- **Use a spin-polarized cache** for anything containing the nanoparticles.
 
 **The open measurement: how far these errors grow when ρ̃ is a prediction rather
 than DFT's.** Every ρ̃ row above used the reference density. The features are
@@ -183,7 +183,7 @@ measured.
 
 Measured 2026-09-27 on an RTX 5060 Ti with `configs/train_ext2paw.yaml` at
 200 epochs, the same 19 held-out structures (split seed 42), two
-initialisation seeds per arm. The readout band is 6.65 Å⁻¹ (95 % of the res48
+initialization seeds per arm. The readout band is 6.65 Å⁻¹ (95 % of the res48
 cache's coarsest Nyquist), not the 9 Å⁻¹ of §3, so the rows are comparable in
 kind rather than in the last digit.
 
@@ -191,8 +191,8 @@ kind rather than in the last digit.
 |---|---|---|---|---|---|
 | charge set, seed 0 | 2.7 % | 9.5 % | 30 % | 22 % | 32 % |
 | charge set, seed 1 | 3.1 % | 9.4 % | 27 % | 23 % | 33 % |
-| magnetisation set, seed 0 | 19 % | 41 % | 77 % | 60 % | 55 % |
-| magnetisation set, seed 1 | 20 % | 40 % | 81 % | 57 % | 54 % |
+| magnetization set, seed 0 | 19 % | 41 % | 77 % | 60 % | 55 % |
+| magnetization set, seed 1 | 20 % | 40 % | 81 % | 57 % | 54 % |
 
 Pooled by norm, the charge set's L > 0 blocks are ~28 % wrong from a
 *predicted* density, against 21–23 % in §3 from the DFT density over a wider
@@ -206,11 +206,11 @@ density §3 found the records linear in. A variant that also read the decoded
 occupancy loss 0.197 and 0.199 against 0.201 and 0.196 without it, every block
 within ±0.02. It was not kept.
 
-**The magnetisation set is limited by its labels as much as by the model.**
+**The magnetization set is limited by its labels as much as by the model.**
 Each nanoparticle family has one relaxation run (`IBRION = 2`) beside ten
 single points 0.2 Å from it. Two of the three relaxations ended non-magnetic
 (structure_0075, structure_0086) and the third (structure_0064) at half its
 siblings' moment, while every single point is magnetic. Nearly identical
-potentials therefore carry different magnetisations, and the operator can only
-average them. Whether the relaxed state is the ground state or an artefact of
+potentials therefore carry different magnetizations, and the operator can only
+average them. Whether the relaxed state is the ground state or an artifact of
 the SCF history is a question for VASP, not for this pipeline.

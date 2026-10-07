@@ -6,8 +6,8 @@ Tests for the optional C backend of the spectral contraction.
 
 Two properties matter and they pull against each other. The kernel must be
 *fast*, which is why it exists; and it must be *invisible*, which is harder --
-an optimisation that changes a number, or that quietly detaches the autograd
-graph, is worse than no optimisation at all, because nothing downstream
+an optimization that changes a number, or that quietly detaches the autograd
+graph, is worse than no optimization at all, because nothing downstream
 reports it.
 
 Most of what follows therefore checks the second property.
@@ -82,7 +82,7 @@ class TestNumericalAgreement:
         assert got is not None and got.dtype == torch.cdouble
         assert torch.allclose(got, expected, rtol=1e-12, atol=1e-14)
 
-    def test_a_strided_operand_is_materialised_first(self, compiled):
+    def test_a_strided_operand_is_materialized_first(self, compiled):
         """
         The failure this module must not have.
 
@@ -268,7 +268,7 @@ class TestAutogradIsUntouched:
 
 
 # ===================================================================== #
-# Build and cache behaviour
+# Build and cache behavior
 # ===================================================================== #
 class TestBuild:
     def test_the_fingerprint_tracks_the_source(self, compiled, monkeypatch,

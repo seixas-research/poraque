@@ -10,8 +10,8 @@ A soft penalty $\lambda\lVert\text{violation}\rVert^2$ trades accuracy against
 constraint satisfaction and fully achieves neither: the weight must be tuned,
 the constraint holds only approximately, and a badly scaled term degrades the
 model while looking principled. Where a constraint can be built into the
-\emph{parameterisation} it should be. It then holds for every weight
-configuration, at initialisation and after any optimiser step, with nothing to
+\emph{parameterization} it should be. It then holds for every weight
+configuration, at initialization and after any optimizer step, with nothing to
 tune and no inference cost.
 
 Three constraints move into the architecture.
@@ -58,7 +58,7 @@ so the network learns only the Pauli term. This buys two things at once:
 
 \begin{ptip}
 The scale $s$ is fitted on the \emph{training split only} --- fitting it on the
-held-out material would leak the answer --- and is then optimised as $\log s$,
+held-out material would leak the answer --- and is then optimized as $\log s$,
 which cannot change sign. $\tauvW[\rho]$ is a fixed function of the
 \emph{input}, so it contributes no gradient to $\theta$: it is a per-sample
 offset, not a second trainable branch.
@@ -119,7 +119,7 @@ becomes load-bearing inside an SCF loop, where the functional sees
 non-converged densities far from the training distribution. These three
 structures cannot distinguish ``the head enforces the bound'' from ``the bound
 is easy here''; the enforcement claim rests on the tests, which check it at
-random initialisation, at $50\times$ weights and after training at a
+random initialization, at $50\times$ weights and after training at a
 destructive learning rate.
 \end{pwarn}
 
@@ -139,7 +139,7 @@ supervised baseline until a term is enabled deliberately. Three design rules:
 
 \begin{enumerate}
   \item \textbf{Physics terms act on the prediction decoded to physical units},
-    never on the normalised representation --- a constraint is a statement about
+    never on the normalized representation --- a constraint is a statement about
     physics, not about preprocessing.
   \item \textbf{Every term is dimensionless.} A raw
     $(\mathrm{eV}/\text{\AA}^3)^2$ penalty varies by orders of magnitude between
@@ -204,12 +204,12 @@ through Model~2, since $\Ts=\int\tau_{\theta_B}[\rho]\,\mathrm{d}\rr$:
 Three consequences, in order of practical value:
 
 \begin{enumerate}
-  \item \textbf{Model~2 is regularised on Model~1's output distribution.} A
+  \item \textbf{Model~2 is regularized on Model~1's output distribution.} A
     functional trained only on converged reference densities fails when placed
     inside an SCF loop, because it then sees non-converged densities it was
     never shown. Joint training on the residual exposes it to exactly that
     distribution.
-  \item \textbf{The optimised quantity becomes the used quantity.} Orbital-free
+  \item \textbf{The optimized quantity becomes the used quantity.} Orbital-free
     DFT needs $\delta\Ts/\delta\rho$, not $\tau$; training through the
     derivative removes the objective mismatch of Chapter~\ref{ch:ofdft}.
   \item \textbf{Inference becomes physically consistent.} A predicted
@@ -257,7 +257,7 @@ accuracy.
 Phase & Work & Status \\
 \midrule
 0 & supervised baseline, honest split by material & done \\
-1 & hard constraints: $\log$ head, charge normalisation, Pauli head & Pauli head done \\
+1 & hard constraints: $\log$ head, charge normalization, Pauli head & Pauli head done \\
 2 & $H^1$ data loss; scaling-relation augmentation & available \\
 3 & Euler--Lagrange residual with the analytic surrogate & available \\
 4 & $\delta \Ts/\delta\rho$ by autograd; joint training & planned \\

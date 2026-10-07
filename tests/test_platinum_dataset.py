@@ -160,10 +160,10 @@ class TestTheKineticEnergyDensityIsReadInVaspsOwnConvention:
             f"not the pair they claim to be.")
 
     @pytest.mark.parametrize("directory", SAMPLE)
-    def test_the_two_blocks_are_both_positive_so_neither_is_a_magnetisation(
+    def test_the_two_blocks_are_both_positive_so_neither_is_a_magnetization(
             self, directory):
         """
-        What identified the layout. A magnetisation block is signed and small;
+        What identified the layout. A magnetization block is signed and small;
         these are non-negative and comparable, which is what τ_up and τ_down
         are.
         """

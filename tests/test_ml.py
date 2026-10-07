@@ -416,9 +416,9 @@ class TestTheFieldCacheReadsEachFileOnce:
         monkeypatch.setattr(data_module, "CACHE_MEMORY_BUDGET", 1)
         assert FieldPairDataset(dataset_root, task="ext2chg", cache=True).cache
 
-    def test_an_unrecognised_setting_raises(self, dataset_root):
+    def test_an_unrecognized_setting_raises(self, dataset_root):
         """Reading a typo as False would be a silent 10x slowdown."""
-        with pytest.raises(ValueError, match="not a recognised setting"):
+        with pytest.raises(ValueError, match="not a recognized setting"):
             FieldPairDataset(dataset_root, task="ext2chg", cache="sometimes")
 
     def test_a_split_inherits_the_resolved_decision(self, dataset_root):
@@ -553,7 +553,7 @@ class TestTraining:
 # --------------------------------------------------------------------- #
 class TestBundle:
     """
-    The deployable artefact is one file holding the whole chain, so the two
+    The deployable artifact is one file holding the whole chain, so the two
     halves cannot be copied separately or mixed across training runs.
     """
 
@@ -656,7 +656,7 @@ class TestBundle:
                                                              tmp_path):
         """
         A ``state_dict`` alone would load weights that decode to the wrong
-        units: the normalisations and the architecture record travel beside
+        units: the normalizations and the architecture record travel beside
         them under the same task key.
         """
         from poraque.ml import load_bundle, save_bundle
@@ -733,7 +733,7 @@ class TestBackboneInference:
 
 class TestOptimizerSelection:
     """
-    The optimiser is a setting, not a hard-coded choice.
+    The optimizer is a setting, not a hard-coded choice.
 
     It was always an Adam-family method -- ``torch.optim.AdamW`` -- so the key
     exists to make the choice *measurable* rather than to introduce Adam. The
@@ -772,7 +772,7 @@ class TestOptimizerSelection:
             build_optimizer(self._parameters(), "rmsprop")
 
     def test_the_default_is_unchanged(self):
-        """AdamW was the behaviour before the key existed; it stays the default."""
+        """AdamW was the behavior before the key existed; it stays the default."""
         from poraque.ml.config import TrainingConfig
         from poraque.ml.training import build_optimizer
 
@@ -814,7 +814,7 @@ class TestOptimizerSelection:
         assert not torch.allclose(step("adam", 0.1), step("adamw", 0.1))
 
     def test_train_accepts_the_setting(self, dataset_root):
-        """End to end: the loop runs under each optimiser."""
+        """End to end: the loop runs under each optimizer."""
         from poraque.ml import FieldOperator, FieldPairDataset, train
 
         data = FieldPairDataset(dataset_root, task="ext2chg")

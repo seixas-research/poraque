@@ -18,7 +18,7 @@ exists.
 
 ### 1.1 "τ is a useful observable" — weak
 
-τ enters meta-GGA functionals, the electron localisation function, and bonding
+τ enters meta-GGA functionals, the electron localization function, and bonding
 analysis. True, but it does not survive the objection: anyone holding a
 converged `CHGCAR` also holds a `TAUCAR`. Predicting a quantity you already
 have is a benchmark, not an application.
@@ -71,11 +71,11 @@ what that chain contains: solving the Kohn–Sham equations. The functional is
 therefore
 
 - **exact but non-local**: τ at one point depends on ρ *everywhere*, because
-  the orbitals are delocalised Bloch states;
+  the orbitals are delocalized Bloch states;
 - **not semi-local**: no finite gradient expansion converges to it, which is
   precisely why Thomas–Fermi and the gradient corrections fail;
 - **expensive to evaluate exactly**: the definition requires the very
-  diagonalisation orbital-free DFT is trying to avoid.
+  diagonalization orbital-free DFT is trying to avoid.
 
 Two architectural consequences follow directly:
 
@@ -95,7 +95,7 @@ states of any $v_s$. Strictly, $\tau[\rho]$ is undefined there. In practice one
 uses the functional anyway — that is what every OF-DFT calculation does — but
 it means a model trained only on converged densities is being *extrapolated*
 every time it is used variationally. Section 6 returns to this; it is the
-single largest risk in the programme.
+single largest risk in the program.
 
 ---
 
@@ -122,10 +122,10 @@ Consequences:
 
 - Reporting only pointwise τ error is reporting a **proxy**. The relative $L^2$
   numbers in the technical guide are necessary, not sufficient.
-- The $H^1$ (Sobolev) data loss exists for exactly this reason: it penalises
+- The $H^1$ (Sobolev) data loss exists for exactly this reason: it penalizes
   the gradient error the plain $L^2$ ignores.
 - The definitive test of Model 2 is **downstream**: insert it into an
-  orbital-free minimiser and measure the error in the converged density and
+  orbital-free minimizer and measure the error in the converged density and
   energy. Everything before that is a proxy.
 
 ---
@@ -150,7 +150,7 @@ grad, = torch.autograd.grad(T_s.sum(), rho, create_graph=True)
 dTs_drho = grad / volume_element                          # eV per (e/Ang^3), see below
 ```
 
-### 4.1 The discretisation factor (easy to get silently wrong)
+### 4.1 The discretization factor (easy to get silently wrong)
 
 With $T_s = \sum_i \tau_i \,\Delta v$ and the functional derivative defined by
 $\delta T_s = \int (\delta T_s/\delta\rho)\,\delta\rho \,\mathrm{d}^3r
@@ -189,7 +189,7 @@ and any accidental `detach()`.
 
 ### 5.1 The equation
 
-Minimising $E[\rho]$ at fixed particle number gives, pointwise,
+Minimizing $E[\rho]$ at fixed particle number gives, pointwise,
 
 $$
 \frac{\delta T_s}{\delta\rho}(\mathbf r)
@@ -226,7 +226,7 @@ $r(\mathbf r)$ is computable from **Model 1's own input and output**, plus
 Model 2. It needs **no additional labels** — no extra DFT calculations, no
 targets. It is therefore usable on:
 
-- unlabelled structures (geometry only, no reference `CHGCAR`);
+- unlabeled structures (geometry only, no reference `CHGCAR`);
 - perturbed or interpolated geometries generated on the fly;
 - the model's own predictions during training.
 
@@ -251,11 +251,11 @@ order of magnitude.
 Three design rules, each learned the hard way elsewhere in this project:
 
 1. **Physics terms act on the prediction decoded to physical units**, never on
-   the normalised representation. A constraint is a statement about physics,
+   the normalized representation. A constraint is a statement about physics,
    not about preprocessing.
 2. **Every term is dimensionless**, or one loss weight cannot serve a
    heterogeneous dataset.
-3. **Warm up.** An Euler–Lagrange residual evaluated at random initialisation
+3. **Warm up.** An Euler–Lagrange residual evaluated at random initialization
    is noise; ramp $\lambda_{\rm EL}$ only after the data term has converged.
 
 ### 5.4 Freeze Model 2, or train jointly?
@@ -265,7 +265,7 @@ Both are defensible, and the failure modes differ.
 **Frozen Model 2** — a fixed physics oracle. Simple, stable, and the constraint
 is exactly as good as the KEDF. Recommended first.
 
-**Joint training** — mutual regularisation. Model 2 is then exposed to the
+**Joint training** — mutual regularization. Model 2 is then exposed to the
 densities Model 1 actually produces, which directly attacks the
 distribution-shift problem of §2.1. But there is a real hazard:
 
@@ -303,13 +303,13 @@ overselling.
   used on non-converged ones. §2.1 shows this is not merely a practical
   inconvenience but a domain question: the functional is strictly undefined
   off the v-representable manifold.
-- **We optimise τ and use $\delta T_s/\delta\rho$** (§3). Until training runs
+- **We optimize τ and use $\delta T_s/\delta\rho$** (§3). Until training runs
   through the derivative, the objective is a proxy.
 - **The derivative is unvalidated.** Nothing in the current results says
   anything about $\delta T_s/\delta\rho$. The §4.2 checks are not yet
   implemented.
 - **Data scale.** Three structures of one element. The measured numbers
-  characterise the pipeline, not the physics.
+  characterize the pipeline, not the physics.
 - **The Pauli potential constraint is unused.** Levy–Ou-Yang gives
   $v_P = \delta T_P/\delta\rho \ge 0$ — a constraint on the *derivative*, which
   is exactly the object §3 argues we should be constraining. It is not yet
@@ -356,11 +356,11 @@ Falsifiable, in dependency order:
 3. **Constraint helps** — matched ablation, $\lambda_{\rm EL} = 0$ vs $> 0$, on
    held-out material. Same protocol as the Pauli-head comparison, which showed
    an 18.3 % gain.
-4. **Label efficiency** — the real promise. Train Model 1 on $k$ labelled
-   structures plus $m$ unlabelled ones under the residual, and show the curve
-   beats $k$ labelled alone. If the residual cannot buy label efficiency, its
+4. **Label efficiency** — the real promise. Train Model 1 on $k$ labeled
+   structures plus $m$ unlabeled ones under the residual, and show the curve
+   beats $k$ labeled alone. If the residual cannot buy label efficiency, its
    main practical argument fails.
-5. **Downstream** — insert the KEDF into an OF-DFT minimiser; measure converged
+5. **Downstream** — insert the KEDF into an OF-DFT minimizer; measure converged
    density and energy error. The only test that matters.
 
 ---
@@ -376,8 +376,8 @@ Falsifiable, in dependency order:
 | $\delta T_s/\delta\rho$ via autograd | **not implemented** |
 | Joint training | not implemented |
 | Pauli potential $v_P \ge 0$ | not implemented |
-| OF-DFT minimiser integration | not implemented |
+| OF-DFT minimizer integration | not implemented |
 
-The gap between rows 4 and 5 is the whole programme: everything up to the
+The gap between rows 4 and 5 is the whole program: everything up to the
 analytic residual is infrastructure; the autograd derivative is what turns two
 regressions into a differentiable orbital-free solver.

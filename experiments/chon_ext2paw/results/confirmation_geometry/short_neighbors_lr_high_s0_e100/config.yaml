@@ -1,0 +1,142 @@
+task:
+  type: ext2paw
+  name: chon_short_neighbors_lr_high_s0_e100
+data:
+  data_paths:
+  - ./data/CHON
+  cache: ./data/cache/chon
+  pattern: ''
+  format: auto
+  resolution: 24
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+  strict_potcar: true
+  sigma: null
+  gaussian_blur: null
+  blur_method: spectral
+  spin: auto
+  precision: float64
+  xc: auto
+  delta_density: true
+  atomic_reference: ./data/CHON/isolated_atoms
+  paw_source: atomic
+  storage: hdf5
+  compression: null
+  compression_level: 4
+  cache_in_memory: true
+model:
+  width: 16
+  modes: 8
+  n_layers: 3
+  projection_channels: 64
+  activation: silu
+  projection_activation: null
+  kan_setup: null
+  use_coordinates: false
+  cell_conditioning: true
+  embedding_dim: 32
+  mode_selection: physical
+  g_max: 12
+  equivariant:
+    enable: true
+    n_radial: 8
+    g_basis: auto
+    spherical_cutoff: true
+  paw:
+    enable: true
+    width: 16
+    modes: 6
+    n_layers: 3
+    readout_g_max: 2.239576570351994
+    occupancy_weight: 3
+    neighbor_min: 0.6
+  pauli_residual: false
+  pauli_scale: null
+  learn_pauli_scale: true
+  precision: float32
+training:
+  epochs: 100
+  batch_size: 4
+  learning_rate: 0.003
+  weight_decay: 0.0001
+  optimizer: adamw
+  scheduler: cosine
+  grad_clip: 1.0
+  valid_fraction: 0.2
+  enable_kfold: false
+  k_folds: 5
+  eval_epoch: 5
+  early_stopping: 30
+  seed: 42
+  init_seed: 0
+  device: cpu
+  strict_device: true
+  distributed: auto
+  distributed_timeout: 30.0
+  num_workers: 0
+  pin_memory: auto
+  tf32: true
+  loss: relative_l2
+  sobolev_weight: 0.1
+  physics_informed:
+    enable: auto
+    electron_count_weight: 0.0
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0
+output:
+  root: models
+  write_log: true
+  plot_figures: false
+  write_pdf_report: false
+  checkpoint: true
+  log: null
+  json: null
+  plot_format: png
+  dpi: 200
+  save_raw_plot_data: false
+symbolic:
+  enable: false
+  target: model
+  features: gga
+  template: none
+  epsilon: 1.0e-08
+  constraints:
+    ^:
+    - -1
+    - 1
+  data_loss: mse
+  physics:
+    enable: true
+    positivity_weight: 100.0
+    thomas_fermi_weight: 100.0
+    von_weizsacker_weight: 100.0
+    p_infinity: 1000000.0
+  unary_operations:
+  - exp
+  - log
+  - sqrt
+  - abs
+  binary_operations:
+  - +
+  - '-'
+  - '*'
+  - /
+  - ^
+  iterations: 40
+  population_size: 33
+  populations: 15
+  max_depth: 10
+  max_size: 30
+  parsimony: 0.0032
+  n_samples: 4000
+  seed: 0
+  deterministic: false
+fine_tuning:
+  enable: false
+  pretrained_checkpoint: models/poraque_models.poraque
+  learning_rate: 1.0e-05
+  freeze_lifting_layers: false
+  use_lora: false
+  lora_rank: 8
+  lora_alpha: 16.0
+  lora_dropout: 0.0
