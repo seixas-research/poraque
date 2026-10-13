@@ -592,6 +592,34 @@ class DataConfig:
         things **worse** (16.3 s to 18.8 s), because each worker is a process
         that re-parses the whole set into a cache of its own. See
         ``training.num_workers``.
+
+    cache_workers : str or int
+        Processes that **build** the cache, one material each. ``"auto"`` (the
+        default), a count, or ``0``/``1`` for the single-process build. Not to
+        be confused with ``training.num_workers``, which loads an already-built
+        cache during training and is a different trade (above).
+
+        The cache build is not the FFT work it looks like. Measured per
+        material on the 97-cell platinum set at ``resolution: 48``: the
+        spectral downsampling is **2.2 %** of the clock, and the Fortran
+        ``E17.11`` text codec is **86 %** of it --- one
+        ``np.array(line.split())`` per line read, one ``fortran_exponential``
+        per voxel written, both pure Python. There is no BLAS call in the path
+        and every transform goes through ``np.fft``, which is single-threaded,
+        so ``OMP_NUM_THREADS`` has nothing to act on and a thread count cannot
+        help. Materials are the axis that scales: ``_build_one`` is independent
+        per material and already writes through ``.partial-<pid>`` +
+        ``os.replace``, so a pool is correct without a lock. Measured on eight
+        cores (four performance, four efficiency): **4.0x** on a text cache,
+        **3.4x** on HDF5, the result byte-identical to the serial build.
+
+        ``"auto"`` takes the smallest of the cores this process may use
+        (``sched_getaffinity``, which is what ``--cpus-per-task`` restricts a
+        Slurm task to), an 8 GiB budget divided by an estimate taken from the
+        **largest** native grid in the set, and the number of materials. The
+        largest rather than the average because a set of 108³ bulk cells and
+        288³ nanoparticles sizes its workers on the nanoparticles or it swaps
+        on them.
     """
 
     data_paths: list = None
@@ -616,6 +644,7 @@ class DataConfig:
     compression: str = None
     compression_level: int = 4
     cache_in_memory: str = "auto"
+    cache_workers: str = "auto"
 
     def paths(self):
         """

@@ -1556,3 +1556,283 @@ class TestOneProgressBarForTheWholeDownload:
         assert [r["status"] for r in sorted(manifest,
                                             key=lambda r: r["material_id"])] \
             == ["downloaded", "failed"]
+
+
+# ---------------------------------------------------------------------- #
+# Parallel downloads
+# ---------------------------------------------------------------------- #
+class TestTheDownloadCanRunInParallel:
+    """
+    `--download-workers N` fetches N densities at once.
+
+    Threads, not processes: the work is a blocking HTTPS GET, so the GIL is
+    released for the part that dominates and nothing has to be pickled. The
+    *parse* the client does on the way back is Python and does hold the GIL,
+    so this is not expected to scale linearly -- what it buys is overlapped
+    transfers.
+
+    It is **off by default** (`download_workers=1`), because what bounds the
+    useful number is the Materials Project's per-key rate limit and that has
+    not been measured. The default therefore takes the single-session path
+    this class's siblings all exercise, and these tests are the only ones that
+    open a pool.
+
+    What has to stay true: the same files, the same manifest, one session per
+    worker rather than one shared across them, and a failure that still costs
+    only its own material.
+    """
+
+    def _parallel(self, identifiers, tmp_path, monkeypatch, workers=4,
+                  **options):
+        """A fetcher whose pool gets the same fake rester the serial path has."""
+        f = fetcher_with(identifiers, tmp_path, monkeypatch=monkeypatch,
+                         download_workers=workers, **options)
+        # One construction point (`_new_rester`), so the thread-local sessions
+        # are the fake too -- which is the whole reason it exists.
+        monkeypatch.setattr(f, "_new_rester", lambda: SimpleNamespace(
+            get_charge_density_from_material_id=(
+                f._rester.get_charge_density_from_material_id),
+            session=SimpleNamespace(close=lambda: None),
+        ))
+        return f
+
+    def test_every_material_is_fetched(self, tmp_path, monkeypatch):
+        ids = [f"mp-{n}" for n in range(1, 10)]
+        f = self._parallel(ids, tmp_path, monkeypatch)
+        manifest = f.download(vasp_inputs=False)
+        assert len(manifest) == len(ids)
+        assert {row["status"] for row in manifest} == {"downloaded"}
+        for identifier in ids:
+            assert (tmp_path / identifier / "CHGCAR.gz").is_file()
+
+    def test_the_manifest_holds_each_material_exactly_once(self, tmp_path,
+                                                           monkeypatch):
+        """
+        `manifest.append` and `_write_manifest` stay in the consuming thread.
+        A worker touching either would duplicate or lose rows, and the
+        duplicate is the one a resumed run would not notice.
+        """
+        ids = [f"mp-{n}" for n in range(1, 13)]
+        f = self._parallel(ids, tmp_path, monkeypatch, workers=6)
+        manifest = f.download(vasp_inputs=False)
+        recorded = [row["material_id"] for row in manifest]
+        assert sorted(recorded) == sorted(ids)
+        assert len(recorded) == len(set(recorded))
+
+    def test_it_writes_the_same_files_as_the_serial_path(self, tmp_path,
+                                                         monkeypatch):
+        serial = fetcher_with(["mp-1", "mp-2", "mp-3"], tmp_path / "serial",
+                              monkeypatch=monkeypatch)
+        serial.download(vasp_inputs=False)
+        parallel = self._parallel(["mp-1", "mp-2", "mp-3"],
+                                  tmp_path / "parallel", monkeypatch,
+                                  workers=3)
+        parallel.download(vasp_inputs=False)
+        for identifier in ("mp-1", "mp-2", "mp-3"):
+            one = (tmp_path / "serial" / identifier / "CHGCAR.gz")
+            two = (tmp_path / "parallel" / identifier / "CHGCAR.gz")
+            assert one.is_file() and two.is_file()
+            # gzip stamps an mtime, so the densities are compared decompressed.
+            import gzip
+            assert gzip.decompress(one.read_bytes()) == \
+                gzip.decompress(two.read_bytes())
+
+    def test_each_worker_gets_its_own_session(self, tmp_path, monkeypatch):
+        """
+        A rester is a `requests.Session`, which is not documented thread-safe:
+        it carries a connection pool and a cookie jar and two threads inside
+        one `get` can interleave on either. Sharing one across the pool is the
+        same class of mistake as shipping a record with its log attached to a
+        process pool.
+        """
+        import threading
+
+        workers = 4
+        ids = [f"mp-{n}" for n in range(1, 9)]
+        f = self._parallel(ids, tmp_path, monkeypatch, workers=workers)
+        seen = {}
+        lock = threading.Lock()
+        # Every worker has to be inside a fetch at once, or a pool whose fake
+        # returns instantly can legitimately finish all eight tasks on one
+        # thread and the assertion below would pass or fail on scheduling.
+        gate = threading.Barrier(workers, timeout=10)
+
+        def fetch(_):
+            try:
+                gate.wait()
+            except threading.BrokenBarrierError:        # pragma: no cover
+                pass
+            return FakeChgcar()
+
+        def counted():
+            with lock:
+                seen[threading.get_ident()] = seen.get(
+                    threading.get_ident(), 0) + 1
+            return SimpleNamespace(
+                get_charge_density_from_material_id=fetch,
+                session=SimpleNamespace(close=lambda: None))
+
+        monkeypatch.setattr(f, "_new_rester", counted)
+        f.download(vasp_inputs=False)
+        # One session per worker thread, not one per material.
+        assert len(seen) == workers, \
+            f"{len(seen)} thread(s) built a session, expected {workers}"
+        assert all(count == 1 for count in seen.values()), \
+            "a thread built more than one session"
+        assert len(f._thread_resters) == workers
+
+    def test_close_closes_every_worker_session(self, tmp_path, monkeypatch):
+        """A leaked session keeps both a socket and the API key alive."""
+        closed = []
+        ids = ["mp-1", "mp-2", "mp-3", "mp-4"]
+        f = fetcher_with(ids, tmp_path, monkeypatch=monkeypatch,
+                         download_workers=3)
+        monkeypatch.setattr(f, "_new_rester", lambda: SimpleNamespace(
+            get_charge_density_from_material_id=lambda _: FakeChgcar(),
+            session=SimpleNamespace(close=lambda: closed.append(1)),
+        ))
+        f.download(vasp_inputs=False)
+        opened = len(f._thread_resters)
+        assert opened >= 1
+        f.close()
+        assert len(closed) >= opened
+        assert f._thread_resters == []
+
+    def test_one_failure_still_costs_only_its_own_material(self, tmp_path,
+                                                           monkeypatch,
+                                                           capsys):
+        ids = [f"mp-{n}" for n in range(1, 8)]
+        f = self._parallel(ids, tmp_path, monkeypatch, workers=4)
+
+        def explode(identifier):
+            if identifier == "mp-3":
+                raise ValueError("no density in the bucket")
+            return FakeChgcar()
+
+        f._rester.get_charge_density_from_material_id = explode
+        monkeypatch.setattr(f, "_new_rester", lambda: SimpleNamespace(
+            get_charge_density_from_material_id=explode,
+            session=SimpleNamespace(close=lambda: None),
+        ))
+        manifest = f.download(vasp_inputs=False)
+        by_id = {row["material_id"]: row for row in manifest}
+        assert by_id["mp-3"]["status"] == "failed"
+        assert "no density in the bucket" in by_id["mp-3"]["error"]
+        assert [row["status"] for i, row in by_id.items() if i != "mp-3"] == \
+            ["downloaded"] * (len(ids) - 1)
+        # The failure is reported while it happens, through the bar.
+        out = capsys.readouterr().out
+        assert "FAILED" in out and "no density in the bucket" in out
+        # And it leaves no empty directory for a later scan to puzzle over.
+        assert not (tmp_path / "mp-3").exists()
+
+    def _no_session(self, fetcher, monkeypatch, built):
+        """Replace the construction point so opening one is observable."""
+        monkeypatch.setattr(fetcher, "_new_rester",
+                            lambda: built.append(1) or SimpleNamespace(
+                                get_charge_density_from_material_id=(
+                                    lambda _: FakeChgcar()),
+                                session=SimpleNamespace(close=lambda: None)))
+
+    def test_a_resumed_run_opens_no_worker_session(self, tmp_path,
+                                                   monkeypatch):
+        """
+        Nothing to fetch must mean no pool. `_fetch_many` returns before it
+        builds one, so a resumed run costs a manifest read and no socket.
+        """
+        ids = ["mp-1", "mp-2", "mp-3"]
+        self._parallel(ids, tmp_path, monkeypatch, workers=3).download(
+            vasp_inputs=False)
+
+        again = self._parallel(ids, tmp_path, monkeypatch, workers=3)
+        built = []
+        self._no_session(again, monkeypatch, built)
+        manifest = again.download(vasp_inputs=False)
+        # Settled rows are carried forward from manifest.json as they stood.
+        assert {row["status"] for row in manifest} == {"downloaded"}
+        assert built == [], "a resumed run opened a session"
+        assert again._thread_resters == []
+
+    def test_a_density_on_disk_without_a_manifest_is_cached_not_fetched(
+            self, tmp_path, monkeypatch):
+        """
+        The second resume mechanism: a file on disk with no manifest entry --
+        a manifest lost, or a directory assembled by hand. Settled in the
+        consuming thread before dispatch, so it never reaches the pool either.
+        """
+        ids = ["mp-1", "mp-2", "mp-3"]
+        self._parallel(ids, tmp_path, monkeypatch, workers=3).download(
+            vasp_inputs=False)
+        (tmp_path / "manifest.json").unlink()
+
+        again = self._parallel(ids, tmp_path, monkeypatch, workers=3)
+        built = []
+        self._no_session(again, monkeypatch, built)
+        manifest = again.download(vasp_inputs=False)
+        assert {row["status"] for row in manifest} == {"cached"}
+        assert built == [], "a fully cached run opened a session"
+        assert again._thread_resters == []
+
+    def test_one_worker_takes_the_shared_session_path(self, tmp_path,
+                                                      monkeypatch):
+        """
+        `--download-workers 1` is the serial path literally -- no pool, no
+        thread, no second session -- so nothing about threading can be blamed
+        for a default run.
+        """
+        ids = ["mp-1", "mp-2"]
+        f = fetcher_with(ids, tmp_path, monkeypatch=monkeypatch,
+                         download_workers=1)
+        monkeypatch.setattr(f, "_new_rester", lambda: (_ for _ in ()).throw(
+            AssertionError("the serial path built a second session")))
+        manifest = f.download(vasp_inputs=False)
+        assert {row["status"] for row in manifest} == {"downloaded"}
+        assert f._thread_resters == []
+
+    def test_the_transfers_actually_overlap(self, tmp_path, monkeypatch):
+        """
+        The claim, not the structure. Earlier versions of this feature could
+        have been "correct" and still serial -- a pool whose tasks are
+        submitted and awaited one at a time passes every other test in this
+        class. So the fetch records how many of itself are in flight, and the
+        high-water mark has to reach the worker count.
+
+        Measured with mocked latency rather than the network: 12 materials at
+        50 ms each ran 0.75 s at one worker and 0.15 s at eight, with peak
+        concurrency 1 and 8. The wall-clock ratio is not asserted -- it is
+        timing-dependent and this is a test suite -- but the concurrency is.
+        """
+        import threading
+
+        workers = 4
+        ids = [f"mp-{n}" for n in range(1, 13)]
+        f = self._parallel(ids, tmp_path, monkeypatch, workers=workers)
+
+        live, peak, lock = 0, 0, threading.Lock()
+        gate = threading.Barrier(workers, timeout=10)
+
+        def fetch(_):
+            nonlocal live, peak
+            with lock:
+                live += 1
+                peak = max(peak, live)
+            try:
+                # Every worker must be inside the fetch at once for this to
+                # return, so a serial implementation times out rather than
+                # quietly passing with peak == 1.
+                gate.wait()
+            except threading.BrokenBarrierError:        # pragma: no cover
+                pass
+            with lock:
+                live -= 1
+            return FakeChgcar()
+
+        monkeypatch.setattr(f, "_new_rester", lambda: SimpleNamespace(
+            get_charge_density_from_material_id=fetch,
+            session=SimpleNamespace(close=lambda: None),
+        ))
+        manifest = f.download(vasp_inputs=False)
+        assert {row["status"] for row in manifest} == {"downloaded"}
+        assert peak == workers, (
+            f"peak concurrency {peak}, expected {workers} -- the pool is "
+            f"not overlapping transfers")

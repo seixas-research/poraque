@@ -311,7 +311,7 @@ def cache_tag(data):
     return tag
 
 
-def build_cache(config, log):
+def build_cache(config, log, workers=None):
     """
     Downsample every material under ``data.data_paths`` into one dataset.
 
@@ -362,6 +362,10 @@ def build_cache(config, log):
         # an error or a documented degradation. Either way, what it *did* serve
         # goes into the cache fingerprint.
         strict_potcar=data.strict_potcar,
+        # One process per material. The build is a Python text codec, not FFT
+        # work -- the spectral downsampling is 2.2 % of it -- so the cores the
+        # job asked for are only used if the materials are split across them.
+        workers=data.cache_workers if workers is None else workers,
     )
 
     # The PAW augmentation records travel with the weights, so a prediction can
@@ -3410,6 +3414,13 @@ def build_parser():
                             "between epochs (default auto). Off, every epoch "
                             "re-parses every file; measured at 10x on real "
                             "data")
+    group.add_argument("--cache-workers", dest="data.cache_workers",
+                       default=None,
+                       help="auto | <n> | 0 -- processes that BUILD the cache, "
+                            "one material each (default auto). The build is a "
+                            "Python text codec, not FFT work, so this is the "
+                            "only setting that uses more than one core: "
+                            "measured 4.0x on eight")
     group.add_argument("--num-workers", dest="training.num_workers", type=int,
                        default=None,
                        help="DataLoader worker processes (default 0). Prefer "
@@ -3641,7 +3652,12 @@ def run(argv=None):
             cache = build_cache(config, log)
         barrier(context)
         if not context.is_main:
-            cache = build_cache(config, log)
+            # Single process on this side of the barrier. Rank 0 has already
+            # written every field, so this call only reads the fingerprint and
+            # the summary back -- and four ranks each starting a pool of
+            # `cache_workers` would put four times the node's cores' worth of
+            # processes on it to discover there is nothing to do.
+            cache = build_cache(config, log, workers=1)
         profile.end()
 
         if args.cache_only:

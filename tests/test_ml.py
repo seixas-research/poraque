@@ -351,7 +351,21 @@ class TestTheFieldCacheReadsEachFileOnce:
     """
 
     def _passes(self, dataset, monkeypatch, passes=2):
-        """`read_volumetric` calls per full pass over the dataset."""
+        """
+        `read_volumetric` calls per full pass over the dataset.
+
+        Patched on **`poraque.fields.base`**, not only on the volumetric
+        module. `base.py` does `from .vasp.volumetric import read_volumetric`
+        at import time, so that name is a separate binding and replacing the
+        module attribute never reached it: what the counter actually saw was
+        the *local* import inside `FieldGrid.from_file`, one call per material,
+        which parsed every value in a density to read its shape off the result.
+        That read is gone (`read_grid_header` stops at the grid-dimension
+        line), and the counter read zero — of a dataset that was parsing every
+        field exactly as before. Both names are patched now, so this counts the
+        field reads it has always claimed to count.
+        """
+        import poraque.fields.base as base
         import poraque.fields.vasp.volumetric as volumetric
 
         calls = []
@@ -362,6 +376,7 @@ class TestTheFieldCacheReadsEachFileOnce:
             return original(*args, **kwargs)
 
         monkeypatch.setattr(volumetric, "read_volumetric", counted)
+        monkeypatch.setattr(base, "read_volumetric", counted)
         counts = []
         for _ in range(passes):
             calls.clear()

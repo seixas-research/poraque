@@ -232,13 +232,14 @@ import os
 import random
 import shutil
 import sys
+import threading
 import time
 
 import numpy as np
 from datetime import datetime, UTC
 
 from ..utils.logging import Logger, field_lines, header
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from itertools import combinations
 from pathlib import Path
@@ -800,7 +801,8 @@ class MPDataFetcher:
     def __init__(self, elements=None, api_key=None, outdir=".", compress=True,
                  workers=16, band_gap=None, crystal_system=None,
                  is_stable=None, num_sites=None, exclude_deprecated=True,
-                 retries=4, retry_delay=2.0, log=print):
+                 retries=4, retry_delay=2.0, log=print,
+                 download_workers=1):
         if isinstance(elements, str):
             elements = elements.replace("-", " ").split()
         # No elements is not an error any more: it means *every* material the
@@ -821,6 +823,15 @@ class MPDataFetcher:
         self.outdir = Path(outdir).resolve()
         self.compress = bool(compress)
         self.workers = int(workers)
+        # Separate from `workers`, which sizes the *sizing* pool: those are
+        # unsigned S3 HEAD requests that transfer no payload and cost the API
+        # nothing, so sixteen of them is free. A download is an authenticated
+        # call against a rate-limited key that also parses a CHGCAR, so the
+        # useful number is smaller -- and it is 1 by default, because what
+        # bounds it is the Materials Project's per-key rate limit and that has
+        # not been measured. Opt in with `--download-workers N` and read the
+        # retry lines: backoff messages mean the limit was found.
+        self.download_workers = int(download_workers)
 
         self.band_gap = tuple(band_gap) if band_gap is not None else None
         self.num_sites = tuple(num_sites) if num_sites is not None else None
@@ -832,6 +843,11 @@ class MPDataFetcher:
                                if crystal_system else None)
 
         self._rester = None
+        # One rester per download worker, plus the list `close()` walks. See
+        # `_thread_rester`: a requests.Session is not thread-safe.
+        self._local = threading.local()
+        self._thread_resters = []
+        self._rester_lock = threading.Lock()
         self._documents = None
         self._keys = None
         self._task_ids = {}
@@ -850,6 +866,49 @@ class MPDataFetcher:
         self.close()
         return False
 
+    def _thread_rester(self):
+        r"""
+        This thread's own :class:`~mp_api.client.MPRester`.
+
+        One rester per thread, because a rester is a ``requests.Session`` and a
+        session is **not** documented thread-safe: it carries a connection pool
+        and a cookie jar, and two threads inside one ``get`` can interleave on
+        either. Sharing ``self._rester`` across a download pool is the same
+        class of mistake as shipping a record with its log attached to a
+        process pool --- it works until it does not, and the failure is a
+        corrupted response rather than an exception.
+
+        The calling thread's rester is created on first use and remembered, so
+        a pool of four opens four sessions for the length of the run rather
+        than one per material. :meth:`close` closes all of them.
+
+        Returns
+        -------
+        mp_api.client.MPRester
+        """
+        existing = getattr(self._local, "rester", None)
+        if existing is not None:
+            return existing
+
+        rester = self._new_rester()
+        self._local.rester = rester
+        with self._rester_lock:
+            self._thread_resters.append(rester)
+        return rester
+
+    def _new_rester(self):
+        """
+        Build one :class:`~mp_api.client.MPRester`. The only place that does.
+
+        Both :meth:`_connect` and :meth:`_thread_rester` come through here, so
+        a test that needs the threaded path has one thing to replace rather
+        than two --- and so the ``mute_progress_bars`` argument below cannot be
+        set in one place and forgotten in the other.
+        """
+        from mp_api.client import MPRester
+
+        return MPRester(self._api_key, mute_progress_bars=True)
+
     def _connect(self):
         """
         The live :class:`~mp_api.client.MPRester`, opened on first use.
@@ -863,16 +922,26 @@ class MPDataFetcher:
         and the query stages announce themselves in a line each.
         """
         if self._rester is None:
-            from mp_api.client import MPRester
-
-            self._rester = MPRester(self._api_key, mute_progress_bars=True)
+            self._rester = self._new_rester()
         return self._rester
 
     def close(self):
-        """Close the API session, dropping the reference that holds the key."""
+        """
+        Close every API session, dropping the references that hold the key.
+
+        Every session, not only ``self._rester``: a threaded download opens one
+        per worker (:meth:`_thread_rester`), and a leaked session keeps both a
+        socket and the API key alive.
+        """
         if self._rester is not None:
             self._rester.session.close()
             self._rester = None
+        with self._rester_lock:
+            resters, self._thread_resters = self._thread_resters, []
+        for rester in resters:
+            with contextlib.suppress(Exception):
+                rester.session.close()
+        self._local = threading.local()
 
     def __repr__(self):
         count = len(self._documents) if self._documents is not None else "?"
@@ -1501,7 +1570,11 @@ class MPDataFetcher:
             attempts, and the retrieval provenance.
         """
         compress = self.compress if compress is None else compress
-        rester = self._connect()
+        # Opened here so an unusable key or an unreachable API fails before the
+        # directory is made and the estimate is run, rather than inside a
+        # worker thread. The density fetches use one session per worker
+        # instead -- see `_thread_rester`.
+        self._connect()
         estimate = self.estimate()
         self.outdir.mkdir(parents=True, exist_ok=True)
 
@@ -1592,70 +1665,63 @@ class MPDataFetcher:
         bar.log = self.log
         fetched_bytes = 0
 
+        # Already on disk: a stat and, at most, a header read. Settled in the
+        # main thread and never dispatched, so the pool below holds nothing but
+        # real transfers and a cached run opens no session at all.
+        pending = []
         for document in remaining:
             identifier = str(document.material_id)
-            label = (f"{identifier} {document.formula_pretty} "
-                     f"({document.nsites} sites)")
-
             found = self._existing(identifier) if skip_existing else None
-            if found is not None:
-                row = self._manifest_row(identifier, document, found, "cached",
-                                         provenance=provenance)
-                # The density is there; the deck may not be, if it was fetched
-                # before `--vasp-inputs` or by a run that skipped them. Filling
-                # it in reads a few hundred bytes of header, not the grid.
-                if vasp_inputs:
-                    row["inputs"] = self._reconstruct_inputs(
-                        identifier, found, inputs.get(identifier), row)
-                manifest.append(row)
-                self._write_manifest(manifest)
-                bar.advance(f"{identifier} cached")
+            if found is None:
+                pending.append(document)
                 continue
+            row = self._manifest_row(identifier, document, found, "cached",
+                                     provenance=provenance)
+            # The density is there; the deck may not be, if it was fetched
+            # before `--vasp-inputs` or by a run that skipped them. Filling
+            # it in reads a few hundred bytes of header, not the grid.
+            if vasp_inputs:
+                row["inputs"] = self._reconstruct_inputs(
+                    identifier, found, inputs.get(identifier), row)
+            manifest.append(row)
+            self._write_manifest(manifest)
+            bar.advance(f"{identifier} cached")
 
-            path = (self._store_path(identifier) if hdf5
-                    else self._chgcar_path(identifier, compress=compress))
-            # The material's directory is created only once the download is
-            # about to be attempted, so a filtered-out or failed entry does not
-            # leave an empty `mp-124/` behind for a later scan to puzzle over.
-            path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                chgcar, attempts = with_retries(
-                    lambda: rester.get_charge_density_from_material_id(identifier),
-                    attempts=self.retries, base_delay=self.retry_delay,
-                    # Through the bar, not past it: a bare `print` here writes
-                    # into the line the bar is redrawing and both are lost.
-                    label=f"  {label}: ", log=bar.write)
-                if chgcar is None:
-                    raise ValueError("the API returned no charge density")
-                grid = self._store_density(chgcar, path, hdf5, compression,
-                                           compression_level)
-            except Exception as error:                          # noqa: BLE001
-                # One material's failure must not cost the other 200. The
-                # partial file goes, the reason is recorded, the batch carries
-                # on -- and the manifest says `failed` rather than staying
-                # silent about a hole in the dataset.
-                bar.write(f"  FAILED {label}: "
-                          f"{type(error).__name__}: {error}")
-                path.unlink(missing_ok=True)
-                # An empty `mp-124/` left by a failure would be discovered as a
-                # material with no density; `rmdir` refuses a non-empty one, so
-                # a directory holding anything else survives untouched.
-                with contextlib.suppress(OSError):
-                    path.parent.rmdir()
+        # One task per material, `download_workers` at a time. Threads rather
+        # than processes: the work is a blocking HTTPS GET, so the GIL is
+        # released for the part that dominates, and nothing has to be pickled.
+        # The *parse* the client does on the way back is Python and does hold
+        # the GIL, so scaling is sub-linear on large grids by construction.
+        #
+        # A worker does network, store and its own cleanup, and nothing else.
+        # The manifest, the resume file and the progress bar stay here: the
+        # manifest is rewritten after every single file and neither `append`
+        # nor `_Progress` is thread-safe. Results are consumed as they land,
+        # so the manifest is in completion order -- which resume does not care
+        # about, since `load_manifest` keys it by material id.
+        for result in self._fetch_many(pending, bar, hdf5=hdf5,
+                                       compress=compress,
+                                       compression=compression,
+                                       compression_level=compression_level):
+            document = result["document"]
+            identifier = str(document.material_id)
+            if result.get("error"):
                 manifest.append(self._manifest_row(
-                    identifier, document, None, "failed",
-                    f"{type(error).__name__}: {error}", provenance=provenance))
+                    identifier, document, None, "failed", result["error"],
+                    provenance=provenance))
                 self._write_manifest(manifest)
                 bar.advance(f"{identifier} failed")
                 continue
 
+            path = result["path"]
             row = self._manifest_row(identifier, document, path, "downloaded",
-                                     grid=grid, attempts=attempts,
+                                     grid=result["grid"],
+                                     attempts=result["attempts"],
                                      provenance=provenance)
             if vasp_inputs:
                 row["inputs"] = self._reconstruct_inputs(
                     identifier, path, inputs.get(identifier), row,
-                    structure=poscar_from_pymatgen(chgcar.structure))
+                    structure=poscar_from_pymatgen(result["structure"]))
             manifest.append(row)
             self._write_manifest(manifest)
             fetched_bytes += path.stat().st_size
@@ -1956,6 +2022,125 @@ class MPDataFetcher:
             rows = rows.get("entries", [])
         return {str(row.get("material_id")): row for row in rows
                 if row.get("material_id")}
+
+    def _fetch_many(self, documents, bar, hdf5, compress, compression,
+                    compression_level):
+        r"""
+        Fetch every document, ``download_workers`` at a time, yielding results.
+
+        Yields ``{"document", "path", "grid", "attempts", "structure"}`` per
+        success and ``{"document", "error"}`` per failure, **in completion
+        order**, so the caller can write its manifest row and advance its bar
+        as each one lands rather than at the end.
+
+        One worker is the serial path, and takes it literally --- no pool, no
+        thread, no second session --- so a run with ``--download-workers 1``
+        behaves exactly as this method's predecessor did and nothing about
+        threading can be blamed for it.
+
+        Parameters
+        ----------
+        documents : sequence
+            Materials still to fetch; anything already cached was settled by
+            the caller and is not here.
+        bar : _Progress
+            For retry and failure lines only. ``bar.write`` goes *through* the
+            bar rather than past it, and is called from the consuming thread.
+        hdf5, compress, compression, compression_level
+            Passed to :meth:`_store_density`.
+
+        Yields
+        ------
+        dict
+        """
+        if not documents:
+            return
+        workers = max(1, min(int(self.download_workers), len(documents)))
+        if workers == 1:
+            # The shared session, not a thread-local one: there is no second
+            # thread to protect it from, and this is the path every existing
+            # caller and test takes.
+            rester = self._connect()
+            for document in documents:
+                yield self._fetch_one(document, rester, hdf5, compress,
+                                      compression, compression_level,
+                                      bar.write)
+            return
+
+        # Retry and failure lines are collected per task and written by the
+        # consumer, because `_Progress.write` redraws the bar: two threads
+        # inside it interleave into one line and both are lost.
+        def task(document):
+            messages = []
+            result = self._fetch_one(document, self._thread_rester(), hdf5,
+                                     compress, compression, compression_level,
+                                     messages.append)
+            result["messages"] = messages
+            return result
+
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="poraque-mp") as pool:
+            futures = [pool.submit(task, document) for document in documents]
+            for future in as_completed(futures):
+                result = future.result()
+                for message in result.pop("messages", ()):
+                    bar.write(message)
+                yield result
+
+    def _fetch_one(self, document, rester, hdf5, compress, compression,
+                   compression_level, write):
+        r"""
+        One material: fetch it, store it, and clean up after itself if it fails.
+
+        May run in a worker thread, so it touches **nothing shared** --- not
+        the manifest, not the bar, not ``self._rester``. The session is handed
+        in by the caller, which is the whole point: the serial path passes the
+        shared one and the pool passes a thread-local one, and this function
+        does not have to know which. Its log line goes to the ``write``
+        callable the caller gave it, and a failure is a returned value rather
+        than a raised exception: one material's failure must not cost the
+        other 200.
+
+        Returns
+        -------
+        dict
+            ``{"document", "path", "grid", "attempts", "structure"}``, or
+            ``{"document", "error"}``.
+        """
+        identifier = str(document.material_id)
+        label = (f"{identifier} {document.formula_pretty} "
+                 f"({document.nsites} sites)")
+        path = (self._store_path(identifier) if hdf5
+                else self._chgcar_path(identifier, compress=compress))
+        # The material's directory is created only once the download is about
+        # to be attempted, so a filtered-out or failed entry does not leave an
+        # empty `mp-124/` behind for a later scan to puzzle over.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            chgcar, attempts = with_retries(
+                lambda: rester.get_charge_density_from_material_id(identifier),
+                attempts=self.retries, base_delay=self.retry_delay,
+                label=f"  {label}: ", log=write)
+            if chgcar is None:
+                raise ValueError("the API returned no charge density")
+            grid = self._store_density(chgcar, path, hdf5, compression,
+                                       compression_level)
+        except Exception as error:                              # noqa: BLE001
+            # The partial file goes, the reason is reported, the batch carries
+            # on -- and the manifest will say `failed` rather than staying
+            # silent about a hole in the dataset.
+            write(f"  FAILED {label}: {type(error).__name__}: {error}")
+            path.unlink(missing_ok=True)
+            # An empty `mp-124/` left by a failure would be discovered as a
+            # material with no density; `rmdir` refuses a non-empty one, so a
+            # directory holding anything else survives untouched.
+            with contextlib.suppress(OSError):
+                path.parent.rmdir()
+            return {"document": document,
+                    "error": f"{type(error).__name__}: {error}"}
+
+        return {"document": document, "path": path, "grid": grid,
+                "attempts": attempts, "structure": chgcar.structure}
 
     def _manifest_row(self, identifier, document, path, status, error="",
                       grid=None, attempts=1, provenance=None):
@@ -2489,7 +2674,16 @@ def build_parser():
                      help="the same cap in GB (1 GB = 1000 MB, decimal, as "
                           "everywhere else in this report)")
     group.add_argument("--workers", type=int, default=16,
-                       help="parallel S3 HEAD requests while sizing")
+                       help="parallel S3 HEAD requests while sizing (these "
+                            "transfer no payload and are unauthenticated, "
+                            "which is why there are sixteen of them)")
+    group.add_argument("--download-workers", type=int, default=1,
+                       help="parallel density downloads (default: 1). Threads, "
+                            "not processes -- the work is a blocking HTTPS GET. "
+                            "Raise it to overlap transfers, and watch for "
+                            "`retrying in ...s` lines: those are the Materials "
+                            "Project's per-key rate limit, which is what "
+                            "bounds this and has not been measured here")
     group.add_argument("--retries", type=int, default=4,
                        help="attempts per object before giving up on it; a "
                             "rate limit or a dropped connection is retried "
@@ -2572,6 +2766,7 @@ def main(argv=None):
             is_stable=True if args.stable_only else None,
             num_sites=args.num_sites, retries=args.retries,
             retry_delay=args.retry_delay, log=log,
+            download_workers=args.download_workers,
         )
     except ValueError as error:
         print(f"ERROR: {error}", file=sys.stderr)

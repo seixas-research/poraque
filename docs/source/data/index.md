@@ -152,6 +152,49 @@ poraque-train --config my_mp_run.yaml     # data_paths: [data/MP]
 and to specialize it on your own chemistry afterwards, point `data_paths` at
 both directories, or fine-tune (see {doc}`../fine_tuning/index`).
 
+### Fetching several densities at once
+
+The download is **one material at a time by default**, and `--download-workers`
+raises that. It is a thread pool, not a process pool: the work is a blocking
+HTTPS GET, so the GIL is released for the part that dominates.
+
+```bash
+poraque-mp --all --sample 200 --output data/MP --download-workers 4
+```
+
+Mind the two worker settings, which are different pools for different things:
+
+| flag | default | what it sizes |
+| --- | --- | --- |
+| `--workers` | 16 | S3 `HEAD` requests while **sizing** (`--estimate`). Unsigned, no payload, free |
+| `--download-workers` | **1** | concurrent **density downloads**: authenticated, rate-limited, and each one parses a `CHGCAR` |
+
+Measured against mocked latency — 12 materials, 50 ms each — the pool overlaps
+transfers as advertised, with peak simultaneous requests equal to the worker
+count:
+
+| workers | wall | speedup |
+| --- | --- | --- |
+| 1 | 0.75 s | 1.00x |
+| 2 | 0.38 s | 1.96x |
+| 4 | 0.21 s | 3.65x |
+| 8 | 0.15 s | 4.96x |
+
+Two reasons not to simply turn it up. The sub-linear tail above is the fixed
+per-material work — storing, gzipping, writing the manifest — becoming the
+floor once the transfers overlap; against real multi-second latency it moves
+out, but the client also **parses** each density into a pymatgen object, and
+that parse is Python and holds the GIL. And the real ceiling is the Materials
+Project's per-key rate limit, which this project has not measured, which is
+why the default is 1. Raise it and read the log: `retrying in ...s after ...`
+means the limit was found, and `--retries`/`--retry-delay` are already backing
+off with jitter.
+
+Everything else is unchanged by it. The manifest is still rewritten after
+every single file, so a run interrupted at 900 of 3000 still resumes at 901; a
+single material's failure still costs only itself; and the cached entries a
+resumed run finds never reach the pool at all.
+
 ### Taking the archive whole
 
 A chemical space is a set of elements. `--all` is the other question — every

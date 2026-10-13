@@ -136,6 +136,7 @@ task: ext2pseudo          # identical to {type: ext2pseudo}, with the default na
 | `gaussian_blur` | `null` | Gaussian blur width in Å applied to the computed potential |
 | `blur_method` | `spectral` | `spectral` or `ndimage` |
 | `cache_in_memory` | `auto` | keep decoded fields in RAM between epochs — see below |
+| `cache_workers` | `auto` | processes that *build* the cache, one material each — [see below](cache-workers) |
 | `spin` | `auto` | train on the magnetization as a second channel — [see below](spin-key) |
 
 (cache-in-memory)=
@@ -184,6 +185,82 @@ would turn a slow run into a dead one.
 
 **Parallel loading is not the alternative it looks like.** See
 [`num_workers`](num-workers-and-pin-memory).
+
+(cache-workers)=
+### `cache_workers`
+
+How many processes **build** the cache, one material each. `auto` (the
+default), a count, or `0` for the single-process build. Not to be confused with
+[`training.num_workers`](num-workers-and-pin-memory), which loads an
+already-built cache during training and is the opposite trade.
+
+The build is not the FFT work it looks like. Measured per material on the
+97-cell platinum set at `resolution: 48`:
+
+| stage | share of the clock |
+| --- | --- |
+| Fortran `E17.11` text reading and writing | **86 %** |
+| computing V_ext (POTCAR tables + one FFT) | 8 % |
+| **spectral downsampling — the FFT** | **2.2 %** |
+
+So a thread count cannot help: there is no BLAS call anywhere in the path, and
+every transform goes through `np.fft`, which is single-threaded. A cache job
+that asks for eight cores and sets `OMP_NUM_THREADS=8` uses one of them. What
+scales is **materials** — `_build_one` is independent per material, and it
+already writes every field to `.partial-<pid>` and moves it into place with
+`os.replace`, so a pool needs no lock and the result is byte-identical to the
+single-process build.
+
+Measured on eight cores, 16 materials at 108³:
+
+| workers | text storage | HDF5 storage |
+| --- | --- | --- |
+| 1 | 2.764 s/material | 1.515 s/material |
+| 2 | 1.462 s (1.89×) | 0.832 s (1.82×) |
+| 4 | 0.868 s (3.18×) | 0.518 s (2.92×) |
+| 8 | 0.684 s (4.04×) | 0.440 s (3.44×) |
+
+On the full 97-cell set the `--cache-only` cache stage went from **656.9 s to
+246.1 s** at the 4 workers `auto` picks there — 2.67x, not 4x, because
+per-material time rises 1.49x under memory-bandwidth contention on the 288³
+grids. Against the 961.8 s the build cost before the two serial redundancies
+below were removed, it is 4.0x.
+
+`auto` takes the smallest of three numbers and says which bound it hit:
+
+```
+  workers: 4 (auto: 8 usable core(s); 4 within the 8 GiB budget at ~1995 MiB
+  each, sized on the largest grid at 23.89 M voxels; 97 material(s))
+```
+
+- the cores this process **may** use (`sched_getaffinity`, which is what
+  Slurm's `--cpus-per-task` restricts a task to — the node's core count is the
+  wrong number on a shared node);
+- a memory budget divided by an estimate taken from the **largest** native grid
+  in the set. Measured by building one material per process: a 108³ density
+  peaked at 498 MiB and a 288³ one at 1558 MiB, so the model is 400 MiB fixed
+  plus 70 B per voxel. The largest rather than the average, because every
+  worker may be handed the nanoparticle and sizing on the mean is how a build
+  goes into swap on the last eleven materials. The budget is **80 % of the
+  job's Slurm allocation** where there is one (`SLURM_MEM_PER_NODE`, or
+  `SLURM_MEM_PER_CPU` × `SLURM_CPUS_PER_TASK`) and 8 GiB otherwise — a
+  constant would pick four workers on a `--cpus-per-task=8 --mem=32G` node and
+  idle half the allocation, which is the exact job this exists for;
+- the number of materials.
+
+Below **1 M native voxels in total** `auto` stays single-process whatever the
+core count: a `spawn`ed pool costs 0.49–0.60 s for each worker to import the
+package, and the build runs at 1.03 s per million voxels, so a pool on a toy
+set is pure loss. An explicit count ignores that floor.
+
+Materials are handed out **largest first**: their native grids span a factor of
+19 in this set and the cost is linear in voxels, so in discovery order the
+biggest cells form a tail with idle cores behind them. Rows therefore print in
+completion order rather than alphabetically, and `i/N` counts materials
+finished.
+
+Raise the job's memory request along with its core count: a 288³ density needs
+~1.6 GiB per worker.
 
 ### `data_paths`
 

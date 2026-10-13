@@ -41,6 +41,7 @@ serves ``pseudo2tau`` afterwards with no rebuild.
 
 import contextlib
 import json
+import multiprocessing
 import os
 import time
 
@@ -77,6 +78,53 @@ CACHE_FINGERPRINT_FILENAME = "cache_fingerprint.json"
 #: Filename of a material's HDF5 field store inside a cache directory — the
 #: store module's own default, imported rather than restated.
 HDF5_FILENAME = DEFAULT_FILENAME
+
+#: Memory ``workers="auto"`` commits to the pool **when no Slurm allocation
+#: says otherwise**, in bytes. Each worker decodes one native-resolution
+#: material at a time, and the peak is set by the *largest* grid in the set,
+#: not the average: a dataset of 108³ bulk cells and 288³ nanoparticles sizes
+#: its workers on the nanoparticles or it swaps on them. 8 GiB, the same order
+#: as :data:`~poraque.ml.data.CACHE_MEMORY_BUDGET` and for the same reason — a
+#: workstation must not be driven into swap by a default. Inside a Slurm job
+#: :func:`_memory_budget` reads the real allocation instead.
+WORKER_MEMORY_BUDGET = 8 * 1024 ** 3
+
+#: Total native voxels across the whole set below which ``workers="auto"``
+#: stays single-process, because the pool would cost more than it saves.
+#:
+#: Measured: a ``spawn``ed pool costs 0.03 s bare and **0.49-0.60 s** once each
+#: worker has imported the package (roughly constant in the worker count, since
+#: they start together). The build itself runs at 1.03 s per million native
+#: voxels. With N workers the pool wins when
+#: :math:`0.6 + W/N < W`, i.e. :math:`W > 0.6\,N/(N-1)` --- 0.8 s at four
+#: workers, which is about 0.8 M voxels. Rounded to 1 M: a handful of 8³ or
+#: 12³ synthetic grids (the end-to-end tests) stays serial, and anything that
+#: is really a dataset does not. An explicit count is honored regardless ---
+#: this bounds ``auto``, not the feature.
+WORKER_MINIMUM_VOXELS = 1_000_000
+
+#: Resident memory one worker costs before it touches a grid: the interpreter,
+#: NumPy, and the package's own imports. Measured at 197-198 MiB on this
+#: machine over two materials three orders of magnitude apart in size; carried
+#: at twice that, because the cost of overestimating is one fewer worker and
+#: the cost of underestimating is swap.
+WORKER_BASE_BYTES = 400 * 1024 ** 2
+
+#: Bytes one worker needs per native voxel of the largest material it may be
+#: handed, on top of :data:`WORKER_BASE_BYTES`: the decoded field, the complex
+#: copy ``np.fft.fftn`` makes of it, and the text chunk being parsed.
+#:
+#: Measured by building one material in a process of its own and reading
+#: ``ru_maxrss``: a 108³ density (1.26 M voxels) peaked at 498 MiB and a 288³
+#: one (23.89 M voxels) at 1558 MiB, so the slope is
+#: :math:`(1558-498)/(23.89-1.26) = 47` B per voxel. Carried at 70, which
+#: reproduces both measurements from the top side.
+WORKER_BYTES_PER_VOXEL = 70
+
+#: The source each worker rebuilds for itself, at module level because that is
+#: the only state a ``spawn``ed process keeps between tasks. See
+#: :func:`_initialize_worker`.
+_WORKER_SOURCES = {}
 
 
 def cached_paths(destination, fields, storage="files"):
@@ -119,7 +167,8 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
                       gaussian_blur=None, blur_method="spectral", pattern=None,
                       format="auto", spin=False, limit=None,
                       storage="files", compression=None, compression_level=4,
-                      strict_potcar=False, log=None, max_spacing=None):
+                      strict_potcar=False, log=None, max_spacing=None,
+                      workers=0):
     r"""
     Downsample every material under ``paths`` into one prepared cache.
 
@@ -188,6 +237,12 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
         configured.
     log : callable, optional
         Receives one line per material.
+    workers : int or str, optional
+        Processes to build with. ``0`` (the default) or ``1`` is the
+        single-process build; ``"auto"`` picks from the cores this process may
+        use, a memory budget taken from the largest native grid, and the
+        material count. See :func:`resolve_cache_workers` for why materials
+        are the axis that scales and threads are not.
 
     Returns
     -------
@@ -216,7 +271,10 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
         emit(f"  limited to the {len(records)} smallest of the available "
              f"materials")
 
-    spin = _resolve_spin(spin, records, emit)
+    # Resolved before the spin probe, because the probe is itself a full pass
+    # over every density file and takes the same pool.
+    worker_count = resolve_cache_workers(workers, records, emit)
+    spin = _resolve_spin(spin, records, emit, workers=worker_count)
     potcar_source = _resolve_potcar_source(sources, strict_potcar, emit)
 
     if storage not in ("files", "hdf5"):
@@ -241,12 +299,18 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
     table = _CacheTable([record.identifier for record in records], fields, emit)
     table.header()
     try:
-        for position, record in enumerate(records, start=1):
-            entry = _build_one(record, cache, resolution, fields, spin,
-                               summary.get(record.identifier), storage,
-                               compression, compression_level, max_spacing)
-            summary[record.identifier] = entry
-            table.row(position, record.identifier, entry)
+        if worker_count > 1:
+            _build_in_parallel(records, cache, resolution, fields, spin,
+                               summary, storage, compression,
+                               compression_level, max_spacing, worker_count,
+                               sources, options, table)
+        else:
+            for position, record in enumerate(records, start=1):
+                entry = _build_one(record, cache, resolution, fields, spin,
+                                   summary.get(record.identifier), storage,
+                                   compression, compression_level, max_spacing)
+                summary[record.identifier] = entry
+                table.row(position, record.identifier, entry)
     finally:
         # Written even when the build aborts partway. The record of what did
         # get cached is the most useful thing to survive a failure, and losing
@@ -255,6 +319,428 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
     table.footer()
 
     return cache
+
+
+def _build_in_parallel(records, cache, resolution, fields, spin, summary,
+                       storage, compression, compression_level, max_spacing,
+                       worker_count, sources, options, table):
+    r"""
+    One process per material, over a pool, into the one cache directory.
+
+    Correct for the same reason two Slurm jobs sharing a cold cache are:
+    :func:`_build_one` writes every field to ``.partial-<pid>`` and moves it
+    into place with :func:`os.replace`, which is atomic. The comment there
+    records the regression that bought the discipline --- two jobs at LNCC
+    interleaved inside one ``write`` and left a zero-length density that
+    *parsed* --- and the pool inherits it. A cache built by eight workers is
+    byte-identical to the serial one; ``tests/test_cache_parallel.py`` pins
+    that.
+
+    What the workers do **not** touch is the bookkeeping. ``cache_summary.json``
+    and ``cache_fingerprint.json`` are plain ``open(..., "w")`` writes and stay
+    in the parent, which also owns the progress table and the ``finally`` that
+    saves the summary when a build aborts. Nothing about the on-disk invariants
+    moves into the pool; only the per-material work does.
+
+    Rows are printed by completion rather than by discovery order
+    (``imap_unordered``), and ``i/N`` counts materials finished. The table's
+    own reason for existing is progress --- an hour-long build whose table
+    appears at the end is not progress --- and ordered delivery would hold a
+    finished 88 MiB row behind an unfinished 1.6 GiB one.
+    """
+    _resolve_charges_before_forking(sources, options)
+    payloads = _payloads(records, cache, resolution, fields, spin, summary,
+                         storage, compression, compression_level, max_spacing)
+    roots = tuple(dict.fromkeys(record.source.root for record in records))
+
+    # `spawn` rather than `fork`: NumPy's BLAS starts threads, and forking a
+    # threaded process is undefined where those threads hold locks. It also
+    # makes the unshippable `log` fail loudly here instead of only on macOS.
+    context = multiprocessing.get_context("spawn")
+    failures = {}
+    with context.Pool(worker_count, initializer=_initialize_worker,
+                      initargs=(roots, shippable_options(options))) as pool:
+        for position, (identifier, entry) in enumerate(
+                pool.imap_unordered(_build_one_shipped, payloads), start=1):
+            if "error" in entry:
+                failures[identifier] = entry["error"]
+                continue
+            summary[identifier] = entry
+            table.row(position, identifier, entry)
+
+    if failures:
+        detail = "; ".join(f"{name}: {why}"
+                           for name, why in sorted(failures.items()))
+        raise RuntimeError(
+            f"{len(failures)} of {len(payloads)} material(s) failed to cache "
+            f"({detail}). The rest were written and are recorded in "
+            f"{CACHE_SUMMARY_FILENAME}, so a rerun resumes from them.")
+
+
+def _resolve_charges_before_forking(sources, options):
+    r"""
+    Settle the inferred valence charges in the parent, once.
+
+    :attr:`CalculationSource.charges` is lazy, and its fallback
+    :func:`~poraque.data.sources.infer_valence_charges` **parses every density
+    in the set** to solve :math:`\int\rho = \sum_s n_s Z_s`. In the serial
+    build that happens at most once. In a pool each worker would do it
+    independently, so eight workers would decode the whole archive eight times
+    before writing a single field --- 61 GiB per worker on this project's
+    platinum set.
+
+    Only datasets that take the Gaussian pseudo-ion route ask the question at
+    all: :meth:`CalculationSource._modeled_charges` returns ``None`` where the
+    material carries its own ``POTCAR``, and the tabulated route reads ``ZVAL``
+    from the ``POTCAR`` instead. So the probe is whether *any* record would
+    fall through to the model, and it is an :func:`os.path.exists` per material
+    plus the per-element library answer :meth:`potcar_coverage` has already
+    memoized.
+
+    Failure is not an error here. ``from_calculation`` raises a better message
+    a moment later, naming the elements it could not place, and raising now
+    would turn a diagnosable build into a traceback from a worker.
+    """
+    if options.get("charges"):
+        return
+    for source in sources:
+        if not _needs_modeled_charges(source):
+            continue
+        try:
+            resolved = source.charges
+        except (ValueError, OSError):
+            return
+        if resolved:
+            options["charges"] = dict(resolved)
+            return
+
+
+def _needs_modeled_charges(source):
+    """Whether any of ``source``'s materials falls back to the model potential."""
+    coverage = source.potcar_coverage()
+    if coverage is not None and all(coverage.values()):
+        return False
+    return any(not os.path.exists(os.path.join(record.directory, "POTCAR"))
+               for record in source.discover())
+
+
+# ---------------------------------------------------------------------- #
+# Working in parallel over materials
+# ---------------------------------------------------------------------- #
+def shippable_options(options):
+    r"""
+    ``options`` with everything a worker process cannot receive removed.
+
+    One key, and it is not optional: ``log``. A
+    :class:`~poraque.data.sources.CalculationSource` keeps its options dict, a
+    ``MaterialRecord`` keeps its source, and :func:`build_field_cache` puts the
+    build's logging callable in those options --- so a record holds a live
+    closure over an open log file and ``pickle.dumps(record)`` raises
+    ``PicklingError``. Under ``fork`` that never surfaces; ``spawn``, which is
+    macOS's default and the only safe start method beside a threaded BLAS, has
+    to send it.
+
+    The workers do not log. One writer of a command's output is the rule
+    (:mod:`poraque.utils.logging`), and eight processes interleaving rows into
+    one terminal would break the aligned table the parent prints anyway.
+
+    Parameters
+    ----------
+    options : dict
+
+    Returns
+    -------
+    dict
+    """
+    return {key: value for key, value in options.items() if key != "log"}
+
+
+def _initialize_worker(roots, options):
+    """
+    Rebuild every source inside a worker, once per process.
+
+    The parent sends the roots and the options rather than the sources, because
+    a source carries the log (see :func:`shippable_options`) and because
+    rebuilding costs one directory probe per *process* where shipping would
+    cost a pickle per *material*.
+    """
+    _WORKER_SOURCES.clear()
+    for root in roots:
+        _WORKER_SOURCES[root] = resolve_source(root, **options)
+
+
+def _build_one_shipped(payload):
+    r"""
+    One material, in a worker process.
+
+    Takes the three strings a record is made of --- identifier, directory and
+    the ``{field: path}`` map --- and rebuilds the record against the worker's
+    own source. Returns ``(identifier, entry)``, or
+    ``(identifier, {"error": ...})`` when the material raises: one unreadable
+    density in an archive of thousands should not lose the other thousands,
+    and the parent re-raises after the summary is written.
+
+    ``Exception``, not ``BaseException``: a ``KeyboardInterrupt`` must tear the
+    pool down rather than be reported as a material that failed to cache, and
+    ``_build_one``'s own cleanup already catches ``BaseException`` to remove
+    its temporaries before re-raising.
+    """
+    from ..ml.data import MaterialRecord
+
+    identifier, directory, files, root, settings = payload
+    record = MaterialRecord(identifier, directory, files=dict(files),
+                            source=_WORKER_SOURCES[root])
+    try:
+        return identifier, _build_one(
+            record, settings["cache"], settings["resolution"],
+            settings["fields"], settings["spin"],
+            settings["remembered"], settings["storage"],
+            settings["compression"], settings["compression_level"],
+            settings["max_spacing"])
+    except Exception as error:
+        return identifier, {"error": f"{type(error).__name__}: {error}"}
+
+
+def _payloads(records, cache, resolution, fields, spin, summary, storage,
+              compression, compression_level, max_spacing):
+    """
+    One picklable work item per material, **most expensive first**.
+
+    Longest-processing-time-first, because one dataset's materials are not one
+    size: across this project's 97 platinum cells the native grids span 1.26 M
+    to 23.89 M voxels and the build cost is linear in them
+    (:math:`t = 0.47 + 1.03\\,{\\rm s}` per million, :math:`R^2 = 0.996`), a
+    factor of 19 between the cheapest and the dearest. Handed out in discovery
+    order with eight workers, the eleven 288³ nanoparticles at the end of the
+    list become a 25-second tail with seven idle cores behind it. File size is
+    a free proxy for voxel count and needs no header read.
+    """
+    ordered = sorted(records, key=_record_cost, reverse=True)
+    return [(record.identifier, record.directory, record.files,
+             record.source.root,
+             {"cache": cache, "resolution": resolution, "fields": fields,
+              "spin": spin, "remembered": summary.get(record.identifier),
+              "storage": storage, "compression": compression,
+              "compression_level": compression_level,
+              "max_spacing": max_spacing})
+            for record in ordered]
+
+
+def _record_cost(record):
+    """Bytes of the density file: the proxy the schedule is sorted on."""
+    try:
+        return os.path.getsize(record.files["CHGCAR"])
+    except (KeyError, OSError):
+        return 0
+
+
+def resolve_cache_workers(requested, records, emit=None):
+    r"""
+    How many processes to build the cache with.
+
+    The build is not the FFT work its Slurm script claims. Measured per
+    material on the platinum set at ``resolution: 48``, the spectral
+    downsampling is **2.2 %** of the clock and the Fortran ``E17.11`` text
+    codec is **86 %** --- one ``np.array(line.split())`` per line read and one
+    ``fortran_exponential`` per voxel written, both pure Python. There is no
+    BLAS call in the path and every transform goes through ``np.fft``, which is
+    single-threaded, so ``OMP_NUM_THREADS`` has nothing to act on. What does
+    scale is materials: :func:`_build_one` is independent per material and its
+    writes are already multi-process safe.
+
+    Parameters
+    ----------
+    requested : int or str
+        A count, ``0``/``1`` for the single-process build, or ``"auto"``.
+    records : sequence of MaterialRecord
+        Used by ``"auto"`` for both bounds: there is no point in more workers
+        than materials, and the memory estimate comes from the largest file.
+    emit : callable, optional
+
+    Returns
+    -------
+    int
+        At least 1.
+
+    Raises
+    ------
+    ValueError
+        On a value that is neither ``"auto"`` nor a non-negative integer ---
+        before the cache is built, like every other setting.
+
+    Notes
+    -----
+    ``"auto"`` takes the smallest of three numbers:
+
+    * the cores **this process may use** --- ``len(os.sched_getaffinity(0))``
+      where the platform has it, which is what Slurm's ``--cpus-per-task``
+      restricts a task to; ``os.cpu_count()`` elsewhere. The node's core count
+      is the wrong number on a shared node;
+    * a memory budget --- 80 % of the job's Slurm allocation where there is
+      one, else :data:`WORKER_MEMORY_BUDGET` --- divided by
+      :data:`WORKER_BASE_BYTES` plus :data:`WORKER_BYTES_PER_VOXEL` times the
+      **largest** native grid in the set. See :func:`_memory_budget`;
+    * the number of materials.
+
+    The line it logs names which of the three bound, so a job that wanted more
+    workers can see whether to ask for cores or for memory.
+    """
+    if isinstance(requested, str):
+        text = requested.strip().lower()
+        if text not in ("auto", ""):
+            try:
+                requested = int(text)
+            except ValueError:
+                raise ValueError(
+                    f"data.cache_workers: {requested!r} is neither 'auto' nor "
+                    f"a number of processes. Use 'auto', or 0 for the "
+                    f"single-process build."
+                ) from None
+        else:
+            requested = "auto"
+
+    if requested != "auto":
+        count = int(requested)
+        if count < 0:
+            raise ValueError(
+                f"data.cache_workers: {count} is negative. Use 0 or 1 for the "
+                f"single-process build.")
+        return max(1, count)
+
+    cores = _usable_cores()
+    shapes = _native_voxels(records)
+    total = sum(shapes)
+    if total and total < WORKER_MINIMUM_VOXELS:
+        if emit:
+            emit(f"  workers: 1 (auto: {total / 1e6:.3f} M voxels in total, "
+                 f"under the {WORKER_MINIMUM_VOXELS / 1e6:.0f} M at which a "
+                 f"pool pays for its own start-up)")
+        return 1
+
+    voxels = max(shapes, default=0)
+    budget, source = _memory_budget()
+    bytes_each = WORKER_BASE_BYTES + voxels * WORKER_BYTES_PER_VOXEL
+    by_memory = max(1, int(budget // bytes_each))
+    workers = max(1, min(cores, by_memory, len(records) or 1))
+    if emit:
+        emit(f"  workers: {workers} (auto: {cores} usable core(s); "
+             f"{by_memory} within the "
+             f"{budget / 1024 ** 3:.1f} GiB {source} at "
+             f"~{bytes_each / 1024 ** 2:.0f} MiB each, sized on the largest "
+             f"grid at {voxels / 1e6:.2f} M voxels; "
+             f"{len(records)} material(s))")
+    return workers
+
+
+def _memory_budget():
+    r"""
+    Memory ``auto`` may commit to the pool, and where the number came from.
+
+    **The job's own allocation when Slurm states one.** A constant is the wrong
+    answer on a cluster: `--cpus-per-task=8 --mem=32G` on Santos Dumont against
+    an 8 GiB default picks four workers for a 288³ set and idles half the
+    allocation, which is the exact job this feature exists for. Slurm exports
+    the allocation, so the budget can be read rather than guessed --
+    ``SLURM_MEM_PER_NODE`` (MB for the whole node) or ``SLURM_MEM_PER_CPU``
+    times ``SLURM_CPUS_PER_TASK``, whichever is set.
+
+    Carried at 80 % of what Slurm granted: the rest is the parent process, the
+    page cache the text reads go through, and the margin between a worker's
+    estimated peak and its real one. Slurm's enforcement is a hard cgroup
+    limit, so overshooting is an OOM kill of the job, not a slow build.
+
+    :data:`WORKER_MEMORY_BUDGET` is the fallback, for a workstation that has no
+    allocation to read.
+
+    Returns
+    -------
+    budget : int
+        Bytes.
+    source : str
+        ``"Slurm allocation"`` or ``"default"``, for the log line -- "4 within
+        the 8 GiB budget" and "4 within the 8 GiB Slurm allocation" are
+        different facts and only one of them is worth changing a submission
+        script over.
+    """
+    granted = _int_environment("SLURM_MEM_PER_NODE")
+    if not granted:
+        per_cpu = _int_environment("SLURM_MEM_PER_CPU")
+        cpus = _int_environment("SLURM_CPUS_PER_TASK") or 1
+        granted = per_cpu * cpus if per_cpu else 0
+    if granted > 0:
+        return int(0.8 * granted * 1024 ** 2), "Slurm allocation"
+    return WORKER_MEMORY_BUDGET, "default budget"
+
+
+def _int_environment(name):
+    """``int(os.environ[name])``, or 0 for absent, empty or malformed."""
+    try:
+        return int(str(os.environ.get(name, "")).strip().rstrip("MmGg") or 0)
+    except ValueError:
+        return 0
+
+
+def _usable_cores():
+    r"""
+    Cores this process may use, not the ones the node has.
+
+    ``SLURM_CPUS_PER_TASK`` first, because it is the job's own statement of
+    what it asked for and Slurm always exports it. ``sched_getaffinity``
+    *usually* agrees --- Slurm narrows the mask through ``task/affinity`` or
+    ``task/cgroup`` --- but that is a site configuration, not a guarantee, and
+    where the plugin is off the mask is the whole node. Reading the variable
+    makes the answer the same on every cluster and visible off one: the
+    affinity call cannot be simulated, so a wrong worker count under
+    ``--cpus-per-task=4`` would only ever be found on the cluster.
+
+    Then the affinity mask, for a ``taskset``/cgroup-confined process outside
+    Slurm, and ``os.cpu_count()`` last, for a workstation.
+    """
+    allocated = _int_environment("SLURM_CPUS_PER_TASK")
+    if allocated > 0:
+        return allocated
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except AttributeError:                                  # macOS, Windows
+        return max(1, os.cpu_count() or 1)
+
+
+def _native_voxels(records):
+    r"""
+    Native voxel count per material, for sizing the pool.
+
+    Two numbers come out of this list: the **largest** sets the per-worker
+    memory estimate (every worker may be handed it) and the **total** decides
+    whether a pool is worth starting at all.
+
+    Read from the headers, not estimated from file sizes: a spin-polarized
+    ``CHGCAR`` holds two grid blocks, so bytes-over-eighteen-columns
+    overestimates it by a factor of two, and the budget that comes out of it
+    would halve the worker count on exactly the datasets that most need them.
+    :func:`~poraque.fields.vasp.volumetric.read_grid_header` stops at the
+    ``NGXF NGYF NGZF`` line, so this costs a few hundred bytes per material
+    however large the grid --- 18 ms for all 97 of the platinum set.
+
+    Falls back to the file-size estimate for anything whose header will not
+    parse, because a worker count is not worth failing a build over.
+
+    Returns
+    -------
+    list of int
+    """
+    from ..fields.vasp.volumetric import read_grid_header
+
+    counts = []
+    for record in records:
+        path = record.files.get("CHGCAR")
+        if not path:
+            continue
+        try:
+            _, shape = read_grid_header(path)
+            counts.append(int(shape[0]) * int(shape[1]) * int(shape[2]))
+        except (OSError, ValueError, IndexError, TypeError):
+            counts.append(_record_cost(record) // 36)
+    return counts
 
 
 def _resolve_potcar_source(sources, strict, emit):
@@ -328,7 +814,41 @@ def _resolve_potcar_source(sources, strict, emit):
     return resolved
 
 
-def _resolve_spin(requested, records, emit):
+def _spin_of(path):
+    """Whether one density file carries a magnetization block. Pool-safe."""
+    from ..fields.spin import is_spin_polarized
+
+    try:
+        return bool(path) and bool(is_spin_polarized(path))
+    except (OSError, ValueError):
+        return False
+
+
+def _polarized_records(records, workers):
+    r"""
+    Which records carry a magnetization block, over ``workers`` processes.
+
+    The probe is :func:`~poraque.fields.spin.is_spin_polarized`, which scans
+    for the repeated grid-dimension line rather than converting any value to
+    float --- already the cheap form. It is still a **linear Python scan of
+    every density in the set**, and on this project's 97 platinum cells it
+    cost 29.2 s before the first field was written: 11 % of the serial build,
+    and under Amdahl the term that would cap the pool at 3.2x however many
+    cores were added. It is per-record independent, so it takes the same pool.
+
+    Only the path is sent, so this needs no source and no initializer.
+    """
+    paths = [record.files.get("CHGCAR") for record in records]
+    if workers > 1 and len(records) > 1:
+        context = multiprocessing.get_context("spawn")
+        with context.Pool(min(workers, len(records))) as pool:
+            flags = pool.map(_spin_of, paths)
+    else:
+        flags = [_spin_of(path) for path in paths]
+    return [record for record, polarized in zip(records, flags) if polarized]
+
+
+def _resolve_spin(requested, records, emit, workers=1):
     r"""
     Turn ``spin="auto"`` into a decision, by looking at the data.
 
@@ -358,6 +878,9 @@ def _resolve_spin(requested, records, emit):
     requested : {"auto", True, False}
     records : list of MaterialRecord
     emit : callable
+    workers : int, optional
+        Processes to run the probe over. It is a full pass over every density
+        file -- see :func:`_polarized_records`.
 
     Returns
     -------
@@ -369,8 +892,7 @@ def _resolve_spin(requested, records, emit):
         When ``spin=True`` is asked of a dataset that carries no magnetization
         anywhere -- a channel the data has no values for cannot be trained.
     """
-    polarized = [record for record in records
-                 if record.source.is_spin_polarized(record)]
+    polarized = _polarized_records(records, workers)
 
     if requested is True:
         if not polarized:

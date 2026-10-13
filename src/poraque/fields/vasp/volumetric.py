@@ -39,6 +39,8 @@ consumed a line at a time into the array being filled, so peak memory follows
 the grid rather than the text.
 """
 
+import itertools
+
 import numpy as np
 
 from .poscar import Poscar
@@ -113,6 +115,44 @@ def read_volumetric(path, read_all=False):
                     extra.append(_read_block(lines, n_points, shape, path))
 
     return structure, data, extra
+
+
+def read_grid_header(path):
+    r"""
+    The structure and the grid shape, without reading a single grid value.
+
+    A ``CHGCAR``'s shape is on the ``NGXF NGYF NGZF`` line immediately after
+    the structure block, so the question "what grid is this file on?" is
+    answered a few hundred bytes in. :meth:`FieldGrid.from_file` used to answer
+    it with :func:`read_volumetric`, converting every value in the file to
+    float, reshaping them, and returning ``data.shape`` --- 0.21 s on a 108³
+    density and 4.6 s on a 288³ one, **8 % of the cache build**, for a number
+    the header carries. The density is then read again by the caller, and a
+    third time by :func:`read_augmentation_blocks`.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        A ``CHGCAR``-format file, optionally compressed, or an HDF5 store.
+
+    Returns
+    -------
+    structure : Poscar
+    shape : tuple of int
+    """
+    from ..hdf5 import is_hdf5_path
+
+    if is_hdf5_path(path):
+        # A store has no text header to stop short in, and reading one dataset
+        # out of it is already cheap -- it is binary and chunked.
+        structure, data, _ = read_volumetric(path)
+        return structure, tuple(data.shape)
+
+    with _open_text(path) as handle:
+        lines = (line.rstrip("\n") for line in handle)
+        structure = _read_header(lines, str(path))
+        shape = _read_shape(lines, str(path))
+    return structure, shape
 
 
 def read_structure_header(path):
@@ -472,25 +512,55 @@ def _read_shape(lines, path=""):
     raise ValueError(f"{path}: no grid-dimension line after the header.")
 
 
+#: Values joined into one string before a single ``split()``, in
+#: :func:`_read_block`.
+#:
+#: The whole block at once is faster still and is deliberately not done: a
+#: 288³ density is 23.9 M values, and the list of Python strings ``split()``
+#: returns for it costs about 1.4 GB. That figure decides how many cache
+#: workers fit in a node's memory, so the parse is chunked and the peak
+#: bounded at a few tens of MB whatever the grid.
+PARSE_CHUNK = 1 << 20
+
+
 def _read_block(lines, n_points, shape, path=""):
-    """
+    r"""
     Read ``n_points`` floats from ``lines`` and reshape them.
 
     Consumes exactly as many lines as it needs, leaving the iterator on the
     first line after the block.
+
+    One ``split()`` per :data:`PARSE_CHUNK` values rather than one
+    ``np.array(line.split())`` per line: a ``CHGCAR`` line holds five values,
+    so the per-line form paid NumPy's array-construction overhead once per
+    five numbers --- 252 k times for a 108³ density, 4.8 M for a 288³ one.
+    Measured 1.8-2.0x on a spin-polarized 108³ density, values bit-identical.
+
+    The chunk is capped at the lines the *remaining* values can occupy, not at
+    a fixed row count. Reading one line too far would consume the
+    ``augmentation occupancies`` header that follows the block --- a parse
+    error, and a line the caller still needs --- which is why the per-line loop
+    this replaces stopped on the value count rather than the line count.
     """
     values = np.empty(n_points, dtype=float)
     filled = 0
-    for line in lines:
-        tokens = line.split()
-        if not tokens:
-            continue
-        chunk = np.array(tokens, dtype=float)
-        take = min(chunk.size, n_points - filled)
-        values[filled:filled + take] = chunk[:take]
-        filled += take
-        if filled >= n_points:
+    first = ""
+    for first in lines:
+        if first.strip():
             break
+    per_line = len(first.split())
+    if per_line:
+        rows = max(1, PARSE_CHUNK // per_line)
+        pending = itertools.chain((first,), lines)
+        while filled < n_points:
+            wanted = -(-(n_points - filled) // per_line)
+            text = " ".join(itertools.islice(pending, min(rows, wanted)))
+            if not text.strip():
+                break
+            chunk = np.array(text.split(), dtype=float)
+            take = min(chunk.size, n_points - filled)
+            values[filled:filled + take] = chunk[:take]
+            filled += take
 
     if filled < n_points:
         raise ValueError(
