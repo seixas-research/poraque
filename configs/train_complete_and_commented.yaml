@@ -5,564 +5,197 @@
 #   poraque-train --config configs/train_complete_and_commented.yaml --epochs 800
 #
 # EVERY KEY IS OPTIONAL and every key is listed here at its default, so this
-# file is the map: copy the two or three lines a run actually changes.
-# configs/train.yaml is that short form and is the reference run.
+# file is the map: copy the lines a run changes. configs/train_simple.yaml is
+# that short form.
 #
-# Command-line flags override these values, so one committed config can be
-# swept from the shell without editing it.
+# Two rules hold everywhere:
+#
+#   * An operator is trained when its section is present. `ext2chg:` and
+#     `chg2tau:` are the two; leave one out and it is not trained.
+#   * A feature that can be switched off is a block whose presence is the
+#     switch: `false` turns it off, `true` (or the bare key) turns it on with
+#     the defaults shown, a block of settings turns it on with those. There is
+#     no `enable` key anywhere.
+#
+# Command-line flags override these values (poraque-train --help), so one
+# config can be swept from the shell without editing it.
 # =====================================================================
 
-task:
-  type: all                     # all | ext2pseudo | pseudo2tau | ext2chg | chg2tau; only `all` reaches a total energy
-  # `ext2chg` predicts the pseudo-density AND every atom's PAW augmentation
-  # occupancies, from V_ext. It is not a link of the chain -- `all` means
-  # ext2pseudo + pseudo2tau -- and `all` adds it only when model.paw.enable is true.
-  name: pt_w16_m8_l3            # names models/<name>/ and everything inside it
+run:
+  name: poraque_models          # everything goes in <output>/<name>/
+  output: models                # parent directory; null writes NOTHING (no checkpoint, log or figure)
+  seed: 42                      # the validation draw, the folds, the batch order and the initial weights
 
 data:
-  # ------------------------------------------------------------------------
-  # ONE key names the dataset, and every entry in it has the SAME shape:
+  # ONE directory, one subdirectory per material. A material is a directory
+  # with a density in it (CHGCAR, compressed or not, or fields.h5):
   #
-  #     <a path listed here>/
-  #         <material>/         one subdirectory per structure
+  #     <path>/
+  #         <material>/
   #             CHGCAR          required -- the density, and the grid every
-  #                             other field of that material is placed on
-  #             TAUCAR          OPTIONAL, and optional per material
-  #             POSCAR INCAR    optional; when present the external potential
-  #             POTCAR ...      is built from them exactly
+  #                             other field of the material is placed on
+  #             TAUCAR          optional, per material: chg2tau trains on the
+  #                             materials that have one
+  #             POSCAR POTCAR   optional; beside the density they make the
+  #             INCAR ...       external potential exact
   #
-  # That is what a VASP run tree looks like, what `poraque-mp` writes, and what
-  # the cache builder produces -- so there is nothing to declare about where a
-  # path came from, and no key that says so. Paths are pooled into one dataset.
-  #
-  # What DIFFERS between them is the CONTENT of a material's directory, and
-  # content is read, not configured:
-  #
-  #     inputs beside the density  ->  V_ext computed from them (exact with a
-  #                                    POTCAR, or with `potcar_dir` below)
-  #     a density on its own       ->  V_ext computed from the structure the
-  #                                    CHGCAR carries in its own header
-  #
-  # V_ext is ALWAYS computed, never read from an EXTCAR that happens to sit in
-  # a directory: at inference time there is no DFT run to read one from, so the
-  # input channel has to be Poraque's own arithmetic in both places.
-  #
-  # TAUCAR is optional per material and needs no declaring. A material that has
-  # one joins the pseudo2tau set; one that does not still joins ext2pseudo and is
-  # simply absent from the other. A whole task with no target anywhere is
-  # skipped with a message rather than failing the run -- which is what makes
-  # `type: all` sensible on a Materials Project download, where no tau exists.
-  #
-  # A path holding ONE material's run directly -- its files at the top level
-  # rather than one level down -- is read as that single material, so a lone
-  # calculation needs no wrapper directory.
-  # ------------------------------------------------------------------------
-  data_paths:                   # null uses data/vasp/structures
-    - data/vasp/structures      # local runs:   structure_0000/, structure_0001/, ...
-  # - data/MP                   # an MP download: mp-124/, mp-81/, ...  (no TAUCAR)
-  # - data/MP                   # (any other dataset root, pooled with the first)
-  cache: data/cache             # where the downsampled copies are written
-  pattern: ""                   # prefix filter on the material subdirectories. EMPTY takes
-                                #   all of them, which is the only sensible default now that
-                                #   one key names every kind of dataset: "structure" would
-                                #   silently exclude every mp-124/ in a download. Set it to
-                                #   skip a sibling folder that must not be trained on; it is
-                                #   part of the cache fingerprint.
-  format: auto                  # auto | vasp -- the code that wrote the files, and NOTHING
-                                #   else. There is no layout to choose: every path is a
-                                #   directory of per-material subdirectories, and what a
-                                #   material holds is read, not declared.
-  resolution: 32                # longest grid axis after spectral downsampling
-  max_spacing: null             # Ang; refine any axis coarser than this (long thin cells), never past native
-  target_scale: null            # e/Ang^3; fixed asinh scale of the density target; null fits the median
-  potcar_dir: null              # POTCAR library; without one V_ext falls back to the Gaussian model
-  strict_potcar: false          # raise instead of falling back when a configured library cannot
-                                #   serve an element. What it DID serve is in the cache
-                                #   fingerprint either way (`potcar_source`, per element), so a
-                                #   cache built while the library was unreachable is rebuilt
-                                #   rather than reused -- `potcar_dir` alone records only the
-                                #   path that was asked for.
-  sigma: null                   # Gaussian pseudo-ion width in Ang; null derives it per species
-  gaussian_blur: null           # blur width in Ang for the computed potential
-  blur_method: spectral         # spectral | ndimage
-  spin: auto                    # auto reads the sources; true demands ISPIN=2, false discards it
-  precision: float64            # how the fields are held in memory (not what the model computes in)
-  xc: auto                      # pbe | lda | pw91 | auto; read by the EL analysis, not by training
-  delta_density: true           # ext2pseudo learns rho - rho_sup; predict() still returns the full rho
-  atomic_reference: data/vasp/isolated_atoms   # atomic_reference.json, or a dir of one-atom runs
-  paw_source: atomic            # atomic (free atom, transferable) | material (training-set average)
-  storage: files                # files (a CHGCAR-format text file per field) | hdf5 (one fields.h5)
-  compression: null             # null | gzip | lzf; hdf5 only, and raises on a text cache
-  compression_level: 4          # gzip only; ignored by lzf
+  # A VASP run tree, a `poraque-mp` download and a cache from an earlier run
+  # all have this shape, so nothing says where the data came from.
+  path: data/vasp/structures
+  potcar_dir: null              # POTCAR library (<dir>/Pt/POTCAR, ...) used where a material ships none.
+                                #   Without one the potential is a Gaussian pseudo-ion model -- a
+                                #   different field, ~0.1 relative L2 -- and the PAW records cannot be
+                                #   laid out, so the occupancies cannot be trained
+  atoms: data/vasp/isolated_atoms   # isolated-atom reference: atomic_reference.json, or a directory of
+                                #   one-atom-in-a-box runs. The baseline rho_sup of `target: delta`, the
+                                #   structure channels, and the PAW records a prediction is written with
+  spin: auto                    # auto keeps the magnetization when the CHGCARs carry one;
+                                #   true demands it (ISPIN = 2); false discards it
+  grid:
+    resolution: 32              # longest grid axis after spectral downsampling
+    max_spacing: null           # Ang; refine any axis coarser than this, never past the native grid.
+                                #   For long thin cells, whose short axes would otherwise be cached at a
+                                #   fraction of the long axis' resolution
+  cache:
+    dir: data/cache             # where the downsampled copies are written, under a tag that encodes
+                                #   the resolution, the potential model and the spin
+    storage: text               # text: a CHGCAR-format file per field | hdf5: one chunked fields.h5
+                                #   per material, 1.38x smaller at gzip and exact to 1e-16
+    compression: null           # null | gzip | lzf; hdf5 only, and raises on a text cache
+    in_memory: auto             # keep decoded fields and normalized samples in RAM between epochs;
+                                #   auto does so under a 4 GiB estimate. Off, every epoch re-parses
+                                #   every file (measured 10x slower on real data)
 
-  # The largest performance setting in this file, and the one whose effect is
-  # invisible from the results: off, EVERY EPOCH re-reads, decompresses and
-  # re-parses every field, producing the same numbers ten times slower.
-  # Measured on a V100 with 115 structures at 32^3 -- __getitem__ was 59% of
-  # the training loop and the GPU sat at 2-4%; turning it on took twenty epochs
-  # from 168.0 s to 16.3 s (10.3x) with the validation error identical to five
-  # decimals. `auto` estimates the decoded size and enables it under 4 GiB.
-  # This is not a CUDA setting: the parse is the same on MPS and CPU.
-  cache_in_memory: auto         # auto | true | false
+# ---------------------------------------------------------------------
+# The density operator: V_ext -> pseudo-density + each atom's PAW
+# augmentation occupancies (138 numbers per atom for PAW_PBE Pt, one set
+# per density channel). Present: trained. Absent: not trained.
+# ---------------------------------------------------------------------
+ext2chg:
+  target: delta                 # delta learns rho - rho_sup, the residual over the isolated atoms
+                                #   superposed, and adds rho_sup back on output | full learns rho
+  structure_input: false        # channels describing the structure, appended after V_ext:
+  # structure_input:
+  #   superposition: true       # rho_sup
+  #   elements: auto            # one superposition per element: auto (every element of the cache),
+  #                             #   a list, or []. Needs target: delta
+  model:
+    width: 64                   # channels carried through the Fourier layers
+    layers: 4                   # Fourier blocks
+    modes: 16                   # retained Fourier modes per axis, counted from the lowest; under
+                                #   `band` the ceiling of what a cell may keep
+    band: null                  # 1/Ang. null keeps `modes` on every axis of every cell; a number
+                                #   keeps floor(band * L / 2 pi) modes on an axis of length L (at most
+                                #   `modes`), so every cell retains the same band of physics. Measured
+                                #   20 % better on mixed cell sizes; too small starves the model (6
+                                #   lost 55 %). The run logs how many modes each cell keeps
+    projection_channels: 64     # hidden width of the read-out head; pointwise, so cheap
+    activation: silu            # silu | gelu | relu | tanh, in every layer and in the read-out
+    cell_conditioning: 32       # width of the lattice embedding every layer is modulated by (FiLM);
+                                #   false drops it
+    equivariant: false          # true constrains every Fourier kernel to a function of |G| alone: the
+                                #   operator then commutes with every rotation and inversion. The
+                                #   retained modes become a ball and no coordinate channels are
+                                #   appended, both because the property fails otherwise
+    # equivariant:
+    #   n_radial: 16            # radial basis functions; with `width`, the layer's whole capacity
+    #   g_basis: auto           # 1/Ang the basis spans; auto reads the median band off the training
+    #                           #   split (a basis wider than the band wastes 14-43 %)
+    precision: float32          # float32 | float64, what the operator computes in. float64 is about
+                                #   twice the time and memory, and absent on Apple's MPS
+  occupancies:                  # false trains the grid alone (no POTCAR needed)
+    weight: 1.0                 # the occupancy term against the field objective, in training and in
+                                #   the choice of the best epoch alike
+    magnetization_weight: 1.0   # the magnetization's record set within the occupancy term
+    readout_band: auto          # 1/Ang read around each atom; auto = 95 % of the coarsest grid's
+                                #   Nyquist over the training and validation grids
+    neighbor_min: 2.2           # Ang, first of the ten radial centers of the neighbor expansion;
+                                #   0.6 also covers short CHON bonds
 
-  # Processes that BUILD the cache, one material each. Not num_workers, which
-  # loads an already-built cache during training and is the opposite trade
-  # (see training.num_workers).
-  #
-  # The build is a Python text codec, not the FFT work it looks like. Measured
-  # per material on the 97-cell platinum set at resolution 48: the Fortran
-  # E17.11 reader and writer are 86% of the clock, computing V_ext 8%, and the
-  # spectral downsampling 2.2%. There is no BLAS call in the path and np.fft is
-  # single-threaded, so OMP_NUM_THREADS has nothing to act on -- a cache job
-  # that asks for eight cores uses one of them unless this key splits the
-  # materials. Measured on eight cores: 4.0x on a text cache, 3.4x on hdf5, the
-  # result byte-identical to the single-process build (the writes were already
-  # atomic: .partial-<pid> + os.replace).
-  #
-  # `auto` takes the smallest of the cores this process MAY use
-  # (sched_getaffinity, i.e. Slurm's --cpus-per-task), a memory budget divided
-  # by an estimate from the LARGEST native grid in the set, and the material
-  # count -- and says which of the three bound. The largest rather than the
-  # average, because a set of 108^3 bulk cells and 288^3 nanoparticles sizes
-  # its workers on the nanoparticles (~1.6 GiB each) or it swaps on the last
-  # eleven. The budget is 80% of the job's Slurm allocation where there is one
-  # and 8 GiB otherwise: a constant picks 4 workers on --cpus-per-task=8
-  # --mem=32G and idles half the allocation.
-  #
-  # Below 1 M native voxels IN TOTAL it stays single-process whatever the core
-  # count -- a spawned pool costs 0.49-0.60 s per worker to import the package
-  # and the build runs at 1.03 s per million voxels, so a pool on a toy set is
-  # pure loss. An explicit count ignores that floor.
-  cache_workers: auto           # auto | <n> | 0 (one process, as before)
-
-model:
-  # width is how much information travels through, modes is how far it travels
-  # in space, projection_channels is only how it is read out. Spectral weights
-  # go as width^2 * modes^3 and are ~99.8% of the parameters.
-  width: 16                     # channels carried through the Fourier layers
-  modes: 8                      # retained Fourier modes per axis, counted from the lowest
-  n_layers: 3                   # how many times the lift/spectral/project cycle runs
-  projection_channels: 64       # hidden width of the read-out head; pointwise, so cheap
-
-  mode_selection: fixed         # fixed keeps `modes` per axis; physical keeps a fixed band
-  g_max: null                   # cutoff in 1/Ang, required by mode_selection: physical
-  # `physical` is right for a dataset spanning cell sizes; then set
-  # modes = floor(g_max * L_max / 2pi) for the LARGEST cell, or the modes no
-  # small cell ever reached stay at their random initialization and go live
-  # on a large one.
-  #
-  # WORTH TRYING on such a dataset, and not only for tidiness. Measured at LNCC
-  # on 115 Materials Project structures whose cells span 2.29 to 25.87 Ang,
-  # `physical` with a GENEROUS g_max beat `fixed` by 20% in both seeds -- and
-  # was FASTER, since fewer modes are retained. Reproduced in a second regime
-  # sharing no parameter with the first (32^3/modes 8/g_max 16, and
-  # 64^3/modes 24/g_max 24, both 20%). The mechanism looks like uniformity
-  # rather than bandwidth: under `fixed`, cells spanning a factor of 11 in
-  # length retain physical bands spanning a factor of 11, and `physical`
-  # removes that.
-  #
-  # It is not the default, on one dataset and one architecture -- and the
-  # useful g_max MOVES with the regime (16 in the first study, 24 in the
-  # second, with the margin collapsing to 3% at 32). Too SMALL is much worse
-  # than `fixed`: g_max 6 starved the band and lost 55%. Both ends are
-  # reported at startup, so the run will say which one it landed on.
-
-  activation: silu              # silu | gelu | relu | tanh (stateless) | kan (learned per channel)
-  projection_activation: null   # read-out nonlinearity; null follows `activation`
-  kan_setup: null               # read ONLY when activation: kan; null means the defaults below
-  # kan_setup:
-  #   variant: bspline          # bspline (the KAN paper) | chebyshev | rbf | rational
-  #   use_base: true            # keep the w_c*silu(x) base term; false is a "pure" KAN
-  #   grid_size: 8              # knot intervals (bspline) / RBF centers - 1 (rbf)
-  #   spline_order: 3           # B-spline degree; bspline only
-  #   grid_range: [-2.0, 2.0]   # support of that grid; bspline clamps outside it, rbf decays
-  #   degree: 6                 # highest Chebyshev order; chebyshev only
-  #   rational_num_degree: 4    # numerator power; rational only
-  #   rational_den_degree: 4    # even denominator powers; rational only
-  # Cost relative to gelu at width=16 on CPU: chebyshev 1.36x, rational 1.54x,
-  # rbf 2.00x, bspline 5.50x. Every variant starts close to silu.
-
-  use_coordinates: true         # append three fractional-coordinate channels to the input
-  cell_conditioning: true       # condition every layer on the lattice through FiLM
-
-  # ONE BLOCK, and that is the schema-wide convention: a feature that can be
-  # switched off is `<feature>: {enable: ..., <its settings>}`, never a scalar
-  # beside a separate `<feature>_setup` group. The two-key spelling was tried
-  # and drifted -- `equivariant: false` above a populated `equivariant_setup`
-  # reads as an equivariant run and is not one, and nothing put the switch in
-  # the same field of view as the settings it governs. Every setting below is
-  # read ONLY when enable is true; omit one and it takes the default named in
-  # its comment.
-  equivariant:
-    enable: false               # constrain the Fourier kernel to a function of |G| alone
-    # n_radial: 16              # radial basis functions -- the whole capacity of the kernel
-    # g_basis: auto             # radius in 1/Ang the basis spans; auto | a number | null
-    # spherical_cutoff: true    # mask the retained modes to the inscribed sphere
-  #
-  # g_basis IS WORTH SETTING, and `auto` is the setting. The basis spans
-  # [0, g_basis]; the band a material retains is min_i 2pi*m_i/L_i, its own
-  # property. Across 115 Materials Project cells those ran 1.94 to 20.96 1/Ang,
-  # so no constant is right for all of them -- and missing is NOT symmetric:
-  #   too NARROW  clamps the outer modes onto one basis function. 71% of modes
-  #               clamped moved the error less than the seed spread did. Free.
-  #   too WIDE    leaves radial functions at radii NO mode reaches, which is
-  #               dead capacity in a layer whose capacity is the radial bank.
-  #               A basis of 48 against a median band of 31 orphaned six of
-  #               sixteen functions and cost 14% at one resolution, 43% at
-  #               another.
-  # `auto` takes the MEDIAN band the training split retains, resolved before
-  # the model is built, and the resolved number is what the checkpoint records.
-  # Half the set is then clamped -- deliberately, that being the free half.
-  # `null` falls back to g_max under mode_selection: physical, where the
-  # retained band provably fits inside it, and to 8.0 1/Ang otherwise.
-  #
-  # NOTE that g_max does NOT size the basis under mode_selection: fixed, where
-  # it truncates nothing either. It did until 2026-09-04, silently: LNCC ran a
-  # 90-run architecture study whose configs carried a leftover `g_max: 6`, so
-  # every equivariant model in it was built with a 6.0 basis rather than the
-  # 8.0 default, and nothing in the log or the run record said so. Stating a
-  # g_max beside `fixed` now warns instead.
-  #
-  # Rotate the input field and the prediction rotates with it, to the precision
-  # of the float -- which the ordinary spectral layer does NOT do: it learns one
-  # complex number per mode, so it can treat G and R.G differently, and measured
-  # over the 24 rotations of the cube it does, by 93% of the field's amplitude.
-  #
-  # THREE conditions have to hold together, and each fails silently:
-  #   1. the kernel is radial               -> equivariant.enable: true
-  #   2. the retained set is a BALL, not a  -> spherical_cutoff: true. A radial
-  #      box                                   kernel over a box is equivariant
-  #                                            only under the box's own symmetry
-  #                                            group; on a tetragonal cell,
-  #                                            leaving this off costs 5e-2.
-  #   3. NO coordinate channels             -> use_coordinates: false, which is
-  #                                            REQUIRED and raises otherwise.
-  #                                            The three fractional coordinates
-  #                                            rotate into each other -- they are
-  #                                            an l=1 object in a network that
-  #                                            treats every channel as a scalar --
-  #                                            and being absolute positions they
-  #                                            cost translation equivariance too.
-  #
-  # The cost is capacity, and it is large: the dense layer holds
-  # 4*width^2*modes^3 COMPLEX numbers, this one holds width^2*n_radial REAL ones
-  # -- 4096 against 1048576 at width 16, modes 8, n_radial 16. An equivariant
-  # model of the same width is a much smaller model; n_radial and width are
-  # where that is bought back, not modes.
-  #
-  # Whether it pays was measured once, on a V100 at LNCC: 400 epochs on 115
-  # Materials Project structures at 32^3, width 32 / n_radial 32 reached a
-  # validation relative L2 of 0.047 against 0.173 for a dense model of 28x the
-  # parameters -- 4.1x better, for 1.3x the time per epoch. The 4x LARGER
-  # equivariant arm (width 128, n_radial 64) was WORSE, at 0.059: capacity is
-  # not what buys this. One seed, one dataset, and neither equivariant arm had
-  # converged at 400 epochs, so read it as a reason to try the flag rather than
-  # as a number.
-  #
-  # NVIDIA's cuequivariance is deliberately not used and is not a dependency.
-  # It accelerates arithmetic on irreducible representations of O(3), and a
-  # scalar field -> scalar field operator carries only l = 0: every tensor
-  # product is a scalar multiply. Equivariance here is a constraint on the
-  # kernel, not a kernel library. See tests/test_cuequivariance_gpu.py.
-  embedding_dim: 32             # width of the cell embedding FiLM reads
-  precision: float32            # float32 | float64; what the operator computes in
-
-  # ONE BLOCK: input channels describing the structure, appended after V_ext
-  # (ext2pseudo, ext2chg). Built from data.atomic_reference, rebuilt from the
-  # structure at inference, recorded in the checkpoint; scalar fields, so the
-  # equivariance is untouched. On 785 CHONPS cells, with the same backbone, it
-  # took the held-out rel L2 of rho from 4.4 % to 3.7 % at epoch 10.
-  structure_input:
-    enable: false               # true: the potential plus the channels below
-    # superposition: true       # rho_sup, the delta-density baseline, as a channel
-    # elements: auto            # one superposition per element; auto = every element in the data, or a list
-
-  occupancy_channels: 8         # chg2tau: field channels the PAW occupancies are written into (SiteWriter)
-
-  pauli_residual: false         # pseudo2tau: predict tau = tau_vW + s*softplus(f), bound by construction
-  pauli_scale: null             # initial Pauli scale in eV/Ang^3; null fits it from the training split
-  learn_pauli_scale: true       # optimize that scale alongside the backbone
-
-  # ONE BLOCK, the convention equivariant follows: the operator of the ext2chg
-  # task, with the switch inside it.
-  paw:
-    enable: false               # true for task.type: ext2chg, or beside `all` to add ext2chg
-    # width: 64                 # the FNO backbone's channels, as model.width
-    # modes: 16                 # its retained Fourier modes per axis, as model.modes
-    # n_layers: 4               # its Fourier layers, as model.n_layers
-    # readout_g_max: auto       # 1/Ang band read at each atom; auto = 95 % of the coarsest grid's Nyquist
-    # occupancy_weight: 1.0     # per-atom term against the field objective, in training and val score alike
-    # neighbor_min: 2.2        # first of 10 neighbor kernel centers in Ang; 0.6 also covers short CHON bonds
-    # magnetization_weight: 1.0 # weight of the magnetization record set in the occupancy loss (and score)
-    # readout_cache_mib: 1024   # device memory for the readout's spectral kernels (one per cell+grid); runtime only
-  #
-  # task.type: ext2chg with enable false RAISES, and so does enable true beside
-  # ext2pseudo or pseudo2tau: two switches for one decision are checked against each
-  # other rather than left to disagree.
-  #
-  # The target is two things. The pseudo-density on the grid, as for ext2pseudo,
-  # and each atom's augmentation occupancies rho(ll'LM) -- the one-center PAW
-  # terms inside the augmentation spheres, which VASP writes after the grid and
-  # no grid model can see. 138 numbers per atom for PAW_PBE Pt (projector
-  # channels d,d,s,s,p,p, in the POTCAR's order), one set per density channel:
-  # a spin-polarized dataset keeps the magnetization's set as well. The cache
-  # carries them verbatim; a cache built before 2026-09-16 dropped them, so
-  # delete it and let it rebuild.
-  #
-  # The operator, as experiments/paw_occupancies measured it should be:
-  #   - an FNO for the grid, sized by width/modes/n_layers above; every other
-  #     model setting (activation, equivariant, ...) applies to it;
-  #   - a readout at each atom of the latent field and the predicted density,
-  #     over ONE band |G| <= readout_g_max for every cell. A readout that
-  #     integrated on each grid as it came scored 184 % on held-out
-  #     nanoparticles, whose spacing differs; over one band, 4.9 %;
-  #   - an equivariant head per element: one map per L shared across M, gated
-  #     by invariants, so the prediction rotates with the atom. With
-  #     model.equivariant on, the whole operator is rotation-equivariant.
-  # The records train in an invertible form (L = 0 centered, each block scaled),
-  # fitted on the training split and stored in the checkpoint. The log gains a
-  # `val occ` column (physical relative RMS, reported) and an `occ loss` column
-  # (the training term on held-out data); the best epoch is chosen on val rel
-  # L2 + occupancy_weight x occ loss, and the report breaks the error down by
-  # record set and L. The element projector channels come from the
-  # POTCAR, so a Gaussian-potential dataset cannot train it. Not yet under
-  # --kfold or fine-tuning, both refused before the cache; an f-channel element
-  # (L = 6) is refused too.
-  #
-  # With an ext2chg operator in the bundle, poraque-inference --add-paw writes
-  # its predicted records (--paw-source model), ahead of the averaged table.
+# ---------------------------------------------------------------------
+# The kinetic operator: pseudo-density + every atom's occupancies -> tau.
+# Trains on the materials that carry a TAUCAR.
+# ---------------------------------------------------------------------
+chg2tau:
+  head: plain                   # plain predicts tau | pauli predicts tau_vW[rho] + s * softplus(f),
+                                #   which makes tau >= tau_vW structural, with s fitted on the training
+                                #   split and learned. pauli needs occupancies: false for now
+  model:
+    width: 16
+    layers: 3
+    modes: 8
+    band: null
+    projection_channels: 64
+    activation: silu
+    cell_conditioning: 32
+    equivariant: false
+    precision: float32
+  occupancies:                  # false trains on the grid alone
+    channels: 8                 # field channels each atom's records are written into, by one learned
+                                #   map per element and angular momentum
 
 training:
   epochs: 500                   # passes over the training set
-  batch_size: 4                 # samples per batch within one grid-shape bucket
-  samples_per_step: 0           # >0: accumulate bucketed batches to this many structures per optimizer step,
-                                # every structure weighted alike; 0 steps once per batch (a lone shape counts more)
-  learning_rate: 0.002
-  weight_decay: 0.0001
-  optimizer: adamw              # adamw | adam | sgd; identical to adam at weight_decay 0
-  scheduler: cosine             # cosine | null
-  grad_clip: 1.0                # global gradient-norm clip; 0 disables
-  loss: relative_l2             # absolute_l2 | relative_l2 | absolute_h1 | relative_h1
-                                #   'relative' divides each sample by its own target norm, so
-                                #     every MATERIAL counts equally; 'absolute' does not, so
-                                #     every VOXEL does and a dense cell weighs more.
-                                #   'h1' adds sobolev_weight * the same error on the spatial
-                                #     gradients -- both halves in the SAME norm, so the weight
-                                #     is a pure ratio and not also a change of scale.
-                                #   The progress table names whichever one is running, and
-                                #     early stopping is decided on it.
-  sobolev_weight: 0.1           # w_Sob; read only by the two h1 losses
-  spin_loss: joint              # joint | per_channel -- how the two channels of a
-                                #   spin-polarized target (data.spin) enter the data term.
-                                #   A one-channel run is identical either way, bit for bit.
-                                #   joint: ONE norm over both channels -- each channel's error
-                                #     over the whole (rho, m) target's norm, added in
-                                #     quadrature, i.e. exactly ||d(rho,m)|| / ||(rho,m)||.
-                                #   per_channel: each channel over ITS OWN norm, summed as
-                                #     charge + magnetization_weight * mag.
-                                #   THE DEFAULT IS THE MEASURED ONE, and the arithmetic is
-                                #     misleading about which should win. Under joint the
-                                #     magnetization's share of the objective is 3e-8 in the
-                                #     MEDIAN on the 432-cell CHON set, which makes per_channel
-                                #     look obviously right. Measured head to head on that
-                                #     cache (2 seeds, 60 epochs, magnetic cells scored by
-                                #     predicted/reference ||m||):
-                                #       30 magnetic + 30 noise   joint 1.00 / relL2 0.084
-                                #                                per_channel 1.00 / relL2 0.109
-                                #       12 magnetic + 100 noise  joint 0.96 / relL2 0.166
-                                #       (the real 11% imbalance) per_channel 0.001 / relL2 1.00
-                                #     What trains m is the MEAN share, not the median: the
-                                #     magnetic cells carry real weight under joint. per_channel
-                                #     gives each of the many noise cells a floored term of
-                                #     order one, and 100 cells saying "drive m to zero" bury 12
-                                #     saying otherwise -- so it collapses the magnetization it
-                                #     was meant to rescue. Use it only when magnetic cells are
-                                #     not a small minority, and measure.
-  magnetization_weight: 1.0     # w_m, the weight of the MAGNETIZATION term relative to the
-                                #   density term's 1. Read only under spin_loss: per_channel.
-                                #   0.0 trains the density alone and says so.
-                                #   Distinct from model.paw.magnetization_weight, which weights
-                                #     the magnetization RECORD SET of the per-atom occupancy
-                                #     target; a bare --set magnetization_weight reaches this one.
-  magnetization_floor: 0.01     # eta: floor on the magnetization term's denominator, as a
-                                #   fraction of ||rho||. Read only under per_channel. The term
-                                #   is ||dm|| / sqrt(||m||^2 + (eta*||rho||)^2), so above the
-                                #   floor it is m's honest relative error and below it the term
-                                #   measures a spurious predicted moment against a fixed
-                                #   fraction of the density. Needed because m is EXACTLY zero
-                                #   on 126 of the 432 CHON cells (239 more sit in the noise at
-                                #   ||m||/||rho|| <= 1e-4), so an unfloored per-channel relative
-                                #   error divides by zero on a quarter of them. Raising eta is
-                                #   what stops the noise cells dominating, at the cost of
-                                #   weakening the term where it was wanted.
-  valid_fraction: 0.2           # held out at the STRUCTURE level; 0 trains on everything
-  eval_epoch: 10                # evaluate and log every this many epochs
-  early_stopping: 300           # epochs without improvement before stopping; 0 disables
-  enable_kfold: false           # cross-validate instead of fitting once; produces K models, not one
-  k_folds: 5                    # folds, capped at the number of structures
-  seed: 42                      # the validation draw, the fold partition, the batch order
-  init_seed: null               # seeds the WEIGHTS only; null reuses `seed`
-  device: auto                  # auto (CUDA, then MPS, then CPU) or an explicit backend
-  strict_device: false          # abort instead of falling back to the CPU
-                                #   Off is right for a workstation: a config written on a
-                                #     machine with a GPU should still run on a laptop.
-                                #   TRUE IN EVERY HPC JOB. In a queue the fallback is not
-                                #     graceful -- the job waits for its GPU, the warning goes
-                                #     into a log nobody reads until afterwards, and the run
-                                #     trains on the CPU inside the GPU allocation until the
-                                #     wall clock ends. `python -m poraque.ml.device --check`
-                                #     is the same test for three seconds, before the queue.
+  batch_size: 4                 # structures per batch, within one grid-shape bucket (shapes are never
+                                #   padded into an FFT)
+  samples_per_step: 0           # > 0: accumulate batches to this many structures per optimizer step, so
+                                #   every structure weighs the same whatever its bucket
+  optimizer:                    # on a cosine schedule, the gradient norm clipped at 1
+    name: adamw                 # adamw | adam | sgd
+    learning_rate: 2.0e-3
+    weight_decay: 1.0e-4
+  loss:
+    norm: relative_l2           # absolute_l2 | relative_l2 | absolute_h1 | relative_h1. relative
+                                #   normalizes per sample; h1 adds the same error on the gradients
+    sobolev_weight: 0.1         # the gradient term's weight; read by the h1 norms only
+  spin:                         # read only for a two-channel (rho, m) target
+    mode: joint                 # joint divides both channels by the norm of (rho, m) | per_channel
+                                #   divides each by its own. Measured: per_channel collapses m when the
+                                #   magnetic cells are a minority (12 in 112); joint learns it
+    magnetization_weight: 1.0   # per_channel only
+    magnetization_floor: 0.01   # per_channel only: floor on m's denominator, as a fraction of |rho|
+  validation:
+    fraction: 0.2               # held out at the STRUCTURE level; 0 trains on everything
+    every: 10                   # evaluate and log every this many epochs
+    patience: 300               # epochs without improvement before stopping and restoring the best
+                                #   weights; 0 never stops
+    kfold: null                 # K: cross-validate over K folds instead of one split (K models, no
+                                #   checkpoint). Not for the occupancy tasks yet
+  physics:                      # penalties on the predicted fields, weighted against the data term;
+                                #   all zero switches them off. Introduce one at a time against a
+                                #   measured baseline: a badly scaled one degrades accuracy
+    electron_count: 0.0         # ext2chg: int(rho) = N (inference renormalizes exactly anyway)
+    positivity: 0.0             # rho, tau >= 0
+    von_weizsacker: 0.0         # chg2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
 
-  # Multi-GPU. `auto` forms a DistributedDataParallel group over NCCL WHEN THE
-  # LAUNCHER ALREADY DESCRIBES ONE -- a Slurm step with several tasks, or
-  # torchrun -- and does nothing otherwise. It cannot invent ranks: the launcher
-  # decides the topology and this key decides only whether to believe it. So on
-  # a cluster the line that matters is in the submission script:
-  #     #SBATCH --ntasks-per-node=4   # one task per GPU. Not optional.
-  #     #SBATCH --gres=gpu:4
-  #     srun poraque-train --config ... --strict-device --distributed auto
-  # Requesting four GPUs and launching ONE task is a perfectly good single-GPU
-  # run that looks, from inside the process, exactly like the one you asked for
-  # -- which is why the run log prints the Slurm variables it saw.
-  # `off` runs single-GPU inside a multi-task allocation, which is how a
-  # scaling result is bisected. Rank 0 alone prints and writes; the EFFECTIVE
-  # BATCH SIZE is batch_size x world_size, so a four-rank run is not the same
-  # optimizer as the one-rank run it is compared against.
-  # See scripts/slurm/poraque_ddp.sbatch.
-  distributed: auto             # auto | off
-  distributed_timeout: 30.0     # minutes before a collective is declared failed.
-                                #   Long on purpose: the first collective happens after
-                                #   every rank has read its cache, and a cold parallel-
-                                #   filesystem read of a few hundred densities is minutes.
+fine_tuning: false              # start from a trained checkpoint instead of a fresh initialization;
+                                #   the normalizations come from it and are never refitted
+# fine_tuning:
+#   checkpoint: models/poraque_models/poraque_models.poraque
+#   learning_rate: 1.0e-5       # much lower than a fresh fit, which is the point
+#   freeze_lifting: false       # hold the input embedding fixed and adapt the rest
+#   lora: false                 # freeze every weight and learn rank-r adapters on the lifting and
+#                               #   projection layers (1320 trainable parameters of 3.15 M):
+#   lora:
+#     rank: 8
+#     alpha: 16.0               # the update is scaled by alpha / rank
+#     dropout: 0.0
 
-  # Getting the data to the device. Read data.cache_in_memory first: these two
-  # are ALTERNATIVES, not complements. Under `distributed` this gets WORSE, not
-  # better -- each rank is already a process with a field cache of its own, and
-  # workers on top multiply the copies again. Measured, 20 epochs on 115 structures:
-  # the cache alone 168.0 -> 16.3 s, four workers alone -> 120.2 s, and the two
-  # together back up to 18.8 s -- each worker is a process that re-parses the
-  # whole set into a cache of its own.
-  num_workers: 0                # DataLoader worker processes; 0 loads in the main process
-  pin_memory: auto              # auto = true on CUDA, false elsewhere (it is a CUDA optimization)
-  tf32: true                    # TensorFloat-32 matmul/conv; CUDA only, and nothing before Ampere
+runtime:                        # the hardware: how fast a run is, never what it computes
+  device: auto                  # auto (CUDA, then MPS, then CPU) | cuda | cuda:1 | mps | cpu
+  strict_device: false          # abort instead of falling back to the CPU; set it in every batch job
+  distributed: auto             # auto forms a DDP group when Slurm or torchrun describes one | off
+  workers: auto                 # processes that BUILD the cache, one material each: auto | n | 0.
+                                #   The build is a Python text codec, so this is the setting that
+                                #   uses the cores (measured 4.0x on eight)
+  loader_workers: 0             # DataLoader processes; prefer cache.in_memory, which beats them
+  tf32: true                    # TensorFloat-32 matmul and convolution on Ampere and later
+  readout_cache_mib: 1024       # device memory for ext2chg's readout kernels, one per cell and grid
 
-  # There is no `compile:` key. torch.compile was measured on a V100 and
-  # removed in 26.9.3: Inductor does not generate code for complex operators,
-  # SpectralConv3d's weights are complex, so the one part of an FNO that
-  # compilation was invoked to fuse is the part it hands back to eager -- while
-  # the wrapper and the graph breaks are still paid for. +7.9% and +9.4% per
-  # epoch over two modes and two repetitions, 200-314 s of cold compilation on
-  # top, a validation error that moved reproducibly, and on four ranks an
-  # eighteen-minute first epoch with no output. Setting the key now raises and
-  # says so. See CUDA_4.md.
-
-  # Physics-informed terms for the NEURAL OPERATOR: total = data + sum_i w_i * term_i.
-  # Only the total is reported. Introduce one at a time against a measured
-  # baseline -- a badly scaled constraint degrades accuracy while looking
-  # principled. Not to be confused with symbolic.physics below.
-  #
-  # ONE BLOCK, the same convention as model.equivariant above: `enable`
-  # decides whether ANY of it runs, and the weights it governs sit beside it.
-  # That is not only a change of objective. Every constraint acts on DECODED fields, so with one
-  # live the loop must, per batch: copy the reference field to the device, run
-  # the target transform's inverse over the prediction -- inside the autograd
-  # graph, so it is paid again on the backward pass and its activations are
-  # held -- run the input transform's inverse too, and in delta-density mode
-  # copy the baseline over and add it back twice. Off, that is all work whose
-  # result is discarded, and it is skipped rather than computed.
-  #
-  #   auto   physics-informed iff a weight below is positive. What every
-  #          config written before this key existed already meant.
-  #   true   RAISES when no weight is set. A run that says physics-informed and
-  #          quietly optimizes the supervised baseline has an ordinary loss
-  #          curve and a report that claims otherwise; this is the guard.
-  #   false  skips them, and warns if a weight below is non-zero -- a live
-  #          weight under a switch that ignores it is the configuration someone
-  #          later reads as evidence that it applied.
-  physics_informed:
-    enable: auto                # auto | true | false, as above
-    electron_count_weight: 0.0  # ext2pseudo/ext2chg: penalize relative error in int(rho) = N
-    positivity_weight: 0.0      # rho, tau >= 0 (a Log head is the better fix)
-    von_weizsacker_weight: 0.0  # pseudo2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
-    euler_lagrange_weight: 0.0  # ext2pseudo: dTs/drho + v_ext + v_H + v_xc = const, on a surrogate Ts
-
-output:
-  root: models                  # parent of every run folder; null writes NOTHING at all
-  write_log: true               # log/<name>.log, .json, and the resolved config
-  plot_figures: true            # render the figures into plots/
-  write_pdf_report: true        # typeset the PDF into report/; needs a LaTeX toolchain
-  checkpoint: true              # write the .poraque
-  log: null                     # explicit log path; null uses the run folder
-  json: null                    # explicit metrics path; null uses the run folder
-  plot_format: png
+report:
+  figures: true                 # plots/: loss curves, parity over every structure, field slices
+  pdf: true                     # report/: the LaTeX report; needs a LaTeX toolchain
+  format: png
   dpi: 200
-  save_raw_plot_data: false     # write the numbers behind every figure beside it,
-                                #   so a plot can be redrawn for publication without
-                                #   re-running the model. Each sidecar takes the STEM
-                                #   of its figure (ext2pseudo_parity.png -> .csv), so the
-                                #   pairing is a property of the listing. Loss curve ->
-                                #   CSV, one row per epoch, with the unmeasured epochs
-                                #   left EMPTY rather than interpolated; parity -> CSV,
-                                #   one row per occupied bin plus a bin-edges file,
-                                #   since a log axis makes edges unrecoverable from
-                                #   centers; slices -> compressed .npz.
-
-symbolic:
-  enable: false                 # minutes of CPU after the fit; needs only sympy, to report
-                                #   spelled `enable` like every other optional feature; it was
-                                #   `enable_symbolic_distillation`, which restated its own section
-  target: model                 # model distils what the operator learned; reference fits the DFT data
-  features: gga                 # gga (rho, p, q) | reduced (p, q) | raw | enhancement (alias)
-  template: none                # none fits tau directly; pauli fits F = (tau - tau_vW)/tau_TF
-  # `features: reduced` with `template: pauli` is the orbital-free pairing:
-  # every constant to be found is then order unity.
-  epsilon: 1.0e-08              # vacuum threshold; p and q there are ratios of two noises
-  constraints: {"^": [-1, 1]}   # per-operator argument complexity; the exponent is held to 1
-  data_loss: mse                # mse | mae; mae is more robust on a density with wide tails
-  unary_operations: [exp, log, sqrt, abs]
-  binary_operations: ['+', '-', '*', /, '^']
-  iterations: 40                # the single biggest quality/time knob
-  population_size: 33
-  populations: 15
-  max_depth: 10                 # ceilings that keep the result readable rather than
-  max_size: 30                  #   a fitted polynomial in disguise
-  parsimony: 0.0032             # penalty per node in the fitness
-  n_samples: 4000               # voxels sampled across the dataset; cost is linear in them
-  seed: 0                       # seeds the sampling always, the search only under `deterministic`
-  deterministic: false          # reproducible, at the cost of the parallelism across populations
-
-  # Physics constraints on the SYMBOLIC SEARCH, as fitness rather than as a
-  # filter applied afterwards. Note the `loss` column of the reported front is
-  # then this constrained objective; R2 and the relative L2 are unaffected.
-  physics:
-    enable: true
-    positivity_weight: 100.0       # F >= 0 on the batch
-    thomas_fermi_weight: 100.0     # F(0, 0) = 1, the uniform gas
-    von_weizsacker_weight: 100.0   # F(p_inf, 0) = 0, one orbital
-    p_infinity: 1.0e+06            # stands in for p -> infinity; keeps p^(8/3) inside float32
-
-fine_tuning:
-  enable: false                 # continue a trained fit on a narrower set; normalizations come
-                                #   from the checkpoint, never refitted on the new data
-  pretrained_checkpoint: models/poraque_models.poraque
-  learning_rate: 1.0e-05        # much lower than a fresh fit, which is the point
-  freeze_lifting_layers: false  # keep the input embedding fixed and adapt only the operator;
-                                #   ignored under use_lora, which freezes everything anyway
-  use_lora: false               # LoRA: freeze every trained weight and learn a rank-r
-                                #   correction  W' = W + (alpha/r) B A  beside the DENSE
-                                #   (1x1x1) lifting and projection convolutions.
-                                #   On the shipped model that is 1320 trainable parameters
-                                #   against 3152353 frozen -- 0.042% -- and the saved file
-                                #   goes from 12.0 MB to 7.6 kB.
-                                #   B starts at zero, so the adapted model IS the base model
-                                #   until the first step.
-                                #   CAVEAT: the spectral weights are NOT adapted, so this
-                                #     re-fits how fields enter and leave the operator and
-                                #     leaves the operator itself alone. A family whose
-                                #     operator genuinely differs needs a full fine-tune.
-                                #   The checkpoint holds the ADAPTER ONLY and names its base,
-                                #     so it cannot be loaded without that base file.
-  lora_rank: 8                  # r; cost and capacity are both linear in it
-  lora_alpha: 16.0              # the update is scaled by alpha / r, which keeps a learning
-                                #   rate roughly transferable between ranks
-  lora_dropout: 0.0             # dropout on the adapter's input
+  raw_data: false               # write the numbers behind every figure beside it (CSV, npz), so a
+                                #   plot can be redrawn for publication without re-running the model

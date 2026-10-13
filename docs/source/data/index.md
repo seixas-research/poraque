@@ -7,21 +7,21 @@ and not a single kinetic energy density among them — become training data.
 
 ## One schema, whatever produced the data
 
-`data.data_paths` is a **list of directories**, and every entry has the same
-shape: subdirectories, one per material, each holding that material's
-volumetric files.
+`data.path` is **one directory**: subdirectories, one per material, each holding
+that material's volumetric files.
 
 ```yaml
 data:
-  data_paths:
-    - data/vasp/structures  # structure_0000/, structure_0001/, ...
-    - data/MP               # mp-124/, mp-81/, ...
-    - data/cache/res32      # a cache from an earlier run
-  resolution: 32
+  path: data/vasp/structures     # structure_0000/, structure_0001/, ...
+  grid:
+    resolution: 32
 ```
 
-Nothing in the config says which is which, because on disk they are the same
-kind of thing. What differs is the **content** of a material's directory, and
+A VASP run tree, a `poraque-mp` download (`data/MP`: `mp-124/`, `mp-81/`, ...)
+and a cache from an earlier run (`data/cache/res32`) are all this shape, and
+nothing in the config says which is which, because on disk they are the same
+kind of thing. To train across several of them, gather the material
+directories under one parent (symbolic links do). What differs is the **content** of a material's directory, and
 content is read rather than declared:
 
 | A material's directory holds | $V_\mathrm{ext}$ from | $\tau$ |
@@ -39,8 +39,8 @@ one level down — is read as that one material.
 
 `TAUCAR` is optional **per material, not per directory**: one run in a tree may
 have written one while its neighbor did not, and the one that did still
-reaches `pseudo2tau` while both reach `ext2pseudo`. A task with no target anywhere is
-skipped with a message rather than failing the run.
+reaches the kinetic operator while both reach the density operator. An operator
+with no target anywhere is skipped with a message rather than failing the run.
 
 ```{note}
 Three keys used to answer this one question — `train_paths`, `root` and
@@ -49,14 +49,13 @@ mattered: it asked the *config* to declare something the *directory* already
 answers. A config using any of them fails and is told what to write instead.
 ```
 
-Detection is by content, never by name. The one thing a config can still
-state is `data.format` — `auto` (the default) detects the DFT code that wrote
-each directory, `vasp` names it — and a name that disagrees with the directory
-is an error rather than an empty dataset.
+Detection is by content, never by name: nothing in the config says which DFT
+code wrote a directory (`data.format` and `data.pattern` are gone; every
+subdirectory with a density is a material).
 
 Everything found is pooled, spectrally downsampled once into a shared cache,
 and served through one `Dataset`. Downsampling caps the longest axis at
-`data.resolution` and, with `data.max_spacing`, refines any axis a long, thin
+`data.grid.resolution` and, with `data.grid.max_spacing`, refines any axis a long, thin
 cell would leave too coarse; both are in the cache's directory name and
 fingerprint. The build prints one row per material as it finishes, counted
 `i/N` (see {doc}`../output`). Identifiers that collide between archives are
@@ -67,7 +66,7 @@ from the calculation — one set per density channel, in text and HDF5 caches
 alike. They are on-site terms with no representation on the grid, so
 downsampling neither changes them nor has anything to say about them, and they
 are the per-atom target of `ext2chg` and the per-atom input of `chg2tau` (see
-the configuration page's `paw` block); `FieldPairDataset.site_records(i)` serves
+the configuration page's `occupancies` blocks); `FieldPairDataset.site_records(i)` serves
 them for both. Each record is read to the length its header declares: a
 spin-polarized `CHGCAR` writes a line of per-ion `MAGMOM` values after its
 first set, and reading to the next header folded them into the last atom's
@@ -82,36 +81,42 @@ built the old way is rebuilt on the next run rather than reused.
 
 ## Training one model, not two
 
-The two tasks are independent, and `task` selects them:
+The two operators are independent, and the sections present select them. A
+Materials Project download has no `POTCAR` and no $\tau$, so it trains the
+density operator on the grid alone:
 
 ```yaml
-task: ext2pseudo      # or pseudo2tau, or all
+ext2chg:
+  occupancies: false      # no chg2tau: section, so no kinetic operator
 ```
 
-With `task: ext2pseudo` the `pseudo2tau` network is never constructed, never moved to
-the device and never differentiated; no $\tau$ is read, and every
-kinetic-energy term of the objective is inert by construction — the physics
-losses are selected by task, so `von_weizsacker_weight` simply does not apply.
-The checkpoint holds one model:
+(The grid-alone density map is called `ext2pseudo` inside the code, the logs
+and the checkpoint; with the occupancies on it is `ext2chg`. The kinetic
+operator is `pseudo2tau` or `chg2tau` likewise.) Without a `chg2tau:` section
+the kinetic network is never constructed, never moved to the device and never
+differentiated; no $\tau$ is read, and every kinetic-energy term of the
+objective is inert by construction — the physics losses are selected by
+operator, so `training.physics.von_weizsacker` simply does not apply. The
+checkpoint holds one model:
 
 ```python
 >>> from poraque.ml import bundle_tasks
->>> bundle_tasks("models/poraque_models.poraque")
+>>> bundle_tasks("models/poraque_models/poraque_models.poraque")
 ['ext2pseudo']
 ```
 
-which loads exactly as a two-task bundle does. Asking such a bundle for
+which loads exactly as a two-operator bundle does. Asking such a bundle for
 `pseudo2tau` — or handing it to the ASE calculator, which runs the whole chain
 $V_\mathrm{ext}\to\rho\to\tau\to E$ — fails with a message saying so, because a
 model that never saw a kinetic energy density cannot supply one.
 
 **`TAUCAR` is optional everywhere.** A calculation directory that has a
-`CHGCAR` and no `TAUCAR` is a first-class `ext2pseudo` dataset: it is ingested
+`CHGCAR` and no `TAUCAR` is a first-class dataset for the density operator: it is ingested
 without error and without warning, and the per-material log says `[no TAUCAR]`
 rather than treating the absence as a fault. The check is per **material**, not
 per directory, so one archive can hold runs of both kinds.
 
-With `task: all` on data that carries no $\tau$ at all, the run reports
+With a `chg2tau:` section on data that carries no $\tau$ at all, the run reports
 
 ```text
 SKIPPING pseudo2tau: no material under data/cache/mp/res32 has both CHGCAR and TAUCAR.
@@ -119,7 +124,7 @@ SKIPPING pseudo2tau: no material under data/cache/mp/res32 has both CHGCAR and T
     that does not carry TAUCAR.
 ```
 
-and trains `ext2pseudo` normally. A task the data cannot supply is a fact about
+and trains the density operator normally. An operator the data cannot supply is a fact about
 the data, not a failure of the run.
 
 ## Why this matters: foundation models from public densities
@@ -146,11 +151,15 @@ So the recipe for a broad `ext2pseudo` model is:
 ```bash
 poraque-mp --elements Pt Pd Ni --estimate                    # size it first
 poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
-poraque-train --config my_mp_run.yaml     # data_paths: [data/MP]
+poraque-train --config my_mp_run.yaml     # data.path: data/MP
 ```
 
-and to specialize it on your own chemistry afterwards, point `data_paths` at
-both directories, or fine-tune (see {doc}`../fine_tuning/index`).
+where `my_mp_run.yaml` sets `data.path: data/MP` and an `ext2chg:` section with
+`occupancies: false`: the download carries no `POTCAR` to lay out the PAW
+records from, and the occupancies are on by default.
+
+and to specialize it on your own chemistry afterwards, gather both under one
+`data.path`, or fine-tune (see {doc}`../fine_tuning/index`).
 
 ### Fetching several densities at once
 
@@ -300,7 +309,7 @@ built from. This is the one gap the data cannot close by itself, and
 
 ```yaml
 data:
-  data_paths: [data/MP]
+  path: data/MP
   potcar_dir: /opt/vasp/potpaw_PBE
 ```
 

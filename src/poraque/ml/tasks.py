@@ -28,7 +28,7 @@ drops the rest.
     The occupancies are on-site quantities with no representation on the
     plane-wave grid --- they are why no grid model has so far predicted them
     --- so this task's target is a field plus a per-atom array, and its
-    operator (``model.paw``) is not the field-to-field one: an FNO for the
+    operator (:class:`~poraque.ml.paw.PAWOperatorModel`) is not the field-to-field one: an FNO for the
     grid, and a readout at each atom over one band of :math:`|\mathbf G|`
     feeding an equivariant head per element --- :mod:`poraque.ml.paw`.
 
@@ -58,13 +58,12 @@ drops the rest.
     approaches Thomas-Fermi in the slowly-varying limit --- which gives the
     physics losses of :mod:`poraque.ml.physics` firm anchors.
 
-:data:`CHAIN` is the grid-only pair, and it is what ``task.type: all`` trains.
-That is a statement about what a dataset can be asked for without extra
-labels, not about which pair matters: the two grid-only links share one
-architecture and one dataset layout and need nothing a density file does not
-already hold, whereas the complete pair needs the occupancy records and the
-projector layouts the pseudopotentials declare. The complete pair joins a run
-when ``model.paw.enable`` asks for it.
+:data:`CHAIN` is the grid-only pair. A configuration names only the complete
+pair -- its ``ext2chg`` and ``chg2tau`` sections -- and reaches the grid-only
+tasks by switching a section's ``occupancies`` off: the two grid-only links
+share one architecture and one dataset layout and need nothing a density file
+does not already hold, whereas the complete pair needs the occupancy records
+and the projector layouts the pseudopotentials declare.
 """
 
 from dataclasses import dataclass
@@ -171,13 +170,10 @@ CHG_TO_TAU = TaskSpec(
 TASKS = {task.name: task
          for task in (EXT_TO_PSEUDO, PSEUDO_TO_TAU, EXT_TO_CHG, CHG_TO_TAU)}
 
-#: The grid-only chain, in order: what ``task.type: all`` trains, what a
-#: bundle must hold to reach a total energy from fields alone, and what a
-#: dataset is asked whether it can serve. The complete pair --- ``ext2chg``
-#: and ``chg2tau`` --- is not in it: each of those replaces a link's endpoint
-#: with a whole CHGCAR rather than feeding the next one, and each needs the
-#: per-atom records, so ``ext2chg`` joins an ``all`` run only when
-#: ``model.paw.enable`` asks and ``chg2tau`` is always trained alone.
+#: The grid-only chain, in order: what a bundle must hold to reach a total
+#: energy from fields alone, and what inference runs by default. The complete
+#: pair --- ``ext2chg`` and ``chg2tau`` --- is not in it: each replaces a
+#: link's endpoint with a whole CHGCAR, and each needs the per-atom records.
 CHAIN = ("ext2pseudo", "pseudo2tau")
 
 

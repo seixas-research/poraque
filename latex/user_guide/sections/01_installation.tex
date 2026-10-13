@@ -21,13 +21,6 @@ pip install -e .
 \end{lstlisting}
 
 Either way this installs NumPy, SciPy, ASE, Matplotlib, PyYAML and PyTorch.
-Symbolic distillation (Chapter~\ref{ch:symbolic}) needs one optional extra,
-SymPy, and only to render its result and check its limits --- the search itself
-runs on the NumPy and SciPy installed above:
-
-\begin{lstlisting}
-pip install "poraque[symbolic]"
-\end{lstlisting}
 
 \section{Console commands}
 \label{sec:console-scripts}
@@ -214,12 +207,12 @@ own log instead of becoming a four-hour CPU run.
 
 Poraqu\^e trains data-parallel over NCCL when the launcher describes a group,
 and on one device when it does not. It cannot invent ranks: \textbf{the
-launcher decides the topology and \opt{training.distributed} decides only
+launcher decides the topology and \opt{runtime.distributed} decides only
 whether to believe it.} The shipped submission script is
 \file{scripts/slurm/poraque\_ddp.sbatch}:
 
 \begin{lstlisting}
-sbatch scripts/slurm/poraque_ddp.sbatch configs/train.yaml
+sbatch scripts/slurm/poraque_ddp.sbatch configs/train_simple.yaml
 \end{lstlisting}
 
 The line that matters is \opt{--ntasks-per-node}, which must equal the number
@@ -230,7 +223,7 @@ of GPUs:
 #SBATCH --ntasks-per-node=4      # one task per GPU. Not optional.
 #SBATCH --gres=gpu:4
 
-srun poraque-train --config configs/train.yaml --device cuda \
+srun poraque-train --config configs/train_simple.yaml --device cuda \
                    --strict-device --distributed auto
 \end{lstlisting}
 
@@ -258,9 +251,9 @@ Three things to know before reading a scaling number. The \textbf{effective
 batch size is \opt{batch\_size} times the world size}, so a four-rank run is
 not the same optimizer as the one-rank run it is compared against. \textbf{Rank
 0 alone writes} the checkpoint, the metrics, the figures and the PDF, and alone
-prints. And \textbf{\opt{num\_workers} gets worse, not better}: each rank is
+prints. And \textbf{\opt{loader\_workers} gets worse, not better}: each rank is
 already a process with a field cache of its own. One rank per GPU, cache on, no
-workers --- see \opt{data.cache\_in\_memory} (section~\ref{sec:cachememory}),
+workers --- see \opt{data.cache.in\_memory} (section~\ref{sec:cachememory}),
 which is worth more here than a second GPU would be, and
 section~\ref{sec:distributed} for the two keys themselves.
 
@@ -283,7 +276,7 @@ run continues on one device.
 
 A training run starts by building its dataset cache --- reading every
 density, computing the external potential, spectrally downsampling, writing
-the result under \opt{data.cache} --- and none of that touches a GPU. On a
+the result under \opt{data.cache.dir} --- and none of that touches a GPU. On a
 cold parallel filesystem it is minutes to hours, and inside a GPU allocation
 it is minutes to hours of idle accelerators. So split the run into two jobs: a
 CPU-only job that builds the cache and exits, and the multi-GPU job, released
@@ -291,21 +284,20 @@ when the first succeeds, with the \emph{same} configuration file.
 
 \begin{lstlisting}
 # 1. a CPU-only job: build the cache and exit
-cache=$(sbatch --parsable scripts/slurm/poraque_cache.sbatch configs/train.yaml)
+cache=$(sbatch --parsable scripts/slurm/poraque_cache.sbatch configs/train_simple.yaml)
 
 # 2. the multi-GPU job, released when the first succeeds; same config
-sbatch --dependency=afterok:${cache} scripts/slurm/poraque_ddp.sbatch configs/train.yaml
+sbatch --dependency=afterok:${cache} scripts/slurm/poraque_ddp.sbatch configs/train_simple.yaml
 \end{lstlisting}
 
-The first script runs \opt{poraque-train --config configs/train.yaml
+The first script runs \opt{poraque-train --config configs/train\_simple.yaml
 --cache-only}, which builds the cache exactly as a training run would and
 then stops --- before a model, an optimizer, a process group or a training
 loop exists --- with exit status 0 and a summary:
 
 \begin{lstlisting}
-==============================================================================
-CACHE BUILT -- no training was run (--cache-only)
-==============================================================================
+[CACHE SUMMARY]
+  status      : built; no training was run (--cache-only)
   cache       : data/cache/res48_potcar
   storage     : files (one CHGCAR-format text file per field)
   materials   : 97 cached  (ext2pseudo: 97, pseudo2tau: 97)
@@ -316,31 +308,33 @@ CACHE BUILT -- no training was run (--cache-only)
                 ...
   elements    : Pt
   on disk     : 458.9 MiB
-  decoded     : ~134.2 MiB in RAM per task (data.cache_in_memory: True, budget 4.0 GiB)
+  decoded     : ~134.2 MiB in RAM per task (data.cache.in_memory: True, budget 4.0 GiB)
 \end{lstlisting}
 
 Three things about the mode are worth knowing. \textbf{It forces the CPU and
-forms no group}, whatever the config says: \opt{training.device: cuda},
+forms no group}, whatever the config says: \opt{runtime.device: cuda},
 \opt{strict\_device: true} and \opt{distributed: auto} can stay in the file
 for the GPU job, and the CPU job overrides all three for its own process while
 touching nothing on disk but the cache. \textbf{The GPU job rebuilds nothing}
-as long as its config keeps the cache fingerprint --- \opt{data.resolution},
-\opt{data.storage}, \opt{data.compression}, \opt{data.spin},
-\opt{data.potcar\_dir} and the data paths --- as it was; its cache table then
+as long as its config keeps the cache fingerprint --- \opt{data.grid.resolution},
+\opt{data.grid.max\_spacing}, \opt{data.cache.storage},
+\opt{data.cache.compression}, \opt{data.spin}, \opt{data.potcar\_dir} and
+the data path --- as it was; its cache table then
 reads \opt{cached} on every row and training starts at once. Change one of
 those keys and the GPU job builds a \emph{different} cache, on the GPU node,
 which is what the split exists to avoid. And \textbf{read the \opt{decoded}
 line before requesting memory}: it is the size of the fields
-\opt{data.cache\_in\_memory} holds in RAM (section~\ref{sec:cachememory}), and
+\opt{data.cache.in\_memory} holds in RAM (section~\ref{sec:cachememory}), and
 the number \opt{auto} compares against its budget; a GPU job whose request is
 below it either declines the cache, at ten times the epoch time, or is killed.
 
-One task, not four: the builder is single-process, and several tasks would
-each build the whole cache. Re-running \opt{--cache-only} on a cache that
+One task, not four: the builder is one task with several processes
+(\opt{runtime.workers: auto} reads \opt{--cpus-per-task}), and several tasks
+would each build the whole cache. Re-running \opt{--cache-only} on a cache that
 already exists is cheap --- present materials are left alone --- so an
 interrupted CPU job is resubmitted, not restarted.
 
-\section{Faster CPU inference}
+\section{Optional C kernels}
 \label{sec:cbackend}
 
 Poraqu\^e ships a small C kernel for the spectral contraction --- the one part
@@ -350,7 +344,25 @@ falls back to \opt{torch.einsum}.
 
 There is nothing to configure. The kernel is compiled on first use --- about
 half a second, once --- and cached in \file{\textasciitilde/.cache/poraque}.
-To do that compile now, and check it:
+A second kernel, the text codec of volumetric grid blocks, makes dataset cache
+builds 3.2--3.4$\times$ faster and is built the same way. Installation compiles
+nothing. To compile both now, check each against its Python reference and see
+what loaded --- in a cluster setup step, say, so that no job pays for the
+compile --- run:
+
+\begin{lstlisting}
+poraque-compile
+\end{lstlisting}
+
+\noindent Its options are \opt{--rebuild} (recompile even if cached),
+\opt{--clean} (delete cached libraries no current kernel loads) and
+\opt{--only spectral} or \opt{--only codec}. The exit status is 0 when every
+requested kernel loaded and 1 otherwise; everything still runs without them.
+\opt{PORAQUE\_C\_BACKEND=0} disables both, and \opt{PORAQUE\_CACHE\_DIR}
+moves the cache. The codec uses portable compiler flags only, so a library built
+on a login node cannot crash a compute node with a different CPU; the spectral
+kernel still tries \opt{-march=native} first, so build it on the node type that
+will run inference. The spectral kernel alone, with a benchmark:
 
 \begin{lstlisting}
 python -m poraque.ml.backend --benchmark

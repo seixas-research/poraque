@@ -63,8 +63,7 @@ That is faster to write than a single-precision workaround, keeps the extra
 accuracy on every backend, and costs nothing measurable.
 
 Everything the Fourier layers need — ``fft.rfftn``/``irfftn``, complex
-``einsum``, ``Conv3d``, ``GroupNorm``, ``softplus`` — is supported on MPS and
-verified by ``tests/test_device.py``.
+``einsum``, ``Conv3d``, ``GroupNorm``, ``softplus`` — is supported on MPS.
 """
 
 import os

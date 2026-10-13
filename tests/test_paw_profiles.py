@@ -376,17 +376,21 @@ class TestATrainingRunWritesTheWholeCheckpoint:
             write_calculation(runs / f"structure_{index:04d}", shape=(8, 8, 8),
                               seed=index, potcar=str(potcar))
         config = tmp_path / "train.yaml"
+        grid_only = {"occupancies": False,
+                     "model": {"width": 4, "modes": 2, "layers": 1,
+                               "projection_channels": 4}}
         config.write_text(yaml.safe_dump({
-            "task": {"type": "all", "name": "paw_smoke"},
-            "data": {"data_paths": [str(runs)], "cache": str(tmp_path / "c"),
-                     "resolution": 8, "delta_density": False,
-                     "paw_source": "material", "spin": False},
-            "model": {"width": 4, "modes": 2, "n_layers": 1,
-                      "projection_channels": 4},
-            "training": {"epochs": 1, "valid_fraction": 0.0, "eval_epoch": 1,
-                         "early_stopping": 0, "device": "cpu"},
-            "output": {"root": str(tmp_path / "models"),
-                       "plot_figures": False, "write_pdf_report": False},
+            "run": {"name": "paw_smoke", "output": str(tmp_path / "models")},
+            "data": {"path": str(runs), "atoms": None, "spin": False,
+                     "grid": {"resolution": 8},
+                     "cache": {"dir": str(tmp_path / "c")}},
+            "ext2chg": {"target": "full", **grid_only},
+            "chg2tau": grid_only,
+            "training": {"epochs": 1,
+                         "validation": {"fraction": 0.0, "every": 1,
+                                        "patience": 0}},
+            "runtime": {"device": "cpu"},
+            "report": {"figures": False, "pdf": False},
         }))
 
         poraque_train.run(["--config", str(config)])
@@ -395,7 +399,7 @@ class TestATrainingRunWritesTheWholeCheckpoint:
         payload = read_bundle(str(path))
         assert tuple(sorted(payload)) == tuple(sorted(CHECKPOINT_KEYS))
         assert sorted(payload["model_state_dict"]) == ["ext2pseudo", "pseudo2tau"]
-        assert payload["config"]["task"]["name"] == "paw_smoke"
+        assert payload["config"]["run"]["name"] == "paw_smoke"
         assert payload["config"]["training"]["epochs"] == 1
 
         silicon = payload["paw_profiles"][14]

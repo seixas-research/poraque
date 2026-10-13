@@ -635,9 +635,6 @@ class FieldOperator:
             for key in ("modes", "mode_selection", "g_max", "activation",
                         "projection_activation",
                         "cell_conditioning", "embedding_dim",
-                        "kan_grid_size", "kan_spline_order", "kan_grid_range",
-                        "kan_degree", "kan_rational_num_degree",
-                        "kan_rational_den_degree", "kan_use_base",
                         "equivariant", "n_radial", "g_basis",
                         "spherical_cutoff")
             if hasattr(backbone, key)
@@ -753,6 +750,19 @@ class FieldOperator:
         # the rank of the spectral weight -- which is why the two must agree
         # rather than one quietly overriding the other.
         architecture.setdefault("equivariant", False)
+        # Checkpoints written before the KAN activations were archived
+        # (2026-10-13) record seven `kan_*` hyperparameters whatever the
+        # activation was. Inert under a stateless one, so they are dropped; a
+        # model that actually used a KAN cannot be rebuilt here, and says so.
+        for key in [k for k in architecture if k.startswith("kan_")]:
+            del architecture[key]
+        for key in ("activation", "projection_activation"):
+            if str(architecture.get(key, "")).startswith("kan"):
+                raise ValueError(
+                    f"This checkpoint was trained with {key}="
+                    f"{architecture[key]!r}, a KAN activation; those were "
+                    f"archived to experiments/kan_symbolic and are no longer "
+                    f"part of the package.")
         # Recorded architecture wins over the inference: mode_selection,
         # g_max, activation, cell_conditioning and embedding_dim live in no
         # tensor shape, so inference alone would silently reset them to the
@@ -1653,8 +1663,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         warnings.warn(
             "early_stopping was requested without a validation split, so it "
             "cannot act: the training loss falls monotonically by construction "
-            "and never signals that training should stop. Set holdout or "
-            "valid_fraction, or set early_stopping=0 to silence this.",
+            "and never signals that training should stop. Hold structures out "
+            "(training.validation.fraction in a configuration), or set "
+            "early_stopping=0 to silence this.",
             RuntimeWarning, stacklevel=2,
         )
         early_stopping = 0

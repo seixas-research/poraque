@@ -191,7 +191,7 @@ class SiteReadout(nn.Module):
     #: budget the least recent are evicted and recomputed every epoch. 64 MiB
     #: was far below the ~360 MB the 785 CHONPS geometries need at a 6 1/Ang
     #: band, and recomputing them dominated the epoch; 1 GiB holds them all.
-    #: The default for :attr:`cache_bytes`; ``model.paw.readout_cache_mib``
+    #: The default for :attr:`cache_bytes`; ``runtime.readout_cache_mib``
     #: sets it per run.
     SPECTRAL_CACHE_BYTES = 1024 ** 3
 

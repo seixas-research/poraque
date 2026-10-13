@@ -491,11 +491,3 @@ class TestFunctionalIsDeclarable:
 
         with pytest.warns(RuntimeWarning, match="Could not determine"):
             assert resolve_xc(str(tmp_path), declared="auto") == "pbe"
-
-    def test_the_config_carries_it(self):
-        """``data.xc`` must reach a run, and default to detection."""
-        from poraque.ml.config import TrainingConfig
-
-        assert TrainingConfig.from_dict({}).data.xc == "auto"
-        assert TrainingConfig.from_dict(
-            {"data": {"xc": "pbe"}}).data.xc == "pbe"

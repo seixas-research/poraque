@@ -43,8 +43,13 @@ the winning configuration. The 41 test structures gave:
 
 The exported bundle is [results/final/best.poraque](results/final/best.poraque),
 from seed 1, epoch 65; the other initialization restored epoch 45. The
-[recommended configuration](../../configs/train_ext2chg_chon_best.yaml) stores
-the hyperparameters and the explicit common band. The general CLI uses its own
+[recommended configuration](configs/train_ext2chg_chon_best.yaml) stores
+the hyperparameters and the explicit common band. The files in `configs/` here
+(`train_ext2chg_chon.yaml`, `train_ext2chg_chon_best.yaml`,
+`train_ext2chg_chon_charge.yaml`, `train_v2.yaml`) are in the training schema
+that preceded 2026-10-13: they are historical records of what the runs used,
+and the current `poraque-train` refuses them, naming where each setting went
+(`model.paw.neighbor_min` is `ext2chg.occupancies.neighbor_min` now, and so on). The general CLI uses its own
 split; to reproduce the held-out test, use the runner and the commands below.
 The [selection record](results/final/selection.json), the
 [complete test metrics](results/final/test_winner.json) and the
@@ -189,7 +194,8 @@ python experiments/chon_ext2chg/benchmark.py --epochs 30 --seeds 0 --threads 1 \
   --arms short_neighbors_lr_high --output experiments/chon_ext2chg/results/geometry_joint
 ```
 
-The setting is also available in the main CLI as `model.paw.neighbor_min`.
+The setting is also available in the main CLI as `ext2chg.occupancies.neighbor_min`
+(`model.paw.neighbor_min` before the schema was rewritten on 2026-10-13).
 The default of 2.2 Å is preserved. Earlier models, including the geometric
 prototype without this key in its metadata, restore their centers from the
 buffers.
@@ -383,7 +389,8 @@ The observable problems that were fixed include:
    containing only `ext2chg`. It now uses the density output of the PAW operator
    and writes its records, omitting TAUCAR and energy when there is no kinetic
    operator. Comparison and figures also handle this absence. The training CLI
-   accepts `--task ext2chg` directly.
+   accepted `--task ext2chg` directly; today `--task` filters the operator
+   sections of the configuration, and a file with an `ext2chg:` section trains it.
 6. The quadrature of the PAW kernels was insufficient at low bands, introducing
    position and multipole errors in constant fields. The spectral path corrects
    this integral without altering the quadrature already used at high bands.
@@ -394,7 +401,7 @@ values differ. This is relevant for the band comparison.
 
 ## Limitations found
 
-`ext2chg` does not yet accept the `--kfold` path or the CLI's fine-tuning. The
+`ext2chg` with its occupancies on does not yet accept the `--kfold` path or the CLI's fine-tuning. The
 confirmation by seeds in this experiment does not replace these capabilities.
 The aggregates also give different weights to structures and atoms; for this
 reason the report keeps both metrics.

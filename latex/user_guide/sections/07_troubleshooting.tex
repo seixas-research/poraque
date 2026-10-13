@@ -4,17 +4,28 @@
 \section{The run stops immediately}
 
 \begin{description}
-  \item[``No struct* directories''] Check \opt{data.root} and
-    \opt{data.pattern}. The pattern is a prefix, not a glob.
-  \item[``Unknown key(s) in section \ldots''] A configuration key was
-    removed. \opt{mode}, \opt{holdout}, \opt{use\_vasp\_extcar},
-    \opt{train\_fraction} and \opt{split} no longer exist; delete them, or
-    start again from \file{configs/train.yaml}. The split is now one number,
-    \opt{valid\_fraction}, and \file{EXTCAR} is always computed.
-  \item[``No valence charge for \ldots''] No \file{POTCAR} was found. Supply one,
-    or pass \opt{--zval Pt=11}.
-  \item[``Unknown key(s) in section \ldots''] A typo in the YAML. The message
-    lists the valid keys.
+  \item[``No material with a charge density found under \ldots''] Check \opt{data.path}: it is one
+    directory holding one subdirectory per material, and a material is a
+    directory with a density (\file{CHGCAR} or \file{fields.h5}) in it.
+  \item[``Removed configuration section(s)'', or ``Replaced: \ldots''] The
+    configuration is written for the schema that preceded 2026-10-13. The
+    message names where each setting went
+    (\opt{training.valid\_fraction} is \opt{training.validation.fraction},
+    \opt{data.data\_paths} is \opt{data.path}, \opt{model.paw} is the
+    \opt{ext2chg} section and its \opt{occupancies} block); or start again from
+    \file{configs/train\_simple.yaml}. \file{EXTCAR} is always computed.
+  \item[``Nothing to train''] The file has neither an \opt{ext2chg:} nor a
+    \opt{chg2tau:} section. An operator is trained when its section is
+    present.
+  \item[``The PAW occupancies need each element's projector channels''] The
+    occupancies are on (the default) and no \file{POTCAR} was found to lay the
+    records out from. Give the data one with \opt{data.potcar\_dir}, or write
+    \opt{occupancies: false} in the operator's section to train the grid alone.
+  \item[``No pseudopotential file found and no \opt{--zval} given''] At
+    inference, the structure directory has no \file{POTCAR}. Supply one, or pass
+    \opt{--zval Pt=11}.
+  \item[``Unknown key(s) in \ldots''] A typo in the YAML. The message lists
+    the valid keys.
 \end{description}
 
 \section{The results look wrong}
@@ -27,7 +38,7 @@
     per cent is normal; tens of per cent means the model is extrapolating,
     typically because the evaluation grid is far from the training resolution.
   \item[The numbers seem too good] Check whether anything was held out. With
-    \opt{valid\_fraction: 0} they are a training fit. The report's
+    \opt{validation.fraction: 0} they are a training fit. The report's
     \emph{What these numbers do not show} section states this explicitly.
 \end{description}
 
@@ -38,7 +49,7 @@
     fields of one material are on different meshes. All three must share a grid;
     read them with \opt{grid=} from the same source.
   \item[``Cannot batch mixed grid shapes''] Use the shape-bucketed loader
-    (the training script does) or \opt{batch\_size: 1}.
+    (the training script does) or \opt{training.batch\_size: 1}.
   \item[A few negative voxels in \file{TAUCAR}] Band-limiting a strictly
     positive field with sharp core peaks rings slightly. It is an artifact of
     the downsampling, not of the data, and is why the pipeline uses a

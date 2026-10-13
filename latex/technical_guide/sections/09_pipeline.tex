@@ -35,14 +35,16 @@ nothing, and its output directory defaults to the current one.
 
 \section{Configuration}
 
-A run is defined by a YAML file with four sections --- \opt{data},
-\opt{model}, \opt{training}, \opt{output} --- mirroring the four things a run
-needs. Command-line flags override individual entries, so one committed
-configuration can be swept from the shell without being edited or copied:
+A run is defined by a YAML file of eight sections --- \opt{run}, \opt{data},
+\opt{ext2chg}, \opt{chg2tau}, \opt{training}, \opt{fine\_tuning},
+\opt{runtime} and \opt{report}. An operator is trained when its section is
+present, and each carries its own \opt{model}. Command-line flags override
+individual entries, so one committed configuration can be swept from the shell
+without being edited or copied:
 
 \begin{lstlisting}
-poraque-train --config configs/train.yaml
-poraque-train --config configs/train.yaml --epochs 500
+poraque-train --config configs/train_simple.yaml
+poraque-train --config configs/train_simple.yaml --epochs 500
 \end{lstlisting}
 
 Unknown keys are \emph{rejected} rather than ignored: a typo such as
@@ -110,20 +112,18 @@ raises a warning naming both.
 
 The tabulated pseudopotential is sharply peaked at the ionic cores. Since a
 network with a fixed mode truncation may not use the highest spatial
-frequencies, an optional Gaussian blur is available:
+frequencies, an optional Gaussian blur was available, applied \emph{on top of}
+the tabulated potential and never in place of it. It was measured to change
+nothing at the resolutions used (below) and it was \textbf{removed} with the
+rewrite of the configuration schema on 2026-10-13: \opt{data.gaussian\_blur},
+\opt{data.blur\_method} and \opt{data.sigma} are refused, naming that there is
+no replacement, and the Gaussian pseudo-ion width is derived per species. What
+follows is the record of the measurement.
 
-\begin{lstlisting}
-poraque-train --config configs/train.yaml \
-       --gaussian-blur 0.15 --blur-method spectral
-\end{lstlisting}
-
-Smoothing is applied \emph{on top of} the tabulated potential; it never
-replaces it. It is off by default (\opt{gaussian\_blur: null}).
-
-\subsection{Two methods, and why the default matters}
+\subsection{Two methods, and why the default mattered}
 
 \begin{description}
-  \item[\opt{spectral} (default)] multiplies by $e^{-G^2\sigma^2/2}$ in
+  \item[\opt{spectral} (the default)] multiplies by $e^{-G^2\sigma^2/2}$ in
     reciprocal space. Exact for a band-limited field, and it uses the true
     reciprocal metric, so the blur stays isotropic in Cartesian space on
     \emph{any} cell.
@@ -179,16 +179,16 @@ where the model could actually use those frequencies.
 \section{Training}
 \label{sec:universal}
 
-\textbf{One model per task is trained across all the training structures},
+\textbf{One model per operator is trained across all the training structures},
 never one per material.
 
 \begin{lstlisting}
-poraque-train --config configs/train.yaml
+poraque-train --config configs/train_simple.yaml
 \end{lstlisting}
 
-There is one protocol and one variation on it: \opt{valid\_fraction} holds back
-a fifth of the structures by default, and \opt{enable\_kfold}
-(Section~\ref{sec:kfold}) swaps the whole thing for cross-validation. Nothing
+There is one protocol and one variation on it: \opt{training.validation.fraction}
+holds back a fifth of the structures by default, and
+\opt{training.validation.kfold} (Section~\ref{sec:kfold}) swaps the whole thing for cross-validation. Nothing
 else selects a training mode.
 
 Batches are drawn \emph{across} materials: the sampler groups structures by
@@ -198,13 +198,14 @@ $(32,32,32)\times3$, $(30,32,32)\times1$ and $(32,30,32)\times1$ --- three
 distinct shapes flowing through one set of weights.
 
 The run writes a single unified checkpoint,
-\file{models/poraque\_models.poraque}, holding both operators under the keys
-\opt{ext2pseudo} and \opt{pseudo2tau}.
+\file{models/<name>/<name>.poraque}, holding both operators under the internal
+task names (\opt{ext2pseudo} and \opt{pseudo2tau}, or \opt{ext2chg} and
+\opt{chg2tau} when the occupancies are on).
 
 \begin{pwarn}
-With \opt{valid\_fraction: 0} every structure is in training, so the reported
+With \opt{validation.fraction: 0} every structure is in training, so the reported
 metrics are \textbf{training fit}. They show the model can represent the data;
-they are not a generalization estimate. Raise \opt{valid\_fraction}, or use the
+they are not a generalization estimate. Raise \opt{validation.fraction}, or use the
 cross-validation of Section~\ref{sec:kfold}, for that.
 
 Measured on seventeen platinum structures: the all-structure training fit gives
@@ -218,17 +219,21 @@ number as a result would be a serious overstatement.
 \label{sec:kfold}
 
 \begin{lstlisting}
-poraque-train --config configs/train.yaml \
-       --kfold --k-folds 5
+poraque-train --config configs/train_simple.yaml \
+       --kfold 5
 \end{lstlisting}
 
 or in the configuration file:
 
 \begin{lstlisting}
 training:
-  enable_kfold: true
-  k_folds: 5
+  validation:
+    kfold: 5
 \end{lstlisting}
+
+It is not yet available to an operator with its PAW occupancies on (the fold
+loop does not fit the occupancy transform per fold), so a cross-validated run
+says \opt{occupancies: false} in its operator sections.
 
 Each fold trains a fresh model on $K-1$ groups and scores it on the held-out
 group, in physical units. The result is a generalization estimate \emph{with a
@@ -246,7 +251,7 @@ data it had already seen. The resulting figure would look excellent and would
 say nothing about transfer to a new material.
 
 \begin{ptip}
-\opt{k\_folds} is capped at the number of structures; setting it equal to that
+The number of folds (\opt{validation.kfold}) is capped at the number of structures; setting it equal to that
 count \emph{is} leave-one-out. The partition is verified exact and disjoint ---
 every structure appears in exactly one validation fold.
 \end{ptip}

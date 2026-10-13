@@ -148,6 +148,27 @@ def open_text(path, encoding="utf-8", errors="replace"):
         yield handle
 
 
+@contextmanager
+def open_binary(path):
+    """
+    Open ``path`` for binary reading, decompressing on the fly when needed.
+
+    For the streaming reader of :mod:`poraque.fields.vasp.volumetric`, which
+    hands windows of the bytes to the C codec. A ``.zip`` archive yields its
+    single data member, chosen as :func:`open_text` chooses it.
+    """
+    text = str(path)
+    suffix = os.path.splitext(text)[1].lower()
+    if suffix == ".zip":
+        with zipfile.ZipFile(text) as archive:
+            with archive.open(_zip_member(archive, text)) as raw:
+                yield raw
+        return
+    opener = _OPENERS.get(suffix, open)
+    with opener(text, "rb") as handle:
+        yield handle
+
+
 def _zip_member(archive, path):
     """
     Pick the single data member of a zip archive.

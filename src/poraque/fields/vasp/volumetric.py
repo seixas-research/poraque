@@ -96,6 +96,10 @@ def read_volumetric(path, read_all=False):
 
         return read_hdf5(path, read_all=read_all)
 
+    fast = _read_volumetric_c(path, read_all)
+    if fast is not None:
+        return fast
+
     with _open_text(path) as handle:
         lines = (line.rstrip("\n") for line in handle)
 
@@ -109,12 +113,187 @@ def read_volumetric(path, read_all=False):
             # Walk past the augmentation records to the next grid header of the
             # same dimensions; that, and only that, starts another data block.
             for line in lines:
-                tokens = line.split()
-                if (len(tokens) == 3 and all(_is_int(t) for t in tokens)
-                        and tuple(int(t) for t in tokens) == shape):
+                if grid_shape(line) == shape:
                     extra.append(_read_block(lines, n_points, shape, path))
 
     return structure, data, extra
+
+
+#: Bytes read from a volumetric file per window by :class:`_Stream`.
+STREAM_CHUNK = 16 * 1024 ** 2
+
+
+class _Stream:
+    r"""
+    A volumetric file read in windows: header lines, and grid blocks in C.
+
+    The first C reader held the whole file in one buffer -- ~870 MB for a 288³
+    spin-polarized ``CHGCAR`` -- where the Python reader it replaced had worked
+    in chunks of tens of MB, and the cache's per-worker memory budget was
+    measured on the latter. This reads :data:`STREAM_CHUNK` bytes at a time
+    from any opener (plain, gzip, bz2, xz, zip), gives the C codec each window
+    up to its last newline, and keeps the tail for the next one, so the
+    reader's peak is the window plus the output array whatever the file.
+    """
+
+    def __init__(self, handle, path):
+        self.handle = handle
+        self.path = path
+        self.buffer = b""
+        self.position = 0
+        self.eof = False
+
+    def _more(self):
+        """Append the next window, dropping what has been consumed."""
+        if self.eof:
+            return False
+        data = self.handle.read(STREAM_CHUNK)
+        if not data:
+            self.eof = True
+            return False
+        self.buffer = self.buffer[self.position:] + data
+        self.position = 0
+        return True
+
+    def lines(self):
+        """The remaining lines, decoded, each consumed as it is yielded."""
+        while True:
+            newline = self.buffer.find(b"\n", self.position)
+            if newline < 0:
+                if self._more():
+                    continue
+                if self.position >= len(self.buffer):
+                    return
+                raw = self.buffer[self.position:]
+                self.position = len(self.buffer)
+            else:
+                raw = self.buffer[self.position:newline]
+                self.position = newline + 1
+            yield raw.decode("utf-8", "replace").rstrip("\r")
+
+    def _stop(self):
+        """End of the current window: just past its last newline, or EOF."""
+        while True:
+            newline = self.buffer.rfind(b"\n", self.position)
+            if newline >= 0:
+                return newline + 1
+            if not self._more():
+                return len(self.buffer)
+
+    def _finish_line(self):
+        """Move past the newline that ends the line the cursor is on."""
+        while True:
+            newline = self.buffer.find(b"\n", self.position)
+            if newline >= 0:
+                self.position = newline + 1
+                return
+            self.position = len(self.buffer)
+            if not self._more():
+                return
+
+    def block(self, count, shape):
+        """The next ``count`` values, as an array of ``shape`` (Fortran order)."""
+        from . import codec
+
+        values = np.empty(count, dtype=np.float64)
+        filled = 0
+        while filled < count:
+            stop = self._stop()
+            if stop <= self.position and self.eof:
+                break
+            parsed, self.position, bad = codec.parse_into(
+                self.buffer, self.position, stop, values, filled)
+            filled += parsed
+            if bad:
+                token = self.buffer[self.position:self.position + 40].split()
+                raise ValueError(
+                    f"{self.path}: {token[0].decode(errors='replace')!r} in "
+                    f"the grid block is not a number (value {filled + 1} of "
+                    f"{count}).")
+            if filled < count:
+                self.position = stop
+                if not self._more() and self.position >= len(self.buffer):
+                    break
+        if filled < count:
+            raise ValueError(
+                f"{self.path}: volumetric file truncated - expected {count} "
+                f"values, got {filled}.")
+        self._finish_line()
+        return values.reshape(shape, order="F")
+
+    def skip(self, count):
+        """Step over ``count`` grid values; ``False`` if the file ended first."""
+        from . import codec
+
+        skipped = 0
+        while skipped < count:
+            stop = self._stop()
+            if stop <= self.position and self.eof:
+                return False
+            done, self.position = codec.skip_tokens(
+                self.buffer, self.position, stop, count - skipped)
+            skipped += done
+            if skipped < count:
+                self.position = stop
+                if not self._more() and self.position >= len(self.buffer):
+                    return False
+        self._finish_line()
+        return True
+
+
+def _read_volumetric_c(path, read_all):
+    r"""
+    :func:`read_volumetric` through the C codec, or ``None`` without it.
+
+    Header and grid line are read as lines; each grid block is parsed by
+    :func:`poraque.fields.vasp.codec.parse_into` window by window
+    (:class:`_Stream`), ``strtod`` under the "C" locale, so the values are
+    bit-identical to the Python path's.
+    """
+    from . import codec
+
+    if codec.load() is None:
+        return None
+    from ..io.compressed import open_binary
+
+    with open_binary(path) as handle:
+        stream = _Stream(handle, path)
+        lines = stream.lines()
+        structure = _read_header(lines, path)
+        shape = _read_shape(lines, path)
+        n_points = int(np.prod(shape))
+        data = stream.block(n_points, shape)
+        extra = []
+        if read_all:
+            # Past the augmentation records to the next grid header of the
+            # same dimensions; that, and only that, starts another data block.
+            while _next_grid_line(stream.lines(), shape):
+                extra.append(stream.block(n_points, shape))
+    return structure, data, extra
+
+
+def _next_grid_line(lines, shape):
+    """Consume ``lines`` up to a grid line of ``shape``; whether one came."""
+    return any(grid_shape(line) == shape for line in lines)
+
+
+def grid_shape(line):
+    """
+    The ``(NGXF, NGYF, NGZF)`` a line states, or ``None`` if it is not one.
+
+    The one test for "this line starts a grid block": three positive integers
+    and nothing else. A block's repeat is recognized by the shape matching the
+    first block's exactly, which keeps the augmentation records -- full of
+    numbers, never three positive integers equal to the grid -- from matching.
+    """
+    tokens = line.split()
+    if len(tokens) != 3:
+        return None
+    try:
+        shape = tuple(int(token) for token in tokens)
+    except ValueError:
+        return None
+    return shape if all(value > 0 for value in shape) else None
 
 
 def read_grid_header(path):
@@ -241,9 +420,7 @@ def read_augmentation(path):
 
         block = []
         for line in lines:
-            tokens = line.split()
-            if (len(tokens) == 3 and all(_is_int(token) for token in tokens)
-                    and tuple(int(token) for token in tokens) == shape):
+            if grid_shape(line) == shape:
                 break                   # a spin channel starts here
             block.append(line)
 
@@ -290,6 +467,10 @@ def read_augmentation_blocks(path):
 
         return read_hdf5_augmentation(path)
 
+    fast = _read_augmentation_blocks_c(path)
+    if fast is not None:
+        return fast
+
     with _open_text(path) as handle:
         lines = (line.rstrip("\n") for line in handle)
 
@@ -311,9 +492,7 @@ def read_augmentation_blocks(path):
             block = []
             pending = None
             for line in lines:
-                tokens = line.split()
-                if (len(tokens) == 3 and all(_is_int(token) for token in tokens)
-                        and tuple(int(token) for token in tokens) == shape):
+                if grid_shape(line) == shape:
                     pending = line          # the next grid block starts here
                     break
                 block.append(line)
@@ -325,6 +504,46 @@ def read_augmentation_blocks(path):
             if pending is None:
                 break
 
+    return shape, blocks
+
+
+def _read_augmentation_blocks_c(path):
+    r"""
+    :func:`read_augmentation_blocks` stepping over each grid block in C.
+
+    The Python path splits every line of the grid to count its values, only to
+    reach the records after it: 5.9 s of a 15.8 s three-material Pt build, the
+    largest single cost once the grid parse was in C. ``None`` without the
+    codec.
+    """
+    from . import codec
+
+    if codec.load() is None:
+        return None
+    from ..io.compressed import open_binary
+
+    with open_binary(path) as handle:
+        stream = _Stream(handle, path)
+        lines = stream.lines()
+        _read_header(lines, path)
+        shape = _read_shape(lines, path)
+        count = int(np.prod(shape))
+
+        blocks = []
+        while stream.skip(count):
+            block = []
+            pending = False
+            for line in stream.lines():
+                if grid_shape(line) == shape:
+                    pending = True          # the next grid block starts here
+                    break
+                block.append(line)
+            while block and not block[-1].strip():
+                block.pop()
+            if block:
+                blocks.append(block)
+            if not pending:
+                break
     return shape, blocks
 
 
@@ -399,6 +618,30 @@ def fortran_exponential(value, decimals=7, width=15):
     return body.rjust(width)
 
 
+def format_block(flat, columns=5, width=17, decimals=11):
+    r"""
+    One grid block as text: ``columns`` values per line, each ``" " + Ew.d``.
+
+    ``flat`` is written in the order given (callers flatten in Fortran order).
+    The leading space is the format's own ``1X``, not a separator: it is what
+    keeps every field exactly ``width + 1`` columns wide whether or not the
+    value is negative. Through the C codec when it is available (byte-identical,
+    ~9x faster), else :func:`fortran_exponential` per value.
+    """
+    from . import codec
+
+    flat = np.asarray(flat, dtype=float).ravel()
+    fast = codec.format_block(flat, columns, width, decimals)
+    if fast is not None:
+        return fast.decode("ascii")
+    lines = []
+    for start in range(0, flat.size, columns):
+        lines.append("".join(
+            " " + fortran_exponential(value, decimals=decimals, width=width)
+            for value in flat[start:start + columns]))
+    return "\n".join(lines) + "\n" if lines else ""
+
+
 def write_volumetric(path, structure, data, comment=None, columns=5,
                      width=17, decimals=11, direct=True, augmentation=None):
     """
@@ -460,16 +703,7 @@ def write_volumetric(path, structure, data, comment=None, columns=5,
         handle.write("\n")
         handle.write("  {:d}  {:d}  {:d}\n".format(*data.shape))
 
-        # The leading space is the format's own `1X`, not a separator: it is
-        # what keeps every field exactly `width + 1` columns wide whether or
-        # not the value is negative.
-        for start in range(0, flat.size, columns):
-            chunk = flat[start:start + columns]
-            handle.write("".join(
-                " " + fortran_exponential(value, decimals=decimals,
-                                          width=width)
-                for value in chunk))
-            handle.write("\n")
+        handle.write(format_block(flat, columns, width, decimals))
 
         # Appended verbatim. These records are a fixed-format Fortran read on
         # VASP's side, so reformatting them -- even reflowing the columns --
@@ -513,13 +747,14 @@ def _read_shape(lines, path=""):
 
 
 #: Values joined into one string before a single ``split()``, in
-#: :func:`_read_block`.
+#: :func:`_read_block` -- the Python path, used when the C codec is not.
 #:
-#: The whole block at once is faster still and is deliberately not done: a
-#: 288³ density is 23.9 M values, and the list of Python strings ``split()``
-#: returns for it costs about 1.4 GB. That figure decides how many cache
-#: workers fit in a node's memory, so the parse is chunked and the peak
-#: bounded at a few tens of MB whatever the grid.
+#: The whole block at once is deliberately not done: a 288³ density is 23.9 M
+#: values, and the list of Python strings ``split()`` returns for it costs
+#: about 1.4 GB, where the chunked parse stays at a few tens of MB. The C path
+#: bounds itself the same way, by :data:`STREAM_CHUNK`; measured on a 288³
+#: spin-polarized material, the cache build peaks at 1558 MiB with C and 1564
+#: MiB with Python, the figure the cache's worker budget was sized on.
 PARSE_CHUNK = 1 << 20
 
 
@@ -568,11 +803,3 @@ def _read_block(lines, n_points, shape, path=""):
             f"got {filled}."
         )
     return values.reshape(shape, order="F")
-
-
-def _is_int(token):
-    try:
-        int(token)
-    except ValueError:
-        return False
-    return True

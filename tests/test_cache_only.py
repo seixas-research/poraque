@@ -44,23 +44,27 @@ def _config(tmp_path, **overrides):
     write_calculation(runs / "structure_0000", shape=(8, 8, 8), seed=0)
     write_calculation(runs / "structure_0001", shape=(8, 8, 8), seed=1)
     settings = {
-        "task": {"type": "all", "name": "cache_only_smoke"},
+        "run": {"name": "cache_only_smoke", "output": str(tmp_path / "models")},
         "data": {
-            "data_paths": [str(runs)],
-            "cache": str(tmp_path / "cache"),
-            "resolution": 8,
+            "path": str(runs),
             # No atomic reference and no augmentation records in a synthetic
-            # run: neither default is under test here.
-            "delta_density": False,
-            "paw_source": "material",
+            # run: neither is under test here.
+            "atoms": None,
             "spin": False,
+            "grid": {"resolution": 8},
+            "cache": {"dir": str(tmp_path / "cache")},
         },
-        "model": {"width": 4, "modes": 2, "n_layers": 1,
-                  "projection_channels": 4},
-        "training": {"epochs": 1, "valid_fraction": 0.0, "eval_epoch": 1,
-                     "early_stopping": 0, "device": "cpu"},
-        "output": {"root": str(tmp_path / "models"),
-                   "plot_figures": False, "write_pdf_report": False},
+        "ext2chg": {"target": "full", "occupancies": False,
+                    "model": {"width": 4, "modes": 2, "layers": 1,
+                              "projection_channels": 4}},
+        "chg2tau": {"occupancies": False,
+                    "model": {"width": 4, "modes": 2, "layers": 1,
+                              "projection_channels": 4}},
+        "training": {"epochs": 1,
+                     "validation": {"fraction": 0.0, "every": 1,
+                                    "patience": 0}},
+        "runtime": {"device": "cpu"},
+        "report": {"figures": False, "pdf": False},
     }
     for section, values in overrides.items():
         settings[section].update(values)
@@ -147,9 +151,9 @@ class TestACacheOnlyRunBuildsTheCacheAndStops:
                                                           no_training):
         """A CPU node has no GPU to honor ``--device cuda`` on, and the mode
         must not fail there for want of one -- nor form a group."""
-        config = _config(tmp_path, training={"device": "cuda",
-                                             "strict_device": True,
-                                             "distributed": "auto"})
+        config = _config(tmp_path, runtime={"device": "cuda",
+                                            "strict_device": True,
+                                            "distributed": "auto"})
         with pytest.raises(SystemExit) as stop:
             poraque_train.run(["--config", config, "--cache-only",
                                "--device", "cuda", "--strict-device"])

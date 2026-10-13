@@ -6,18 +6,44 @@ on the smaller set at a much lower learning rate: what the base model learned
 about the general map is kept, and only the specialization is learned.
 
 ```{note}
-Off by default. Switch it on with `enable: true` in the `fine_tuning` block, or
-with `--fine-tune` on the command line.
+Off by default, and switched on by the **presence** of a `fine_tuning:` section
+in the configuration. The flags `--pretrained` and `--fine-tune-lr` override the
+section's values; they do not create it, and without the section they are
+refused.
+
+Fine-tuning is not yet available to an operator with its PAW occupancies on (a
+pretrained bundle has no occupancy layer to adapt), so the operator sections
+below say `occupancies: false` and adapt the grid-alone maps.
+```
+
+```yaml
+# base.yaml: the model trained across everything you have
+run:
+  name: general
+ext2chg:
+  occupancies: false
+chg2tau:
+  occupancies: false
+```
+
+```yaml
+# oxides.yaml: specialize it on one family
+run:
+  name: oxides
+data:
+  path: data/oxides
+ext2chg:
+  occupancies: false
+chg2tau:
+  occupancies: false
+fine_tuning:
+  checkpoint: models/general/general.poraque
 ```
 
 ```bash
-# 1. the base model, trained across everything you have
-poraque-train --config configs/train.yaml
-
-# 2. specialize it on one family
-poraque-train --config configs/train.yaml \
-    --fine-tune --pretrained models/poraque_models.poraque \
-    --root data/oxides --checkpoint-dir models/oxides
+poraque-train --config base.yaml
+poraque-train --config oxides.yaml
+poraque-train --config oxides.yaml --fine-tune-lr 5e-6    # override one value
 ```
 
 ## What comes from the checkpoint
@@ -45,7 +71,7 @@ order of magnitude away is transfer learning in name only.
 
 ```yaml
 fine_tuning:
-  freeze_lifting_layers: true
+  freeze_lifting: true
 ```
 
 The lifting map embeds the input field into the network's channel space before
@@ -60,7 +86,7 @@ precisely what differs between material families.
 The run reports what was actually frozen, so you never have to infer it:
 
 ```text
-      fine-tuning from : models/poraque_models.poraque
+      fine-tuning from : models/general/general.poraque
       architecture     : inferred from the checkpoint (4,202,001 parameters)
       transforms       : taken from the checkpoint
       frozen           : lifting path, 1,392 parameters; 4,200,609 remain trainable
@@ -78,26 +104,31 @@ undoing the pre-training the freeze was meant to preserve.
 
 ```yaml
 fine_tuning:
-  enable: false
-  pretrained_checkpoint: models/poraque_models.poraque
+  checkpoint: models/poraque_models/poraque_models.poraque
   learning_rate: 1.0e-05
-  freeze_lifting_layers: false
-  use_lora: false
-  lora_rank: 8
-  lora_alpha: 16.0
-  lora_dropout: 0.0
+  freeze_lifting: false
+  lora: false
+```
+
+```yaml
+fine_tuning:
+  checkpoint: models/general/general.poraque
+  lora:
+    rank: 8
+    alpha: 16.0
+    dropout: 0.0
 ```
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `enable` | `false` | start from `pretrained_checkpoint` instead of a fresh init |
-| `pretrained_checkpoint` | `models/poraque_models.poraque` | base bundle to adapt |
-| `learning_rate` | `1e-05` | replaces `training.learning_rate` for this run |
-| `freeze_lifting_layers` | `false` | hold the input lifting path fixed |
-| `use_lora` | `false` | freeze everything and learn a low-rank correction |
-| `lora_rank` | `8` | $r$; cost and capacity are both linear in it |
-| `lora_alpha` | `16.0` | the update is scaled by `lora_alpha / lora_rank` |
-| `lora_dropout` | `0.0` | dropout on the adapter's input |
+| `fine_tuning` | off | the section's presence starts from `checkpoint` instead of a fresh init; `false` turns it off, `true` takes every default |
+| `checkpoint` | `models/poraque_models/poraque_models.poraque` | base bundle to adapt |
+| `learning_rate` | `1.0e-05` | replaces `training.optimizer.learning_rate` for this run |
+| `freeze_lifting` | `false` | hold the input lifting path fixed |
+| `lora` | `false` | a block: freeze everything and learn a low-rank correction |
+| `lora.rank` | `8` | $r$; cost and capacity are both linear in it |
+| `lora.alpha` | `16.0` | the update is scaled by `alpha / rank` |
+| `lora.dropout` | `0.0` | dropout on the adapter's input |
 
 The fine-tuning learning rate is much smaller by design: the base rate would
 walk the weights away from the solution being adapted before a small dataset
@@ -105,7 +136,7 @@ could constrain them.
 
 ## LoRA — adapting a model that does not fit
 
-`use_lora: true` freezes every trained weight and learns a rank-$r$ correction
+A `lora` block freezes every trained weight and learns a rank-$r$ correction
 beside the model's **dense ($1\times1\times1$) lifting and projection**
 convolutions:
 
@@ -145,25 +176,24 @@ honest answer there is a full fine-tune. It buys memory, not generality.
 where its base lives, which is the whole economy of the method — the frozen
 tensors are already on disk in the model being adapted. Move or delete that
 base and the fine-tune cannot be loaded; the error says so and names the file.
-`freeze_lifting_layers` is ignored under LoRA, which freezes everything anyway,
+`freeze_lifting` is ignored under LoRA, which freezes everything anyway,
 and the run says so rather than appearing to apply both.
 ```
 
 ## Output
 
-A fine-tune is written as **`poraque_finetuned.poraque`**, never over the base
-`poraque_models.poraque`. The two coexist in the same directory, and a run that
-would genuinely overwrite its own base is refused — before training starts, not
-after.
+A fine-tune is written as **`<name>_finetuned.poraque`** in its run directory,
+never over the base. A run that would genuinely overwrite its own base is
+refused — before training starts, not after.
 
 The PDF report leads its Configuration section with the fine-tuning facts and
 carries a caveat at the top:
 
-> This is a FINE-TUNED model, adapted from `models/poraque_models.poraque`. Its
+> This is a FINE-TUNED model, adapted from `models/general/general.poraque`. Its
 > scores describe the material family it was specialized on, and say nothing
 > about the broader set the base model was trained across.
 
-The checkpoint's `config` records `fine_tuning.pretrained_checkpoint`, the
+The checkpoint's `config` records `fine_tuning.checkpoint`, the
 learning rate and whether the lifting layers were frozen, so a checkpoint can
 always be traced back to its parent.
 
@@ -174,8 +204,8 @@ after the architecture inside it:
 
 | File | Contents |
 | --- | --- |
-| `models/poraque_models.poraque` | the universal model: both operators in one file |
-| `models/poraque_finetuned.poraque` | a fine-tune, specialized to one family |
+| `models/<name>/<name>.poraque` | the universal model: both operators in one file |
+| `models/<name>/<name>_finetuned.poraque` | a fine-tune, specialized to one family |
 
 The container is a `torch.save` dictionary of exactly three entries:
 

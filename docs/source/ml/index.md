@@ -23,12 +23,14 @@ band of $|\mathbf G|$, and an equivariant head per element — and `chg2tau`
 reads them, written into extra input channels by an equivariant
 {class}`~poraque.ml.paw.SiteWriter` beside the density. What the one predicts is
 exactly what the other reads, which is the route this project takes to the
-total energy; `task: all` still means the chain alone. The
+total energy. In a configuration they are the two sections, `ext2chg:` and
+`chg2tau:`, and the occupancies are a block inside each: `occupancies: false`
+trains the grid alone, which is the chain's pair of maps. The
 {ref}`configuration reference <paw>` describes both operators and their keys.
 
 `ext2pseudo` and `ext2chg` can also be handed the structure explicitly, as
 superpositions of isolated atoms beside $V_\mathrm{ext}$
-({ref}`model.structure_input <structure-input>`): scalar fields, so the
+({ref}`ext2chg.structure_input <structure-input>`): scalar fields, so the
 operator stays equivariant, and functions of the geometry alone, so inference
 rebuilds them from the structure as it rebuilds the potential.
 
@@ -87,24 +89,26 @@ material. Batches are drawn across materials, so a gradient step generally
 mixes several.
 
 ```bash
-poraque-train --config configs/train.yaml
+poraque-train --config configs/train_simple.yaml
 ```
 
-A fifth of the structures is held back for validation (`valid_fraction`), so
-the reported score is genuinely held out. The run writes a single unified
-checkpoint in Poraquê's own **`.poraque`** format —
-`models/poraque_models.poraque` — holding both operators under the
-keys `ext2pseudo` and `pseudo2tau`. A [fine-tuned](../fine_tuning/index.md) model is
-written beside it as `poraque_finetuned.poraque`, never over the top of it.
+A fifth of the structures is held back for validation
+(`training.validation.fraction`), so the reported score is genuinely held out.
+The run writes a single unified checkpoint in Poraquê's own **`.poraque`**
+format — `models/<run.name>/<run.name>.poraque` — holding both operators, under
+the internal task names (`ext2pseudo` and `pseudo2tau`, or `ext2chg` and
+`chg2tau` with the occupancies on). A [fine-tuned](../fine_tuning/index.md)
+model is written beside it as `<run.name>_finetuned.poraque`, never over the
+top of it.
 
 K-fold cross-validation is the only variation on this:
 
 ```bash
-poraque-train --config configs/train.yaml --kfold
+poraque-train --config configs/train_simple.yaml --kfold 5
 ```
 
 ```{warning}
-With `valid_fraction: 0` nothing is held out and the reported metrics are
+With `training.validation.fraction: 0` nothing is held out and the reported metrics are
 **training fit**. They show the model can represent the data; they are not a
 generalization estimate. That setting is for the final artifact, which uses all
 the data — quote a `--kfold` run for the number.
@@ -177,7 +181,7 @@ into a histogram the moment it is drawn and then discarded. The histogram is
 sparse and fine — 0.005 decades a bin on log axes — and only its occupied bins
 are stored, so memory follows the spread of the values rather than the number
 of structures; the 200 bins of the figure are summed from it at the end. The
-draw is seeded from `training.seed` and the structure's position, so a rerun
+draw is seeded from `run.seed` and the structure's position, so a rerun
 draws the same voxels.
 
 The four numbers on each panel are computed from running sums over the sampled

@@ -1,0 +1,37 @@
+# Controlled comparison: activation: kan, variant chebyshev, use_base: false.
+# a Chebyshev-polynomial expansion -- typically cheaper and smoother.
+#
+# Against its base-carrying twin (compare_kan_chebyshev_ext2pseudo.yaml) and the
+# shipped silu model, ext2pseudo only. One setting differs -- see the README's
+# "Run use_base: false" follow-up.
+#
+# Without the base term phi_c is BOUNDED for a wide pre-activation tail
+# rather than tracking it.
+task:
+  type: ext2pseudo               # the density operator alone
+  name: pt_w16_m8_l3_kanchebyshev_purekan
+
+data:
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs   # as in configs/train.yaml
+
+model:
+  width: 16                   # channels carried through the Fourier layers
+  modes: 8                    # retained Fourier modes per axis
+  n_layers: 3                 # Fourier layers
+  projection_channels: 64     # hidden width of the read-out head
+  mode_selection: fixed       # as in configs/train.yaml
+  activation: kan             # the learnable family; kan_setup says which and how
+  kan_setup:
+    variant: chebyshev            # bspline | chebyshev | rbf | rational
+    use_base: false           # "pure" KAN: only the learned residual
+    degree: 6                 # highest Chebyshev order; degree+1 coefficients (the default)
+  paw:                         # the ext2chg operator; on only for task.type: ext2chg
+    enable: false
+
+training:
+  physics_informed:
+    enable: auto                # auto: on, because a weight below is non-zero
+    electron_count_weight: 0.1  # int(rho) = the known valence count
+    positivity_weight: 0.0
+    von_weizsacker_weight: 0.0
+    euler_lagrange_weight: 0.0

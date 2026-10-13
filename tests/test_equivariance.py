@@ -394,13 +394,20 @@ class TestTheCoordinateChannelsAreNotThreeScalars:
             FNO3d(width=8, modes=4, n_layers=2, equivariant=True,
                   use_coordinates=True)
 
-    def test_the_config_refuses_before_the_cache_is_built(self):
+    def test_the_config_never_asks_for_both(self):
+        """
+        Since 2026-10-13 the coordinates are not a key: they are appended
+        exactly when the model is not equivariant, so the contradiction cannot
+        be written down at all.
+        """
         from poraque.ml.config import TrainingConfig
 
         config = TrainingConfig.from_dict(
-            {"model": {"equivariant": {"enable": True}}})
+            {"ext2chg": {"model": {"equivariant": True}}})
+        assert config.model_kwargs("ext2chg")["use_coordinates"] is False
         with pytest.raises(ValueError, match="use_coordinates"):
-            config.model_kwargs()
+            TrainingConfig.from_dict(
+                {"ext2chg": {"model": {"use_coordinates": True}}})
 
 
 class TestTheRadialCoefficientsAreReal:
@@ -589,96 +596,65 @@ class TestAnEquivariantCheckpointReloadsAsOne:
 
 class TestTheEquivarianceBlockIsOneKey:
     """
-    The switch lives *inside* the settings it governs.
+    The block's presence is the switch, and its settings sit inside it.
 
-    It did not always. Until 26.9.8 this was ``equivariant: true`` beside a
-    separately-named ``equivariant_setup`` group, and the two halves drifted in
-    exactly the way a two-key layout invites: a config with ``equivariant:
-    false`` above a populated ``equivariant_setup`` reads at a glance as an
-    equivariant run and is not one, and nothing brings the flag and the
-    settings into the same field of view. The block is now what
-    ``fine_tuning``, ``symbolic.physics`` and ``training.physics_informed``
-    already were.
+    Until 26.9.8 this was ``equivariant: true`` beside a separately-named
+    ``equivariant_setup`` group, and the two halves drifted: ``equivariant:
+    false`` above a populated ``equivariant_setup`` reads as an equivariant
+    run and is not one. Then the switch moved inside as ``enable``; since
+    2026-10-13 there is no switch key at all -- ``false`` is off, ``true`` or
+    a block of settings is on -- so a block can no longer be off while
+    listing settings that read as if they applied.
 
     What has *not* changed is the constructor: :class:`FNO3d` still takes flat
     ``equivariant=`` / ``n_radial=`` keywords, and every checkpoint's
-    ``architecture`` record is unaffected. The grouping is a property of the
-    configuration file.
+    ``architecture`` record is unaffected.
     """
 
     @staticmethod
-    def _config(**model):
+    def _config(equivariant):
         from poraque.ml.config import TrainingConfig
 
-        return TrainingConfig.from_dict({"model": model})
+        return TrainingConfig.from_dict(
+            {"ext2chg": {"model": {"equivariant": equivariant}}})
 
     def test_an_unknown_setting_raises_and_names_the_block(self):
-        """
-        At load, and the message says which block --- there are three.
+        """At load, and the message says which block."""
+        with pytest.raises(ValueError,
+                           match=r"ext2chg\.model\.equivariant.*nradial"):
+            self._config({"nradial": 4})
 
-        "Unknown key: nradal" is true of a schema with one such block and
-        useless in one with several.
-        """
-        with pytest.raises(ValueError, match=r"model\.equivariant.*nradial"):
-            self._config(equivariant={"enable": True, "nradial": 4},
-                         use_coordinates=False)
-
-    def test_a_setting_beside_a_dense_model_warns_rather_than_acting(self):
-        config = self._config(equivariant={"n_radial": 4})
-        with pytest.warns(RuntimeWarning, match="enable false"):
-            kwargs = config.model_kwargs()
-        assert "n_radial" not in kwargs
+    def test_false_is_the_dense_layer(self):
+        kwargs = self._config(False).model_kwargs("ext2chg")
         assert kwargs["equivariant"] is False
+        assert "n_radial" not in kwargs
 
     def test_the_block_reaches_the_constructor(self):
-        config = self._config(
-            use_coordinates=False,
-            equivariant={"enable": True, "n_radial": 24, "g_basis": 5.0,
-                         "spherical_cutoff": False})
-        kwargs = config.model_kwargs()
+        kwargs = self._config({"n_radial": 24, "g_basis": 5.0}) \
+            .model_kwargs("ext2chg")
         assert kwargs["equivariant"] is True
         assert kwargs["n_radial"] == 24
         assert kwargs["g_basis"] == 5.0
-        assert kwargs["spherical_cutoff"] is False
+        assert kwargs["spherical_cutoff"] is True
 
-    def test_an_unstated_setting_stays_unstated(self):
-        """
-        Not filled in with a default, and that is load-bearing.
+    def test_the_cutoff_is_not_a_choice(self):
+        """A box of modes silently breaks the property, so it cannot be asked for."""
+        with pytest.raises(ValueError, match="spherical_cutoff"):
+            self._config({"spherical_cutoff": False})
 
-        ``g_basis`` unstated means "follow ``g_max`` if
-        ``mode_selection: physical`` named a band, else the module default" ---
-        a resolution :class:`FNO3d` performs and the config cannot, because it
-        depends on a key in the same section. A block that helpfully passed
-        ``g_basis: 8.0`` would bypass it and silently ignore ``g_max``.
-        """
-        config = self._config(use_coordinates=False,
-                              equivariant={"enable": True, "n_radial": 24})
-        kwargs = config.model_kwargs()
-        assert "g_basis" not in kwargs and "spherical_cutoff" not in kwargs
-
-    def test_the_old_two_key_spelling_says_what_to_write_instead(self):
-        """A config written against the old schema is refused, not reinterpreted."""
+    def test_the_old_spellings_say_what_to_write_instead(self):
+        """A config written against an older schema is refused, not reinterpreted."""
         from poraque.ml.config import TrainingConfig
 
-        with pytest.raises(ValueError, match="must be a block"):
+        with pytest.raises(ValueError, match="Removed configuration section"):
             TrainingConfig.from_dict({"model": {"equivariant": True}})
+        with pytest.raises(ValueError, match="enable"):
+            self._config({"enable": True})
 
-        with pytest.raises(ValueError, match="equivariant_setup"):
-            TrainingConfig.from_dict(
-                {"model": {"equivariant_setup": {"n_radial": 4}}})
-
-    def test_a_bad_switch_value_is_refused_at_load(self):
-        """
-        ``from_dict`` validates the block, so a run says so on the command line.
-
-        Not at ``model_kwargs()`` time: the model is built after the field
-        cache, which on a real dataset is minutes.
-        """
-        from poraque.ml.config import TrainingConfig
-
-        with pytest.raises(ValueError, match="enable is 'yes'"):
-            TrainingConfig.from_dict(
-                {"model": {"equivariant": {"enable": "yes"}}})
+    def test_a_scalar_is_refused_at_load(self):
+        """``from_dict`` validates the block, so a run says so on the command line."""
+        with pytest.raises(ValueError, match="false, true or a block"):
+            self._config("yes")
 
 
 def accelerator():
@@ -1232,16 +1208,15 @@ class TestTheBasisCanBeSizedFromTheTrainingSplit:
         from poraque.ml.config import TrainingConfig
 
         def model(**equivariant):
-            return TrainingConfig.from_dict({"model": {
-                "use_coordinates": False,
-                "equivariant": {"enable": True, **equivariant}}}).model
+            return TrainingConfig.from_dict({"ext2chg": {"model": {
+                "equivariant": equivariant}}}).ext2chg.model
 
         assert model(g_basis="auto").equivariant_kwargs()["g_basis"] == "auto"
         assert model(g_basis=12.5).equivariant_kwargs()["g_basis"] == 12.5
-        assert "g_basis" not in model().equivariant_kwargs()
+        assert model().equivariant_kwargs()["g_basis"] == "auto"
         for wrong in ("atuo", -3.0, 0.0, True, "8.0"):
             with pytest.raises(ValueError, match="g_basis"):
-                model(g_basis=wrong).equivariant_kwargs()
+                model(g_basis=wrong)
 
 
 class TestTheRunSaysWhatBandItRetains:
@@ -1279,7 +1254,10 @@ class TestTheRunSaysWhatBandItRetains:
         """Only the cells and the grid shape are read out of a sample."""
 
         def __init__(self, lengths, n=24):
+            from poraque.ml.tasks import resolve_task
+
             self.lengths, self.n = list(lengths), n
+            self.task = resolve_task("ext2pseudo")
 
         def __len__(self):
             return len(self.lengths)
@@ -1292,9 +1270,10 @@ class TestTheRunSaysWhatBandItRetains:
     def _config(**equivariant):
         from poraque.ml.config import TrainingConfig
 
-        return TrainingConfig.from_dict({"model": {
-            "modes": 6, "use_coordinates": False,
-            "equivariant": {"enable": True, "n_radial": 16, **equivariant}}})
+        return TrainingConfig.from_dict({"ext2chg": {
+            "occupancies": False,
+            "model": {"modes": 6,
+                      "equivariant": {"n_radial": 16, **equivariant}}}})
 
     def test_auto_becomes_a_number_before_the_model_is_built(self):
         script = self._train_script()
@@ -1315,8 +1294,6 @@ class TestTheRunSaysWhatBandItRetains:
         data = self._Dataset([4.0, 7.0])
         assert script.resolve_radial_basis(
             data, self._config(g_basis=9.0), lambda line: None) == {}
-        assert script.resolve_radial_basis(
-            data, self._config(), lambda line: None) == {}
 
     def test_paw_backbone_modes_override_the_field_config_for_auto_basis(self):
         script = self._train_script()
@@ -1339,7 +1316,10 @@ class TestTheRunSaysWhatBandItRetains:
 
         script = self._train_script()
         data = self._Dataset([4.0, 7.0])
-        config = TrainingConfig.from_dict({"model": {"modes": 6}})
+        config = TrainingConfig.from_dict(
+            {"ext2chg": {"occupancies": False, "model": {"modes": 6}}})
+        assert script.resolve_radial_basis(data, config,
+                                           lambda line: None) == {}
         lines = []
         script.report_radial_basis(
             data, FNO3d(width=8, modes=6, n_layers=1), lines.append)

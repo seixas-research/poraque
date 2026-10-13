@@ -207,7 +207,7 @@ def configure(base, arm, seed, epochs, device):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="configs/train_ext2chg_chon.yaml")
+    parser.add_argument("--config", default="experiments/chon_ext2chg/configs/train_ext2chg_chon.yaml")
     parser.add_argument("--output", default="experiments/chon_ext2chg/results")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--seeds", type=int, nargs="+", default=[0])

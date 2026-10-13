@@ -28,7 +28,7 @@ They usually do: \opt{ENCUT} and the cell shape fix \opt{NGXF, NGYF, NGZF}, so
 two structures of the same compound can land on different meshes. This is
 handled --- batches are grouped by grid shape and one model serves them all.
 
-Fields are reduced to a common working resolution (\opt{data.resolution}, the
+Fields are reduced to a common working resolution (\opt{data.grid.resolution}, the
 longest axis) by Fourier truncation, which is the exact band-limited projection
 for a plane-wave field: periodicity and the electron count survive to machine
 precision.
@@ -51,15 +51,15 @@ before any model is trained.
 
 \opt{poraque-train} does not repeat this check, but it does stop with an error
 on a missing \file{CHGCAR}, and it reports how many points a field drives
-negative when it is band-limited to \opt{data.resolution} --- Gibbs ringing
+negative when it is band-limited to \opt{data.grid.resolution} --- Gibbs ringing
 around the core peaks, which is an artifact of the truncation rather than a
 fault in the data.
 
 A missing \file{TAUCAR} is \emph{not} an error. It simply means the material
-cannot serve \opt{pseudo2tau}; it remains a perfectly good \opt{ext2pseudo} training
-example, the cache logs \opt{[no TAUCAR]} beside it, and a run asking for
-\opt{task: all} trains the task the data can support and reports the other as
-skipped.
+cannot serve the kinetic operator; it remains a perfectly good training example
+for the density operator, the cache logs \opt{[no TAUCAR]} beside it, and a run
+with a \opt{chg2tau:} section trains the operator the data can support and
+reports the other as skipped.
 
 \section{Downloading from the Materials Project}
 \label{sec:mp-download}
@@ -104,7 +104,7 @@ poraque-mp --elements Pt Pd Ni --output data/MP --max-size-mb 20
 \end{lstlisting}
 
 A download is \textbf{one directory per material, named by its id} --- the
-shape of a VASP run, and the shape \opt{data.data\_paths} already reads:
+shape of a VASP run, and the shape \opt{data.path} already reads:
 
 \begin{lstlisting}
 data/MP/
@@ -269,8 +269,11 @@ Three consequences, and Poraqu\^e handles the first two for you:
     returns $11$, $11$ and $10$ --- the \file{POTCAR} values, read off the
     data, from three small files.
   \item[$\tau$ is not.] No public archive publishes a kinetic energy density,
-    so \opt{pseudo2tau} cannot be trained on MP data at all. Use
-    \opt{task: ext2pseudo}.
+    so the kinetic operator cannot be trained on MP data at all: write no
+    \opt{chg2tau:} section. Nor do MP downloads carry a \file{POTCAR}, so the
+    density operator trains on the grid alone, with \opt{occupancies: false}
+    in its \opt{ext2chg:} section; the per-atom PAW records need the
+    pseudopotential to lay them out.
 \end{description}
 
 \section{The external potential without a POTCAR}
@@ -286,10 +289,12 @@ per species, as VASP distributes them:
 
 \begin{lstlisting}
 data:
-  data_paths:
-    - data/MP
+  path: data/MP
   potcar_dir: /opt/vasp/potpaw_PBE     # <dir>/Ag/POTCAR, <dir>/Pt/POTCAR, ...
-  resolution: 32
+  grid:
+    resolution: 32
+ext2chg:
+  occupancies: false
 \end{lstlisting}
 
 \file{.gz} and \file{.Z} entries are read directly, and a flat
@@ -326,7 +331,7 @@ falls back to the Gaussian model for the structures containing it, so a library
 covering four elements of five still buys the exact potential for everything
 that does not involve the fifth. The run log names the construction per source.
 
-\subsection{What the cache records, and \opt{strict\_potcar}}
+\subsection{What the cache records}
 \label{sec:strict-potcar}
 
 The cache \emph{directory name} carries \opt{potcar} when a library was
@@ -353,10 +358,9 @@ library --- it rebuilds rather than being reused --- and the resolved mode is
 in the run log beside the rest of the cache line. It is \opt{null} when no
 library is configured, so a purely Gaussian dataset's fingerprint is unchanged.
 
-\opt{data.strict\_potcar: true} turns the fallback into an error naming the
-elements the library did not serve. Off by default, and meant for queues: the
-failure shape is \opt{training.strict\_device}'s --- a job that holds its
-allocation and quietly computes something other than what was configured.
+(A \opt{data.strict\_potcar} key that turned the fallback into an error was
+removed on 2026-10-13: what the library served is recorded in the cache
+either way, and the run log names it.)
 
 Without a library the map learned is \emph{model potential} $\to$ \emph{DFT
 density}: well-posed and self-consistent, since inference builds the very same
@@ -365,17 +369,16 @@ quoted.
 
 \section{Training on several sources at once}
 
-\opt{data.data\_paths} is a list of directories, and \textbf{every entry has
-the same shape}: subdirectories, one per material, each holding that material's
-volumetric files. Nothing in the config says which is which, because on disk
-they are the same kind of thing:
+\opt{data.path} is \textbf{one directory}: subdirectories, one per material,
+each holding that material's volumetric files. A VASP run tree
+(\file{structure\_0000/}, \ldots), a download (\file{mp-124/}, \ldots) and a
+cache from an earlier run are all this shape, and nothing in the config says
+which is which, because on disk they are the same kind of thing. To train across
+several, gather the material directories under one parent (symbolic links do):
 
 \begin{lstlisting}
 data:
-  data_paths:
-    - data/vasp/structures  # structure_0000/, structure_0001/, ...
-    - data/MP               # mp-124/, mp-81/, ...
-    - data/cache/res32      # a cache from an earlier run
+  path: data/pooled       # structure_0000/, mp-124/, res32_0001/, ...
   potcar_dir: /opt/vasp/potpaw_PBE
 \end{lstlisting}
 
@@ -388,7 +391,7 @@ Everything found is pooled into one training set, and identifiers that collide
 between directories are prefixed with their own so no material is silently
 dropped. \file{TAUCAR} is optional \textbf{per material}: one run may have
 written one while its neighbor did not, and the one that did still reaches
-\opt{pseudo2tau} while both reach \opt{ext2pseudo}.
+the kinetic operator while both reach the density operator.
 
 \begin{pwarn}
 Without \opt{potcar\_dir}, mixing materials that carry their own

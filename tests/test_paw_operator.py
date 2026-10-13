@@ -687,41 +687,61 @@ class TestTheOperatorTrainsInTheOneLoop:
 class TestTheScriptsDriveIt:
     """``poraque-train`` trains it; ``poraque-inference`` writes its records."""
 
-    @pytest.fixture
-    def trained(self, tmp_path):
+    @staticmethod
+    def _train(tmp_path, runs, name, occupancies=True):
+        """
+        One synthetic ``poraque-train`` run: the density operator (with its
+        per-atom head unless ``occupancies`` is false) and the grid-only
+        kinetic operator.
+        """
         import yaml
 
         import poraque_train
 
-        runs = _synthetic_runs(str(tmp_path), count=5)
-        config = tmp_path / "train.yaml"
+        head = ({"neighbor_min": 0.6} if occupancies else False)
+        config = tmp_path / f"{name}.yaml"
         config.write_text(yaml.safe_dump({
-            "task": {"type": "all", "name": "paw_run"},
-            "data": {"data_paths": [runs], "cache": str(tmp_path / "c"),
-                     "resolution": 16, "delta_density": False,
-                     "paw_source": "material", "spin": "auto"},
-            "model": {"width": 4, "modes": 2, "n_layers": 1,
-                      "projection_channels": 4, "use_coordinates": False,
-                      "paw": {"enable": True, "width": 6, "modes": 4,
-                              "n_layers": 1, "neighbor_min": 0.6}},
-            "training": {"epochs": 3, "batch_size": 2, "valid_fraction": 0.4,
-                         "eval_epoch": 1, "device": "cpu"},
-            "output": {"root": str(tmp_path / "models"),
-                       "plot_figures": False, "write_pdf_report": False},
+            "run": {"name": name, "output": str(tmp_path / "models")},
+            "data": {"path": runs, "atoms": None, "spin": "auto",
+                     "grid": {"resolution": 16},
+                     "cache": {"dir": str(tmp_path / "c")}},
+            "ext2chg": {"target": "full",
+                        "model": {"width": 6, "modes": 4, "layers": 1,
+                                  "projection_channels": 4},
+                        "occupancies": head},
+            "chg2tau": {"occupancies": False,
+                        "model": {"width": 4, "modes": 2, "layers": 1,
+                                  "projection_channels": 4}},
+            "training": {"epochs": 3, "batch_size": 2,
+                         "validation": {"fraction": 0.4, "every": 1}},
+            "runtime": {"device": "cpu"},
+            "report": {"figures": False, "pdf": False},
         }))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             poraque_train.run(["--config", str(config)])
+        return str(tmp_path / "models" / name / f"{name}{'.poraque'}")
+
+    @pytest.fixture
+    def trained(self, tmp_path):
+        runs = _synthetic_runs(str(tmp_path), count=5)
+        self._train(tmp_path, runs, "paw_run")
         return tmp_path, runs
 
-    def test_an_all_run_with_the_block_trains_all_three(self, trained):
+    def test_a_run_with_both_sections_trains_both_operators(self, trained):
+        """
+        The density operator with its per-atom head beside the grid-only
+        kinetic operator, in one bundle. (Before 2026-10-13 an ``all`` run
+        with ``model.paw`` on trained three operators; a run now trains one
+        per section.)
+        """
         import json
 
         from poraque.ml import bundle_tasks, read_bundle
 
         tmp_path, _ = trained
         bundle = tmp_path / "models" / "paw_run" / "paw_run.poraque"
-        assert bundle_tasks(str(bundle)) == ["ext2chg", "ext2pseudo", "pseudo2tau"]
+        assert bundle_tasks(str(bundle)) == ["ext2chg", "pseudo2tau"]
         site = read_bundle(str(bundle))["model_state_dict"]["ext2chg"]["site"]
         assert site["layouts"] == {"14": [1]}
         assert site["readout_g_max"] > 0 and site["transform"]
@@ -750,8 +770,11 @@ class TestTheScriptsDriveIt:
 
         def find(node):
             if isinstance(node, dict):
-                if "occupancies" in node and node["occupancies"]:
-                    return node["occupancies"]
+                # The resolved config carries an `ext2chg.occupancies` block
+                # too; the summary is the one with per-split entries.
+                found = node.get("occupancies")
+                if isinstance(found, dict) and "train" in found:
+                    return found
                 for value in node.values():
                     found = find(value)
                     if found:
@@ -850,7 +873,7 @@ class TestTheScriptsDriveIt:
         from poraque.ml import load_bundle, save_bundle
 
         base, runs = trained
-        bundle = str(base / "models" / "paw_run" / "paw_run.poraque")
+        bundle = self._train(base, runs, "grid_run", occupancies=False)
         chain = {task: load_bundle(bundle, task, device="cpu")
                  for task in ("ext2pseudo", "pseudo2tau")}
         without = save_bundle(str(tmp_path / "chain.poraque"), chain)

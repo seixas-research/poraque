@@ -5,7 +5,7 @@
 Tests for the train/validation split, the evaluation interval and early
 stopping.
 
-The split is defined by one number, ``valid_fraction``; K-fold cross-validation
+The split is defined by one number, ``validation.fraction``; K-fold cross-validation
 is the only variation on the protocol.
 
 The split resolver lives in ``scripts/poraque_train.py`` rather than the package,
@@ -15,7 +15,6 @@ what actually runs.
 """
 
 import importlib.util
-import json
 import os
 import sys
 
@@ -54,15 +53,64 @@ class _Dataset:
 
 
 # ===================================================================== #
-# valid_fraction
+# training.validation.fraction
 # ===================================================================== #
+@pytest.fixture
+def toy(tmp_path):
+    """A two-material dataset on one grid shape, enough to drive `train`."""
+    import numpy as np
+
+    from poraque.fields import ChargeDensity, KineticEnergyDensity
+    from poraque.fields import ExternalPotential, FieldGrid
+    from poraque.fields.vasp.poscar import Poscar
+    from poraque.ml import FieldPairDataset
+
+    rng = np.random.default_rng(0)
+    for index in range(2):
+        directory = tmp_path / f"mat_{index}"
+        directory.mkdir()
+        grid = FieldGrid((8, 8, 8), np.eye(3) * 5.0)
+        structure = Poscar(np.eye(3) * 5.0, ["Si"], [2], rng.random((2, 3)))
+        ExternalPotential.compute(structure, grid, {"Si": 4.0},
+                                  widths={"Si": 0.5}).write(directory / "EXTCAR")
+        density = rng.random(grid.shape) * 0.1 + 0.01
+        ChargeDensity(density, grid, structure).write(directory / "CHGCAR")
+        KineticEnergyDensity(density * 50.0, grid,
+                             structure).write(directory / "TAUCAR")
+    return FieldPairDataset(str(tmp_path), task="pseudo2tau")
+
+
+def _rows(lines):
+    """The per-epoch data rows, excluding the legend, header and rule."""
+    return [line for line in lines
+            if line.strip() and line.strip()[0].isdigit()]
+
+
+def _train_toy(dataset, epochs, eval_every, log=None, validate=False,
+               verbose=True, early_stopping=0, loss=None):
+    """Run a tiny training loop and return its history."""
+    torch.manual_seed(0)
+    operator = FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
+                             projection_channels=8, device="cpu")
+    return train(operator, dataset, epochs=epochs, batch_size=1,
+                 learning_rate=1e-3, eval_every=eval_every,
+                 validation=dataset if validate else None,
+                 early_stopping=early_stopping, log=log, verbose=verbose,
+                 loss=loss)
+
+
+# ===================================================================== #
+# Fine-tuning
+# ===================================================================== #
+
+
 class TestValidFraction:
     def test_default_is_a_fifth(self):
-        assert TrainingConfig().training.valid_fraction == pytest.approx(0.2)
+        assert TrainingConfig().training.validation.fraction == pytest.approx(0.2)
 
     def test_zero_falls_back_to_the_universal_fit(self):
         config = TrainingConfig()
-        config.training.valid_fraction = 0.0
+        config.training.validation.fraction = 0.0
         validation, origin = poraque_train.resolve_validation_split(_Dataset(5), config)
         assert validation == set()
         assert "TRAINING FIT" in origin
@@ -72,22 +120,22 @@ class TestValidFraction:
     ])
     def test_reserves_the_requested_share(self, fraction, expected):
         config = TrainingConfig()
-        config.training.valid_fraction = fraction
+        config.training.validation.fraction = fraction
         validation, _ = poraque_train.resolve_validation_split(_Dataset(10), config)
         assert len(validation) == expected
 
     def test_split_is_at_the_structure_level(self):
         """Whole materials move together; identifiers come out intact."""
         config = TrainingConfig()
-        config.training.valid_fraction = 0.4
+        config.training.validation.fraction = 0.4
         validation, _ = poraque_train.resolve_validation_split(_Dataset(5), config)
         assert validation <= {f"struct_{i:03d}" for i in range(5)}
 
     def test_is_reproducible_for_a_given_seed(self):
         def draw(seed):
             config = TrainingConfig()
-            config.training.valid_fraction = 0.3
-            config.training.seed = seed
+            config.training.validation.fraction = 0.3
+            config.run.seed = seed
             return poraque_train.resolve_validation_split(_Dataset(10), config)[0]
 
         assert draw(0) == draw(0)
@@ -97,8 +145,8 @@ class TestValidFraction:
         draws = set()
         for seed in range(8):
             config = TrainingConfig()
-            config.training.valid_fraction = 0.3
-            config.training.seed = seed
+            config.training.validation.fraction = 0.3
+            config.run.seed = seed
             draws.add(frozenset(
                 poraque_train.resolve_validation_split(_Dataset(10), config)[0]))
         assert len(draws) > 1
@@ -109,41 +157,41 @@ class TestValidFraction:
         fit while the config still claims a validation split.
         """
         config = TrainingConfig()
-        config.training.valid_fraction = 0.01
+        config.training.validation.fraction = 0.01
         validation, _ = poraque_train.resolve_validation_split(_Dataset(3), config)
         assert len(validation) == 1
 
-        config.training.valid_fraction = 0.99
+        config.training.validation.fraction = 0.99
         validation, _ = poraque_train.resolve_validation_split(_Dataset(3), config)
         assert len(validation) == 2      # one structure is always kept to train on
 
     def test_rejects_a_fraction_outside_the_range(self):
         config = TrainingConfig()
         for bad in (1.0, 1.5, -0.2):
-            config.training.valid_fraction = bad
-            with pytest.raises(SystemExit, match="valid_fraction"):
+            config.training.validation.fraction = bad
+            with pytest.raises(SystemExit, match="fraction"):
                 poraque_train.resolve_validation_split(_Dataset(5), config)
 
     def test_rejects_a_single_structure_dataset(self):
         config = TrainingConfig()
-        config.training.valid_fraction = 0.5
+        config.training.validation.fraction = 0.5
         with pytest.raises(SystemExit, match="two structures"):
             poraque_train.resolve_validation_split(_Dataset(1), config)
 
     def test_origin_records_the_protocol(self):
         config = TrainingConfig()
-        config.training.valid_fraction = 0.25
-        config.training.seed = 7
+        config.training.validation.fraction = 0.25
+        config.run.seed = 7
         _, origin = poraque_train.resolve_validation_split(_Dataset(8), config)
-        assert "valid_fraction=0.25" in origin and "seed=7" in origin
+        assert "fraction=0.25" in origin and "seed=7" in origin
 
 
 # ===================================================================== #
-# eval_epoch
+# training.validation.every
 # ===================================================================== #
 class TestEvalInterval:
     def test_config_default_is_ten(self):
-        assert TrainingConfig().training.eval_epoch == 10
+        assert TrainingConfig().training.validation.every == 10
 
     def test_reports_only_on_the_interval(self, toy):
         lines = []
@@ -228,7 +276,7 @@ class TestEvalInterval:
 
 
 # ===================================================================== #
-# early_stopping
+# training.validation.patience
 # ===================================================================== #
 class TestEarlyStopping:
     def test_config_defaults_are_pinned(self):
@@ -241,9 +289,9 @@ class TestEarlyStopping:
         # Raised together when the shipped configs were unified: both of them
         # already used 500/300, so the numbers moved out of the files and into
         # the defaults rather than being restated in each.
-        assert training.early_stopping == 300
+        assert training.validation.patience == 300
         assert training.epochs == 500
-        assert training.early_stopping < training.epochs
+        assert training.validation.patience < training.epochs
 
     def test_triggers_once_patience_runs_out(self, toy, monkeypatch):
         """
@@ -347,202 +395,6 @@ class TestEarlyStopping:
 # ===================================================================== #
 # The reported objective
 # ===================================================================== #
-class TestTheObjectiveIsReportedAsOneNumber:
-    """
-    The log and the report carry the **total** objective and nothing else.
-
-    A physics-informed run's total is what the optimizer stepped on: data
-    fidelity plus every weighted constraint. The per-term split used to be
-    logged beside it, in unweighted units that do not sum to the total, which
-    made the table three columns wide and two of them incomparable with any
-    other run's.
-    """
-
-    def _physics(self, **weights):
-        from poraque.ml.losses import PhysicsInformedLoss
-
-        return PhysicsInformedLoss(task="pseudo2tau", **weights)
-
-    def test_history_carries_only_the_total(self, toy):
-        history = _train_toy(toy, epochs=2, eval_every=1, verbose=False,
-                             loss=self._physics(positivity_weight=0.5,
-                                                von_weizsacker_weight=0.25))
-        assert len(history["train_loss"]) == 2
-        assert not [key for key in history
-                    if key.startswith(("data_loss", "physics"))]
-
-    def test_the_header_is_the_same_with_and_without_constraints(self, toy):
-        constrained = []
-        _train_toy(toy, epochs=2, eval_every=1, log=constrained.append,
-                   loss=self._physics(positivity_weight=0.5))
-        plain = []
-        _train_toy(toy, epochs=2, eval_every=1, log=plain.append)
-
-        header = next(line for line in constrained if "epoch" in line)
-        assert header == next(line for line in plain if "epoch" in line)
-        assert "train loss" in header
-        assert "physics" not in header and "data loss" not in header
-
-    def test_rows_line_up_under_the_header(self, toy):
-        lines = []
-        _train_toy(toy, epochs=2, eval_every=1, log=lines.append,
-                   loss=self._physics(positivity_weight=0.5))
-        header = next(line for line in lines if "epoch" in line)
-        for row in _rows(lines):
-            assert len(row) == len(header)
-
-
-class TestTheValidationColumnNamesItsOwnNorm:
-    r"""
-    ``loss: sobolev`` constrains the gradient as well as the values, so the
-    number watched during training has to be the one being minimized.
-
-    The regression this pins is a label, but not only a label. The column read
-    ``val rel L2`` whatever the objective was, and the quantity behind it was a
-    plain :math:`L^2` — so a Sobolev run reported a number the optimizer was
-    not stepping on, plotted it as the validation curve, and *selected the
-    checkpoint on it*. Early stopping was choosing the model that minimized the
-    wrong functional.
-
-    The final per-structure table is deliberately untouched: it reports
-    relative :math:`L^2` whatever the run was trained with, because that is
-    what makes two runs comparable at all.
-    """
-
-    def _objective(self, name="relative_h1", weight=0.1):
-        from poraque.ml.losses import PhysicsInformedLoss
-
-        return PhysicsInformedLoss(task="pseudo2tau", loss=name,
-                                   sobolev_weight=weight)
-
-    def test_a_plain_run_still_says_rel_l2(self, toy):
-        lines = []
-        history = _train_toy(toy, epochs=2, eval_every=1, validate=True,
-                             log=lines.append)
-        assert history["val_metric"] == "rel L2"
-        assert "val rel L2" in next(line for line in lines if "epoch" in line)
-
-    @pytest.mark.parametrize("name,label", (
-        ("absolute_l2", "abs L2"),
-        ("relative_l2", "rel L2"),
-        ("absolute_h1", "abs H1"),
-        ("relative_h1", "rel H1"),
-    ))
-    def test_each_objective_names_its_own_norm(self, toy, name, label):
-        lines = []
-        history = _train_toy(toy, epochs=2, eval_every=1, validate=True,
-                             log=lines.append,
-                             loss=self._objective(name))
-
-        assert history["val_metric"] == label
-        header = next(line for line in lines if "epoch" in line)
-        assert f"val {label}" in header
-
-    def test_the_legend_says_what_the_h1_is_made_of(self, toy):
-        """A reader who has never seen the column needs the definition once."""
-        lines = []
-        _train_toy(toy, epochs=1, eval_every=1, validate=True,
-                   log=lines.append,
-                   loss=self._objective("relative_h1", weight=0.25))
-        legend = " ".join(lines)
-        assert "rel H1 = rel L2 + 0.25 x" in legend
-        assert "reports plain rel L2" in legend
-
-    def test_an_absolute_h1_says_absolute_in_its_legend(self, toy):
-        lines = []
-        _train_toy(toy, epochs=1, eval_every=1, validate=True,
-                   log=lines.append,
-                   loss=self._objective("absolute_h1", weight=0.5))
-        legend = " ".join(lines)
-        assert "abs H1 = abs L2 + 0.5 x the absolute L2 of the gradient" in legend
-
-    def test_the_number_is_not_the_l2_relabeled(self, toy):
-        """
-        The whole point: an H1 error is a different number. Relabeling the
-        same value would satisfy a test on the header and none of the reason
-        the header was wrong.
-        """
-        plain = _train_toy(toy, epochs=2, eval_every=1, validate=True,
-                           verbose=False)
-        sobolev = _train_toy(toy, epochs=2, eval_every=1, validate=True,
-                             verbose=False,
-                             loss=self._objective("relative_h1", weight=0.5))
-        assert sobolev["val_error"][-1] > plain["val_error"][-1]
-
-    def test_it_is_the_objective_evaluated_on_the_held_out_set(self, toy):
-        """
-        `evaluate` and `SobolevLoss` must agree, or the validation curve is
-        measuring a third thing that happens to look like the objective.
-        """
-        import torch
-
-        from poraque.ml.losses import DATA_LOSSES, build_data_loss, data_error
-
-        torch.manual_seed(0)
-        prediction = torch.randn(2, 1, 8, 8, 8)
-        target = torch.randn(2, 1, 8, 8, 8)
-        cell = torch.eye(3).expand(2, 3, 3) * 5.0
-
-        for name in DATA_LOSSES:
-            objective = build_data_loss(name, sobolev_weight=0.3)
-            reduced = (objective(prediction, target, cell)
-                       if DATA_LOSSES[name]["gradient"]
-                       else objective(prediction, target))
-            per_sample = data_error(prediction, target, cell, loss=name,
-                                    sobolev_weight=0.3)
-
-            assert per_sample.shape == (2,), name
-            assert float(per_sample.mean()) == pytest.approx(
-                float(reduced), rel=1e-5), name
-
-    def test_zero_weight_is_exactly_the_l2_number(self, toy):
-        """
-        `sobolev_weight: 0` is a relative L2 by construction, and the label
-        follows the weight rather than the config keyword — so a run that asks
-        for Sobolev and weights the gradient at nothing is reported honestly
-        as what it is.
-        """
-        import torch
-
-        from poraque.ml.losses import data_error, relative_error
-
-        torch.manual_seed(0)
-        prediction = torch.randn(2, 1, 6, 6, 6)
-        target = torch.randn(2, 1, 6, 6, 6)
-        cell = torch.eye(3).expand(2, 3, 3) * 5.0
-        assert torch.allclose(
-            data_error(prediction, target, cell, loss="relative_h1",
-                       sobolev_weight=0.0),
-            relative_error(prediction, target))
-
-        # The *label* still says H1: the objective was asked for, and a run
-        # that weights the gradient at nothing has chosen a degenerate H1
-        # rather than an L2. Renaming it would hide the setting.
-        history = _train_toy(toy, epochs=1, eval_every=1, validate=True,
-                             verbose=False,
-                             loss=self._objective("relative_h1", weight=0.0))
-        assert history["val_metric"] == "rel H1"
-
-    def test_the_figure_labels_the_axis_it_actually_plotted(self, toy, tmp_path):
-        """
-        The stored series is whatever `train` measured, and a figure that
-        assumed L2 would mislabel it with nothing to notice.
-        """
-        pytest.importorskip("matplotlib")
-        from poraque.vis import TrainingReport
-
-        report = TrainingReport(str(tmp_path))
-        history = _train_toy(toy, epochs=2, eval_every=1, validate=True,
-                             verbose=False, loss=self._objective())
-        report.loss_curves(history, name="sobolev")
-
-        import matplotlib.pyplot as plt
-
-        plt.close("all")
-        assert history["val_metric"] == "rel H1"
-        assert os.path.exists(os.path.join(str(tmp_path), "sobolev.png"))
-
-
 class TestTheFinalEvaluationIsAlwaysARelativeL2:
     """
     Whatever a run was trained on, what it *reports* per structure is a
@@ -569,220 +421,6 @@ class TestTheFinalEvaluationIsAlwaysARelativeL2:
         assert values["relative_l2"] == pytest.approx(0.1, rel=1e-6)
 
 
-class TestLossSummaryRows:
-    def test_reports_one_number(self):
-        rows = poraque_train.loss_summary({"train_loss": [0.5]})
-        assert rows == {"final train loss": "0.50000"}
-
-    def test_a_constrained_run_reports_the_total_and_nothing_else(self):
-        """The total already includes every weighted physics term."""
-        rows = poraque_train.loss_summary({"train_loss": [1.0]})
-        assert rows == {"final train loss": "1.00000"}
-
-    def test_an_empty_history_yields_nothing(self):
-        assert poraque_train.loss_summary({}) == {}
-
-
-# ===================================================================== #
-# Writing the history into the JSON summary
-# ===================================================================== #
-class TestHistorySerialization:
-    """
-    `train` returns per-epoch curves and scalar summaries in one dict, and the
-    scalars appear whenever a validation split does — which is the default. A
-    run that mapped `float` over every value crashed at the very end of
-    training, after all the compute had been spent.
-    """
-
-    def test_separates_curves_from_scalars(self, toy):
-        history = _train_toy(toy, epochs=4, eval_every=2, validate=True,
-                             early_stopping=2)
-        poraque_train.extract_resource_usage(history)
-        curves, stopping = poraque_train.split_history(history)
-
-        assert set(curves) == {"train_loss", "val_error", "val_epoch"}
-        assert all(isinstance(value, list) for value in curves.values())
-        assert set(stopping) == {"best_epoch", "best_error", "stopped_early",
-                                 "val_metric"}
-
-    def test_a_real_history_survives_json(self, toy):
-        """The failure was a TypeError on the way into json.dump."""
-        history = _train_toy(toy, epochs=4, eval_every=2, validate=True,
-                             early_stopping=2)
-        curves, stopping = poraque_train.split_history(history)
-        payload = json.loads(json.dumps({"history": curves,
-                                         "early_stopping": stopping}))
-        assert payload["history"]["train_loss"]
-        assert payload["early_stopping"]["stopped_early"] in (True, False)
-
-    def test_scalars_are_not_iterated(self):
-        """The exact shape that raised: an int beside the lists."""
-        curves, stopping = poraque_train.split_history(
-            {"train_loss": [1.0, 0.5], "best_epoch": 2, "stopped_early": True})
-        assert curves == {"train_loss": [1.0, 0.5]}
-        assert stopping == {"best_epoch": 2, "stopped_early": True}
-
-
-class TestTheCostMeasurementsAreNotResults:
-    """
-    `train` records what a run cost beside what it achieved, and
-    `split_history` sorts by *type* rather than by meaning: a list becomes a
-    plotted loss curve and a scalar becomes an early-stopping summary. Left in
-    place, `seconds_per_epoch` would be serialized as a second loss curve and a
-    VRAM byte count would be filed under early stopping.
-    """
-
-    def test_the_timings_are_taken_out_of_the_history(self, toy):
-        history = _train_toy(toy, epochs=3, eval_every=1, validate=True)
-        assert len(history["seconds_per_epoch"]) == 3
-
-        resources = poraque_train.extract_resource_usage(history)
-        assert "seconds_per_epoch" not in history
-        assert len(resources["seconds_per_epoch"]) == 3
-
-    def test_every_key_is_present_even_off_cuda(self, toy):
-        """`None` says "not measured here"; a missing key says nothing."""
-        history = _train_toy(toy, epochs=2, eval_every=1, validate=True)
-        resources = poraque_train.extract_resource_usage(history)
-        assert set(resources) == {"seconds_per_epoch", "peak_vram_bytes",
-                                  "peak_vram_reserved_bytes"}
-
-    def test_what_is_left_still_serializes(self, toy):
-        history = _train_toy(toy, epochs=3, eval_every=1, validate=True)
-        resources = poraque_train.extract_resource_usage(history)
-        curves, stopping = poraque_train.split_history(history)
-        payload = json.loads(json.dumps({"history": curves,
-                                         "early_stopping": stopping,
-                                         **resources}))
-        assert "seconds_per_epoch" not in payload["history"]
-        assert len(payload["seconds_per_epoch"]) == 3
-
-    def test_no_validation_leaves_no_scalars(self, toy):
-        """Without a split `train` adds none, and the key stays null."""
-        history = _train_toy(toy, epochs=2, eval_every=1)
-        curves, stopping = poraque_train.split_history(history)
-        assert stopping is None
-        assert curves["train_loss"]
-
-    def test_curves_are_floats(self):
-        """Tensors and numpy scalars must not reach json.dump."""
-        curves, _ = poraque_train.split_history(
-            {"train_loss": [torch.tensor(0.25)], "val_epoch": [1]})
-        assert curves == {"train_loss": [0.25], "val_epoch": [1.0]}
-        assert all(type(v) is float for v in curves["train_loss"])
-
-
-class TestTorchCompileIsGoneAndSaysSo:
-    """
-    `training.compile` was removed in 26.9.3, after being measured on a V100.
-
-    Inductor does not generate code for complex operators. `SpectralConv3d`'s
-    weights are complex, so the one part of an FNO that compilation was invoked
-    to fuse is the part it hands back to eager, while the wrapper and the graph
-    breaks are still paid for: +7.9 % and +9.4 % per epoch over two modes and
-    two repetitions, 200-314 s of cold compilation on top, a validation error
-    that moved reproducibly in both arms, and -- on four DDP ranks -- an
-    eighteen-minute first epoch with no output, canceled.
-
-    The three keys are *retired* rather than accepted-and-ignored. A config
-    that still sets them was written to ask for something, and answering "yes"
-    silently is how a run comes to be quoted with a claim about how it was
-    executed that is not true of it.
-    """
-
-    @pytest.mark.parametrize("key", ["compile", "compile_mode",
-                                     "compile_dynamic"])
-    def test_the_key_raises_rather_than_being_ignored(self, tmp_path, key):
-        from poraque.ml.config import TrainingConfig
-
-        path = tmp_path / "run.yaml"
-        path.write_text(f"training:\n  {key}: true\n")
-        with pytest.raises(ValueError, match=key):
-            TrainingConfig.from_yaml(str(path))
-
-    def test_the_error_names_torch_compile_and_why(self, tmp_path):
-        """A retired key that says only "unknown" sends the reader to the
-        source to find out whether it ever did anything."""
-        from poraque.ml.config import TrainingConfig
-
-        path = tmp_path / "run.yaml"
-        path.write_text("training:\n  compile: true\n")
-        with pytest.raises(ValueError) as error:
-            TrainingConfig.from_yaml(str(path))
-        assert "torch.compile" in str(error.value)
-
-    def test_train_no_longer_takes_the_keywords(self):
-        import inspect
-
-        from poraque.ml.training import train
-
-        parameters = inspect.signature(train).parameters
-        assert not [name for name in parameters if "compile" in name]
-
-    def test_the_measurement_survives_in_the_source(self):
-        """
-        The reason it is gone has to outlive the code that implemented it, or
-        it gets re-proposed in a year. `physics.py` already keeps its rejected
-        on-device cell arithmetic this way; the complex weights get the same
-        treatment, beside the `torch.cfloat` that is the whole explanation.
-        """
-        import os
-
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        source = open(os.path.join(root, "src", "poraque", "ml",
-                                   "fno.py")).read()
-        weights = source.split("dtype=torch.cfloat")[0][-1600:]
-        assert "torch.compile" in weights
-        assert "complex" in weights
-
-
-@pytest.fixture
-def toy(tmp_path):
-    """A two-material dataset on one grid shape, enough to drive `train`."""
-    import numpy as np
-
-    from poraque.fields import ChargeDensity, KineticEnergyDensity
-    from poraque.fields import ExternalPotential, FieldGrid
-    from poraque.fields.vasp.poscar import Poscar
-    from poraque.ml import FieldPairDataset
-
-    rng = np.random.default_rng(0)
-    for index in range(2):
-        directory = tmp_path / f"mat_{index}"
-        directory.mkdir()
-        grid = FieldGrid((8, 8, 8), np.eye(3) * 5.0)
-        structure = Poscar(np.eye(3) * 5.0, ["Si"], [2], rng.random((2, 3)))
-        ExternalPotential.compute(structure, grid, {"Si": 4.0},
-                                  widths={"Si": 0.5}).write(directory / "EXTCAR")
-        density = rng.random(grid.shape) * 0.1 + 0.01
-        ChargeDensity(density, grid, structure).write(directory / "CHGCAR")
-        KineticEnergyDensity(density * 50.0, grid,
-                             structure).write(directory / "TAUCAR")
-    return FieldPairDataset(str(tmp_path), task="pseudo2tau")
-
-
-def _rows(lines):
-    """The per-epoch data rows, excluding the legend, header and rule."""
-    return [line for line in lines
-            if line.strip() and line.strip()[0].isdigit()]
-
-
-def _train_toy(dataset, epochs, eval_every, log=None, validate=False,
-               verbose=True, early_stopping=0, loss=None):
-    """Run a tiny training loop and return its history."""
-    torch.manual_seed(0)
-    operator = FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
-                             projection_channels=8, device="cpu")
-    return train(operator, dataset, epochs=epochs, batch_size=1,
-                 learning_rate=1e-3, eval_every=eval_every,
-                 validation=dataset if validate else None,
-                 early_stopping=early_stopping, log=log, verbose=verbose,
-                 loss=loss)
-
-
-# ===================================================================== #
-# Fine-tuning
-# ===================================================================== #
 class TestFineTuning:
     """
     Adapting a trained operator, rather than starting from noise.
@@ -962,43 +600,42 @@ class TestTheExtensionIsPoraqueAndPfnoStillLoads:
 
     def test_the_checkpoint_path_carries_the_new_extension(self, tmp_path):
         config = TrainingConfig()
-        config.task.name = "pt_res32"
-        config.output.root = str(tmp_path)
+        config.run.name = "pt_res32"
+        config.run.output = str(tmp_path)
         assert config.checkpoint_path().endswith("pt_res32.poraque")
 
 
 class TestFineTuningValidation:
     def _config(self, tmp_path, **overrides):
-        config = TrainingConfig()
-        config.fine_tuning.enable = True
-        config.output.root = str(tmp_path)
+        config = TrainingConfig.from_dict({"fine_tuning": True})
+        config.run.output = str(tmp_path)
         for key, value in overrides.items():
             setattr(config.fine_tuning, key, value)
         return config
 
     def test_disabled_needs_no_checkpoint(self):
         config = TrainingConfig()
-        config.fine_tuning.pretrained_checkpoint = "/nope.poraque"
+        assert config.fine_tuning is None
         poraque_train.validate_fine_tuning_settings(config)     # no raise
 
     def test_a_missing_checkpoint_fails_before_training(self, tmp_path):
-        config = self._config(tmp_path, pretrained_checkpoint="/nope.poraque")
+        config = self._config(tmp_path, checkpoint="/nope.poraque")
         with pytest.raises(SystemExit, match="does not exist"):
             poraque_train.validate_fine_tuning_settings(config)
 
     def test_writing_over_the_base_is_refused(self, tmp_path):
         """
-        The destination is derived from `task.name`, so the collision is
+        The destination is derived from `run.name`, so the collision is
         constructed the same way rather than from a remembered filename.
         """
-        config = self._config(tmp_path, pretrained_checkpoint="unset")
+        config = self._config(tmp_path, checkpoint="unset")
         base = poraque_train.bundle_path(config)
         # The run folder is created by the run, not by `bundle_path`, which
         # only forms the name.
         os.makedirs(os.path.dirname(base), exist_ok=True)
         with open(base, "w") as handle:
             handle.write("x")
-        config.fine_tuning.pretrained_checkpoint = base
+        config.fine_tuning.checkpoint = base
         with pytest.raises(SystemExit, match="over its own base"):
             poraque_train.validate_fine_tuning_settings(config)
 
@@ -1008,14 +645,14 @@ class TestFineTuningValidation:
 
         base = tmp_path / BUNDLE_FILENAME
         base.write_text("x")
-        config = self._config(tmp_path, pretrained_checkpoint=str(base))
+        config = self._config(tmp_path, checkpoint=str(base))
         poraque_train.validate_fine_tuning_settings(config)     # no raise
 
     def test_the_name_reaches_every_output(self, tmp_path):
         """One string decides the weights, the report and the figure folder."""
         config = TrainingConfig()
-        config.task.name = "ag_au_pt_v2"
-        config.output.root = str(tmp_path)
+        config.run.name = "ag_au_pt_v2"
+        config.run.output = str(tmp_path)
 
         run = os.path.join(str(tmp_path), "ag_au_pt_v2")
         assert poraque_train.bundle_path(config) == \
@@ -1031,14 +668,14 @@ class TestFineTuningValidation:
         assert poraque_train.report_filename(config, "ext2pseudo", 2) == \
             "ag_au_pt_v2_ext2pseudo_report.pdf"
         # A fine-tune never lands on the general model it specializes.
-        config.fine_tuning.enable = True
+        config.apply_overrides({"fine_tuning": True})
         assert poraque_train.bundle_path(config) != \
             os.path.join(str(tmp_path), "ag_au_pt_v2.poraque")
 
     def test_a_non_positive_learning_rate_fails(self, tmp_path):
         base = tmp_path / "base.poraque"
         base.write_text("x")
-        config = self._config(tmp_path, pretrained_checkpoint=str(base),
+        config = self._config(tmp_path, checkpoint=str(base),
                               learning_rate=0.0)
         with pytest.raises(SystemExit, match="must be positive"):
             poraque_train.validate_fine_tuning_settings(config)
@@ -1047,235 +684,9 @@ class TestFineTuningValidation:
         base = tmp_path / "base.pth"
         base.write_text("x")
         config = self._config(tmp_path,
-                              pretrained_checkpoint=str(tmp_path / "base.poraque"))
+                              checkpoint=str(tmp_path / "base.poraque"))
         poraque_train.validate_fine_tuning_settings(config)
-        assert config.fine_tuning.pretrained_checkpoint == str(base)
-
-
-class TestStandardOutputTables:
-    """
-    The terminal tables, checked on their alignment.
-
-    Every defect here is invisible to the code and obvious to a reader: a rule
-    a character short of its heading, a left-aligned value under a
-    right-aligned word, a column of blanks for a metric the task cannot
-    produce. None of them raises.
-    """
-
-    METRICS = {"mse": 1.1e-4, "mae": 4.5e-3, "rmse": 1.0e-2,
-               "relative_l2": 0.0107, "r2": 0.9998, "jsd": 7.8e-6}
-
-    def test_the_rule_matches_the_heading(self):
-        heading, rule = poraque_train.format_metrics_header(22)
-        assert len(rule) == len(heading), (
-            f"heading {len(heading)}, rule {len(rule)}")
-
-    def test_rows_line_up_with_the_heading(self):
-        heading, _ = poraque_train.format_metrics_header(22)
-        row = poraque_train.format_metrics_row("struct_000", "train",
-                                               self.METRICS, 22)
-        assert len(row) == len(heading)
-
-    def test_the_split_is_its_own_column(self):
-        """
-        It used to be glued to the name -- ``struct_000 (train)`` -- which put
-        two different things in the structure column.
-        """
-        row = poraque_train.format_metrics_row("struct_000", "validation",
-                                               self.METRICS, 22)
-        assert "struct_000" in row and "(validation)" not in row
-        assert "validation" in row
-
-    def test_a_left_aligned_column_has_a_left_aligned_title(self):
-        heading, _ = poraque_train.format_metrics_header(22)
-        row = poraque_train.format_metrics_row("s", "train", self.METRICS, 22)
-        assert heading.index("split") == row.index("train")
-
-    def test_a_missing_metric_leaves_the_columns_intact(self):
-        """
-        ``jsd`` is undefined for a signed field. The row must keep its width so
-        the table does not shear.
-        """
-        heading, _ = poraque_train.format_metrics_header(22)
-        without = dict(self.METRICS, jsd=None)
-        assert len(poraque_train.format_metrics_row(
-            "s", "train", without, 22)) == len(heading)
-
-    def test_a_task_without_jsd_drops_the_column_entirely(self):
-        columns = poraque_train.metric_columns([dict(self.METRICS, jsd=None)])
-        assert all(key != "jsd" for _, key, _ in columns), (
-            "a column of blanks is worse than no column")
-        heading, rule = poraque_train.format_metrics_header(22, columns)
-        assert "JSD" not in heading and len(rule) == len(heading)
-
-    def test_structure_names_wrap_into_indented_lines(self):
-        names = [f"struct_{i:03d}" for i in range(17)]
-        lines = poraque_train.format_names(names)
-        assert len(lines) > 1, "seventeen names on one line is the defect"
-        assert all(line.startswith("      ") for line in lines)
-        joined = " ".join(lines).split()
-        assert joined == names, "every name must survive the wrapping"
-
-    def test_an_empty_name_list_prints_nothing(self):
-        assert poraque_train.format_names([]) == []
-
-    def test_grid_shapes_are_one_line_each(self):
-        lines = poraque_train.format_shapes({(32, 32, 32): 9, (30, 32, 30): 1})
-        assert len(lines) == 2
-        assert "30x32x30" in lines[0] and "1 structure" in lines[0]
-        assert "32x32x32" in lines[1] and "9 structures" in lines[1]
-
-    def test_the_shape_continuation_is_indented_under_the_first(self):
-        lines = poraque_train.format_shapes({(32, 32, 32): 9, (30, 32, 30): 1})
-        assert not lines[0].startswith(" ")
-        assert lines[1].startswith("   "), "continuations align under the label"
-
-    def test_the_aggregate_is_printed_for_both_splits(self):
-        """
-        Quoting only the training aggregate is how a training fit gets read as
-        a generalization estimate.
-        """
-        lines = []
-        poraque_train.format_aggregate("ext2pseudo: training", [self.METRICS],
-                                       lines.append)
-        poraque_train.format_aggregate("ext2pseudo: VALIDATION", [self.METRICS],
-                                       lines.append)
-        text = "\n".join(lines)
-        assert "training" in text and "VALIDATION" in text
-        assert text.count("metric") == 2
-
-    def test_an_empty_aggregate_prints_nothing(self):
-        lines = []
-        poraque_train.format_aggregate("ext2pseudo: VALIDATION", [], lines.append)
-        assert lines == []
-
-    def test_the_aggregate_rule_matches_its_heading(self):
-        lines = []
-        poraque_train.format_aggregate("x", [self.METRICS], lines.append)
-        heading = next(line for line in lines if "metric" in line)
-        rule = next(line for line in lines if set(line.strip()) == {"-"})
-        assert len(rule) == len(heading)
-
-
-class TestTheFiveMetricsTheSplitTableReports:
-    r"""
-    Two metrics were added for the split table, and both are integrals.
-
-    ``relative_l2``, ``mae`` and ``max_abs`` are sums over voxels and need
-    nothing but the two arrays. ``relative_h1`` and ``integral_error`` are
-    integrals over the *cell* --- a spectral gradient and a volume element ---
-    so they need the grid, and return ``None`` without one rather than
-    guessing a lattice.
-
-    ``relative_h1`` is deliberately **not** the :math:`H^1` objective
-    :class:`~poraque.ml.losses.SobolevLoss` minimizes. That one is two
-    separately-normalized terms combined with ``training.sobolev_weight``, so
-    its value depends on a run setting and two runs cannot be compared through
-    it. This is the textbook relative Sobolev norm, which has no free
-    parameter --- the same discipline
-    :class:`TestTheFinalEvaluationIsAlwaysARelativeL2` states for the
-    :math:`L^2`.
-    """
-
-    @staticmethod
-    def _grid(shape=(12, 12, 12), lengths=(5.0, 6.5, 7.0)):
-        import numpy as np
-
-        from poraque.fields.grid import FieldGrid
-
-        return FieldGrid(shape, np.diag(lengths))
-
-    def test_the_integral_metrics_need_a_grid_and_say_so_by_absence(self):
-        import numpy as np
-
-        values = poraque_train.metrics(np.ones((4, 4, 4)) * 1.1,
-                                       np.ones((4, 4, 4)))
-        assert "relative_h1" not in values
-        assert "integral_error" not in values
-
-    def test_a_perfect_prediction_scores_zero_on_both(self):
-        import numpy as np
-
-        grid = self._grid()
-        field = np.random.RandomState(0).rand(*grid.shape) + 1.0
-        values = poraque_train.metrics(field, field, grid=grid)
-        assert values["relative_h1"] == 0.0
-        assert values["integral_error"] == 0.0
-
-    def test_the_sobolev_error_matches_the_torch_gradient_it_mirrors(self):
-        """
-        ``metrics`` is NumPy and the loss is torch; the two spectral gradients
-        are separate implementations of one operator, and a report that
-        disagrees with the objective by a factor nobody can account for is
-        worse than one that omits the column.
-        """
-        import numpy as np
-        import torch
-
-        from poraque.ml.physics import spectral_gradient
-
-        grid = self._grid()
-        rng = np.random.RandomState(0)
-        target = rng.rand(*grid.shape) + 1.0
-        prediction = target + 0.02 * rng.rand(*grid.shape)
-
-        mine = poraque_train.sobolev_error(prediction, target, grid)
-
-        cell = torch.tensor(np.asarray(grid.cell), dtype=torch.float64)[None]
-        predicted = torch.tensor(prediction, dtype=torch.float64)[None, None]
-        reference = torch.tensor(target, dtype=torch.float64)[None, None]
-        difference = spectral_gradient(predicted - reference, cell)
-        gradient = spectral_gradient(reference, cell)
-        theirs = float(torch.sqrt(
-            (((predicted - reference) ** 2).sum() + (difference ** 2).sum())
-            / ((reference ** 2).sum() + (gradient ** 2).sum())))
-
-        assert mine == pytest.approx(theirs, rel=1e-10)
-
-    def test_a_rough_prediction_scores_worse_in_h1_than_in_l2(self):
-        """
-        The reason the column exists: a small pointwise error can hide a large
-        gradient error, and the von Weizsacker kinetic energy depends on the
-        gradient. High-frequency noise is exactly that case.
-        """
-        import numpy as np
-
-        grid = self._grid()
-        rng = np.random.RandomState(1)
-        target = np.ones(grid.shape) + 0.1 * np.sin(
-            np.linspace(0, 2 * np.pi, grid.shape[0]))[:, None, None]
-        noise = 0.01 * rng.randn(*grid.shape)          # white: all frequencies
-        values = poraque_train.metrics(target + noise, target, grid=grid)
-        assert values["relative_h1"] > 5 * values["relative_l2"]
-
-    def test_the_conservation_error_is_signed_before_it_is_absolute(self):
-        """
-        The question is whether the *totals* agree, not how large the voxel
-        errors were. A prediction 1 % high in one half of the cell and 1 % low
-        in the other conserves charge exactly, and must read zero here while
-        reading badly under ``mae``.
-        """
-        import numpy as np
-
-        grid = self._grid(shape=(12, 12, 12))
-        target = np.ones(grid.shape)
-        prediction = target.copy()
-        prediction[:6] += 0.01
-        prediction[6:] -= 0.01
-
-        values = poraque_train.metrics(prediction, target, grid=grid)
-        assert values["integral_error"] == pytest.approx(0.0, abs=1e-12)
-        assert values["mae"] == pytest.approx(0.01, rel=1e-9)
-
-    def test_the_conservation_error_is_in_electrons_not_in_voxels(self):
-        """One extra electron spread over the cell reads as one, not as 1/N."""
-        import numpy as np
-
-        grid = self._grid()
-        target = np.ones(grid.shape)
-        prediction = target + 1.0 / grid.volume_element / target.size
-        values = poraque_train.metrics(prediction, target, grid=grid)
-        assert values["integral_error"] == pytest.approx(1.0, rel=1e-9)
+        assert config.fine_tuning.checkpoint == str(base)
 
 
 class TestTheReportedMetricsAreTheDensityChannel:

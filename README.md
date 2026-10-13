@@ -34,10 +34,7 @@ cd poraque
 pip install -e .
 ```
 
-Python 3.11 or newer. Symbolic distillation needs one optional package —
-SymPy, to render its result and check its limits — as
-`pip install "poraque[symbolic]"`; the search itself is genetic programming in
-NumPy and needs nothing training does not. Installing registers seven console commands
+Python 3.11 or newer. Installing registers seven console commands
 — `poraque-train`, `poraque-inference`, `poraque-committee`,
 `poraque-active-learning`, `poraque-atoms`, `poraque-vasp` and `poraque-mp` —
 which run from any directory once the environment is active. All but the last
@@ -67,13 +64,13 @@ python -m poraque.ml.device --check --device cuda   # three seconds, before the 
 It prints the torch build, its CUDA runtime, where it was imported from, the
 architectures it carries kernels for, and one line per GPU saying whether this
 build can use it — and exits non-zero when the answer is no. In a job script,
-`|| exit 1`; in a configuration, `training.strict_device: true`, which aborts
+`|| exit 1`; in a configuration, `runtime.strict_device: true`, which aborts
 rather than spending a GPU allocation on the CPU.
 
-Two settings matter more than the GPU itself. `data.cache_in_memory` (`auto` by
+Two settings matter more than the GPU itself. `data.cache.in_memory` (`auto` by
 default) keeps decoded fields in RAM between epochs; without it every epoch
 re-parses every file, which measured **10.3× on a V100** with the validation
-error unchanged to five decimals. And `training.num_workers` is its
+error unchanged to five decimals. And `runtime.loader_workers` is its
 *alternative*, not its complement — added to the cache it makes training slower,
 since each worker re-parses the set into a cache of its own.
 
@@ -81,10 +78,10 @@ since each worker re-parses the set into a cache of its own.
 
 Poraquê trains data-parallel over NCCL when the launcher describes a group, and
 on one device when it does not. It cannot invent ranks: **the launcher decides
-the topology and `training.distributed` decides only whether to believe it.**
+the topology and `runtime.distributed` decides only whether to believe it.**
 
 ```bash
-sbatch scripts/slurm/poraque_ddp.sbatch configs/train.yaml
+sbatch scripts/slurm/poraque_ddp.sbatch configs/train_simple.yaml
 ```
 
 The line that matters is `--ntasks-per-node=4` beside `--gres=gpu:4`.
@@ -109,42 +106,47 @@ process group, no training — so the expensive allocation starts training the
 moment it is granted:
 
 ```bash
-cache=$(sbatch --parsable scripts/slurm/poraque_cache.sbatch configs/train.yaml)
-sbatch --dependency=afterok:${cache} scripts/slurm/poraque_ddp.sbatch configs/train.yaml
+cache=$(sbatch --parsable scripts/slurm/poraque_cache.sbatch configs/train_simple.yaml)
+sbatch --dependency=afterok:${cache} scripts/slurm/poraque_ddp.sbatch configs/train_simple.yaml
 ```
 
 The GPU job, run with the same config, finds every material `cached` and
 rebuilds nothing.
 
-### Faster CPU inference (optional)
+### Optional C kernels
 
-Poraquê ships a small C kernel for the spectral contraction — the one part of a
-Fourier layer PyTorch runs poorly at batch 1, which is the shape every
-prediction has. It compiles itself on first use and needs no configuration.
+Poraquê ships two small optional C kernels: one for the spectral contraction —
+the part of a Fourier layer PyTorch runs poorly at batch 1, which is the shape
+every prediction has — and one for the text codec of volumetric grid blocks,
+which makes dataset cache builds 3.2–3.4× faster. Nothing is compiled at
+installation; each compiles itself on first use. To compile both now, check
+each against its Python reference and see what loaded:
 
 ```bash
-python -m poraque.ml.backend --benchmark    # compile now and check it
+poraque-compile                             # compile now, check, report
+python -m poraque.ml.backend --benchmark    # the spectral kernel alone, with a benchmark
 ```
 
-**2–3.4× on whole-model CPU inference** at 24–32³ (less at 96³, where the FFTs
+The spectral kernel gives **2–3.4× on whole-model CPU inference** at 24–32³ (less at 96³, where the FFTs
 dominate). Optional in every sense: without a C compiler everything works and
 falls back to `torch.einsum`. Training is unaffected, accuracy is identical to
-float32 rounding, and `PORAQUE_C_BACKEND=0` turns it off. See the User Guide
+float32 rounding, and `PORAQUE_C_BACKEND=0` turns both off. See the User Guide
 §1.5 for the details.
 
 ## Use
 
 ```bash
-# 1. train one ext2pseudo and one pseudo2tau model on all structures
-poraque-train --config configs/train.yaml
+# 1. train the density operator (ext2chg) and the kinetic operator (chg2tau)
+#    on all structures: an operator is trained when its section is present
+poraque-train --config configs/train_simple.yaml
 
-# 2. measure generalization
-poraque-train --config configs/train.yaml --kfold --k-folds 5
+# 2. measure generalization (K folds; the operators here need occupancies: false)
+poraque-train --config configs/train_simple.yaml --kfold 5
 
 # 3. predict a structure that has never been computed. --models points at
-#    the bundle step 1 wrote: models/<task.name>/<task.name>.poraque
+#    the bundle step 1 wrote: models/<run.name>/<run.name>.poraque
 poraque-inference new_structure/ --output predictions/new_structure \
-    --models models/pt_w16_m8_l3/pt_w16_m8_l3.poraque
+    --models models/platinum/platinum.poraque
 
 # 4. calibrate: does committee disagreement predict error? Run this on
 #    LABELED data first -- it costs nothing and says whether step 5 means
@@ -170,26 +172,30 @@ Every predicted field is written in `CHGCAR` format.
 ### Configuration
 
 **Every key is optional** — a file states only what the run does differently.
-That is why `configs/train.yaml` fits on half a page: of the ~80 settings a
-full config carries, it changes a handful.
+That is why `configs/train_simple.yaml` fits on a page: of the ~80 settings a
+full config carries, it changes a handful. A file is eight sections (`run`,
+`data`, `ext2chg`, `chg2tau`, `training`, `fine_tuning`, `runtime`, `report`),
+and **an operator is trained when its section is present**. A feature that can
+be switched off is a block whose presence is the switch: `false` is off, `true`
+or the bare key is on with the defaults, a mapping is on with those settings.
 
-`configs/train_complete_and_commented.yaml` is the reference: it lists the
-settings worth knowing about, each with the reasoning behind it. Read it there
-and copy only what you need into your own file.
+`configs/train_complete_and_commented.yaml` is the reference: every key at its
+default, each with the reasoning behind it. Read it there and copy only what
+you need into your own file. A configuration written for the previous schema
+(before 2026-10-13) is refused, and each error names where the setting went.
 
 | File | Purpose |
 | --- | --- |
-| `configs/train.yaml` | the clean starting point — copy this one |
-| `configs/train_complete_and_commented.yaml` | the same run with every choice explained; a reference to read, not to copy |
-| `configs/kan/*.yaml` | the KAN-activation comparison runs, one file per variant |
+| `configs/train_simple.yaml` | the clean starting point: the platinum set, both operators — copy this one |
+| `configs/train_complete_and_commented.yaml` | every key at its default, explained; a reference to read, not to copy |
 
 ### One directory per model
 
 Everything a run writes lands under `models/<name>/`:
 
 ```text
-models/pt_w16_m8_l3/
-    pt_w16_m8_l3.poraque     the weights
+models/platinum/
+    platinum.poraque         the weights
     log/                  training log, metrics JSON, resolved config
     plots/                loss curves, parity, field slices
     report/               the generated PDF
@@ -197,35 +203,36 @@ models/pt_w16_m8_l3/
 
 A trained model is not one file: it is weights, plus the numbers that say how
 good they are, plus the figures behind those numbers, plus the config that
-produced them. Naming the run is the only thing you set — `task.name` — and
+produced them. Naming the run is the only thing you set — `run.name` — and
 two runs with different names cannot collide.
 
-Each part can be switched off independently:
+The figures and the PDF can be switched off independently, and the parent
+directory moved or silenced:
 
 ```yaml
-output:
-  root: models              # null disables all output
-  write_log: true
-  plot_figures: true
-  write_pdf_report: true
-  checkpoint: true
+run:
+  output: models            # null disables all output
+report:
+  figures: true
+  pdf: true
 ```
 
-or from the shell with `--output-root DIR`, `--no-plots`, `--no-report`.
+or from the shell with `--output DIR`, `--no-plots`, `--no-report`.
 
 ### Precision
 
-Two independent settings, because they control different costs:
+The fields are held in float64, and each operator computes in what its
+`model.precision` says:
 
 ```yaml
-data:  {precision: float64}    # how fields are stored: float16 | float32 | float64
-model: {precision: float32}    # what the operator computes in: float32 | float64
+ext2chg:
+  model:
+    precision: float32      # what the operator computes in: float32 | float64
 ```
 
-`data.precision` is memory — a 160³ field is 16 MB in double and 8 MB in
-single. `model.precision: float64` roughly doubles time and memory and is for
-checking that a physical result is not a single-precision artifact; it needs
-`training.device: cpu`, since Metal has no float64 at all.
+`precision: float64` roughly doubles time and memory and is for checking that a
+physical result is not a single-precision artifact; it needs
+`runtime.device: cpu`, since Metal has no float64 at all.
 
 Or drive it from ASE:
 
@@ -234,7 +241,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
-atoms.calc = Poraque("models/poraque_models.poraque", potcar_dir="POTCARs")
+atoms.calc = Poraque("models/platinum/platinum.poraque", potcar_dir="POTCARs")
 
 rho = atoms.calc.get_charge_density(atoms)   # ChargeDensity, e/Ang^3
 print(rho.electron_count())                  # 44.0, the valence count
@@ -314,7 +321,7 @@ also strongly right-tailed, so two draws of twenty can differ by tens of
 percent, and a projection that moved on every run could not be planned against.
 
 A download is **one directory per material, named by its id** — the shape of a
-VASP run, and the shape `data.data_paths` already reads:
+VASP run, and the shape `data.path` already reads:
 
 ```text
 data/MP/
@@ -362,25 +369,30 @@ for byte rather than parsed and re-emitted: re-rendering a file that was
 already correct can only lose digits or shift a column, and the density block
 is a column-positional Fortran read.
 
-Then train. **`data_paths` is the only key that names a dataset**, and a
-download goes in it exactly as a run tree does — every entry is a directory of
-per-material subdirectories, and nothing says which is which:
+Then train. **`data.path` is the only key that names a dataset**: one
+directory of per-material subdirectories, and a download goes in it exactly as
+a run tree does — nothing says which is which. To pool your own runs with it,
+gather both under one parent directory:
 
 ```yaml
-task: ext2pseudo              # MP publishes no tau, so pseudo2tau is not trainable
+run:
+  name: mp_pt_pd_ni
 data:
-  data_paths:
-    - data/MP              # mp-124/, mp-81/, ...
-    - data/vasp/structures # optional: your own runs, pooled into the same set
+  path: data/MP                        # mp-124/, mp-81/, ...
   potcar_dir: /opt/vasp/potpaw_PBE     # see below
-  resolution: 32
+  grid:
+    resolution: 32
+ext2chg:
+  occupancies: false          # no POTCAR to lay the PAW records out from
 ```
 
-`TAUCAR` is optional per material, so `type: all` on a mixture trains `ext2pseudo`
-on everything and `pseudo2tau` on whichever materials have a τ.
+MP publishes no τ, so there is no `chg2tau:` section: an operator is trained
+when its section is present. `TAUCAR` is optional per material, so on a mixture
+that has some, adding the section trains the kinetic operator on whichever
+materials have a τ.
 
 ```bash
-poraque-train --config configs/train_materialsproject.yaml
+poraque-train --config my_mp_run.yaml
 ```
 
 **Set `potcar_dir`.** An MP download has a structure and a density and no
@@ -426,7 +438,7 @@ in its first lines.
 - **Grids may differ between materials.** One model serves all of them: the
   operator's weights live in Fourier-mode space, and batches are bucketed by
   grid shape.
-- **Constraints are structural where possible.** For `pseudo2tau`,
+- **Constraints are structural where possible.** With `chg2tau.head: pauli`,
   τ = τ_vW[ρ] + softplus(·) makes the Hoffmann-Ostenhof bound hold by
   construction rather than by penalty.
 - **Resampling is spectral.** Fourier truncation is the exact band-limited
@@ -436,7 +448,7 @@ in its first lines.
   which, with the compute capability, because a request that quietly fell back
   to the CPU is the most expensive silent failure this package has.
 - **Rotational equivariance is available, and it is a constraint on the kernel
-  rather than a library.** `model.equivariant.enable: true` makes every Fourier
+  rather than a library.** `ext2chg.model.equivariant` (a block; `true` takes the defaults) makes every Fourier
   multiplier a function of |**G**| alone, which is exactly a convolution with a
   radial kernel and therefore commutes with every rotation: measured over the
   24 rotations of the cube, the prediction follows the input field to 2.9e-07
@@ -445,11 +457,12 @@ in its first lines.
   layer holds `4·width²·modes³` complex numbers and the radial one
   `width²·n_radial` real ones.
 
-  Two conditions come with it and both raise rather than degrade: the retained
-  modes are masked to a sphere, since a radial kernel over a *box* is
-  equivariant only under the box's own symmetry group; and `use_coordinates`
-  must be off, because the three fractional coordinates rotate into each other
-  and are an ℓ=1 object in a network that treats every channel as a scalar.
+  Two conditions come with it and the schema guarantees both rather than
+  asking: the retained modes are a sphere, since a radial kernel over a *box*
+  is equivariant only under the box's own symmetry group; and no coordinate
+  channels are appended, because the three fractional coordinates rotate into
+  each other and are an ℓ=1 object in a network that treats every channel as a
+  scalar.
 
   Trained once, on a V100: at matched *cost* the constrained model reached a
   validation relative L² of 0.047 against 0.173 for a dense model with 28×
@@ -463,7 +476,7 @@ in its first lines.
   is bandwidth paid only in arithmetic, and raising it from 4 to 16 bought 2.7×
   at identical parameter count while raising `n_radial` made things
   monotonically worse. What does need sizing is the radius the basis spans:
-  `equivariant.g_basis: auto` reads it off the training split, because a basis
+  `model.equivariant.g_basis: auto` reads it off the training split, because a basis
   narrower than the band costs nothing measurable and one wider than it wastes
   the layer's only capacity.
 
@@ -506,7 +519,7 @@ wide margin on this system — on the same held-out fields Thomas-Fermi scores
 1.347 and von Weizsäcker 0.738, so `pseudo2tau` is **26×** and **14×** better
 respectively.
 
-> **What this split can and cannot tell you.** With `valid_fraction = 0.2` and
+> **What this split can and cannot tell you.** With `training.validation.fraction = 0.2` and
 > 17 structures, the held-out set is three structures — and at `seed=42` all
 > three (`struct_011`, `struct_012`, `struct_016`) happen to be 32-atom cells.
 > So the headline numbers describe the *harder* subset only, there is no

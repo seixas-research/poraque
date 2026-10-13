@@ -48,7 +48,7 @@ import numpy as np
 from .base import resolve_dtype
 from .density import ChargeDensity
 from .grid import FieldGrid
-from .vasp.volumetric import (_open_text, read_volumetric,
+from .vasp.volumetric import (_open_text, grid_shape, read_volumetric,
                               write_volumetric)
 
 
@@ -105,23 +105,104 @@ def _text_has_second_block(path):
     -------
     bool
     """
+    answer = _second_block_by_seeking(path)
+    if answer is not None:
+        return answer
+
     shape = None
     with _open_text(path) as handle:
         for line in handle:
-            fields = line.split()
-            if len(fields) != 3:
-                continue
-            try:
-                candidate = tuple(int(token) for token in fields)
-            except ValueError:
-                continue
-            if any(value <= 0 for value in candidate):
+            candidate = grid_shape(line)
+            if candidate is None:
                 continue
             if shape is None:
                 shape = candidate
             elif candidate == shape:
                 return True
     return False
+
+
+def _float_count(line):
+    """How many floats a grid line holds, or ``None`` if it is not one."""
+    tokens = line.split()
+    try:
+        for token in tokens:
+            float(token)
+    except ValueError:
+        return None
+    return len(tokens)
+
+
+def _second_block_by_seeking(path):
+    r"""
+    :func:`_text_has_second_block` without reading the grid, or ``None``.
+
+    The linear scan reads every line of the first grid block to reach what
+    follows it -- 24 M values, ~430 MB of text, on a 288³ platinum cell -- and
+    on the 97-cell set that pass was 81 % of the run's preparation before the
+    cache (11.4 s of 14.1 s with every material already cached, all of it on a
+    warm page cache; a cold parallel filesystem reads the same tens of GB from
+    disk). VASP writes the block in fixed-width lines -- five ``E17.11``
+    values, 90 bytes plus the newline, the last line shorter -- so the end of
+    the block is arithmetic: ``ceil(N / per_line)`` lines from its start.
+
+    The file is opened in binary, the first data line gives the width and the
+    count per line, and the arithmetic is **checked** where it could fail: the
+    line before the predicted last one, and the last one, must both start on a
+    line boundary and hold the expected number of floats at the expected width.
+    Only then is the rest of the file -- the augmentation records, and a second
+    grid header if there is one -- scanned as before.
+
+    Returns ``None`` whenever an assumption does not hold (a compressed file,
+    an HDF5 store, a block whose lines vary in width, a single-line block),
+    and the caller falls back to the linear scan, so the answer is never a
+    guess.
+    """
+    from .io.compressed import is_compressed
+
+    if is_compressed(path):
+        return None
+    try:
+        handle = open(path, "rb")
+    except OSError:
+        return None
+    with handle:
+        shape = None
+        for raw in handle:
+            shape = grid_shape(raw.decode("ascii", "replace"))
+            if shape is not None:
+                break
+        if shape is None:
+            return None
+
+        start = handle.tell()
+        first = handle.readline()
+        width = len(first)
+        per_line = _float_count(first.decode("ascii", "replace"))
+        total = int(np.prod(shape))
+        if not per_line or not first.endswith(b"\n") or total <= per_line:
+            return None
+        full, remainder = divmod(total, per_line)
+
+        def full_line_at(index):
+            offset = start + index * width
+            handle.seek(offset - 1)
+            if handle.read(1) != b"\n":
+                return False
+            line = handle.readline()
+            return (len(line) == width and _float_count(
+                line.decode("ascii", "replace")) == per_line)
+
+        if full < 2 or not (full_line_at(full // 2)
+                            and full_line_at(full - 1)):
+            return None
+        if remainder:
+            last = handle.readline().decode("ascii", "replace")
+            if _float_count(last) != remainder:
+                return None
+
+        return any(grid_shape(raw.decode("ascii", "replace")) == shape
+                   for raw in handle)
 
 
 class SpinDensity:
@@ -430,13 +511,7 @@ class SpinDensity:
 
 def _format_block(values, columns, width, decimals):
     """One grid block, in the same layout :func:`write_volumetric` produces."""
-    from .vasp.volumetric import fortran_exponential
+    from .vasp.volumetric import format_block
 
     flat = np.asarray(values, dtype=float).ravel(order="F")
-    lines = []
-    for start in range(0, flat.size, columns):
-        chunk = flat[start:start + columns]
-        lines.append("".join(
-            " " + fortran_exponential(value, decimals=decimals, width=width)
-            for value in chunk))
-    return "\n".join(lines) + "\n"
+    return format_block(flat, columns, width, decimals)

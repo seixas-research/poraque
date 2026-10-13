@@ -1,0 +1,49 @@
+# =====================================================================
+# Poraque - a short configuration: the platinum set, both operators
+#
+#   poraque-train --config configs/train_simple.yaml
+#
+# Only what this run decides is written here; everything else takes the
+# default that configs/train_complete_and_commented.yaml lists and explains.
+# An operator is trained because its section is present: delete `chg2tau:`
+# to train the density operator alone.
+# =====================================================================
+
+run:
+  name: platinum                # everything goes in models/platinum/
+
+data:
+  path: data/vasp/structures    # one subdirectory per material
+  potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
+  atoms: data/vasp/isolated_atoms
+  spin: false                   # the Pt cells are magnetically dead
+  grid:
+    resolution: 48
+  cache:
+    in_memory: true
+
+ext2chg:                        # V_ext -> pseudo-density + PAW occupancies
+  model:
+    width: 64
+    layers: 4
+    modes: 8
+    band: 16.0
+    equivariant:
+      n_radial: 16
+  occupancies:
+    weight: 3.0
+
+chg2tau:                        # pseudo-density + PAW occupancies -> tau
+  model:
+    width: 16
+    layers: 4
+    modes: 8
+    band: 16.0
+    equivariant:
+      n_radial: 16
+
+training:
+  epochs: 1000
+  batch_size: 16
+  validation:
+    patience: 100

@@ -212,8 +212,9 @@ That is a measurement on the existing fields: fit the pointwise function by
 bin-and-average, subtract it, and look at the autocorrelation of what is left.
 If the remainder is structureless, the Euler-Lagrange violation on this data is
 a local correction to `TF + lam*vW` and belongs in a closed form —
-`poraque.ml.symbolic` already searches exactly that space, and the target here
-is one variable rather than two.
+the symbolic distiller, archived in `experiments/kan_symbolic/src/symbolic.py`,
+searched exactly that space, and the target here is one variable rather than
+two.
 
 The caveat stated throughout applies with full force: 31 fcc-like cells of one
 element at similar densities is precisely the setting in which a non-local

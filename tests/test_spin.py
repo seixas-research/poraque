@@ -542,9 +542,9 @@ class TestSpinAutoIsResolvedFromTheSourceNotFromTheCache:
 
         root = _runs(tmp_path / "runs", grid, poscar, polarized=True)
         auto = TrainingConfig.from_dict(
-            {"data": {"data_paths": [root], "spin": "auto"}})
+            {"data": {"path": str(root), "spin": "auto"}})
         off = TrainingConfig.from_dict(
-            {"data": {"data_paths": [root], "spin": False}})
+            {"data": {"path": str(root), "spin": False}})
 
         assert cache_tag(auto.data).endswith("_spin")
         assert not cache_tag(off.data).endswith("_spin")
@@ -583,6 +583,82 @@ class TestDetectingASecondBlockIsCheap:
                                 "  8 8 8 8", "  1 2 3", "  0.1 0.2 0.3"])
 
         assert is_spin_polarized(path) is False
+
+    def test_the_seek_path_answers_without_reading_the_block(
+            self, tmp_path, grid, poscar, spin_density):
+        """
+        The probe jumps over the fixed-width grid block rather than reading
+        it: it was 81 % of the preparation before the cache on the Pt set.
+        A wrong jump would drop a magnetization silently, so the seek path
+        must answer (not fall back) on a file Poraquê wrote, and agree.
+        """
+        from poraque.fields.spin import _second_block_by_seeking
+
+        for name, field, expected in (
+                ("spin", spin_density, True),
+                ("plain", ChargeDensity(np.ones(grid.shape), grid, poscar),
+                 False)):
+            path = str(tmp_path / f"CHGCAR_{name}")
+            field.write(path)
+            assert _second_block_by_seeking(path) is expected, name
+
+    def test_a_block_of_uneven_lines_falls_back_to_the_scan(
+            self, tmp_path, grid, poscar, spin_density):
+        """Arithmetic over line widths is only trusted where it checks out."""
+        from poraque.fields.spin import _second_block_by_seeking
+
+        path = tmp_path / "CHGCAR"
+        spin_density.write(str(path))
+        lines = path.read_text().splitlines(keepends=True)
+        start = next(i for i, line in enumerate(lines)
+                     if line.split() == [str(n) for n in grid.shape]) + 1
+        lines[start + 2] = " " + lines[start + 2]        # one line wider
+        path.write_text("".join(lines))
+
+        assert _second_block_by_seeking(str(path)) is None
+        assert is_spin_polarized(str(path)) is True
+
+    def test_the_answer_is_remembered_until_the_file_changes(
+            self, tmp_path, grid, poscar, spin_density, monkeypatch):
+        """
+        A gzipped density cannot be seeked, so its answer costs a full
+        decompression: 34.5 s on 432 CHON files, every run. The memo makes
+        the second run read nothing, and a rewritten file is probed again.
+        """
+        import poraque.data.cache as cache
+
+        path = str(tmp_path / "CHGCAR")
+        spin_density.write(path)
+        calls = []
+        real = cache._spin_of
+        monkeypatch.setattr(cache, "_spin_of",
+                            lambda p: calls.append(p) or real(p))
+
+        assert cache.probe_spin([path], memo_root=str(tmp_path)) == [True]
+        assert cache.probe_spin([path], memo_root=str(tmp_path)) == [True]
+        assert len(calls) == 1
+
+        ChargeDensity(np.ones(grid.shape), grid, poscar).write(path)
+        assert cache.probe_spin([path], memo_root=str(tmp_path)) == [False]
+        assert len(calls) == 2
+
+    def test_a_store_backed_density_is_probed_not_assumed(
+            self, tmp_path, spin_density):
+        """
+        A store's field path is ``fields.h5::CHGCAR``, which ``os.stat``
+        cannot open; the memo once took that as "no file" and answered
+        ``False`` without probing, so ``spin: auto`` dropped the
+        magnetization of every HDF5-backed material.
+        """
+        import poraque.data.cache as cache
+        from poraque.fields.hdf5 import join_target, write_fields
+
+        store = str(tmp_path / "fields.h5")
+        write_fields(store, {"CHGCAR": spin_density})
+        path = join_target(store, "CHGCAR")
+
+        assert cache.probe_spin([path], memo_root=str(tmp_path)) == [True]
+        assert cache.probe_spin([path], memo_root=str(tmp_path)) == [True]
 
 
 # ===================================================================== #
@@ -808,7 +884,7 @@ class TestTheMagnetizationWeightReachesTheObjective:
         from poraque.ml.config import TrainingConfig
 
         config = TrainingConfig.from_dict(
-            {"training": {"magnetization_weight": 2.5}})
+            {"training": {"spin": {"magnetization_weight": 2.5}}})
         criterion = build_loss(config, "ext2pseudo")
         assert criterion.magnetization_weight == 2.5
         assert criterion.data_loss.magnetization_weight == 2.5

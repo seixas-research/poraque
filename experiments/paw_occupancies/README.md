@@ -181,7 +181,9 @@ measured.
 
 ## 6. The open measurement, on the trained operator
 
-Measured 2026-09-27 on an RTX 5060 Ti with `configs/train_ext2chg.yaml` at
+Measured 2026-09-27 on an RTX 5060 Ti with `configs/train_ext2chg.yaml` (a file retired on
+2026-10-13, when the training configuration schema was rewritten; the run
+above was made with it as it stood) at
 200 epochs, the same 19 held-out structures (split seed 42), two
 initialization seeds per arm. The readout band is 6.65 Å⁻¹ (95 % of the res48
 cache's coarsest Nyquist), not the 9 Å⁻¹ of §3, so the rows are comparable in

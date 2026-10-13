@@ -265,53 +265,57 @@ class TestOperatorPrecision:
 
 
 class TestConfigValidation:
+    """
+    Each operator's ``model.precision`` is checked at load; the fields are
+    held in float64 whatever the operator computes in.
+
+    Until 2026-10-13 ``data.precision`` was a second setting beside
+    ``model.precision``, and float16 fields into a float64 model had to be
+    refused by hand. The field precision is no longer a choice.
+    """
+
     @staticmethod
-    def _validate(data=None, model=None, device="cpu"):
+    def _config(precision="float32", device="cpu"):
+        from poraque.ml.config import TrainingConfig
+
+        return TrainingConfig.from_dict({
+            "ext2chg": {"model": {"precision": precision}},
+            "runtime": {"device": device}})
+
+    @staticmethod
+    def _validate(config):
         import sys
 
         sys.path.insert(0, __import__("os").path.join(
             __import__("os").path.dirname(__file__), "..", "scripts"))
         from poraque_train import validate_precision_settings
 
-        from poraque.ml.config import TrainingConfig
-
-        config = TrainingConfig()
-        config.training.device = device
-        if data is not None:
-            config.data.precision = data
-        if model is not None:
-            config.model.precision = model
         return validate_precision_settings(config)
 
     def test_the_defaults_pass(self):
-        self._validate()
+        self._validate(self._config())
 
-    def test_an_unknown_field_precision_is_refused(self):
-        with pytest.raises(SystemExit, match="data.precision"):
-            self._validate(data="f8")
+    def test_an_unknown_model_precision_is_refused_at_load(self):
+        with pytest.raises(ValueError, match="ext2chg.model.precision"):
+            self._config(precision="half")
 
-    def test_an_unknown_model_precision_is_refused(self):
-        with pytest.raises(SystemExit, match="model.precision"):
-            self._validate(model="half")
+    def test_the_fields_are_held_in_float64(self):
+        from poraque.ml.config import DataConfig
 
-    def test_float16_data_into_a_float64_model_is_refused(self):
-        with pytest.raises(SystemExit, match="three\n?\\s*decimal digits"):
-            self._validate(data="float16", model="float64")
+        assert DataConfig.FIXED["precision"] == "float64"
 
     def test_float64_on_cpu_is_allowed(self):
-        self._validate(model="float64", device="cpu")
+        self._validate(self._config(precision="float64", device="cpu"))
 
     @pytest.mark.skipif(not torch.backends.mps.is_available(),
                         reason="needs an Apple Metal device")
     def test_float64_on_mps_is_refused_with_a_way_out(self):
         """Metal has no float64 at all -- absent, not slow."""
         with pytest.raises(SystemExit, match="does not implement double"):
-            self._validate(model="float64", device="mps")
+            self._validate(self._config(precision="float64", device="mps"))
 
     def test_precision_is_not_passed_to_the_backbone(self):
-        from poraque.ml.config import TrainingConfig
-
-        assert "precision" not in TrainingConfig().model_kwargs(), (
+        assert "precision" not in self._config().model_kwargs("ext2chg"), (
             "FNO3d takes no precision argument; it is applied afterwards")
 
 
@@ -320,33 +324,29 @@ class TestConfigValidation:
 # ===================================================================== #
 class TestDerivedOutputPaths:
     """
-    A run should be named once.
+    A run is named once, and everything it writes hangs off that name.
 
-    Every artifact already came from ``task.name`` -- ``models/<name>.poraque``,
-    ``reports/<name>_report.pdf``, ``results/plots/<name>/``. The log and the
-    metrics were the two a user had to repeat by hand, and the only two that
-    two different runs could end up sharing while writing separate weights.
+    The log and the metrics were once the two artifacts a user had to name by
+    hand, and the only two that two different runs could end up sharing while
+    writing separate weights. Now every path is ``<run.output>/<run.name>/...``.
     """
 
     @staticmethod
-    def _config(**task):
+    def _config(name):
         from poraque.ml.config import TrainingConfig
 
-        config = TrainingConfig()
-        for key, value in task.items():
-            setattr(config.task, key, value)
-        return config
+        return TrainingConfig.from_dict({"run": {"name": name}})
 
     def test_the_log_follows_the_name(self):
         import os
 
-        assert self._config(name="pt_w16").log_path() == os.path.join(
+        assert self._config("pt_w16").log_path() == os.path.join(
             "models", "pt_w16", "log", "pt_w16.log")
 
     def test_the_metrics_follow_the_name(self):
         import os
 
-        assert self._config(name="pt_w16").json_path() == os.path.join(
+        assert self._config("pt_w16").json_path() == os.path.join(
             "models", "pt_w16", "log", "pt_w16.json")
 
     def test_everything_lands_in_one_run_folder(self):
@@ -355,52 +355,39 @@ class TestDerivedOutputPaths:
         are, the figures behind those numbers, and the config that produced
         them. They arrive and leave together.
         """
-        config = self._config(name="pt_w16")
+        config = self._config("pt_w16")
         run = config.run_dir()
         for path in (config.checkpoint_path(), config.log_path(),
                      config.plot_dir(), config.report_dir()):
             assert path.startswith(run + "/"), path
 
-    def test_each_toggle_switches_off_its_own_artifact(self):
-        config = self._config(name="pt_w16")
-        config.output.write_pdf_report = False
-        config.output.plot_figures = False
-        config.output.write_log = False
+    def test_each_report_toggle_switches_off_its_own_artifact(self):
+        config = self._config("pt_w16")
+        config.report.pdf = False
+        config.report.figures = False
         assert config.report_dir() is None
         assert config.plot_dir() is None
-        assert config.log_path() is None and config.json_path() is None
+        assert config.log_path() is not None, "the log is always written"
         assert config.checkpoint_path() is not None, "weights are separate"
 
-    def test_a_null_root_switches_everything_off(self):
-        config = self._config(name="pt_w16")
-        config.output.root = None
+    def test_a_null_output_switches_everything_off(self):
+        config = self._config("pt_w16")
+        config.run.output = None
         assert config.run_dir() is None
         assert config.checkpoint_path() is None
         assert config.plot_dir() is None
         assert config.report_dir() is None
         assert config.log_path() is None
 
-    def test_an_explicit_path_still_wins(self):
-        config = self._config(name="pt_w16")
-        config.output.log = "somewhere/else.log"
-        assert config.log_path() == "somewhere/else.log"
-
     def test_two_names_cannot_share_a_log(self):
-        assert self._config(name="a").log_path() != self._config(
-            name="b").log_path()
-
-    def test_an_empty_string_switches_the_log_off(self):
-        config = self._config(name="a")
-        config.output.log = ""
-        assert config.log_path() is None
+        assert self._config("a").log_path() != self._config("b").log_path()
 
 
 class TestMinimalConfig:
     """
     Every key is optional, and a config that says so is far shorter.
 
-    Of the 87 keys a full config carries, ``configs/train.yaml`` changes
-    three. The round trip below is what makes dropping the other 84 safe
+    The round trip below is what makes dropping every unchanged key safe
     rather than merely shorter.
     """
 
@@ -408,16 +395,15 @@ class TestMinimalConfig:
     def _configured():
         from poraque.ml.config import TrainingConfig
 
-        config = TrainingConfig()
-        config.task.name = "probe"
-        config.training.epochs = 123
-        config.model.n_layers = 7
-        return config
+        return TrainingConfig.from_dict({
+            "run": {"name": "probe"},
+            "ext2chg": {"model": {"layers": 7}},
+            "training": {"epochs": 123}})
 
     def test_only_the_differences_are_listed(self):
         trimmed = self._configured().non_default_dict()
-        assert trimmed == {"task": {"name": "probe"},
-                           "model": {"n_layers": 7},
+        assert trimmed == {"run": {"name": "probe"},
+                           "ext2chg": {"model": {"layers": 7}},
                            "training": {"epochs": 123}}
 
     def test_defaults_produce_an_empty_document(self):
@@ -450,8 +436,8 @@ def _shipped_configs():
 
     A hard-coded list silently stops covering a file the moment one is renamed
     or added, which is exactly when the coverage is wanted. The walk is
-    recursive so ``configs/kan/`` -- eight variants of one comparison -- is
-    covered by the same rules as the rest.
+    recursive so a subdirectory of variants is covered by the same rules as
+    the rest.
 
     Returns
     -------
@@ -469,59 +455,41 @@ def _shipped_configs():
 
 class TestOneDataSchemaForEveryOrigin:
     r"""
-    ``data.data_paths`` is the only way a dataset is named, and every entry in
-    it has the same shape.
+    ``data.path`` is the only way a dataset is named: one directory, one
+    subdirectory per material, whatever produced it.
 
-    Before 2026-08-31 there were three keys for one question — ``train_paths``
+    Before 2026-08-31 there were three keys for one question -- ``train_paths``
     (a list), ``root`` (a single path used when the list was empty) and
-    ``source`` (which layout each path was). The last is the one that mattered:
-    it asked the *config* to declare something the *directory* already answers,
-    and so made "a VASP run" and "a Materials Project download" two different
-    kinds of thing to write down when they are the same kind of thing on disk.
-
-    All three are gone. What a material's directory holds is read, not
-    declared.
+    ``source`` (which layout each path was) -- and the last asked the *config*
+    to declare something the *directory* already answers. They became one
+    list, ``data_paths``; on 2026-10-13 that became the one directory
+    ``data.path``. What a material's directory holds is read, not declared.
     """
 
     import os as _os
 
     ROOT = _os.path.join(_os.path.dirname(__file__), "..", "configs")
 
-    def _load(self, name):
-        import os
-
-        from poraque.ml.config import TrainingConfig
-
-        return TrainingConfig.from_yaml(os.path.join(self.ROOT, f"{name}.yaml"))
-
-    @pytest.mark.parametrize("key", ("train_paths", "root", "source"))
+    @pytest.mark.parametrize("key", ("train_paths", "root", "source",
+                                     "data_paths"))
     def test_the_retired_keys_are_gone(self, key):
         from dataclasses import fields
 
-        from poraque.ml.config import DataConfig
+        from poraque.ml.config import DataConfig, TrainingConfig
 
         assert key not in {f.name for f in fields(DataConfig)}
+        with pytest.raises(ValueError, match="Unknown key"):
+            TrainingConfig.from_dict({"data": {key: "anything"}})
 
-    @pytest.mark.parametrize("key,replacement", (
-        ("train_paths", "data_paths"),
-        ("root", "data_paths"),
-        ("source", "detected"),
-    ))
-    def test_a_config_written_against_the_old_schema_is_told_what_to_write(
-            self, key, replacement):
+    def test_the_list_key_is_told_what_to_write(self):
         """
-        "Unknown key: root" beside twenty valid ones says the config is wrong.
-        It does not say what to write instead, and this one has an answer.
+        "Unknown key: data_paths" says the config is wrong; it does not say
+        what to write instead, and this one has an answer.
         """
         from poraque.ml.config import TrainingConfig
 
-        with pytest.raises(ValueError, match="Replaced"):
-            TrainingConfig.from_dict({"data": {key: "anything"}})
-
-        try:
-            TrainingConfig.from_dict({"data": {key: "anything"}})
-        except ValueError as error:
-            assert replacement in str(error)
+        with pytest.raises(ValueError, match="data.path"):
+            TrainingConfig.from_dict({"data": {"data_paths": ["a"]}})
 
     @pytest.mark.parametrize("name", _shipped_configs())
     def test_no_shipped_config_mentions_a_retired_key(self, name):
@@ -531,38 +499,26 @@ class TestOneDataSchemaForEveryOrigin:
         with open(os.path.join(self.ROOT, f"{name}.yaml"),
                   encoding="utf-8") as handle:
             text = handle.read()
-        # Key position only: `paw_source` is a different key that happens to
-        # end in one of these words, and `root:` is still an `output` setting.
-        data = text.split("\ndata:", 1)[-1].split("\nmodel:", 1)[0]
-        for key in ("train_paths", "source", "root"):
+        data = re.split(r"^\S", text.split("\ndata:", 1)[-1], maxsplit=1,
+                        flags=re.M)[0]
+        for key in ("data_paths", "train_paths", "source", "root"):
             assert not re.search(rf"^\s{{2}}{key}\s*:", data, re.M)
 
-    def test_a_mixed_config_pools_both_origins_under_one_key(self, tmp_path):
-        """The example the unification exists for: local runs and a download,
-        in one list, with nothing distinguishing them."""
+    def test_a_list_is_refused(self):
+        """One dataset is one directory; a list reads as a pool that the
+        cache would then have to name."""
         from poraque.ml.config import TrainingConfig
 
-        written = tmp_path / "train_mixed.yaml"
-        written.write_text(
-            "data:\n"
-            "  data_paths:\n"
-            "    - ./data/vasp/structures\n"
-            "    - ./data/MP\n")
-        paths = TrainingConfig.from_yaml(str(written)).data.paths()
+        with pytest.raises(ValueError, match="one directory"):
+            TrainingConfig.from_dict({"data": {"path": ["a", "b"]}})
 
-        assert len(paths) == 2
-        assert any("vasp" in path for path in paths)
-        assert any("MP" in path for path in paths)
-
-    def test_a_bare_string_means_the_one_item_list(self):
-        """Writing a single path without the list dashes is the obvious
-        mistake, and it means exactly what the list means."""
+    def test_the_path_is_what_the_cache_builder_gets(self):
         from poraque.ml.config import TrainingConfig
 
-        config = TrainingConfig.from_dict({"data": {"data_paths": "one/dir"}})
+        config = TrainingConfig.from_dict({"data": {"path": "one/dir"}})
         assert config.data.paths() == ["one/dir"]
 
-    def test_an_unset_list_still_has_a_dataset(self):
+    def test_an_unset_path_still_has_a_dataset(self):
         from poraque.ml.config import DEFAULT_DATA_PATH, TrainingConfig
 
         assert TrainingConfig.from_dict({}).data.paths() == [DEFAULT_DATA_PATH]
@@ -570,7 +526,8 @@ class TestOneDataSchemaForEveryOrigin:
     def test_the_annotated_reference_explains_the_directory_logic(self):
         """
         `train_complete_and_commented.yaml` is where a reader learns the
-        schema. The unified shape is the one thing it must not leave implicit.
+        schema. The directory shape is the one thing it must not leave
+        implicit.
         """
         import os
 
@@ -579,15 +536,27 @@ class TestOneDataSchemaForEveryOrigin:
                   encoding="utf-8") as handle:
             text = handle.read()
 
-        block = text.split("\ndata:", 1)[1].split("\nmodel:", 1)[0]
-        assert "data_paths:" in block
-        for phrase in ("one subdirectory per structure", "OPTIONAL",
-                       "TAUCAR", "V_ext"):
+        block = text.split("\ndata:", 1)[1].split("\next2chg:", 1)[0]
+        assert "path:" in block
+        for phrase in ("one subdirectory per material", "optional",
+                       "TAUCAR", "external potential"):
             assert phrase in block, f"the data block never mentions {phrase!r}"
 
 
+def _leaves(raw, defaults, prefix=""):
+    """Dotted paths of the leaves of ``raw`` that equal ``defaults``."""
+    for key, value in raw.items():
+        path = f"{prefix}.{key}" if prefix else key
+        reference = defaults.get(key, object()) if isinstance(defaults, dict) \
+            else object()
+        if isinstance(value, dict) and isinstance(reference, dict):
+            yield from _leaves(value, reference, path)
+        elif value == reference:
+            yield path
+
+
 class TestShippedConfigs:
-    """The committed examples must load, and must stay short."""
+    """The committed examples must load, and the short one must stay short."""
 
     import os as _os
 
@@ -601,71 +570,20 @@ class TestShippedConfigs:
 
         TrainingConfig.from_yaml(os.path.join(self.ROOT, f"{name}.yaml"))
 
-    #: Keys allowed to restate their default in a shipped config.
+    #: Keys ``train_simple`` may restate at their default:
     #:
-    #: ``task.type`` is spelled out on purpose: it is the first decision a
-    #: reader makes, it changes what the resulting model can do -- only
-    #: ``all`` gives both halves of the chain, and so a total energy -- and a
-    #: config that leaves it implicit reads as if the question had not been
-    #: considered.
-    #: Each entry carries an explanatory comment in the file, which is the
-    #: reason it is written out rather than left to the default:
-    #:
-    #: ``task.type``      the first decision a reader makes, and the one that
-    #:                    decides whether the model can reach a total energy
-    #: ``model.width``,   the three settings most often confused with each
-    #: ``model.modes``,   other; the config is where that is explained
-    #: ``model.projection_channels``
-    #: ``model.mode_selection`` the choice to revisit when the cells stop
-    #:                    being uniform, and silent when it is wrong
-    #: ``symbolic.physics`` shown beside ``training.physics_informed`` so
-    #: the two are
-    #:                    visibly separate objectives on separate objects
-    #: ``data.delta_density`` what the operator is trained on at all -- a reader
-    #:                    who does not know this is on cannot interpret a
-    #:                    single reported number, and it is silent when wrong
-    #: ``data.paw_source`` which one-center occupancies a predicted CHGCAR
-    #:                    carries; the two choices trade transferability
-    #:                    against accuracy and neither is obvious
-    #: ``data.storage``  and ``data.compression`` / ``data.compression_level``:
-    #:                    the three are one decision and are shown together, so
-    #:                    the measured size table that explains the trade has
-    #:                    somewhere to sit. `compression` also *raises* when set
-    #:                    without `storage: hdf5`, which is a coupling a reader
-    #:                    should meet in the file rather than in a traceback.
-    #: ``model.n_layers`` the fourth member of the group above; three of the
-    #:                    four were already spelled out and leaving the depth
-    #:                    implicit made the architecture look like three numbers
-    #: ``model.activation`` decides whether the `kan_setup` block below it is
-    #:                    read at all, so it is written even when it is `silu`
-    #: ``training.epochs`` written wherever `early_stopping` is, since a
-    #:                    patience means nothing without the budget it runs in
-    #: ``model.paw``      `{enable: false}` in every field-task config: ext2chg
-    #:                    reads the same EXTCAR and targets the same CHGCAR as
-    #:                    ext2pseudo, so a reader of an ext2pseudo run should see
-    #:                    that the per-atom operator beside it is off rather
-    #:                    than wonder whether it was considered
-    DELIBERATE = {"task.type", "model.width", "model.modes",
-                  "model.n_layers", "model.projection_channels",
-                  "model.mode_selection", "model.activation",
-                  "symbolic.physics", "data.delta_density", "data.paw_source",
-                  "data.storage", "data.compression", "data.compression_level",
-                  "training.epochs", "model.paw"}
+    #: ``data.path``, ``data.atoms``  where the data and the reference atoms
+    #:     are is the first thing a reader of a run looks for, default or not
+    #: ``*.model.width``, ``*.model.layers``, ``*.model.modes``  the size of
+    #:     each network is read as one shape; leaving the members that happen
+    #:     to match a default implicit made it look like fewer numbers
+    DELIBERATE = {"data.path", "data.atoms"} | {
+        f"{operator}.model.{key}" for operator in ("ext2chg", "chg2tau")
+        for key in ("width", "layers", "modes")}
 
-    #: Configs whose stated purpose is to be explicit, and which the rule
-    #: below would therefore delete rather than tidy:
-    #:
-    #: ``train_complete_and_commented`` lists **every** key at its default. It
-    #:     is the map a short config is copied from, not a description of an
-    #:     experiment.
-    #: ``train`` spells out the run it describes, so the file records what was
-    #:     in force rather than what happened to differ from a default that may
-    #:     since have moved. That is the same argument the archived per-run
-    #:     config rests on, applied to a committed one.
-    #:
-    #: What is left under the rule is the comparison configs, where restating
-    #: a default really would bury the one line that differs.
-    EXPLICIT = {"train_complete_and_commented", "train"}
+    #: ``train_complete_and_commented`` lists **every** key at its default:
+    #: it is the map a short config is copied from.
+    EXPLICIT = {"train_complete_and_commented"}
 
     @pytest.mark.parametrize("name", _shipped_configs())
     def test_it_states_only_what_it_changes(self, name):
@@ -677,34 +595,29 @@ class TestShippedConfigs:
 
         import yaml
 
-        if name in self.EXPLICIT:
-            pytest.skip(f"{name} is deliberately explicit; see EXPLICIT")
-
-        with open(os.path.join(self.ROOT, f"{name}.yaml")) as handle:
-            raw = yaml.safe_load(handle)
-
         from poraque.ml.config import TrainingConfig
 
-        defaults = TrainingConfig().to_dict()
-        redundant = [f"{section}.{key}"
-                     for section, values in raw.items()
-                     if isinstance(values, dict)
-                     for key, value in values.items()
-                     if defaults.get(section, {}).get(key, object()) == value
-                     and f"{section}.{key}" not in self.DELIBERATE]
+        if name in self.EXPLICIT:
+            pytest.skip(f"{name} is deliberately explicit; see EXPLICIT")
+        with open(os.path.join(self.ROOT, f"{name}.yaml")) as handle:
+            raw = yaml.safe_load(handle)
+        defaults = TrainingConfig.from_dict(
+            {"ext2chg": None, "chg2tau": None}).to_dict()
+        redundant = [path for path in _leaves(raw, defaults)
+                     if path not in self.DELIBERATE]
         assert not redundant, f"these keys restate the default: {redundant}"
 
     @pytest.mark.parametrize("name", _shipped_configs())
-    def test_the_task_type_is_always_spelled_out(self, name):
-        """The first decision a reader makes should not be implicit."""
+    def test_the_operators_trained_are_always_written(self, name):
+        """The first decision a reader makes should not be implicit: an
+        operator is trained because its section is there."""
         import os
 
         import yaml
 
         with open(os.path.join(self.ROOT, f"{name}.yaml")) as handle:
             raw = yaml.safe_load(handle)
-        assert "type" in raw.get("task", {}), (
-            "task.type decides whether the model can reach a total energy")
+        assert {"ext2chg", "chg2tau"} & set(raw)
 
 
 class TestDocstringsAreNotMangled:
@@ -791,7 +704,7 @@ class TestDocstringsAreNotMangled:
 
         doc = ModelConfig.__doc__
         assert r"o = 1 \dots C" in doc               # width
-        assert r"\ell = 1 \dots L" in doc            # n_layers
+        assert r"\ell = 1 \dots L" in doc            # layers
         assert r"p = 1 \dots P" in doc               # projection_channels
         assert r"m_1 = \min(\texttt{modes}, N_x/2)" in doc   # modes
 
@@ -808,14 +721,13 @@ class TestModeSelectionReporting:
     """
 
     @staticmethod
-    def _config(g_max, modes=8, selection="physical"):
+    def _config(band, modes=8):
+        """``band: None`` is fixed selection; a number is physical."""
         from poraque.ml.config import TrainingConfig
 
-        config = TrainingConfig()
-        config.model.modes = modes
-        config.model.mode_selection = selection
-        config.model.g_max = g_max
-        return config
+        return TrainingConfig.from_dict({"ext2chg": {
+            "occupancies": False,
+            "model": {"modes": modes, "band": band}}})
 
     class _Set(list):
         """
@@ -831,6 +743,9 @@ class TestModeSelectionReporting:
             import numpy as np
             import torch
 
+            from poraque.ml.tasks import resolve_task
+
+            self.task = resolve_task("ext2pseudo")
             super().__init__({"cell": np.eye(3) * length,
                               "input": torch.zeros(1, n, n, n)}
                              for length in lengths)
@@ -849,11 +764,6 @@ class TestModeSelectionReporting:
         return "\n".join(lines)
 
     def test_fixed_selection_reports_nothing(self):
-        text = self._report(self._config(None, selection="fixed"),
-                            self._Set([4.08]))
-        assert text == ""
-
-    def test_physical_without_g_max_reports_nothing(self):
         text = self._report(self._config(None), self._Set([4.08]))
         assert text == ""
 

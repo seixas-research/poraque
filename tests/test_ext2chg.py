@@ -397,10 +397,16 @@ class TestTheDatasetYieldsPerAtomTargets:
 # ===================================================================== #
 # The configuration and the pre-flight
 # ===================================================================== #
-class TestTheTaskAndItsBlockAgree:
+class TestTheSectionIsTheOperator:
     """
-    ``task.type: ext2chg`` and ``model.paw.enable`` are checked against each
-    other, and ``all`` still means the chain.
+    The ``ext2chg:`` section trains the ``ext2chg`` operator, and its
+    ``occupancies`` decide whether the per-atom head is there at all.
+
+    Until 2026-10-13 two switches decided this -- ``task.type: ext2chg`` and
+    ``model.paw.enable`` -- and had to be checked against each other; the
+    backbone's size sat in ``model.paw`` beside the field operator's
+    ``model.width``. Now the section's presence is the one switch and its
+    ``model`` is the backbone.
     """
 
     @staticmethod
@@ -409,55 +415,46 @@ class TestTheTaskAndItsBlockAgree:
 
         return TrainingConfig.from_dict(sections)
 
-    def test_all_is_still_the_chain(self):
+    def test_the_section_trains_ext2chg_and_it_is_not_the_chain(self):
         from poraque.ml.tasks import CHAIN, TASKS
 
-        assert self._config().task_names() == list(CHAIN)
+        assert self._config(ext2chg=None).task_names() == ["ext2chg"]
         assert "ext2chg" in TASKS and "ext2chg" not in CHAIN
 
-    def test_the_block_adds_ext2chg_to_an_all_run(self):
-        names = self._config(model={"paw": {"enable": True}}).task_names()
-        assert names == ["ext2pseudo", "pseudo2tau", "ext2chg"]
-
-    def test_the_two_switches_cannot_disagree(self):
-        with pytest.raises(ValueError, match="model.paw.enable is false"):
-            self._config(task={"type": "ext2chg"}).task_names()
-        with pytest.raises(ValueError, match="never reads it"):
-            self._config(task={"type": "pseudo2tau"},
-                         model={"paw": {"enable": True}}).task_names()
+    def test_occupancies_off_is_the_grid_task(self):
+        names = self._config(ext2chg={"occupancies": False}).task_names()
+        assert names == ["ext2pseudo"]
 
     def test_the_settings_default_and_are_checked(self):
-        model = self._config(model={"paw": {"enable": True, "width": 32}}).model
-        assert model.paw_settings() == {"width": 32, "modes": 16,
-                                        "n_layers": 4, "readout_g_max": "auto",
-                                        "occupancy_weight": 1.0, "neighbor_min": 2.2,
-                                        "magnetization_weight": 1.0,
-                                        "readout_cache_mib": 1024}
+        operator = self._config(ext2chg={"model": {"width": 32}}).ext2chg
+        assert operator.paw_settings() == {"width": 32, "modes": 16,
+                                           "n_layers": 4,
+                                           "readout_g_max": "auto",
+                                           "occupancy_weight": 1.0,
+                                           "neighbor_min": 2.2,
+                                           "magnetization_weight": 1.0,
+                                           "readout_cache_mib": 1024}
         for bad in (0, -1, 2.5, True, "64"):
             with pytest.raises(ValueError, match="positive integer"):
-                self._config(model={"paw": {"enable": True,
-                                            "modes": bad}}).model.paw_settings()
-        for key, bad in (("readout_g_max", 0), ("readout_g_max", "atuo"),
-                         ("occupancy_weight", -1.0),
-                         ("occupancy_weight", True),
+                self._config(ext2chg={"model": {"modes": bad}})
+        for key, bad in (("readout_band", 0), ("readout_band", "atuo"),
+                         ("weight", -1.0), ("weight", True),
                          ("neighbor_min", -0.1), ("neighbor_min", 5.8),
-                         ("neighbor_min", True), ("neighbor_min", float("nan")),
-                         ("readout_cache_mib", -1), ("readout_cache_mib", True),
+                         ("neighbor_min", True),
+                         ("neighbor_min", float("nan")),
                          ("magnetization_weight", -0.5)):
             with pytest.raises(ValueError, match=key):
-                self._config(model={"paw": {"enable": True,
-                                            key: bad}}).model.paw_settings()
+                self._config(ext2chg={"occupancies": {key: bad}})
+        for bad in (-1, True):
+            with pytest.raises(ValueError, match="readout_cache_mib"):
+                self._config(runtime={"readout_cache_mib": bad})
         with pytest.raises(ValueError, match="Unknown key"):
-            self._config(model={"paw": {"enable": True, "layers": 4}})
+            self._config(ext2chg={"occupancies": {"layers": 4}})
 
-    def test_settings_under_a_disabled_block_warn(self):
-        model = self._config(model={"paw": {"enable": False,
-                                            "width": 32}}).model
-        with pytest.warns(RuntimeWarning, match="ignored"):
-            model.paw_settings()
-
-    def test_the_field_operator_never_sees_the_block(self):
-        kwargs = self._config(model={"paw": {"enable": True}}).model_kwargs()
+    def test_the_backbone_is_the_sections_model(self):
+        kwargs = self._config(ext2chg=None).model_kwargs("ext2chg")
+        assert (kwargs["width"], kwargs["modes"], kwargs["n_layers"]) \
+            == (64, 16, 4)
         assert "paw" not in kwargs
 
     def test_a_dataset_is_not_said_to_serve_ext2chg_by_file_names(self,
@@ -484,23 +481,24 @@ class TestTheCacheOnlyPathAndThePreFlight:
                                         shape=(8, 8, 8)), spin=False)
         path = tmp_path / "train.yaml"
         path.write_text(yaml.safe_dump({
-            "task": {"type": "ext2chg", "name": "paw_smoke"},
-            "data": {"data_paths": [str(runs)], "cache": str(tmp_path / "c"),
-                     "resolution": 8, "delta_density": False, "spin": False,
-                     "paw_source": "material"},
-            "model": {"width": 4, "modes": 2, "n_layers": 1,
-                      "projection_channels": 4, "paw": {"enable": True}},
-            "training": {"epochs": 1, "valid_fraction": 0.0,
-                         "device": "cpu", **training},
-            "output": {"root": str(tmp_path / "models"),
-                       "plot_figures": False, "write_pdf_report": False},
+            "run": {"name": "paw_smoke", "output": str(tmp_path / "models")},
+            "data": {"path": str(runs), "atoms": None, "spin": False,
+                     "grid": {"resolution": 8},
+                     "cache": {"dir": str(tmp_path / "c")}},
+            "ext2chg": {"target": "full",
+                        "model": {"width": 4, "modes": 2, "layers": 1,
+                                  "projection_channels": 4}},
+            "training": {"epochs": 1, **training},
+            "runtime": {"device": "cpu"},
+            "report": {"figures": False, "pdf": False},
         }))
         return str(path)
 
     def test_kfold_is_refused_before_the_cache(self, tmp_path):
         import poraque_train
 
-        config = self._config_file(tmp_path, enable_kfold=True)
+        config = self._config_file(tmp_path, validation={"fraction": 0.0,
+                                                         "kfold": 2})
         with pytest.raises(SystemExit, match="kfold"):
             poraque_train.run(["--config", config])
         assert not (tmp_path / "c").exists()
@@ -509,7 +507,7 @@ class TestTheCacheOnlyPathAndThePreFlight:
                                                                tmp_path):
         import poraque_train
 
-        config = self._config_file(tmp_path)
+        config = self._config_file(tmp_path, validation={"fraction": 0.0})
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             with pytest.raises(SystemExit) as caught:
@@ -524,11 +522,11 @@ class TestTheCacheOnlyPathAndThePreFlight:
         values, _ = occupancy_arrays(blocks)
         assert values.shape == (2, 1, 6)
 
-    def test_the_shipped_ext2chg_config_loads_and_passes_the_pre_flight(self):
+    def test_the_shipped_config_loads_and_passes_the_pre_flight(self):
         import poraque_train
         from poraque.ml.config import TrainingConfig
 
         config = TrainingConfig.from_yaml(
-            os.path.join(_ROOT, "configs", "train_ext2chg.yaml"))
-        assert config.task_names() == ["ext2chg"]
+            os.path.join(_ROOT, "configs", "train_simple.yaml"))
+        assert config.task_names() == ["ext2chg", "chg2tau"]
         poraque_train.validate_paw_settings(config)

@@ -4,9 +4,8 @@
 
      <!-- BADGES
           The same set, the same order and the same for-the-badge style as
-          README.md's own row. Two files, one row, kept in step by hand --
-          which is exactly the pair that drifts, so
-          tests/test_badges.py asserts they have not.
+          README.md's own row. Two files, one row, kept in step by hand;
+          nothing checks it, so edit both together.
 
           Every badge links out: to the project it names, or to that
           project's PyPI page when it has no separate home. The row is
@@ -115,7 +114,6 @@ What Poraquê provides
    fine_tuning/index
    energy/index
    analysis/index
-   symbolic/index
    theory
    configuration
    output

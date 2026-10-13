@@ -1,42 +1,144 @@
+# KAN activations and symbolic distillation (archived)
+
+On 2026-10-13, from version 26.10.6, two features were taken out of the
+`poraque` package and put here: the **Kolmogorov-Arnold (KAN) activations**
+(`poraque.ml.kan`) and **symbolic distillation** (`poraque.ml.symbolic`,
+`poraque.ml.gp`). They are kept whole, with their tests, their configs and
+their documentation, so that nothing has to be rediscovered if either returns.
+Nothing here is imported by the package.
+
+## Why
+
+**KAN.** `silu` beat `gelu` and every KAN variant on this project's Pt data;
+dropping the base term always lost. The measurement tables are below; they
+are the only record, since the checkpoints behind them were deleted. A learnable activation per
+channel bought cost (up to 5.5x per step for the B-spline variant) and no
+accuracy.
+
+**Symbolic distillation.** It fitted `pseudo2tau` only: a short algebraic form
+for the Pauli enhancement factor, found by genetic programming with the
+physical limits as fitness. It is being set aside, not abandoned, and may come
+back once the operator it distills is accurate enough to be worth distilling.
+
+What the package does now: `model.activation` (under `ext2chg:` or `chg2tau:`
+since the 2026-10-13 schema) accepts `silu`, `gelu`, `relu`
+and `tanh` (`poraque.ml.fno.ACTIVATIONS`); `model.kan_setup` and the whole
+`symbolic:` section raise, naming this directory; the `--symbolic*` flags of
+`poraque-train`, the `symbolic distillation` profiling stage, the
+`SYMBOLIC DISTILLATION <TASK>` log block, the PDF report's symbolic section
+and the metrics JSON's `symbolic` key are gone, and so is the `[symbolic]`
+(SymPy) install extra.
+
+## Measurements (2026-08-15 → 17)
+
+The checkpoints behind these tables were deleted; the tables are the only
+record. Protocol throughout: `ext2pseudo`, `width 16, modes 8, n_layers 3`,
+resolution 32, `seed 42`, `epochs 500, early_stopping 300`, the same 14/3
+structure split of the *early* 17-structure platinum set. **One seed per row.**
+Measured seed spread on this operator is 1–53 % (median ~12 %), so the ordering
+is evidence, not proof.
+
+Held-out relative L², SiLU-base KAN variants (the design in the tree today):
+
+| activation | rel L² | R² | best epoch | wall-clock (MPS) |
+|---|---|---|---|---|
+| `silu` | **0.02337** | 0.99910 | 340 | 507 s |
+| `kan_rbf` | 0.02398 | 0.99905 | 150 | 734 s |
+| `kan_chebyshev` | 0.02464 | 0.99899 | 370 | 663 s |
+| `kan_rational` | 0.02467 | 0.99899 | 260 | 697 s |
+| `gelu` | 0.02504 | 0.99896 | 330 | ≈500 s |
+| `kan_bspline` | 0.02834 | 0.99867 | 350 | 2580 s |
+
+`kan_setup.use_base: false` ("pure" KAN) against the base-carrying row:
+
+| activation | with base | pure |
+|---|---|---|
+| `kan_bspline` | 0.02834 | 0.03137 |
+| `kan_rbf` | 0.02398 | 0.03712 |
+| `kan_rational` | 0.02467 | 0.03860 |
+| `kan_chebyshev` | 0.02464 | 0.03915 |
+
+CPU forward+backward cost, single 24³ sample, relative to `gelu`: `silu` 1.00×,
+`kan_chebyshev` 1.36×, `kan_rational` 1.54×, `kan_rbf` 2.00×, `kan_bspline`
+5.50×.
+
+`pseudo2tau` 5-fold CV, `silu` 0.0351 ± 0.0027 vs `gelu` 0.0364 ± 0.0029, `silu`
+ahead on 4 of 5 folds — **measured on the invalid pre-2026-08-27 τ and void as
+a τ result**; the `silu > gelu` ordering rests on the `ext2pseudo` rows, which
+never read a `TAUCAR`.
+
+Conclusions carried: `silu` is the default; three of four KAN variants beat
+`gelu`; none beats `silu`; dropping the base term always loses; `kan_bspline`
+tolerates a pure form best and is worst with one.
+
+## Layout
+
+| Path | Holds |
+| --- | --- |
+| `src/kan.py`, `symbolic.py`, `gp.py` | the three modules, as they were in `src/poraque/ml/` |
+| `src/symbolic_config.py` | the `symbolic` section of `ml/config.py` |
+| `src/report_symbolic.py` | the cut-out report code (`TrainingReport.pareto`, the PDF section) |
+| `src/train_symbolic.py` | the post-fit stage and CLI flags of `scripts/poraque_train.py` |
+| `tests/` | `test_kan.py`, `test_gp.py`, `test_symbolic.py`, `test_report_symbolic.py`, and a `conftest.py` that puts `../src` on `sys.path` |
+| `configs/` | the eight `compare_kan_*_ext2pseudo.yaml` comparison runs |
+| `docs/` | `symbolic_manual.md` (the Manual's old chapter) and `06_symbolic.tex` (the user guide's) |
+| `demo.py` | the KAN readout demo described below |
+
+## What runs, and what does not
+
+- `kan.py`, `symbolic.py` and `gp.py` import as **top-level modules** from
+  `src/` (`import kan`), not as `poraque.ml.*`.
+- `python -m pytest experiments/kan_symbolic/tests` passes the symbolic, GP and
+  KAN-module tests. The **43 tests that build an `FNO3d` or a configuration
+  with a KAN activation fail**: `FNO3d` no longer accepts one.
+- `report_symbolic.py` and `train_symbolic.py` are verbatim cut-outs. They lean
+  on helpers that stayed behind and **do not run**; `symbolic_config.py` still
+  imports `split_enable_block` from `poraque.ml.config`.
+- The configs in `configs/` here are rejected by the current schema (`kan_setup`
+  is a retired key, and the top-level `model:`, `task:` and `output:` sections
+  they use went with the 2026-10-13 rewrite).
+- `demo.py` loads four checkpoints that have been deleted, and those are in the
+  retired `poraque-bundle-1` layout besides. The sample output below is the
+  only record of what it printed.
+
+## Bringing KAN back
+
+`FNO3d` would have to take an activation **module or factory** instead of a
+name looked up in `ACTIVATIONS` (a KAN activation is sized by the layer it sits
+in: `C` functions in a Fourier block, `C_P` in the read-out), the checkpoint's
+architecture record would have to store the factory's arguments, and the
+configuration would need a key to carry them (the old one was
+`model.kan_setup`, selected by `activation: kan`). Then `src/kan.py` moves back
+to `src/poraque/ml/` and `tests/` back to `tests/`. For symbolic distillation,
+restore the `symbolic` section from `symbolic_config.py`, remove it from
+`RETIRED_SECTIONS`, and put the stage in `train_symbolic.py` back into
+`run_task`. Do it against two seeds: measured seed spread is 1-53 %.
+
 # Reading a symbolic expression out of a trained KAN
 
-```bash
-conda run -n poraque python experiments/kan_symbolic/demo.py
-```
-
-## Two different things both called "symbolic"
-
-`poraque.ml.symbolic` (`SymbolicDistiller`, used by `experiments/euler_lagrange`)
-**searches** the space of short algebraic expressions for one that
-reproduces what a trained *operator* computes -- a regression against a
-black box, over probe points.
-
-`poraque.ml.kan.symbolic_expression`, demonstrated here, is not a search.
-Every learnable activation in `poraque.ml.kan` already *is* a fixed
-functional form -- SiLU plus a residual built from a small, explicit set of
-learned numbers (Chebyshev coefficients, spline coefficients, RBF weights,
-or a rational function's numerator/denominator coefficients), or (with
-`kan_use_base: false`) the residual alone, no base function at all. Reading
-the symbolic function one channel computes is therefore a **readout of
-parameters that were symbolic all along**, not a fit to anything. This is
-the literal content of the claim that a KAN is interpretable: the
-interpretation was never hidden inside the weights, it *is* the weights.
-
-The scope is deliberately narrow: one channel, one Fourier layer's
-elementwise nonlinearity `sigma_c` in `v[l] = v[l-1] + sigma(y[l])`. It says
-nothing about the spectral weights, the pointwise mixing, or how the 16 (or
-so) channels combine across three layers into a prediction of the charge
-density -- that whole-operator question is what `poraque.ml.symbolic`
-answers, by search, and only for the semi-local GGA/reduced-gradient
-features it is given.
+Two different things were called "symbolic". `src/symbolic.py`
+(`SymbolicDistiller`) **searched** the space of short algebraic expressions for
+one that reproduces what a trained *operator* computes: a regression against a
+black box, over probe points. `kan.symbolic_expression`, demonstrated by
+`demo.py`, is not a search. Every learnable activation in `kan.py` already
+*is* a fixed functional form -- SiLU plus a residual built from a small,
+explicit set of learned numbers (Chebyshev coefficients, spline coefficients,
+RBF weights, or a rational function's numerator/denominator coefficients), or
+(with `use_base: false`) the residual alone. Reading the function one channel
+computes is therefore a **readout of parameters that were symbolic all along**,
+not a fit to anything. The scope is deliberately narrow: one channel, one
+Fourier layer's elementwise nonlinearity `sigma_c` in
+`v[l] = v[l-1] + sigma(y[l])`. It says nothing about the spectral weights, the
+pointwise mixing, or how the channels combine into a prediction of the charge
+density.
 
 ## What the demo does
 
 For each of the eight checkpoints trained in this repo -- the four
 base-carrying variants (`models/pt_w16_m8_l3_kanchebyshev`, `_kanbspline`,
 `_rbf`, `_rational`) and their four `kan_use_base: false` ("pure") twins
-(`models/pt_w16_m8_l3_<variant>_purekan`; see `FUTURE.md` for how all eight
-compare on accuracy), it:
+(`models/pt_w16_m8_l3_<variant>_purekan`; see the measurements above for how all
+eight compare on accuracy), it:
 
 1. reads channel 0 of Fourier layer 0's activation straight off the real
    trained weights, as a closed-form expression;
@@ -52,8 +154,7 @@ compare on accuracy), it:
 Base-carrying (`kan_use_base: true`, the default) -- every expression opens
 with the SiLU base term, `x/(1+exp(-x))`, no `erf` anywhere (SiLU's exact
 closed form needs none; an earlier version of this readout used GELU,
-`x/2*(1+erf(x/sqrt(2)))`, which did -- see FUTURE.md's "Base-function
-correction"):
+`x/2*(1+erf(x/sqrt(2)))`, which did):
 
 ```
 kan_chebyshev:
@@ -142,7 +243,7 @@ B-spline residual really is a coefficient table.
 Read for one (layer, channel) pair on one trained checkpoint. It says
 nothing about which channels' learned functions departed meaningfully from
 their base function (most channels, most layers, stay close to it at these
-accuracy levels -- see `poraque.ml.kan`'s "close to silu at init" property,
+accuracy levels -- see `src/kan.py`'s "close to silu at init" property,
 which training only partially erodes) or about whether any of this readout
 *explains* the accuracy differences between activations or between
 base-carrying and pure mode. That would need reading every channel of every

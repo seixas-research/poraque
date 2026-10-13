@@ -667,3 +667,32 @@ class TestSmoothing:
         assert entry.has_local_table is False
         # the q grid must still pair with whatever was read
         assert len(entry.local_q_grid) == len(entry.local_potential)
+
+
+class TestTheStructureFactorIsOneProductInBoundedChunks:
+    """
+    The sum over atoms is a BLAS matrix product (3.33 s -> 0.07 s on a 288³,
+    55-atom cell), taken over chunks of atoms so its (atoms x N1*N2)
+    intermediate stays bounded; the chunking must not change the sum.
+    """
+
+    def test_chunks_agree_with_the_direct_sum(self, monkeypatch):
+        from poraque.fields import FieldGrid
+        from poraque.fields import external
+
+        grid = FieldGrid((6, 8, 10), np.diag([3.0, 4.0, 5.0]))
+        positions = np.random.default_rng(0).random((7, 3))
+        m1, m2, m3 = grid.fft_frequencies()
+        direct = sum(
+            np.exp(-2j * np.pi * (m1[:, None, None] * p[0]
+                                  + m2[None, :, None] * p[1]
+                                  + m3[None, None, :] * p[2]))
+            for p in positions)
+
+        whole = external.structure_factor(grid, positions)
+        monkeypatch.setattr(external, "STRUCTURE_FACTOR_CHUNK_BYTES",
+                            16 * 6 * 8 * 2)          # two atoms per chunk
+        chunked = external.structure_factor(grid, positions)
+
+        assert np.allclose(whole, direct, rtol=0, atol=1e-12)
+        assert np.allclose(chunked, direct, rtol=0, atol=1e-12)

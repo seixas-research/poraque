@@ -1,13 +1,20 @@
 \chapter{Configuration reference}
 \label{ch:config}
 
-A run is defined by \file{configs/train\_config.yaml}: one top-level key and
-four sections. Generate a copy with every default written out explicitly with
+A run is described by a YAML file of eight sections, each about one thing:
 
 \begin{lstlisting}
+run:           # what the run is called, where it writes, its seed
+data:          # where the materials are, and how they are cached
+ext2chg:       # the density operator: V_ext -> pseudo-density + occupancies
+chg2tau:       # the kinetic operator: pseudo-density + occupancies -> tau
+training:      # the optimization, shared by both operators
+fine_tuning:   # start from a trained checkpoint (off unless present)
+runtime:       # the hardware: device, processes, distribution
+report:        # figures and the PDF
 \end{lstlisting}
 
-This chapter documents every key that file can contain.
+Every key is optional: a file states only what the run does differently, and anything omitted takes its default. Two files in \opt{configs/\allowbreak{}} are the starting points. \opt{configs/\allowbreak{}train\_\allowbreak{}simple.\allowbreak{}yaml} is the short one, the platinum set with both operators, forty-odd lines, only what the run decides. \opt{configs/\allowbreak{}train\_\allowbreak{}complete\_\allowbreak{}and\_\allowbreak{}commented.\allowbreak{}yaml} is the map: every key at its default, with a line saying what it means. This chapter documents every key either can contain, and the measurements behind the defaults that were measured.
 
 \section{How a value is resolved}
 
@@ -19,419 +26,250 @@ Three sources, highest priority first:
   \item the built-in default.
 \end{enumerate}
 
-That ordering is what lets a single committed configuration be swept from the
-shell without being edited or copied:
+That ordering is what lets one committed config be swept from the shell without being edited or copied:
 
 \begin{lstlisting}
-poraque-train --config configs/train.yaml --epochs 500
+poraque-train --config configs/train_simple.yaml --epochs 500 --seed 1
 \end{lstlisting}
 
+Each flag overrides one dotted path (\opt{-{}-epochs} is \opt{training.\allowbreak{}epochs}, \opt{-{}-cache-workers} is \opt{runtime.\allowbreak{}workers}); \opt{poraque-train -{}-help} lists them under the section they belong to.
+
 \begin{pnote}
-Unknown keys are \textbf{rejected}, not ignored. A typo such as
-\opt{learn\_rate} would otherwise be dropped silently and the run would quietly
-use the default --- producing results that do not match the file that appears
-to describe them. The error message names the valid keys for that section.
+Unknown keys are \textbf{rejected}, not ignored. A typo such as \opt{learn\_\allowbreak{}rate} would otherwise be silently dropped and the run would quietly use the default, producing results that do not match the file that appears to describe them. The error message names the valid keys for that section. The keys and sections of the schema this one replaced (2026-10-13) are rejected too, and each error names where its setting went: \opt{training.\allowbreak{}valid\_\allowbreak{}fraction} is now \opt{training.\allowbreak{}validation.\allowbreak{}fraction}, \opt{data.\allowbreak{}cache\_\allowbreak{}workers} is \opt{runtime.\allowbreak{}workers}, and so on.
 \end{pnote}
 
-The \emph{resolved} configuration --- defaults, file and command-line overrides
-merged --- is written beside the results as \file{<json-stem>\_config.yaml}
-(by default \file{models/<name>/log/<name>\_config.yaml}). That is the file worth
-keeping: it records what actually ran, overrides included.
+The \emph{resolved} configuration, with defaults, file and overrides merged, is written beside the results as \opt{\textless{}name\textgreater{}\_\allowbreak{}config.\allowbreak{}yaml}. That is the file worth keeping: it records what actually ran.
 
-\section{Optional features are blocks}
+\section{Operators and blocks: presence is the switch}
+
 \label{sec:enableblocks}
 
-Every feature that can be switched off is one key, with its switch
-\textbf{inside} the settings it governs:
+\textbf{An operator is trained when its section is present.} \opt{ext2chg:} and \opt{chg2tau:} are the two; leave one out and it is not trained. A configuration with neither raises, since there is nothing to do.
 
 \begin{lstlisting}
-<group>:
-  <feature>:
-    enable: <switch>
-    <setting>: <value>
+ext2chg:            # trained
+chg2tau:            # trained, with its defaults
 \end{lstlisting}
 
-There are four: \opt{model.equivariant}, \opt{training.physics\_informed},
-\opt{symbolic.physics} and \opt{fine\_tuning}. A setting inside a block is read
-\textbf{only when \opt{enable} is on}; naming one beside a switch that is off
-warns rather than acting, and an unknown one raises, naming the block it was
-in.
+Each operator carries its own \opt{model}, because the two maps need different networks and a single shared block forced the larger one into a corner of the other.
 
-\begin{pnote}
-Two of these were a scalar beside a separately named \opt{<feature>\_setup}
-group until 26.9.8, and the two halves drifted in exactly the way that layout
-invites: \opt{equivariant: false} above a populated \opt{equivariant\_setup}
-reads at a glance as an equivariant run and is not one, and nothing brought the
-switch and the settings into the same field of view. The old spellings now
-raise and name their replacement --- including the bare \opt{equivariant:
-true}, which is a \emph{type} error rather than an unknown key and so carries
-its own message showing the block to write instead.
+\textbf{A feature that can be switched off is a block whose presence is the switch.} \opt{false} turns it off, \opt{true} (or the bare key) turns it on with the defaults, a mapping turns it on with those settings. There is no \opt{enable} key anywhere:
 
-\opt{symbolic.enable\_symbolic\_distillation} became \opt{symbolic.enable} in
-the same change. It restated its own section in its own name, and at 37
-characters was the longest key in the schema --- wide enough to set the width
-of the configuration table in the PDF report.
-\end{pnote}
+\begin{lstlisting}
+ext2chg:
+  model:
+    equivariant: false        # off
+\end{lstlisting}
 
-One \opt{\_setup} stays, deliberately: \opt{model.kan\_setup}. It is selected
-by \opt{model.activation}, which is a \emph{choice among five} rather than a
-switch, so there is no \opt{enable} for it to hold and no boolean it could
-contradict.
+\begin{lstlisting}
+ext2chg:
+  model:
+    equivariant: true         # on, with the defaults
+\end{lstlisting}
 
-Blocks are validated when the file is \textbf{read}, not when the feature is
-first used. That matters more than it sounds: the model is built after the
-field cache and the objective after that, so a one-line mistake in either block
-would otherwise take minutes of downsampling to report.
+\begin{lstlisting}
+ext2chg:
+  model:
+    equivariant:              # on, with these
+      n_radial: 32
+\end{lstlisting}
 
-\section{Every key is optional}
-\label{sec:minimal}
+The old layout put a switch beside the settings it governed, and a block could be switched off while still listing settings that read as if they applied; with the presence as the switch, what the file says is what runs. Blocks are validated when the file is \textbf{read}, not when the feature is first used. That matters more than it sounds: the model is built after the field cache and the objective after that, so a one-line mistake in either would otherwise take minutes of downsampling to report.
 
-Anything omitted takes its default, so a configuration needs to state only
-what the run does \emph{differently}. That is what makes a committed file
-readable as the description of one experiment rather than a dump of every
-knob: of the eighty settings a full configuration carries,
-\file{configs/train.yaml} differs in a handful.
+The blocks are \opt{ext2chg.\allowbreak{}structure\_\allowbreak{}input}, \opt{ext2chg.\allowbreak{}occupancies}, \opt{chg2tau.\allowbreak{}occupancies}, \opt{model.\allowbreak{}equivariant}, \opt{training.\allowbreak{}physics}'s weights (zero is off), \opt{fine\_\allowbreak{}tuning} and \opt{fine\_\allowbreak{}tuning.\allowbreak{}lora}.
 
-\file{configs/train\_complete\_and\_commented.yaml} is the reference: it lists
-the settings worth knowing about, each with the reasoning behind it. Read it
-there and copy only what you need into your own file. This chapter is the
-exhaustive version of the same thing.
+\textbf{The two names are the vocabulary of configuration; four are the vocabulary of the code.} \opt{occupancies} is the switch between them. With it on (the default) \opt{ext2chg} predicts the pseudo-density and every atom's PAW augmentation occupancies, and \opt{chg2tau} reads them. With \opt{occupancies: false} the operator trains on the grid alone, which internally is the \opt{ext2pseudo} task (V\_ext to pseudo-density) or the \opt{pseudo2tau} task (pseudo-density to $\tau$). Those two names remain in logs, figure and file names and checkpoints, and \opt{poraque-train -{}-task} takes only the configuration's two. The grid-alone pair needs no \opt{POTCAR}, and a bundle needs exactly that pair to run \opt{poraque-inference} and the ASE calculator.
 
-Eleven configurations ship with the source --- three at the top of
-\file{configs/} and eight controlled activation comparisons under
-\file{configs/kan/}:
+\section{What is fixed}
+
+Some settings stopped being choices because one value won every measurement or the alternative never worked. They are not keys: the cosine schedule, a gradient-norm clip of 1, the weight initialization seeded by \opt{run.\allowbreak{}seed}, the read-out activation following \opt{model.\allowbreak{}activation}, the Pauli scale fitted on the training split and learned, an Euler--Lagrange weight of 0, fields held in float64, the isolated atom's PAW records for a prediction, gzip level 4, pinned memory on CUDA and not elsewhere, a 30 minute collective timeout, and an asinh scale fitted rather than fixed. Naming one in a file raises.
+
+\section{\opt{run} --- what the run is called}
+
+\label{sec:run-section}
 
 \begin{center}
-\begin{tabular}{@{}lp{7.9cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.117\linewidth}>{\raggedright\arraybackslash}p{0.211\linewidth}>{\raggedright\arraybackslash}p{0.602\linewidth}@{}}
 \toprule
-File & Purpose \\
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
 \midrule
-\file{train.yaml} & The clean starting point. Copy this one. \\
-\file{train\_complete\_and\_commented.yaml} & The same run, with every choice
-explained at length --- the reference to read, not to copy. \\
-\file{train\_ext2chg.yaml} & The \opt{ext2chg} task on the same data: the
-pseudo-density and every atom's PAW occupancies. \\
-\file{kan/compare\_kan\_*.yaml} & One per learnable activation, base-carrying
-and pure, identical in everything else --- so a difference between two of them
-is the activation. \\
+\opt{name} & \opt{poraque\_\allowbreak{}models} & the run's name; everything goes in \opt{\textless{}output\textgreater{}/\allowbreak{}\textless{}name\textgreater{}/\allowbreak{}} \\
+\opt{output} & \opt{models} & parent directory; \opt{null} writes \textbf{nothing} (no checkpoint, log or figure) \\
+\opt{seed} & \opt{42} & the validation draw, the folds, the batch order \textbf{and} the initial weights \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\begin{pnote}
-Every one of them is parsed against the current schema by the test suite, and
-checked for hyphens, camelCase, duplicate keys and retired names. That is not
-belt-and-braces: the 26.9.8 rename broke all eight \file{kan/} files and left
-the ones at the top working, because those were the ones anyone loaded.
-\end{pnote}
+\begin{lstlisting}
+run:
+  name: mp_ag_au_pt
+  output: models
+  seed: 42
+\end{lstlisting}
 
-\section{Top level}
+Everything a run writes lives under \opt{\textless{}output\textgreater{}/\allowbreak{}\textless{}name\textgreater{}/\allowbreak{}}: the weights (\opt{\textless{}name\textgreater{}.\allowbreak{}poraque}), \opt{log/\allowbreak{}} (the log, the metrics JSON and the resolved configuration), \opt{plots/\allowbreak{}} and \opt{report/\allowbreak{}}. \opt{output} is the only path setting and \opt{name} is the only thing that distinguishes two runs, so "delete this experiment" and "send me that model" are one directory each rather than a collection of fragments by filename.
 
-\begin{center}
-\begin{tabular}{@{}llp{7.0cm}@{}}
-\toprule
-Key & Default & Meaning \\
-\midrule
-\opt{task} & \opt{all} & Which map to train: \opt{ext2pseudo}, \opt{pseudo2tau},
-\opt{all} for both in sequence, or \opt{ext2chg} (\S\ref{sec:paw}). \\
-\bottomrule
-\end{tabular}
-\end{center}
+A run that trains both operators writes two reports, \opt{\textless{}name\textgreater{}\_\allowbreak{}ext2pseudo\_\allowbreak{}report.\allowbreak{}pdf} and \opt{\textless{}name\textgreater{}\_\allowbreak{}pseudo2tau\_\allowbreak{}report.\allowbreak{}pdf} (or \opt{ext2chg} and \opt{chg2tau}, by whether the occupancies are on): one name cannot serve both. Cross-validation writes \opt{\textless{}name\textgreater{}\_\allowbreak{}kfold\_\allowbreak{}report.\allowbreak{}pdf}, and a fine-tune writes its weights to \opt{\textless{}name\textgreater{}\_\allowbreak{}finetuned.\allowbreak{}poraque} rather than over the general model it specializes.
+
+\begin{pwarn}
+Two runs that share a \opt{name} share their output files, and the second wins. Change it for anything worth keeping beside the last run: a different chemical space, resolution, or set of physics weights.
+\end{pwarn}
+
+\opt{seed} is one number for everything that is random. Earlier versions had a second one for the initial weights, so that a committee of models could differ in initialization alone; now a different seed also draws a different validation split and a different batch order, which is a stronger, and different, source of disagreement. The ensemble tools take it as it is (see \opt{docs/\allowbreak{}notes/\allowbreak{}committee.\allowbreak{}md}).
 
 \section{\opt{data} --- where the fields come from}
 
 \begin{center}
-\begin{tabular}{@{}llp{6.7cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.196\linewidth}>{\raggedright\arraybackslash}p{0.262\linewidth}>{\raggedright\arraybackslash}p{0.472\linewidth}@{}}
 \toprule
-Key & Default & Meaning \\
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
 \midrule
-\opt{data\_paths} & \file{data/vasp/structures} & The dataset, as a list of
-directories --- see below. \\
-\opt{cache} & \opt{data/cache} & Where downsampled copies are written. \\
-\opt{pattern} & \opt{""} & Prefix filter on the material subdirectories;
-empty takes all of them. \\
-\opt{format} & \opt{auto} & \opt{vasp}, or \opt{auto} to detect the code from
-the files present. Those are the only two values. \\
-\opt{resolution} & \opt{32} & Longest grid axis after spectral downsampling. \\
-\opt{potcar\_dir} & \opt{null} & \file{POTCAR} library, used where the data
-ships no pseudopotentials. \\
-\opt{strict\_potcar} & \opt{false} & Refuse the Gaussian fallback when a
-configured library cannot serve an element (Section~\ref{sec:strict-potcar}).
-What it \emph{did} serve is in the cache fingerprint either way. \\
-\opt{sigma} & \opt{null} & Gaussian pseudo-ion width in \AA{}, where the
-Gaussian model is reached. \\
-\opt{gaussian\_blur} & \opt{null} & Gaussian blur width in \AA{} applied to the
-computed potential. \\
-\opt{blur\_method} & \opt{spectral} & \opt{spectral} or \opt{ndimage}. \\
-\opt{cache\_in\_memory} & \opt{auto} & Keep decoded fields in RAM between
-epochs --- see below. \\
-\opt{cache\_workers} & \opt{auto} & Processes that \emph{build} the cache, one
-material each (Section~\ref{sec:cacheworkers}). \\
-\opt{spin} & \opt{auto} & Train on the magnetization as a second channel
-(Section~\ref{sec:spin}). \\
+\opt{path} & \opt{data/\allowbreak{}vasp/\allowbreak{}structures} & the dataset: one directory, one subdirectory per material --- see below \\
+\opt{potcar\_\allowbreak{}dir} & \opt{null} & POTCAR library, used where a material ships none \\
+\opt{atoms} & \opt{data/\allowbreak{}vasp/\allowbreak{}isolated\_\allowbreak{}atoms} & isolated-atom reference: a \opt{poraque-atoms} JSON, or a directory of one-atom-in-a-box runs \\
+\opt{spin} & \opt{auto} & train on the magnetization as a second channel --- see below (Section~\ref{sec:spin}) \\
+\opt{grid.\allowbreak{}resolution} & \opt{32} & longest grid axis after spectral downsampling \\
+\opt{grid.\allowbreak{}max\_\allowbreak{}spacing} & \opt{null} & largest grid spacing in \AA{} after downsampling --- see below (Section~\ref{sec:max-spacing}) \\
+\opt{cache.\allowbreak{}dir} & \opt{data/\allowbreak{}cache} & where downsampled copies are written \\
+\opt{cache.\allowbreak{}storage} & \opt{text} & \opt{text} (a \opt{CHGCAR}-format file per field) or \opt{hdf5} (one \opt{fields.\allowbreak{}h5} per material) \\
+\opt{cache.\allowbreak{}compression} & \opt{null} & \opt{null}, \opt{gzip} or \opt{lzf}; \opt{hdf5} only, and it raises on a text cache \\
+\opt{cache.\allowbreak{}in\_\allowbreak{}memory} & \opt{auto} & keep decoded fields in RAM between epochs --- see below (Section~\ref{sec:cachememory}) \\
 \bottomrule
 \end{tabular}
 \end{center}
-
-\subsection{\opt{cache\_in\_memory}}
-\label{sec:cachememory}
-
-The largest performance setting in the file, and the only one whose effect is
-completely invisible from the results.
-
-With it off, \textbf{every epoch reopens, decompresses and re-parses every
-field from disk}. That produces exactly the same numbers as caching does ---
-and takes about ten times as long. Measured on a V100 with 115 structures at
-$32^3$: \opt{\_\_getitem\_\_} was 59\,\% of the training loop, 78.9\,s over 483
-calls, while the GPU sat at 2--4\,\% utilization waiting on \opt{zlib} and
-\opt{numpy.array} over a text generator. Turning the cache on took twenty
-epochs from \textbf{168.0\,s to 16.3\,s}, with the validation error identical
-to five decimals.
-
-It is not a GPU setting. The parse is the same on Apple Silicon and on the
-CPU; what an accelerator adds is a fast device left idle by it.
-
-\opt{auto} estimates the decoded size --- grid points $\times$ itemsize
-$\times$ channels, over the input and target fields --- and enables the cache
-below 4\,GiB, logging what it decided and what it costs:
-
-\begin{lstlisting}
-  field cache         : in RAM, ~61.3 MiB (data.cache_in_memory: auto)
-\end{lstlisting}
-
-Set it to \opt{false} when the process shares its memory with something the
-estimate cannot see. What \opt{auto} refuses on its own is the case the old
-default was right about: $128^3$ grids over thousands of materials, where
-caching silently would turn a slow run into a dead one.
-
-\begin{pnote}
-Parallel loading is \textbf{not} the alternative it looks like. See
-\opt{num\_workers} below: added to the cache, workers make training slower.
-\end{pnote}
-
-\subsection{\opt{cache\_workers}}
-\label{sec:cacheworkers}
-
-How many processes \textbf{build} the cache, one material each: \opt{auto} (the
-default), a count, or \opt{0} for the single-process build. Not
-\opt{training.num\_workers}, which loads an \emph{already-built} cache during
-training and is the opposite trade.
-
-The build is not the FFT work it looks like. Measured per material on the
-97-cell platinum set at \opt{resolution: 48}:
-
-\begin{center}
-\begin{tabular}{@{}lr@{}}
-\toprule
-Stage & Share of the clock \\
-\midrule
-Fortran \opt{E17.11} text reading and writing & \textbf{86\,\%} \\
-Computing $V_{\rm ext}$ (POTCAR tables, one FFT) & 8\,\% \\
-\textbf{Spectral downsampling --- the FFT} & \textbf{2.2\,\%} \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-A thread count therefore cannot help: there is no BLAS call anywhere in the
-path, and every transform goes through \opt{np.fft}, which is single-threaded.
-A cache job that requests eight cores and exports \opt{OMP\_NUM\_THREADS=8}
-uses one of them. What scales is \textbf{materials} --- \opt{\_build\_one} is
-independent per material, and it already writes every field to
-\opt{.partial-<pid>} and moves it into place with \opt{os.replace}, so a pool
-needs no lock and its cache is byte-identical to the single-process one.
-
-\begin{center}
-\begin{tabular}{@{}lrr@{}}
-\toprule
-Workers & Text storage & HDF5 storage \\
-\midrule
-1 & 2.764\,s/material & 1.515\,s/material \\
-2 & 1.462\,s (1.89$\times$) & 0.832\,s (1.82$\times$) \\
-4 & 0.868\,s (3.18$\times$) & 0.518\,s (2.92$\times$) \\
-8 & 0.684\,s (4.04$\times$) & 0.440\,s (3.44$\times$) \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-On the full 97-cell set the \opt{--cache-only} cache stage went from
-\textbf{656.9\,s to 246.1\,s} at the four workers \opt{auto} picks there ---
-2.67$\times$, not 4$\times$, because per-material time rises 1.49$\times$ under
-memory-bandwidth contention on the $288^3$ grids --- and 4.0$\times$ against the
-961.8\,s the build cost before the two serial redundancies above were removed.
-\opt{auto} takes the smallest of three numbers and says which bound it hit:
-
-\begin{lstlisting}
-  workers: 4 (auto: 8 usable core(s); 4 within the 8 GiB budget at ~1995 MiB
-  each, sized on the largest grid at 23.89 M voxels; 97 material(s))
-\end{lstlisting}
-
-the cores this process \emph{may} use (\opt{sched\_getaffinity}, which is what
-Slurm's \opt{--cpus-per-task} restricts a task to); a memory budget divided by
-an estimate taken from the \textbf{largest} native grid in the set (measured:
-a $108^3$ density peaks at 498\,MiB and a $288^3$ one at 1558\,MiB, so
-400\,MiB fixed plus 70\,B per voxel); and the number of materials. The budget
-is 80\,\% of the job's Slurm allocation where there is one and 8\,GiB
-otherwise --- a constant would pick four workers on a
-\opt{--cpus-per-task=8 --mem=32G} node and idle half of it. Below 1\,M native
-voxels \emph{in total} \opt{auto} stays single-process whatever the core
-count: a spawned pool costs 0.49--0.60\,s to import the package per worker and
-the build runs at 1.03\,s per million voxels.
-
-\begin{pnote}
-Sized on the largest grid, not the average, because every worker may be handed
-the biggest material --- sizing on the mean is how a build goes into swap on
-the last eleven. Materials are handed out \textbf{largest first}, so rows print
-in completion order rather than alphabetically and \opt{i/N} counts materials
-finished. Raise the job's memory request with its core count: a $288^3$ density
-needs ${\sim}1.6$\,GiB per worker.
-\end{pnote}
-
-\subsection{\opt{data\_paths}}
-
-\textbf{One key names the dataset, and every entry in it has the same shape:} a
-directory of subdirectories, one per material, each holding that material's
-volumetric files.
 
 \begin{lstlisting}
 data:
-  data_paths:
-    - data/vasp/structures      # structure_0000/, structure_0001/, ...
-    - data/MP                   # mp-124/, mp-81/, ...
-    - data/cache/res32          # a cache from an earlier run
+  path: data/vasp/structures
+  potcar_dir: /opt/vasp/potpaw_PBE
+  grid:
+    resolution: 48
+  cache:
+    storage: hdf5
+    compression: gzip
 \end{lstlisting}
 
-That is what a VASP run tree looks like, what \opt{poraque-mp} writes, and what
-the cache builder produces --- so nothing has to be declared about where a path
-came from, and no key says so. Every path is pooled into one dataset.
+\subsection{\opt{path}}
 
-What \emph{differs} is the \textbf{content} of a material's directory, and
-content is read, not configured:
+\textbf{One key names the dataset}: a directory of subdirectories, one per material, each holding that material's volumetric files.
+
+\begin{lstlisting}
+data/vasp/structures/
+    structure_0000/     CHGCAR  TAUCAR  POSCAR  POTCAR  INCAR ...
+    structure_0001/
+    ...
+\end{lstlisting}
+
+That is what a VASP run tree looks like, what \opt{poraque-mp} writes, and what the cache builder produces, so nothing has to be declared about where a path came from. A material is a directory with a density in it: a \opt{CHGCAR}, compressed or not, or a \opt{fields.\allowbreak{}h5}. To pool several sources, gather them under one directory (symbolic links do); the set is the directory's content.
+
+What \emph{differs} is the \textbf{content} of a material's directory, and content is read, not configured:
 
 \begin{center}
-\begin{tabular}{@{}lp{7.4cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.360\linewidth}>{\raggedright\arraybackslash}p{0.570\linewidth}@{}}
 \toprule
-A material's directory holds & Poraqu\^e \\
+\textbf{A material's directory holds} & \textbf{Poraqu\^e} \\
 \midrule
-inputs beside the density & computes $\vext$ from them --- exactly, with a
-\file{POTCAR} or \opt{potcar\_dir} \\
-a density on its own & computes it from the structure the \file{CHGCAR} carries
-in its own header \\
-an \file{EXTCAR} already & reads it as it stands (a prepared cache) \\
+inputs beside the density & computes $V_\mathrm{ext}$ from them: exactly, with a \opt{POTCAR} or \opt{potcar\_\allowbreak{}dir} \\
+a density on its own & computes it from the structure the \opt{CHGCAR} carries in its own header \\
+an \opt{EXTCAR} already & reads it as it stands (a prepared cache) \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-$\vext$ is \textbf{always computed} for the first two, never read from an
-\file{EXTCAR} that happens to sit in a run directory: at inference time there is
-no DFT run to read one from, so the input channel has to be Poraqu\^e's own
-arithmetic in both places.
+$V_\mathrm{ext}$ is \textbf{always computed} for the first two, never read from an \opt{EXTCAR} that happens to sit in a run directory: at inference time there is no DFT run to read one from, so the input channel has to be Poraqu\^e's own arithmetic in both places.
 
-\file{TAUCAR} is \textbf{optional, per material}. A directory that has one joins
-the \opt{pseudo2tau} set; one that does not still joins \opt{ext2pseudo} and is simply
-absent from the other. Nothing is declared for it, and a task with no target
-anywhere is skipped with a message rather than failing the run --- which is what
-makes \opt{type: all} sensible on a Materials Project download, where no $\tau$
-exists.
+\opt{TAUCAR} is \textbf{optional, per material.} A directory that has one joins the kinetic operator's set; one that does not still joins the density operator's and is simply absent from the other. Nothing is declared for it, and an operator with no target anywhere is skipped with a message rather than failing the run, which is what makes both sections sensible on a Materials Project download, where no $\tau$ exists.
 
-A path holding a \textbf{single} material's run directly --- its files at the
-top level rather than one level down --- is read as that one material, so a lone
-calculation needs no wrapper directory.
+A path holding a \textbf{single} material's run directly, with its files at the top level rather than one level down, is read as that one material, so a lone calculation needs no wrapper directory.
+
+See Chapter~\ref{ch:data} for what each kind of directory contains and for training across a mixture of them.
+
+\subsection{\opt{grid.\allowbreak{}resolution}}
+
+Fields are reduced to this many points along their longest axis before training. The reduction is a Fourier truncation, the exact band-limited projection for a plane-wave field, so periodicity is preserved and the electron count is unchanged to machine precision.
+
+Cost scales as the cube: raising 32 to 64 is roughly eight times the memory and time. Grid \emph{shapes} are reduced in proportion, so a 120$\times$128$\times$128 calculation becomes 30$\times$32$\times$32 rather than being forced square.
 
 \begin{pnote}
-Three keys used to answer this one question: \opt{train\_paths} (a list),
-\opt{root} (a single path used when the list was empty) and \opt{source} (which
-layout each path was). All three were removed on 2026-08-31. The last is the one
-that mattered: it asked the \emph{config} to declare something the
-\emph{directory} already answers, which made ``a VASP run'' and ``a Materials
-Project download'' two different things to write down when they are the same
-thing on disk. A config using any of them now fails and is told what to write
-instead.
+There is no key for supplying an external potential. \opt{EXTCAR} is \textbf{always} computed by \opt{ExternalPotential} from the \opt{POTCAR} tables, which reproduces a reference potential to a relative error of order $10^{-5}$. Any \opt{EXTCAR} present in a source directory is ignored: the training input must be exactly what the pipeline produces at inference time, when no such file exists. Standard VASP does not write one anyway.
 \end{pnote}
 
-Chapter~\ref{ch:data} covers what each kind of directory contains;
-\opt{potcar\_dir} and its Gaussian fallback are in
-Section~\ref{sec:mp-potcar-dir}, which is the setting to read before quoting
-any number from a run on archive data.
+\subsection{\opt{grid.\allowbreak{}max\_\allowbreak{}spacing}}
 
-\subsection{\opt{resolution}}
+\label{sec:max-spacing}
 
-Fields are reduced to this many points along their longest axis before
-training. The reduction is a Fourier truncation --- the exact band-limited
-projection for a plane-wave field --- so periodicity is preserved and the
-electron count is unchanged to machine precision. Interpolation would alias
-and shift it.
+\opt{resolution} caps the \textbf{longest} axis, and the others are reduced in proportion. That is right for a compact cell and wrong for a long, thin one. On the CHONPS set a 3 $\times$ 4 $\times$ 35 \AA{} cell kept 6 and 8 points on its short axes, 0.6 \AA{} spacing, where the median cell had 0.2 \AA{}, and such cells were the worst-predicted of the validation split by a factor of five. \opt{max\_\allowbreak{}spacing} is the second bound, in \AA{}: an axis that \opt{resolution} would leave coarser than it is refined to the smallest FFT-friendly count that meets it, but \textbf{never past its native grid}, since a truncation cannot invent coefficients the calculation never had. \opt{null}, the default, is \opt{resolution} alone.
 
-Cost scales as the cube: raising $32 \to 64$ is roughly eight times the memory
-and time. Grid \emph{shapes} are reduced in proportion, so a
-$120\times128\times128$ calculation becomes $30\times32\times32$ rather than
-being forced square.
+The value is part of the cache tag (\opt{res32\_\allowbreak{}h0.\allowbreak{}25\_\allowbreak{}potcar}) and of the fingerprint, so a cache built with one bound is never read under another, and like \opt{resolution} it belongs to the set of keys a \opt{-{}-cache-only} job and the GPU job after it must agree on.
 
-\begin{pnote}
-There is no key for supplying an external potential. \file{EXTCAR} is
-\textbf{always} computed by \pyclass{ExternalPotential} from the \file{POTCAR}
-tables, which reproduces a reference potential to a relative error of order
-$10^{-5}$. Any \file{EXTCAR} present in a source directory is ignored --- the
-training input must be exactly what the pipeline produces at inference time,
-when no such file exists. Standard VASP does not write one anyway.
-\end{pnote}
+\subsection{\opt{potcar\_\allowbreak{}dir} and the Gaussian fallback}
 
-\subsection{\opt{gaussian\_blur} and \opt{blur\_method}}
+\label{sec:potcar-dir-and-the-gaussian-fallback}
 
-Smooths the computed external potential. The blur is applied \emph{on top of}
-the tabulated pseudopotential, never in place of it.
+The external potential needs pseudopotentials, and not every dataset ships them. A Materials Project download has a structure and a density and nothing else; archived local runs often have their \opt{POTCAR}s stripped for licensing. \opt{potcar\_\allowbreak{}dir} points at a \textbf{library}, one subdirectory per species, as VASP distributes them:
+
+\begin{lstlisting}
+data:
+  potcar_dir: /opt/vasp/potpaw_PBE       # <dir>/Ag/POTCAR, <dir>/Pt/POTCAR, ...
+\end{lstlisting}
+
+\opt{.\allowbreak{}gz} and \opt{.\allowbreak{}Z} entries are read directly, and a flat \opt{POTCAR.\allowbreak{}Ag} / \opt{Ag.\allowbreak{}POTCAR} layout is recognized too. A run that has its own \opt{POTCAR} ignores the library entirely: it is a fallback, not an override.
+
+Which construction results is the \textbf{most consequential single property of a training set}, because the two are different physical quantities rather than different approximations to one:
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.242\linewidth}>{\raggedright\arraybackslash}p{0.407\linewidth}>{\raggedright\arraybackslash}p{0.281\linewidth}@{}}
+\toprule
+\textbf{} & \textbf{$V_\mathrm{ext}$} & \textbf{residual vs. a reference \opt{EXTCAR}} \\
+\midrule
+pseudopotentials available & tabulated local pseudopotential (VASP's \opt{POTION}) & $2\times10^{-5}$ relative $L_2$ \\
+none available & Gaussian pseudo-ion model, $f_s(G)=e^{-G^2\sigma^2/2}$ & order $10^{-1}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Measured on the Ag--Pt--Pt Materials Project set, the two constructions differ from each other by \textbf{0.38 relative $L_2$}.
+
+Without the library the map learned is \emph{model potential} $\to$ \emph{DFT density}. That is well-posed and self-consistent, since inference builds the very same potential, but it is not VASP's $V_\mathrm{ext}$, and a model trained that way is not comparable with one trained on tabulated potentials. It also means a mixed dataset spanning both constructions is training on two quantities under one name; \opt{MixedFieldDataset} warns when that happens, and setting \opt{potcar\_\allowbreak{}dir} is what makes the warning go away \emph{correctly}.
 
 \begin{pwarn}
-\opt{ndimage} uses \opt{scipy.ndimage.gaussian\_filter}, which blurs along
-\emph{grid} axes and is therefore anisotropic in Cartesian space unless the
-cell is orthogonal --- on a face-centered cubic cell the two methods differ by
-$2$--$6\,\%$. \opt{spectral} multiplies by $e^{-G^{2}\sigma^{2}/2}$ using the
-true reciprocal metric and stays isotropic on any cell. Prefer the default.
+Point at the library that generated the data. The Materials Project uses the VASP PBE set (\opt{PAW\_\allowbreak{}PBE}); a \opt{PAW\_\allowbreak{}LDA} library would build a potential the densities were never computed from, which is worse than the Gaussian fallback because it looks exact.
 \end{pwarn}
 
-Measured at $\sigma = 0.15$~\AA{} and \opt{resolution: 32}, with one structure
-held out and everything else fixed, blurring changed the held-out error by
-$0.7\,\%$ and the training time by $0.4\,\%$ --- neither meaningful, since the
-grid already band-limits the field. It does remove information near the ionic
-cores, where the density peaks. Leave it off unless working at higher
-resolution.
+Missing or unreadable entries are \textbf{not fatal}. Each such species warns once and falls back to the Gaussian model for the structures that contain it, so a library covering four elements of five still buys the exact potential for everything that does not involve the fifth. The width is derived per species from the pseudopotential core radius where one is known and is 0.5 \AA{} otherwise (an MP download supplies no \opt{RCORE}).
 
-\begin{ptip}
-The cache directory name encodes these choices, for example
-\file{res32\_blur0.15spec}, so changing them cannot silently reuse a cache
-built with different settings.
-\end{ptip}
+\textbf{The cache records which construction it holds.} A library that cannot be read falls back per element, and what was wrong until 26.9.3 is that nothing downstream recorded it. A control run on Santos Dumont landed on a node where the library's filesystem was not mounted, warned six times, trained against analytic pseudo-ion potentials, and wrote a fingerprint byte-identical to one built from real pseudopotentials. Every later run reused it silently, including on nodes where the library was mounted. The fingerprint now carries \opt{potcar\_\allowbreak{}source}, per element:
+
+\begin{lstlisting}
+{ "potcar_dir": "/prj/.../POTCARs",
+  "potcar_source": {"Ag": "gaussian", "Pt": "library"} }
+\end{lstlisting}
+
+so a cache built during an outage no longer matches a run that can read the library; it rebuilds rather than being reused. The run log names the construction per source, and the cache directory records it (\opt{res32\_\allowbreak{}potcar}), so a tabulated cache and a Gaussian one can never be confused for each other.
+
+\begin{pwarn}
+\textbf{The occupancies need the \opt{POTCAR}.} The layout of each element's PAW record (which projector channels, so how many values) is read from the pseudopotential. With \opt{ext2chg.\allowbreak{}occupancies} on, the default, and no \opt{POTCAR} anywhere, the run stops before training and says to give the data one. A dataset without them, such as a Materials Project download, trains the grid alone: write \opt{occupancies: false} in the operator's section.
+\end{pwarn}
 
 \subsection{\opt{spin}}
+
 \label{sec:spin}
 
 \begin{center}
-\begin{tabular}{@{}lp{10.4cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.152\linewidth}>{\raggedright\arraybackslash}p{0.778\linewidth}@{}}
 \toprule
-Value & What happens \\
+\textbf{Value} & \textbf{What happens} \\
 \midrule
-\opt{auto} & Ask the sources whether their \file{CHGCAR}s carry a second grid
-block, and settle the channel count for the whole dataset before the cache is
-written. \\
-\opt{true} & Demand one: a dataset with no magnetization \textbf{raises}. \\
-\opt{false} & Drop it deliberately, and say so in the log. \\
+\opt{auto} & ask the sources whether their \opt{CHGCAR}s carry a second grid block, and settle the channel count for the whole dataset before the cache is written \\
+\opt{true} & demand one: a dataset with no magnetization \textbf{raises} \\
+\opt{false} & drop it deliberately, and say so in the log \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-This is the switch for spin-polarized training, and there is no other. A
-\file{CHGCAR} from an \mbox{\opt{ISPIN = 2}} run stores two grids, the total density
-$\rho$ and the magnetization $m = \rho_\uparrow - \rho_\downarrow$; with
-\opt{spin} resolved on, both reach the cache, \opt{ext2pseudo} predicts them as
-channels 0 and 1 of one output, and \opt{pseudo2tau} reads both. How many channels
-there are is a property of the data, not of the architecture, which is why the
-key lives in \opt{data} and why \opt{model} has no second one: two switches
-could disagree, and one of them would then be quietly ignored. An unpolarized
-member of a spin set carries $m \equiv 0$, so a mixed archive trains one
-two-channel operator rather than two datasets. The cache tag says which it
-holds (\file{res48\_potcar\_spin}).
+This is the switch for spin-polarized training, and there is no other. A \opt{CHGCAR} from an \opt{ISPIN = 2} run stores two grids, the total density $\rho$ and the magnetization $m = \rho_\uparrow - \rho_\downarrow$; with \opt{spin} resolved on, both reach the cache, the density operator predicts them as channels 0 and 1 of one output, and the kinetic operator reads both. How many channels there are is a property of the data, not of the architecture, which is why the key lives in \opt{data} and why \opt{ext2chg} has no second one: two switches could disagree, and one of them would then be quietly ignored. An unpolarized member of a spin set carries $m \equiv 0$, so a mixed archive trains one two-channel operator rather than two datasets. The cache tag says which it holds (\opt{res48\_\allowbreak{}potcar\_\allowbreak{}spin}).
 
-The objective is still one number over $(\rho, m)$ together. The training log
-says how it divides:
+The objective is still one number over $(\rho, m)$ together. The training log says how it divides:
 
 \begin{lstlisting}
           epoch     train loss     charge        mag     val rel L2
@@ -440,793 +278,455 @@ says how it divides:
             6/6        1.16123    0.73227    0.90121        1.11899  *
 \end{lstlisting}
 
-\opt{charge} is the data term with the prediction substituted into the density
-channel alone, the magnetization left at its reference; \opt{mag} is the same
-the other way round. Both keep the objective's norm and \textbf{its
-denominator}, the norm of the whole $(\rho, m)$ target. That choice is forced
-rather than convenient: a relative error of $m$ on its own divides by $m$,
-which is identically zero on every non-magnetic cell, so it would be undefined
-on precisely the materials most datasets are made of. With a shared denominator
-the parts of an $L^2$ objective add in quadrature,
-$\mathrm{data} = \sqrt{\mathrm{charge}^2 + \mathrm{mag}^2}$ per sample, and the
-columns say where the error lives. An $H^1$ objective adds its gradient term
-rather than combining in quadrature, so there the columns rank the channels
-without summing to anything; the log's legend states which case applies.
-\opt{train loss} remains the total the optimizer stepped on, physics terms
-included.
+\opt{charge} is the data term with the prediction substituted into the density channel alone, the magnetization left at its reference; \opt{mag} is the same the other way round. Both keep the objective's norm and \textbf{its denominator}, the norm of the whole $(\rho, m)$ target. That choice is forced rather than convenient: a relative error of $m$ on its own divides by $m$, which is identically zero on every non-magnetic cell, so it would be undefined on precisely the materials most datasets are made of. With a shared denominator the parts of an $L^2$ objective add in quadrature, $\text{data} = \sqrt{\text{charge}^2 + \text{mag}^2}$ per sample, and the columns say where the error lives. An $H^1$ objective adds its gradient term rather than combining in quadrature, so there the columns rank the channels without summing to anything; the log's legend states which case applies. \opt{train loss} remains the total the optimizer stepped on, physics terms included.
 
-\begin{pnote}
-Both parts are in the metrics JSON's \opt{history}, as
-\opt{train\_loss\_charge} and \opt{train\_loss\_magnetization}, and exist only
-for a two-channel \opt{ext2pseudo} target --- a one-channel run prints neither
-column. The magnetization gets its own parity figure,
-\file{<task>\_parity\_magnetization}, on linear axes because $m$ changes sign,
-and its own held-out number, \opt{magnetization\_relative\_l2}; the report's
-performance table stays on the density channel.
-\end{pnote}
+Both parts are in the metrics JSON's \opt{history}, as \opt{train\_\allowbreak{}loss\_\allowbreak{}charge} and \opt{train\_\allowbreak{}loss\_\allowbreak{}magnetization}, and exist only for a two-channel density target; a one-channel run prints neither column. The magnetization gets its own parity figure, \opt{\textless{}task\textgreater{}\_\allowbreak{}parity\_\allowbreak{}magnetization}, on linear axes because $m$ changes sign, and its own held-out number, \opt{magnetization\_\allowbreak{}relative\_\allowbreak{}l2}; the report's performance table stays on the density channel. How the two channels enter the objective is \opt{training.\allowbreak{}spin} (Section~\ref{sec:training-spin}).
 
-\section{\opt{model} --- the operator's shape}
+\subsection{\opt{cache.\allowbreak{}in\_\allowbreak{}memory}}
+
+\label{sec:cachememory}
+
+The largest performance setting in the file, and the only one whose effect is completely invisible from the results.
+
+With it off, \textbf{every epoch reopens, decompresses and re-parses every field from disk}. That produces exactly the same numbers as caching does, and takes about ten times as long. Measured on a V100 with 115 structures at 32$^3$: \opt{\_\allowbreak{}\_\allowbreak{}getitem\_\allowbreak{}\_\allowbreak{}} was 59 \% of the training loop, 78.9 s over 483 calls, while the GPU sat at 2--4 \% utilization waiting on \opt{zlib} and \opt{numpy.\allowbreak{}array} over a text generator. Turning the cache on took twenty epochs from \textbf{168.0 s to 16.3 s}, with the validation error identical to five decimals.
+
+It is not a GPU setting. The parse is the same on Apple Silicon and on the CPU; what an accelerator adds is a fast device left idle by it.
+
+\textbf{The cache keeps the normalized sample, not only the field.} Removing the parse left the transforms: every epoch still ran the input and target normalizations (an asinh over every voxel of every channel) on the CPU, and on a fast GPU that, not the operator, was the training loop. Measured on an RTX 5060 Ti with the CHONPS set at 48$^3$, the GPU sat at about 2 \% utilization with every decoded field already in RAM; memoizing the normalized samples took an epoch from \textasciitilde{}60 s to \textasciitilde{}8 s and the GPU to \textasciitilde{}99 \%, for the same arithmetic. The memo cannot go stale, because a dataset's transforms are properties: assigning either one empties it, so no sample normalized by a superseded transform survives the change.
+
+\opt{auto} estimates what the cache will hold (grid points $\times$ itemsize $\times$ channels over the input and target fields, three times over: the decoded fields, the tensors made from them, and the normalized samples), plus the atomic baseline in $\delta$-density mode, and enables the cache below 4 GiB, logging what it decided and what it costs:
+
+\begin{lstlisting}
+  field cache         : in RAM, ~61.3 MiB (data.cache.in_memory: auto)
+\end{lstlisting}
+
+Set it to \opt{false} when the process shares its memory with something the estimate cannot see. What \opt{auto} refuses on its own is the case the old default was right about: 128$^3$ grids over thousands of materials, where caching silently would turn a slow run into a dead one.
+
+\textbf{Parallel loading is not the alternative it looks like.} See \opt{runtime.\allowbreak{}loader\_\allowbreak{}workers} (Section~\ref{sec:num-workers-and-pin-memory}).
+
+\subsection{\opt{cache.\allowbreak{}storage} and \opt{cache.\allowbreak{}compression}}
+
+\opt{text} writes each field as a \opt{CHGCAR}-format file, readable by anything that reads VASP; \opt{hdf5} writes one chunked \opt{fields.\allowbreak{}h5} per material, 1.38$\times$ smaller at gzip and exact to $10^{-16}$ relative (text round-trips to $10^{-11}$). HDF5 stores carry the magnetization block and the PAW records, but VASP cannot open one; \opt{poraque-vasp chgcar} writes it back to text. \opt{compression} applies to HDF5 only (\opt{gzip} at level 4, or \opt{lzf}, with byte-shuffle on) and raises on a text cache. Both are part of the cache fingerprint.
+
+\subsection{\opt{atoms}}
+
+The isolated-atom reference, as a \opt{poraque-atoms} JSON or as a directory of one-atom-in-a-box runs. It supplies three things: the baseline $\rho_\mathrm{sup}$ of \opt{ext2chg.\allowbreak{}target: delta}, the structure channels of \opt{structure\_\allowbreak{}input} (Section~\ref{sec:structure-input}), and the PAW records a prediction is written with. An element the library does not cover fails before the first epoch. The shipped library covers platinum only.
+
+\section{\opt{ext2chg} --- the density operator}
+
+$V_\mathrm{ext} \to \tilde\rho$ and, with the occupancies on, every atom's augmentation occupancies. Present: trained.
 
 \begin{center}
-\begin{tabular}{@{}llp{6.7cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.173\linewidth}>{\raggedright\arraybackslash}p{0.293\linewidth}>{\raggedright\arraybackslash}p{0.464\linewidth}@{}}
 \toprule
-Key & Default & Meaning \\
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
 \midrule
-\opt{width} & \opt{16} & Channel width of the Fourier layers. \\
-\opt{modes} & \opt{8} & Retained Fourier modes per axis. \\
-\opt{n\_layers} & \opt{3} & Number of Fourier layers. \\
-\opt{projection\_channels} & \opt{64} & Hidden width of the output
-projection. \\
-\opt{activation} & \opt{silu} & \opt{silu}, \opt{gelu}, \opt{relu}, \opt{tanh}
-or \opt{kan}. \\
-\opt{projection\_activation} & \opt{null} & Read-out nonlinearity;
-\opt{null} follows \opt{activation}. \\
-\opt{kan\_setup} & \opt{null} & The KAN variant and its hyperparameters; read
-only when \opt{activation: kan}. \\
-\opt{use\_coordinates} & \opt{true} & Append three fractional-coordinate input
-channels. \\
-\opt{cell\_conditioning} & \opt{true} & Condition every layer on lattice
-descriptors (FiLM). \\
-\opt{embedding\_dim} & \opt{32} & Width of that cell embedding. \\
-\opt{mode\_selection} & \opt{fixed} & \opt{fixed} mode index, or
-\opt{physical} at constant $G_{\max}$. \\
-\opt{g\_max} & \opt{null} & Cutoff wavevector in \AA$^{-1}$; required by
-\opt{mode\_selection: physical}. \\
-\opt{equivariant} & \opt{\{enable: false\}} & Rotation-equivariant radial
-kernel --- one block, see below. \\
-\opt{paw} & \opt{\{enable: false\}} & The \opt{ext2chg} operator ---
-one block, see below. \\
-\opt{pauli\_residual} & \opt{false} & Structural $\tau\ge\tauvW$ for
-\opt{pseudo2tau}. \\
-\opt{pauli\_scale} & \opt{null} & Initial Pauli scale in eV/\AA$^{3}$;
-\opt{null} fits it from the training split. \\
-\opt{learn\_pauli\_scale} & \opt{true} & Optimize that scale alongside the
-backbone. \\
-\opt{precision} & \opt{float32} & Dtype the operator computes in;
-\opt{float64} for checking a result is not a single-precision artifact. \\
+\opt{target} & \opt{delta} & \opt{delta} learns $\rho-\rho_\mathrm{sup}$ and adds $\rho_\mathrm{sup}$ back on output; \opt{full} learns $\rho$ \\
+\opt{structure\_\allowbreak{}input} & \opt{false} & channels describing the structure, appended after $V_\mathrm{ext}$ --- see below (Section~\ref{sec:structure-input}) \\
+\opt{model} & width 64, layers 4, modes 16 & the network --- see below (Section~\ref{sec:model-section}) \\
+\opt{occupancies} & on & the per-atom PAW head --- see below (Section~\ref{sec:paw}); \opt{false} trains the grid alone \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\subsection{\opt{width}, \opt{modes}, \opt{n\_layers}}
+\subsection{\opt{target}}
 
-These three set the capacity. The parameter count is dominated by the spectral
-weights --- $4\,w^{2}m^{3}$ complex numbers per layer for width $w$ and
-$m$ modes --- so \opt{modes} is by far the expensive knob: doubling it
-multiplies the spectral parameters by eight.
+\opt{delta}, the default, trains on the residual over a superposition of isolated atoms ($\delta\rho=\rho-\rho_\mathrm{sup}$; the residual is 0.057 in $L^2$ on the Pt cells). The operator still returns the \textbf{full} density: prediction adds $\rho_\mathrm{sup}$ back, in a fixed order (decode, add the baseline, clip, normalize), and every physics term sees the absolute density. The atomic library is copied into the checkpoint. It needs \opt{data.\allowbreak{}atoms} (Section~\ref{sec:potcar-dir-and-the-gaussian-fallback}) to cover every element. \opt{full} trains on $\rho$ itself and needs no library.
 
-\begin{ptip}
-\opt{modes} is a \emph{capacity limit}, not a requirement. On a grid too coarse
-to supply that many modes, fewer are used automatically, so one configuration
-serves materials whose grids differ in size.
-\end{ptip}
+\subsection{\opt{structure\_\allowbreak{}input}}
+
+\label{sec:structure-input}
+
+A block, off by default:
+
+\begin{lstlisting}
+ext2chg:
+  structure_input:
+    superposition: true    # rho_sup, the delta-density baseline, as a channel
+    elements: auto         # one superposition per element of the data, or a list
+\end{lstlisting}
+
+The operator is handed $V_\mathrm{ext}$ and must work out from it, voxel by voxel, \emph{which} atoms surround a point and how far away they are before it can say anything about the bonding charge there. The potential carries that information, but only implicitly, in the shape of each ion's local pseudopotential, and a network of a few layers spends much of its depth decoding it. This block states it outright, as extra input channels after the potential:
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.201\linewidth}>{\raggedright\arraybackslash}p{0.119\linewidth}>{\raggedright\arraybackslash}p{0.610\linewidth}@{}}
+\toprule
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
+\midrule
+\opt{superposition} & \opt{true} & lead with $\rho_\mathrm{sup}$, the superposition of isolated atoms the $\delta$-density baseline already builds \\
+\opt{elements} & \opt{auto} & one channel per element (that element's atoms alone, superposed); \opt{auto} is every element of the training data, a list names them, an empty list gives none \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The per-element channels sum to $\rho_\mathrm{sup}$, and an element absent from a structure is a channel of zeros. All of them share one asinh scale, the median of $|\rho_\mathrm{sup}|$, because a scale fitted to a channel that is mostly zeros would be its noise floor.
+
+Every channel is a scalar field built from radial form factors of the isolated-atom library, so the operator that reads them stays equivariant under rotations, inversion and translations, and every one is a function of the geometry alone: at inference they are rebuilt from the structure exactly as the potential is, and a caller still hands over a potential and nothing else. The library is therefore required (\opt{data.\allowbreak{}atoms}, with \opt{target: delta}; the combination with \opt{full} raises). The checkpoint records the resolved block, element list included, because an input-channel count alone cannot say which channels the weights expect; a structure holding an element outside that list is refused at inference rather than having its atoms silently vanish from the per-element channels while remaining in the potential.
+
+Measured on 785 CHONPS cells with the same backbone, the channels took the held-out relative $L^2$ of $\rho$ from 4.4 \% to 3.7 \% at epoch 10: one comparison, early in training, so a reason to try the block rather than a settled number.
+
+\section{\opt{model} --- the network of each operator}
+
+\label{sec:model-section}
+
+\opt{ext2chg.\allowbreak{}model} and \opt{chg2tau.\allowbreak{}model} have the same keys; they differ in their defaults, because the two maps differ in difficulty:
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.229\linewidth}>{\raggedright\arraybackslash}p{0.098\linewidth}>{\raggedright\arraybackslash}p{0.098\linewidth}>{\raggedright\arraybackslash}p{0.504\linewidth}@{}}
+\toprule
+\textbf{Key} & \textbf{\opt{ext2chg}} & \textbf{\opt{chg2tau}} & \textbf{Meaning} \\
+\midrule
+\opt{width} & \opt{64} & \opt{16} & channel width of the Fourier layers \\
+\opt{layers} & \opt{4} & \opt{3} & number of Fourier layers \\
+\opt{modes} & \opt{16} & \opt{8} & retained Fourier modes per axis (under \opt{band}, the ceiling) \\
+\opt{band} & \opt{null} & \opt{null} & \opt{null}: \opt{modes} on every axis; a number in \AA{}$^{-1}$: the same physical band in every cell \\
+\opt{projection\_\allowbreak{}channels} & \opt{64} & \opt{64} & hidden width of the read-out head \\
+\opt{activation} & \opt{silu} & \opt{silu} & \opt{silu}, \opt{gelu}, \opt{relu} or \opt{tanh}, in every layer and in the read-out \\
+\opt{cell\_\allowbreak{}conditioning} & \opt{32} & \opt{32} & width of the lattice embedding that modulates every layer (FiLM); \opt{false} drops it \\
+\opt{equivariant} & \opt{false} & \opt{false} & rotation-equivariant radial kernel --- a block, see below \\
+\opt{precision} & \opt{float32} & \opt{float32} & \opt{float32} or \opt{float64}, what the operator computes in \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{\opt{width}, \opt{modes}, \opt{layers}}
+
+These three set the capacity. The parameter count is dominated by the spectral weights, $4w^2m^3$ complex numbers per layer for width $w$ and $m$ modes, so \opt{modes} is by far the expensive knob: doubling it multiplies the spectral parameters by eight.
+
+\opt{modes} is a \emph{capacity limit}, not a requirement. On a grid too coarse to supply that many modes, fewer are used automatically, so one configuration serves materials whose grids differ in size.
+
+\subsection{\opt{activation}}
+
+\opt{silu}, \opt{gelu}, \opt{relu} and \opt{tanh} are stateless: one fixed function, no parameters, nothing to learn, and the same function serves the read-out. \opt{silu} is the default because it won: learnable Kolmogorov--Arnold activations were tried against it on this project's Pt data and none beat it. The KAN code, its tests and its comparison configs now live in \opt{experiments/\allowbreak{}kan\_\allowbreak{}symbolic}; \opt{model.\allowbreak{}kan\_\allowbreak{}setup} raises and names the archive.
+
+\subsection{\opt{cell\_\allowbreak{}conditioning}}
+
+The lattice, through an embedding of this width, modulates each layer's activations (FiLM). Without it the operator sees the field but not the cell it lives in, and cannot distinguish two materials whose grids agree while their lattice vectors do not. Keep it on unless deliberately ablating it. The three fractional coordinates are appended to the input as extra channels exactly when the model is \emph{not} equivariant; there is no key for it, since an equivariant operator cannot take them (below).
+
+\subsection{\opt{band}}
+
+\opt{null} keeps the lowest \opt{modes} indices on every material. Because the spacing of reciprocal-lattice points depends on the cell size, that means a \emph{different physical band} for each material.
+
+A number keeps every mode below that wavevector, retaining $\lfloor\texttt{band}\,L_i/2\pi\rfloor$ modes along an axis of length $L_i$ (never more than \opt{modes}), so every material contributes the same band of physics. Prefer it when cell sizes vary widely.
+
+\textbf{Worth trying rather than only tidier.} Measured at LNCC on 115 Materials Project structures whose cells span 2.29 to 25.87 \AA{}, a fixed band with a generous value beat the per-axis count by 20 \% in \textbf{both} seeds, and was \emph{faster}, since fewer modes are retained. It reproduced in a second regime sharing no parameter with the first (32$^3$ / \opt{modes} 8 / band 16, and 64$^3$ / \opt{modes} 24 / band 24; 20.5 \% and 20.3 \%). The mechanism looks like uniformity rather than bandwidth: with a fixed count, cells spanning a factor of 11 in length retain physical bands spanning a factor of 11, and \opt{band} removes that.
+
+It is not the default (one dataset, one architecture), and it is not a free switch either. \textbf{Too small is much worse than \opt{null}}: a band of 6 starved the model and lost 55 \%. The useful value also moves with the regime (16 in the first study, 24 in the second, with the margin collapsing to 3 \% at 32), so it belongs to the run rather than to the schema. \opt{poraque-train} reports the modes retained per structure at startup and, for an equivariant run, the band they span; read those rather than trusting a number copied from another config.
+
+\opt{band} does not size the radial basis of an equivariant model when it is \opt{null}: it did until 2026-09-04, silently, and a 90-run architecture study at LNCC was run through a leftover value because nothing in the log said so. The basis is \opt{equivariant.\allowbreak{}g\_\allowbreak{}basis}, and only that (below).
 
 \subsection{\opt{equivariant}}
 
-One block, following the convention of \S\ref{sec:enableblocks}:
+A block, off by default:
 
 \begin{lstlisting}
-model:
-  use_coordinates: false      # required
-  equivariant:
-    enable: true
-    n_radial: 32
+ext2chg:
+  model:
+    equivariant:
+      n_radial: 32
 \end{lstlisting}
 
-Constrains the Fourier multiplier to a \textbf{real function of $|\GG|$
-alone}, which is a convolution with a radial kernel and therefore commutes with
-every rotation. The coefficients being real also makes it commute with
-inversion, so the operator is equivariant under the full $O(3)$ rather than the
-$SE(3)$ the construction was asked for.
+Constrains the Fourier multiplier to a \textbf{real function of $|\mathbf{G}|$ alone}, which is a convolution with a radial kernel and therefore commutes with every rotation. The coefficients being real also makes it commute with inversion, so the operator is equivariant under the full $O(3)$ rather than the $SE(3)$ the construction was asked for.
 
 \begin{center}
-\begin{tabular}{@{}llp{6.4cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.144\linewidth}>{\raggedright\arraybackslash}p{0.128\linewidth}>{\raggedright\arraybackslash}p{0.658\linewidth}@{}}
 \toprule
-Key & Default & Meaning \\
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
 \midrule
-\opt{enable} & \opt{false} & Use the radial kernel in place of the dense
-one. \\
-\opt{n\_radial} & \opt{16} & Radial basis functions --- the whole capacity of
-the kernel. \\
-\opt{g\_basis} & \opt{null} & Radius in \AA$^{-1}$ the basis spans:
-\opt{auto}, a number, or \opt{null}. \\
-\opt{spherical\_cutoff} & \opt{true} & Mask the retained modes to the
-inscribed sphere. \\
+\opt{n\_\allowbreak{}radial} & \opt{16} & radial basis functions: the whole capacity of the kernel \\
+\opt{g\_\allowbreak{}basis} & \opt{auto} & radius in \AA{}$^{-1}$ the basis spans: \opt{auto} or a number \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\subsubsection*{\opt{g\_basis: auto} --- size the basis from the data}
+\subsubsection*{\opt{g\_\allowbreak{}basis: auto} --- size the basis from the data}
 
-The basis spans $[0, g_{\mathrm{basis}}]$; the band a \emph{material} retains
-is $\min_i 2\pi m_i / L_i$, a property of its own cell. Over 115 Materials
-Project cells those ran from $1.94$ to $20.96$~\AA$^{-1}$, so no constant is
-right for all of them --- and the two ways to miss cost very differently.
+The basis spans $[0, g_\mathrm{basis}]$; the band a \emph{material} retains is $\min_i 2\pi m_i/L_i$, a property of its own cell. Over 115 Materials Project cells those ran from 1.94 to 20.96 \AA{}$^{-1}$, so no constant is right for all of them, and the two ways to miss cost very differently:
 
 \begin{center}
-\begin{tabular}{@{}lp{5.1cm}p{4.0cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.108\linewidth}>{\raggedright\arraybackslash}p{0.411\linewidth}>{\raggedright\arraybackslash}p{0.411\linewidth}@{}}
 \toprule
-Missing & What happens & Measured cost \\
+\textbf{missing} & \textbf{what happens} & \textbf{measured cost} \\
 \midrule
-too \textbf{narrow} & Modes beyond the basis are clamped onto its outermost
-function and share one response. & None: 71\,\% of modes clamped moved the
-error less than the seed spread. \\
-too \textbf{wide} & Radial functions sit at radii no mode reaches. &
-\textbf{14\,\% to 43\,\%}, with six of sixteen functions orphaned. \\
+too \textbf{narrow} & modes beyond the basis are clamped onto its outermost function and share one response & none: 71 \% of modes clamped moved the error less than the seed spread \\
+too \textbf{wide} & radial functions sit at radii no mode reaches & \textbf{14 \% to 43 \%}: a basis of 48 against a median band of 31 orphaned six of sixteen functions \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\opt{auto} takes the \textbf{median} band the training split retains, resolved
-before the model is built so the number a checkpoint records is a number. Half
-the set is then clamped, deliberately: that is the free half. \opt{null} falls
-back to \opt{g\_max} under \opt{mode\_selection: physical} and to
-$8.0$~\AA$^{-1}$ otherwise --- which on this project's own platinum set is
-$2.3\times$ wider than the band, leaving about 18 of \file{configs/train.yaml}'s
-32 radial functions where no mode exists. That file therefore states
-\opt{auto}.
+\opt{auto} takes the \textbf{median} band the training split retains, resolved before the model is built so that the number a checkpoint records is a number. Half the set is then clamped, deliberately: that is the free half. The median is also what fits the measurements: the four configurations that performed well had \opt{g\_\allowbreak{}basis} within a few percent of the median band edge, and the one that did not was 54 \% above it. The run says at startup what the basis spans, the range and median of the band the training structures retain, and the fraction of retained modes lying beyond the basis.
 
-Whichever applies, the run says so at startup: what the basis spans, the range
-and median of the band the training structures retain, and the fraction of
-retained modes lying beyond it.
+\textbf{Three conditions have to hold together, and each fails silently.} The kernel being radial is the one everybody thinks of; the other two were found by measuring, and the schema now guarantees them rather than asking.
 
-\begin{pwarn}[title={Three conditions have to hold together, and each fails
-silently}]
-The kernel being radial is the one everybody thinks of; the other two were
-found by measuring.
+\emph{The retained set must be a ball, not a box.} A radial multiplier over a box of modes is equivariant only under the box's own symmetry group. A cubic cell with equal mode counts hides this completely, because the box \emph{is} invariant under the octahedral group; on a tetragonal cell a box takes the error from 3e-7 to 5e-2. The modes of an equivariant model are always a ball (there used to be a \opt{spherical\_\allowbreak{}cutoff} key; it is gone, as nobody wanted the broken setting).
 
-\textbf{The retained set must be a ball, not a box} ---
-\opt{spherical\_cutoff: true}. A radial multiplier over a box of modes is
-equivariant only under the box's own symmetry group. A cubic cell with equal
-mode counts hides this completely, because the box \emph{is} invariant under
-the octahedral group; on a tetragonal cell, switching the cutoff off takes the
-error from $3\times10^{-7}$ to $5\times10^{-2}$.
+\emph{No coordinate channels.} The three fractional coordinates are not three scalar fields (under a rotation they turn into each other) and being absolute positions they cost translation equivariance too. An equivariant model does not append them.
 
-\textbf{\opt{use\_coordinates} must be off}, and \opt{enable: true} beside it
-raises. The three fractional coordinates are not three scalar fields --- under
-a rotation they turn into each other --- and being absolute positions they cost
-translation equivariance too.
-\end{pwarn}
+\emph{The coefficients must be real,} which the layer enforces.
 
-The cost is capacity, and it is large. The dense layer holds
-$4C_{\mathrm{in}}C_{\mathrm{out}}m_1m_2m_3$ complex numbers; this one holds
-$C_{\mathrm{in}}C_{\mathrm{out}}R$ real ones --- $4\,096$ against
-$1\,048\,576$ at \opt{width 16}, \opt{modes 8}, \opt{n\_radial 16}.
+\textbf{The cost is capacity, and it is large.} The dense layer holds $4C_\mathrm{in}C_\mathrm{out}m_1m_2m_3$ complex numbers; this one holds $C_\mathrm{in}C_\mathrm{out}R$ real ones: 4 096 against 1 048 576 at \opt{width 16, modes 8, n\_\allowbreak{}radial 16}.
 
-Which does not make \opt{n\_radial} the knob to raise \emph{first}, though this
-guide said so until 2026-09-04. \opt{modes} costs \emph{zero} parameters under
-equivariance --- the coefficient count is $C^{2}R$ whatever band is retained
---- so it is a bandwidth knob paid only in arithmetic. On 92 training materials
-the error rose monotonically with \opt{n\_radial} across 8, 16, 32 and 64,
-while raising \opt{modes} from 4 to 16 improved it $2.7\times$ at
-\emph{identical} parameter count, for 36\,\% more time per epoch. On a small
-training set the radial bank is where the excess capacity accumulates and the
-bandwidth is free; expect the ordering to invert as the set grows, which is
-untested.
+\textbf{Which does not make \opt{n\_\allowbreak{}radial} the knob to raise first.} \opt{modes} costs \emph{zero} parameters under equivariance (the coefficient count is $C^2R$ whatever band is retained), so it is a bandwidth knob paid only in FLOPs. On 92 training materials LNCC measured the error rising monotonically with \opt{n\_\allowbreak{}radial} across 8, 16, 32 and 64, while raising \opt{modes} from 4 to 16 improved it \textbf{2.7$\times$ at identical parameter count}, for 36 \% more time per epoch. On a small training set the radial bank is where the excess capacity accumulates and the bandwidth is free; expect the ordering to invert as the set grows, which is untested.
 
-Whether it pays was measured once, on a V100: 400 epochs on 115 Materials
-Project structures at $32^{3}$, \opt{width 32 / n\_radial 32} reached a
-validation relative $L^{2}$ of $0.047$ against $0.173$ for a dense model with
-$28\times$ the parameters --- $4.1\times$ better. The $4\times$ \emph{larger}
-equivariant arm (\opt{width 128, n\_radial 64}) was \textbf{worse}, at $0.059$:
-capacity is not what buys this, the constraint is. One seed, one dataset, and
-neither equivariant arm had converged at 400 epochs, so read it as a reason to
-try the flag rather than as a number.
+\textbf{Whether it pays was measured once}, on a V100: 400 epochs on 115 Materials Project structures at 32$^3$, \opt{width 32 /\allowbreak{} n\_\allowbreak{}radial 32} reached a validation relative $L^2$ of 0.047 against 0.173 for a dense model with 28$\times$ the parameters, 4.1$\times$ better. The 4$\times$ \emph{larger} equivariant arm (\opt{width 128, n\_\allowbreak{}radial 64}) was \textbf{worse}, at 0.059: capacity is not what buys this, the constraint is. One seed, one dataset, and neither equivariant arm had converged at 400 epochs, so read it as a reason to try the block rather than as a number.
 
 \begin{pnote}
-An equivariant model is slower per epoch despite having two orders of magnitude
-fewer parameters, and that is not a defect. The dense layer \emph{stores} one
-complex number per retained mode per channel pair and reads it; the radial
-layer stores $C^{2}R$ real numbers and must \textbf{reconstruct} the multiplier
-at every mode from them --- about $R/2$ times the arithmetic at
-\opt{n\_radial: R}. The constraint trades memory for recomputation, so
-parameters and FLOPs move in opposite directions by construction.
+An equivariant model is slower per epoch despite having two orders of magnitude fewer parameters, and that is not a bug. The dense layer \emph{stores} one complex number per retained mode per channel pair and reads it; the radial layer stores $C^2R$ real numbers and must \textbf{reconstruct} the multiplier at every mode from them, about $R/2$ times the arithmetic at \opt{n\_\allowbreak{}radial: R}. The constraint trades memory for recomputation, so parameters and FLOPs move in opposite directions by construction.
 \end{pnote}
 
-\subsection{\opt{paw}}
+\begin{pwarn}
+NVIDIA's cuequivariance is deliberately \textbf{not} used and is not a dependency. It accelerates arithmetic on irreducible representations of $O(3)$, and a scalar-field-to-scalar-field operator carries only $\ell=0$: every tensor product in it is a scalar multiply, and the Fourier layer is a complex \opt{einsum} diagonal in the mode index, which Clebsch--Gordan cannot express. Profiled by kernel class on a V100 its share is 0.0 \%. Equivariance here is a constraint on the kernel, not a kernel library.
+\end{pwarn}
+
+\section{\opt{ext2chg.\allowbreak{}occupancies} --- the per-atom PAW head}
+
 \label{sec:paw}
 
+A block, \textbf{on by default}:
+
 \begin{lstlisting}
-task:
-  type: all          # the chain, and ext2chg beside it
-model:
-  use_coordinates: false
-  equivariant:
-    enable: true     # the whole operator becomes equivariant
-  paw:
-    enable: true
-    width: 64
-    modes: 16
-    n_layers: 4
+ext2chg:
+  occupancies:
+    weight: 3.0
+    neighbor_min: 0.6
 \end{lstlisting}
 
-\opt{ext2chg} maps $\vext$ to two things at once: the pseudo-density on the
-grid, as \opt{ext2pseudo} does, and every atom's \textbf{augmentation occupancies}
-$\rho(\ell\ell'LM)$ --- the one-center PAW terms VASP writes after the grid,
-which with the pseudo-density are what an all-electron density is rebuilt from.
-They are not a field. There are 138 per atom for \opt{PAW\_PBE Pt}, whose
-projector channels are d, d, s, s, p, p in the POTCAR's order, and one set per
-density channel, so a spin-polarized dataset keeps the magnetization's set too.
+\opt{false} trains the grid alone and needs no \opt{POTCAR}; \opt{true} or the bare key is the defaults.
 
 \begin{center}
-\begin{tabular}{@{}llp{7.0cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.265\linewidth}>{\raggedright\arraybackslash}p{0.108\linewidth}>{\raggedright\arraybackslash}p{0.557\linewidth}@{}}
 \toprule
-Key & Default & Meaning \\
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
 \midrule
-\opt{enable} & \opt{false} & Train \opt{ext2chg}: required by
-\opt{task.type: ext2chg}, and adds it to an \opt{all} run. \\
-\opt{width} & \opt{64} & The FNO backbone's channels. \\
-\opt{modes} & \opt{16} & Its retained Fourier modes per axis. \\
-\opt{n\_layers} & \opt{4} & Its Fourier layers. \\
-\opt{readout\_g\_max} & \opt{auto} & The band in \AA$^{-1}$ read at each atom;
-\opt{auto} is 95\,\% of the coarsest training grid's Nyquist frequency. \\
-\opt{occupancy\_weight} & \opt{1.0} & The per-atom term against the field
-objective, and in the validation score. \\
+\opt{weight} & \opt{1.\allowbreak{}0} & the per-atom term against the field objective, in training and in the validation score alike \\
+\opt{magnetization\_\allowbreak{}weight} & \opt{1.\allowbreak{}0} & weight of the magnetization record set in the occupancy loss and score, against the charge set's \\
+\opt{readout\_\allowbreak{}band} & \opt{auto} & the band in \AA{}$^{-1}$ read at each atom; \opt{auto} is 95 \% of the coarsest Nyquist frequency over the training and validation grids \\
+\opt{neighbor\_\allowbreak{}min} & \opt{2.\allowbreak{}2} & first of ten neighbor-kernel centers in \AA{}, below the fixed last center at 5.8 \AA{}; 0.6 also covers short CHON bonds \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\opt{ext2chg} is not a link of the chain --- \opt{all} still means
-\opt{ext2pseudo} then \opt{pseudo2tau} --- and the two switches are checked against
-each other: \opt{task.type: ext2chg} with \opt{enable: false} raises, and so
-does \opt{enable: true} beside \opt{ext2pseudo} or \opt{pseudo2tau}.
+(\opt{runtime.\allowbreak{}readout\_\allowbreak{}cache\_\allowbreak{}mib} sets the device memory for the read-out's kernels; it is a hardware setting, below.)
 
-The operator is built as \file{experiments/paw\_occupancies} measured it should
-be. \textbf{An FNO for the grid}, sized by the block; every other \opt{model}
-setting applies to it unchanged. \textbf{A readout at each atom} of the latent
-field and the predicted density, onto solid-harmonic Gaussians
-$r^{L}Y_{LM}(\hat r)\,e^{-r^{2}/2s_n^{2}}$ --- the decoder half of a graph neural
-operator --- over one band $|\GG| \le$ \opt{readout\_g\_max}, resampled to a
-common spacing so every cell is integrated alike. \textbf{An equivariant head per
-element}: one map per L shared across M, gated by invariants. With
-\opt{model.equivariant} on, the whole operator rotates its predicted occupancies
-with the crystal, to $7\times10^{-15}$ in double precision.
+With the head on, the operator maps $V_\mathrm{ext}$ to two things at once: the pseudo-density on the grid and every atom's \textbf{augmentation occupancies} $\rho(\ell\ell'LM)$, the one-center PAW terms VASP writes after the grid, which together with the pseudo-density are what an all-electron density is reconstructed from. They are not a field. There are 138 per atom for \opt{PAW\_\allowbreak{}PBE Pt} (projector channels d, d, s, s, p, p, in the POTCAR's order) and one set per density channel, so a spin-polarized dataset keeps the magnetization's set as well.
 
-\begin{pwarn}[title={The band is not optional}]
-A readout of the DFT density integrated on each grid as it came scored 3\,\% on
-nanoparticles it had seen and 184\,\% on held-out ones, whose grid spacing
-differs; over one band it scored 4.9\,\%. A grid too coarse to supply the band
-therefore raises, at training and at inference.
-\end{pwarn}
+The operator is built as \opt{experiments/\allowbreak{}paw\_\allowbreak{}occupancies} measured it should be (\opt{paw}):
 
-The records train with L = 0 centered and every (set, L, pair) block scaled to
-unit RMS, fitted on the training split and inverted from the checkpoint, and
-every L block weighs the same in the loss. The log gains a \opt{val occ}
-column, the relative RMS in physical units, and an \opt{occ loss} column, the
-training term on held-out data; the best epoch is chosen on \opt{val rel L2 +
-occupancy\_weight $\times$ occ loss}, the objective itself. \opt{val occ} is
-reported, not selected on: 99\,\% of the records' norm is the charge set's
-L = 0 block, so it cannot see the L > 0 blocks. The report breaks the error
-down by record set and L. Each element's record layout comes from the POTCAR's
-\opt{Non local Part}, so a dataset without POTCARs cannot train it; nor, yet,
-can \opt{--kfold}, fine-tuning or an f-channel element, all refused before the
-cache. A cache built before 16 September 2026 dropped the records; delete it and
-let it rebuild.
+\textbf{An FNO for the grid}, sized by the section's \opt{model}. Every other \opt{model} setting (activation, equivariance, band) applies to it unchanged.
 
-\subsection{\opt{use\_coordinates} and \opt{cell\_conditioning}}
+\textbf{A readout at each atom}, of the latent field and the predicted density, onto solid-harmonic Gaussians $r^L Y_{LM}(\hat r)\,e^{-r^2/2s_n^2}$. It is the decoder half of a graph neural operator, with one constraint that was not optional. The fields are first restricted to one band $|\mathbf G| \le$ \opt{readout\_\allowbreak{}band} and resampled to a spacing of $\pi/2G_\mathrm{max}$. A readout of the DFT density integrated on each grid as it came scored 3 \% on nanoparticles it had seen and 184 \% on held-out ones, whose grid spacing differs; over one band, 4.9 \%. A grid too coarse to supply the band \textbf{raises}, at training and at inference.
 
-\opt{use\_coordinates} appends the three fractional coordinates as extra input
-channels, giving the network a positional reference the field alone does not
-carry.
+\opt{auto} takes the band from the validation grids as well as the training ones. The band is a property of the geometry, not of any target, and a held-out cell coarser than every training cell would otherwise stop the run at its first validation pass rather than before the first epoch.
 
-\opt{cell\_conditioning} feeds lattice descriptors through an embedding of
-width \opt{embedding\_dim} and uses it to modulate each layer's activations
-(FiLM). Without it the operator sees the field but not the cell it lives in,
-and cannot distinguish two materials whose grids agree while their lattice
-vectors do not. Keep both on unless deliberately ablating them.
+The geometric neighbor features retain ten Gaussian channels of width 0.3 \AA{}, under a 6 \AA{} cutoff. \opt{neighbor\_\allowbreak{}min} changes their first center, preserving the original 2.2--5.8 \AA{} range by default. The experiment in \opt{experiments/\allowbreak{}chon\_\allowbreak{}ext2chg} tests 0.6--5.8 \AA{} for shorter covalent bonds. Their actual centers are checkpoint buffers; loading an older checkpoint preserves its features.
 
-\subsection{\opt{mode\_selection} and \opt{g\_max}}
+\textbf{An equivariant head per element.} Each L block of the record is one map shared across M, gated by an MLP over the invariants, with a linear path beside it. With \opt{model.\allowbreak{}equivariant} on, the whole operator rotates its predicted occupancies with the crystal, measured to 7e-15 in double precision. The layout of each element's record comes from the POTCAR's \opt{Non local Part}, so a dataset without POTCARs cannot train it.
 
-\opt{fixed} keeps the lowest \opt{modes} indices on every material. Because the
-spacing of reciprocal-lattice points depends on the cell size, that means a
-\emph{different physical band} for each material.
+\textbf{An invertible target.} The records train with L = 0 centered and every (set, L, pair) block scaled to unit RMS, both fitted on the training split, stored in the checkpoint and inverted at prediction, and every L block weighs the same in the loss. On raw records the loss would be 99 \% the L = 0 block.
 
-\opt{physical} instead keeps every mode below a fixed wavevector $G_{\max}$,
-retaining $\lfloor G_{\max} L_i / 2\pi \rfloor$ modes along axis $i$, so every
-material contributes the same band of physics. Prefer it when cell sizes vary
-widely. It requires \opt{g\_max}.
+\textbf{One weight per record set.} A spin-polarized density carries a second set, the magnetization's, and with every (set, L) block weighed alike its L \textgreater{} 0 blocks (0.005 \% of the occupancy norm on the CHONPS set, and as unpredictable from the potential as the field magnetization is: 98 \% held-out error at L = 1) were most of the occupancy loss and of the score the best epoch is chosen on. \opt{magnetization\_\allowbreak{}weight} scales that set against the charge set's; below one, the charge blocks drive both. The weights are normalized to their mean, so the default of 1.0 is the unweighted loss to the bit. A one-channel dataset has no second set and ignores the key. It is not \opt{training.\allowbreak{}spin.\allowbreak{}magnetization\_\allowbreak{}weight} (Section~\ref{sec:training-spin}), which weights the magnetization \emph{channel} of the field objective.
 
-Worth trying rather than only tidier. Measured on 115 Materials Project
-structures whose cells span $2.29$ to $25.87$~\AA, \opt{physical} with a
-generous \opt{g\_max} beat \opt{fixed} by 20\,\% in \emph{both} seeds, and was
-faster --- fewer modes are retained. It reproduced in a second regime sharing
-no parameter with the first. The mechanism looks like uniformity rather than
-bandwidth: under \opt{fixed}, cells spanning a factor of 11 in length retain
-physical bands spanning a factor of 11, and \opt{physical} removes that.
+The training log gains two columns: \opt{val occ}, the relative RMS of the held-out occupancies in physical units, and \opt{occ loss}, the training term on the held-out split. The best epoch is chosen on \opt{val rel L2 + weight x occ loss}, the objective itself, on held-out data. \opt{val occ} is reported rather than selected on because 99 \% of the records' squared norm is the charge set's L = 0 block: it reads a few percent while the L \textgreater{} 0 blocks are tens of percent wrong. After training, each structure's \opt{occupancy\_\allowbreak{}relative\_\allowbreak{}rms} is written to the metrics JSON beside a baseline (the training-mean L = 0 record with every L \textgreater{} 0 block zero), and each split is broken down by record set and L, in the log and under \opt{occupancies}.
 
-It is not the default --- one dataset, one architecture --- and it is not a
-free switch either. \textbf{Too small is much worse than \opt{fixed}}:
-\opt{g\_max 6} starved the band and lost 55\,\%. The useful value also moves
-with the regime, so it belongs to the run rather than to the schema; read the
-lines \file{poraque-train} prints at startup rather than copying a number from
-another config.
+A bundle holding this operator gives \opt{poraque-inference -{}-add-paw} a fourth PAW source, \opt{model}; \opt{auto} prefers it to the averaged table.
 
-\begin{pwarn}[title={\opt{g\_max} does not size the radial basis under
-\opt{fixed}}]
-It did until 2026-09-04, and silently. \opt{g\_max} truncates nothing under
-\opt{mode\_selection: fixed}, so a reader concludes the key is inert --- but
-the fallback that gives \opt{g\_basis} its default read it under either mode
-selection. A 90-run architecture study was carried out through a leftover
-\opt{g\_max: 6}, so every equivariant model in it was built with a
-$6.0$~\AA$^{-1}$ basis rather than the $8.0$ default, and nothing in the log,
-the resolved config or the run record said so. The measured accuracy cost was
-inside the seed spread, which is why it survived twenty runs.
-
-Stating a \opt{g\_max} beside \opt{fixed} now warns and leaves the basis at its
-default. The coupling under \opt{physical} is correct and kept: there
-$m_i = \lfloor G_{\max} L_i/2\pi \rfloor$, so the inscribed radius
-$\min_i 2\pi m_i/L_i$ is at most $G_{\max}$ and a basis spanning $G_{\max}$
-spans the retained band by construction.
-\end{pwarn}
-
-\subsection{\opt{pauli\_residual} and its scale}
-
-For \opt{pseudo2tau}, the model predicts
-\[
-  \tau = \tauvW[\rho] + s\,\mathrm{softplus}\bigl(f_\theta(\rho)\bigr),
-\]
-so the Hoffmann--Ostenhof bound $\tau \ge \tauvW$ holds by construction and the
-network learns only the Pauli term $\tauP$. Against a matched baseline it
-improved every fold --- $18.3\,\%$ in mean relative $L^{2}$ --- while training
-$17.8\,\%$ \emph{faster}, because the network no longer has to re-derive
-$|\nabla\rho|^{2}/8\rho$, roughly $31\,\%$ of $\tau$. Recommended.
-
-\opt{pauli\_scale} sets the initial magnitude $s$; \opt{null} fits it from the
-training split, which is the sensible default. \opt{learn\_pauli\_scale}
-lets the optimizer refine it.
-
-\begin{pwarn}
-The bound is a theorem for all-electron densities, whereas \file{CHGCAR} and
-\file{TAUCAR} hold pseudo quantities. Check it on new data before enabling the
-head --- the training log reports any reference points that violate it.
-\end{pwarn}
-
-\section{Numerical precision}
-
-Two independent settings, because they control different costs:
+The cache carries the records; a cache built before 16 September 2026 dropped them, so delete it and let it rebuild. \opt{FieldPairDataset.\allowbreak{}site\_\allowbreak{}records(i)} returns one structure's (occupancies, record lengths, atomic numbers and fractional positions, in the file's atom order) for both operators that carry them: as the target of \opt{ext2chg} and as the input of \opt{chg2tau} (Section~\ref{sec:chg2tau}). A dataset built for either yields, beside the usual \opt{input} and \opt{target}:
 
 \begin{center}
-\begin{tabular}{@{}llp{7.4cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.148\linewidth}>{\raggedright\arraybackslash}p{0.189\linewidth}>{\raggedright\arraybackslash}p{0.593\linewidth}@{}}
 \toprule
-Key & Default & Meaning \\
+\textbf{Key} & \textbf{Shape} & \textbf{} \\
 \midrule
-\opt{data.precision} & \opt{float64} & How the volumetric fields are
-\emph{stored}: \opt{float16}, \opt{float32} or \opt{float64}. A memory
-setting --- a $160^3$ field is 16\,MB in double and 8\,MB in single. \\
-\opt{model.precision} & \opt{float32} & What the operator \emph{computes} in:
-\opt{float32} or \opt{float64}. \\
+\opt{paw} & \opt{(B, A, S, L)} & occupancies: batch, atoms, record sets, values \\
+\opt{paw\_\allowbreak{}mask} & \opt{(B, A, L)} & a real value of a real atom's record \\
+\opt{atom\_\allowbreak{}mask} & \opt{(B, A)} & a real atom \\
+\opt{species} & \opt{(B, A)} & atomic numbers, 0 for padding \\
+\opt{positions} & \opt{(B, A, 3)} & fractional coordinates \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Keep \opt{data.precision} at \opt{float64} wherever an integral over the cell
-is the result --- the electron count, the energy terms are sums of $N^3$
-values. Drop to \opt{float32} when the field is on its way into a network that
-computes in single precision anyway.
+\begin{pwarn}
+Not yet supported, and refused before the cache: \opt{training.\allowbreak{}validation.\allowbreak{}kfold} (the transform is fitted per split, not per fold), \opt{fine\_\allowbreak{}tuning} (a pretrained bundle has no occupancy head to adapt), and an f-channel element, whose records reach L = 6. Each is fine with \opt{occupancies: false}.
+\end{pwarn}
 
-\opt{model.precision: float64} roughly doubles time and memory and exists to
-check that a physical result is not a single-precision artifact: an energy
-difference of a few meV assembled from $N^3$ voxel sums has no obvious margin
-in float32.
+\section{\opt{chg2tau} --- the kinetic operator}
+
+\label{sec:chg2tau}
+
+The kinetic energy density from the pseudo-density \textbf{and} every atom's augmentation occupancies, the on-site part the grid cannot hold, entering as input. Present: trained, on the materials that carry a \opt{TAUCAR}.
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.212\linewidth}>{\raggedright\arraybackslash}p{0.273\linewidth}>{\raggedright\arraybackslash}p{0.445\linewidth}@{}}
+\toprule
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
+\midrule
+\opt{head} & \opt{plain} & \opt{plain} predicts $\tau$; \opt{pauli} predicts $\tau_\mathrm{vW}[\rho]+s\,\mathrm{softplus}(f)$ --- see below (Section~\ref{sec:pauli}) \\
+\opt{model} & width 16, layers 3, modes 8 & the network --- see above (Section~\ref{sec:model-section}) \\
+\opt{occupancies} & on & the per-atom input; \opt{false} trains on the grid alone \\
+\opt{occupancies.\allowbreak{}channels} & \opt{8} & field channels each atom's records are written into \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{lstlisting}
+chg2tau:
+  occupancies:
+    channels: 8
+\end{lstlisting}
+
+What \opt{ext2chg} predicts is exactly what \opt{chg2tau} reads, which is the route this project takes to a total energy: $V_\mathrm{ext}\to(\tilde\rho,\rho^a_{ij})\to\tau$. The data is the same as for the grid-alone kinetic map: a material needs a \opt{CHGCAR} with its records and a \opt{TAUCAR}, and the records come from the input density, read by the same \opt{site\_\allowbreak{}records}.
+
+The operator is the ordinary FNO with more input channels. A \opt{SiteWriter}, the transpose of the \opt{ext2chg} readout, writes each atom's normalized record as a field: atom-centered solid-harmonic Gaussians $r^L Y_{LM}(\hat r)\,e^{-r^2/2s^2}$ at three widths (0.25, 0.45 and 0.8 \AA{}), with coefficients from one learned map per element and L, \textbf{shared across M}. A rotation of the atom's occupancies therefore rotates the kernel it writes, the written field is a scalar field, and the operator reading it stays equivariant. The field is built in reciprocal space, where it is exact: by Hobson's theorem the Fourier transform of a solid harmonic times a Gaussian is the same solid harmonic of $\mathbf G$ times a Gaussian, so each atom is a phase $e^{-i\mathbf G\cdot\mathbf R_a}$, the periodic sum over images comes free with the inverse FFT, and nothing depends on the grid but the band it can hold. The \opt{channels} written fields are concatenated after the density, and an \opt{OccupancyInputModel} hands the whole stack to \opt{FNO3d}. The records are normalized as \opt{ext2chg} normalizes its target (the same \opt{OccupancyTransform}, fitted on the training split and stored in the checkpoint) and their layouts come from the POTCAR, so here too a dataset without POTCARs cannot train it.
+
+The operator cannot predict from a density by itself: \opt{FieldOperator.\allowbreak{}predict(field, sites=.\allowbreak{}.\allowbreak{}.\allowbreak{})} needs the structure's records, a dataset's \opt{site\_\allowbreak{}records(i)} or occupancies, species and positions assembled by hand, and raises without them.
 
 \begin{pwarn}
-\opt{model.precision: float64} requires \opt{training.device: cpu}. Apple's
-Metal backend does not implement double precision at all --- not slowly,
-absent --- and the run refuses at startup rather than failing an hour in.
+\opt{chg2tau} with its occupancies is refused under \opt{training.\allowbreak{}validation.\allowbreak{}kfold} and under \opt{fine\_\allowbreak{}tuning}, as \opt{ext2chg} is and for the same reasons. The ASE calculator does not run it yet.
+\end{pwarn}
+
+\opt{poraque-inference} chains the density operator into the kinetic one. The two operators are usually trained apart (the density on whatever archive is at hand, the kinetic energy density on calculations that wrote a \opt{TAUCAR}), so \opt{-{}-models} may be repeated, and each task is taken from the first bundle that holds it:
+
+\begin{lstlisting}
+poraque-inference Pt2/ --models models/chonps_v2/chonps_v2.poraque \
+                       --models models/pt_chg2tau/pt_chg2tau.poraque
+\end{lstlisting}
+
+\opt{-{}-kinetic auto} (the default) runs \opt{chg2tau} whenever a bundle holds it, and then prefers \opt{ext2chg} for the density, so the pseudo-density and the occupancies \opt{chg2tau} reads come from one model; \opt{-{}-kinetic pseudo2tau} keeps the density route. The occupancies are the ones the \opt{ext2chg} operator predicts for the structure in front of it; with no such operator in \opt{-{}-models}, those of a reference \opt{CHGCAR} beside the structure; with neither, the run stops and says what to add.
+
+\subsection{\opt{head: pauli}}
+
+\label{sec:pauli}
+
+The model predicts
+
+\[\tau = \tau_\mathrm{vW}[\rho] + s\,\mathrm{softplus}(f_\theta(\rho)),\]
+
+so the Hoffmann--Ostenhof bound $\tau \ge \tau_\mathrm{vW}$ holds by construction and the network learns only the Pauli term. The scale $s$ is fitted on the training split and then learned alongside the backbone; neither is a key. Against a matched baseline it improved every fold, by 18.3 \% in mean relative $L^2$, while training 17.8 \% \emph{faster}, because the network no longer has to re-derive $|\nabla\rho|^2/8\rho$, roughly 31 \% of $\tau$. Recommended, with one limitation of the present version: it is implemented for the grid alone, so it needs \opt{occupancies: false}, and with the occupancies on it raises.
+
+\begin{lstlisting}
+chg2tau:
+  head: pauli
+  occupancies: false
+\end{lstlisting}
+
+\begin{pwarn}
+The bound is a theorem for all-electron densities, whereas \opt{CHGCAR} and \opt{TAUCAR} hold pseudo quantities. Check it on new data before using the head; the training log reports any reference points that violate it.
 \end{pwarn}
 
 \section{\opt{training} --- how it is fitted}
 
-\begin{center}
-\begin{tabular}{@{}llp{6.5cm}@{}}
-\toprule
-Key & Default & Meaning \\
-\midrule
-\opt{valid\_fraction} & \opt{0.2} & Fraction of structures held out for
-validation; \opt{0} uses every structure. \\
-\opt{enable\_kfold} & \opt{false} & Run K-fold cross-validation instead;
-ignores \opt{valid\_fraction}. \\
-\opt{k\_folds} & \opt{5} & Number of folds, capped at the structure count. \\
-\opt{eval\_epoch} & \opt{10} & Evaluate and log every this many epochs. \\
-\opt{early\_stopping} & \opt{100} & Stop after this many epochs without
-validation improvement; \opt{0} disables. \\
-\opt{epochs} & \opt{300} & Passes over the training set. \\
-\opt{batch\_size} & \opt{4} & Maximum samples per grid-shape bucket. \\
-\opt{learning\_rate} & \opt{0.002} & AdamW step size. \\
-\opt{weight\_decay} & \opt{0.0001} & AdamW weight decay. \\
-\opt{scheduler} & \opt{cosine} & \opt{cosine} decay, or \opt{null} for a
-constant rate. \\
-\opt{grad\_clip} & \opt{1.0} & Global gradient-norm clip; \opt{0} disables. \\
-\opt{seed} & \opt{0} & Weight initialization, batch order and fold shuffling. \\
-\opt{device} & \opt{auto} & \opt{auto}, \opt{cuda}, \opt{mps} or \opt{cpu}. \\
-\opt{strict\_device} & \opt{false} & Abort instead of falling back to the CPU;
-see below. \\
-\opt{distributed} & \opt{auto} & \opt{auto} or \opt{off}; multi-GPU over
-NCCL when the launcher describes a group. \\
-\opt{distributed\_} \opt{timeout} & \opt{30.0} & Minutes before a collective
-is declared failed. \\
-\opt{num\_workers} & \opt{0} & DataLoader worker processes. Read
-\opt{data.cache\_in\_memory} first. \\
-\opt{pin\_memory} & \opt{auto} & Page-locked staging; \opt{auto} is true on
-CUDA and false elsewhere. \\
-\opt{tf32} & \opt{true} & TensorFloat-32 matmul and convolution; CUDA, Ampere
-and later. \\
-\opt{loss} & \opt{relative\_l2} & \opt{absolute\_l2}, \opt{relative\_l2},
-\opt{absolute\_h1} or \opt{relative\_h1}. \\
-\opt{sobolev\_weight} & \opt{0.1} & Gradient-term weight for the two
-\opt{h1} losses. \\
-\opt{spin\_loss} & \opt{joint} & \opt{joint} or \opt{per\_channel}: how the
-two channels of a spin-polarized target enter the data term. \\
-\opt{magnetization\_weight} & \opt{1.0} & Weight of the magnetization term
-relative to the density term's 1; read only under \opt{per\_channel}. \\
-\opt{magnetization\_floor} & \opt{0.01} & Floor on the magnetization term's
-denominator, as a fraction of $\lVert\rho\rVert$; \opt{per\_channel} only. \\
-\opt{physics\_informed} & \opt{\{enable: auto\}} & The switch and the four
-constraint weights, in one block; see below. \\
-\bottomrule
-\end{tabular}
-\end{center}
+One section for both operators.
 
-\subsection{The validation split}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.287\linewidth}>{\raggedright\arraybackslash}p{0.143\linewidth}>{\raggedright\arraybackslash}p{0.500\linewidth}@{}}
+\toprule
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
+\midrule\endhead
+\bottomrule\endlastfoot
+\opt{epochs} & \opt{500} & passes over the training set \\
+\opt{batch\_\allowbreak{}size} & \opt{4} & maximum samples per grid-shape bucket \\
+\opt{samples\_\allowbreak{}per\_\allowbreak{}step} & \opt{0} & structures per optimizer step, accumulated across buckets; \opt{0} steps once per batch \\
+\opt{optimizer.\allowbreak{}name} & \opt{adamw} & \opt{adamw}, \opt{adam} or \opt{sgd}, on a cosine schedule with the gradient norm clipped at 1 \\
+\opt{optimizer.\allowbreak{}learning\_\allowbreak{}rate} & \opt{0.\allowbreak{}002} & step size \\
+\opt{optimizer.\allowbreak{}weight\_\allowbreak{}decay} & \opt{0.\allowbreak{}0001} & weight decay \\
+\opt{loss.\allowbreak{}norm} & \opt{relative\_\allowbreak{}l2} & \opt{absolute\_\allowbreak{}l2}, \opt{relative\_\allowbreak{}l2}, \opt{absolute\_\allowbreak{}h1} or \opt{relative\_\allowbreak{}h1} \\
+\opt{loss.\allowbreak{}sobolev\_\allowbreak{}weight} & \opt{0.\allowbreak{}1} & gradient-term weight; read by the two \opt{h1} norms only \\
+\opt{spin.\allowbreak{}mode} & \opt{joint} & \opt{joint} or \opt{per\_\allowbreak{}channel}: how the two channels of a spin-polarized target enter the data term \\
+\opt{spin.\allowbreak{}magnetization\_\allowbreak{}weight} & \opt{1.\allowbreak{}0} & weight of the magnetization term; \opt{per\_\allowbreak{}channel} only \\
+\opt{spin.\allowbreak{}magnetization\_\allowbreak{}floor} & \opt{0.\allowbreak{}01} & floor on its denominator, as a fraction of $\lVert\rho\rVert$; \opt{per\_\allowbreak{}channel} only \\
+\opt{validation.\allowbreak{}fraction} & \opt{0.\allowbreak{}2} & fraction of structures held out; \opt{0} uses every structure \\
+\opt{validation.\allowbreak{}every} & \opt{10} & evaluate and log every N epochs \\
+\opt{validation.\allowbreak{}patience} & \opt{300} & stop after N epochs without improvement; \opt{0} never stops \\
+\opt{validation.\allowbreak{}kfold} & \opt{null} & K: cross-validate over K folds instead of one split \\
+\opt{physics.\allowbreak{}electron\_\allowbreak{}count} & \opt{0.\allowbreak{}0} & weight of $\int\rho=N$ (density operator) \\
+\opt{physics.\allowbreak{}positivity} & \opt{0.\allowbreak{}0} & weight of $\rho,\tau\ge0$ \\
+\opt{physics.\allowbreak{}von\_\allowbreak{}weizsacker} & \opt{0.\allowbreak{}0} & weight of $\tau\ge\tau_\mathrm{vW}$ (kinetic operator) \\
+\end{longtable}
+
+\subsection{\opt{validation}: the split, the folds, the stopping}
 
 There is \textbf{one} training protocol and \textbf{one} variation on it.
 
-By default a run trains a single model per task, holding back
-\opt{valid\_fraction} of the structures for validation. That is all there is to
-it --- no mode to select, no structures to name.
+By default a run trains a single model per operator, holding back \opt{validation.\allowbreak{}fraction} of the structures for validation. That is all there is to it: no mode to select, no structures to name.
 
-\opt{enable\_kfold} swaps that for K-fold cross-validation: each fold trains a
-fresh model on $K-1$ groups and scores it on the group held out. It answers a
-different question --- whether the architecture generalizes --- and produces
-$K$ models rather than one to deploy. \opt{valid\_fraction} is ignored, since
-the folds define the splits. Setting \opt{k\_folds} to the number of structures
-gives leave-one-out.
+\opt{kfold: K} swaps that for K-fold cross-validation (on the command line, \opt{-{}-kfold K}, or a bare \opt{-{}-kfold} for five): each fold trains a fresh model on \emph{K}$-$1 groups and scores it on the group held out. It answers a different question, whether the architecture generalizes, and produces \emph{K} models rather than one to deploy. \opt{fraction} is ignored, since the folds define the splits. Setting K to the number of structures gives leave-one-out; it is capped there. It cannot be combined with \opt{fine\_\allowbreak{}tuning} (each fold trains from scratch) and is not available to an operator with its occupancies on.
 
 \begin{ptip}
-Splitting is always at the \emph{structure} level: whole materials move
-together. A voxel-level split would place the same crystal on both sides, and
-since neighboring voxels are strongly correlated the score would look
-excellent while saying nothing about transfer to a new material.
+Splitting is always at the \emph{structure} level: whole materials move together. A voxel-level split would place the same crystal on both sides, and since neighboring voxels are strongly correlated the score would look excellent while saying nothing about transfer to a new material.
 \end{ptip}
 
 \begin{pwarn}
-\opt{valid\_fraction} defaults to \textbf{0.2}, so an ordinary run reports a
-genuine held-out score and \opt{early\_stopping} is active. The trade-off is
-that the model has then seen only $80\,\%$ of the data. For the final
-deployable artifact set \opt{valid\_fraction: 0} --- accepting that its own
-metrics become a \textbf{training fit} carrying no generalization claim, about
-four times better than the cross-validated score on the reference dataset ---
-and quote a separate \opt{--kfold} run for the number.
+\opt{fraction} defaults to \textbf{0.2}, so an ordinary run reports a genuine held-out score and early stopping is active. The trade-off is that the model has then seen only 80 \% of the data. For the final deployable artifact set \opt{fraction: 0}, accepting that its own metrics become a training fit, and quote a separate \opt{kfold} run for the generalization number.
 \end{pwarn}
 
-\subsection{\opt{eval\_epoch}}
+\begin{pwarn}
+With \opt{fraction: 0} the reported metrics are \textbf{training fit}, carrying no generalization claim. On the reference dataset they are about four times better than the cross-validated score. Quote the cross-validated numbers.
+\end{pwarn}
 
-Evaluate and log every this many epochs. Validation is computed \emph{only} on
-those epochs, so raising it on a large validation set is a genuine speed-up
-rather than only a quieter log. The final epoch always reports, so a run never
-ends without a current number.
+\textbf{\opt{every}} is how often to evaluate and log. Validation is computed \emph{only} on those epochs, so raising it on a large validation set is a genuine speed-up rather than only a quieter log. The final epoch always reports, so a run never ends without a current number.
 
 \begin{lstlisting}
   progress (every 10 epochs):
     train loss: mean PhysicsInformedLoss per batch   |   val rel L2: held-out error, physical units
           epoch     train loss     val rel L2
     -----------------------------------------
-         10/300        0.31745        0.34118
-         20/300        0.18902        0.21447  *
+         10/500        0.31745        0.34118
+         20/500        0.18902        0.21447  *
 \end{lstlisting}
 
-\subsection{\opt{early\_stopping}}
-
-Stop after this many epochs without an improvement in the \textbf{validation}
-error, and restore the best weights seen:
+\textbf{\opt{patience}} stops the run after this many epochs without an improvement in the \textbf{validation} error, and restores the best weights seen:
 
 \begin{lstlisting}
-         30/300        0.03173        0.03659  *
+         30/500        0.03173        0.03659  *
          ...
-         38/300        0.02249        0.06568
-    stopped early at epoch 38: no improvement in 8 epochs
-                                 (best 0.03659 at epoch 30)
+         38/500        0.02249        0.06568
+    stopped early at epoch 38: no improvement in 8 epochs (best 0.03659 at epoch 30)
 
-  trained 38/300 epochs in 12.0 s   loss 0.8599 -> 0.0225
+  trained 38/500 epochs in 12.0 s   loss 0.8599 -> 0.0225
 \end{lstlisting}
 
 \begin{pwarn}
-It needs a validation split (\opt{valid\_fraction > 0}). With
-nothing held out there is only the training loss, which falls monotonically by
-construction and so can never signal that training should stop --- asking for
-early stopping anyway \textbf{warns} rather than silently doing nothing and
-leaving you believing the run was protected.
-
-The shipped default holds a fifth of the structures out
-(\opt{valid\_fraction: 0.2}), so early stopping is active out of the box. It
-goes inactive only if you set \opt{valid\_fraction: 0} to train on every
-structure, and the run says so rather than appearing to be protected.
+It needs a validation split (\opt{fraction \textgreater{} 0}). With nothing held out there is only the training loss, which falls monotonically by construction and so can never signal that training should stop; asking for patience anyway \textbf{warns} rather than silently doing nothing and leaving you believing the run was protected.
 \end{pwarn}
 
-Patience is counted in \emph{epochs} but checked only on the epochs where
-validation is computed, so a value below \opt{eval\_epoch} behaves like
-\opt{eval\_epoch}.
+Patience is counted in \emph{epochs} but checked only on the epochs where validation is computed, so a value below \opt{every} behaves like \opt{every}. The best weights are restored on exit, so the operator you get is the best one \emph{measured} rather than merely the last one reached; stopping partway down a degrading curve would otherwise hand back the degraded model. \opt{history} records \opt{best\_\allowbreak{}epoch}, \opt{best\_\allowbreak{}error} and \opt{stopped\_\allowbreak{}early}. The \opt{*} marks an epoch that improved on the best validation score. Only epochs on which validation was actually measured can do so: a checkpoint is written against a measured score, never an assumed one.
 
-The best weights are restored on exit, so the operator you get is the best one
-\emph{measured} rather than merely the last one reached --- stopping partway
-down a degrading curve would otherwise hand back the degraded model.
+\subsection{\opt{batch\_\allowbreak{}size}}
 
-The \opt{*} marks an epoch that improved on the best validation score. Only
-epochs on which validation was actually measured can do so --- a checkpoint is
-written against a measured score, never an assumed one.
+Capped \emph{per grid-shape bucket}. Materials whose grids differ in shape cannot be stacked into one tensor, so they are grouped by shape and batches drawn within a group. A bucket holding a single material yields batches of one however large this is set. The training log prints the buckets it found.
 
-\subsection{\opt{batch\_size}}
+That cap is a real ceiling, not a formality: \textbf{above the largest bucket's size the setting stops meaning anything.} In the 115-structure set measured on a V100 the largest bucket held 70 materials ($\approx$56 after the split), and \opt{bs=64} and \opt{bs=128} were the same run: identical peak memory, identical error, identical time. With the field cache on, throughput responded to the batch up to 16 and was flat thereafter.
 
-Capped \emph{per grid-shape bucket}. Materials whose grids differ in shape
-cannot be stacked into one tensor, so they are grouped by shape and batches
-drawn within a group. A bucket holding a single material yields batches of one
-however large this is set. The training log prints the buckets it found.
+\opt{peak\_\allowbreak{}vram\_\allowbreak{}bytes} and \opt{seconds\_\allowbreak{}per\_\allowbreak{}epoch} in the metrics JSON are what a sweep over \opt{batch\_\allowbreak{}size} should be read from. The whole run's cost, stage by stage, closes the log (the resource profile (Section~\ref{sec:resource-profile})).
 
-That cap is a real ceiling, not a formality: \textbf{above the largest bucket's
-size the setting stops meaning anything}. In the 115-structure set measured on
-a V100 the largest bucket held 70 materials ($\approx$56 after the split), and
-\opt{bs=64} and \opt{bs=128} were the same run --- identical peak memory,
-identical error, identical time. With the field cache on, throughput responded
-to the batch up to 16 and was flat thereafter.
+\subsection{\opt{samples\_\allowbreak{}per\_\allowbreak{}step}}
 
-\opt{peak\_vram\_bytes} and \opt{seconds\_per\_epoch} in the metrics JSON are
-what a sweep over this should be read from; before they were recorded there,
-the only route to either was sampling \opt{nvidia-smi} from outside the
-process. The whole run's cost, stage by stage, closes the log
-(Section~\ref{sec:resource-profile}).
+One optimizer step per batch weighs every \emph{batch} alike, and so a structure by the inverse of its batch's size. On a dataset whose grid shapes are mostly unique that is far from neutral: a structure alone in its bucket moves the weights as far as four structures sharing the commonest shape do together, at the default \opt{batch\_\allowbreak{}size: 4}, and the cells that happen to have odd shapes are fitted at the expense of the rest.
 
-\subsection{\opt{strict\_device}}
+\opt{samples\_\allowbreak{}per\_\allowbreak{}step: N} accumulates gradients over consecutive shape-bucketed batches until at least N \textbf{structures} have been seen, then takes one step. Each batch's loss is weighted by its size, so every structure carries the same weight whatever bucket it fell in. Bucketing is untouched (no batch ever mixes shapes); it is only the step that spans several of them. The gradient of a step is the mean over its structures, and the epoch's remainder, fewer than N, takes a step of its own rescaled to remain a mean. \opt{0}, the default, keeps the one-step-per-batch behavior. The optimizer then takes about one step per N structures rather than one per batch, which is a change of schedule as well as of weighting; compare against a baseline at matched steps, not only at matched epochs.
 
-\opt{device: auto} prefers CUDA, then Apple Metal, then the CPU. An explicit
-backend that is unavailable \textbf{warns and falls back to the CPU}, so a
-configuration written on a machine with a GPU still runs on a laptop.
+\subsection{\opt{loss}}
 
-That is right on a workstation and expensive in a queue.
-\opt{strict\_device: true} turns the fallback into an error, and
-\textbf{every HPC configuration should set it}. The refusal names the probable
-cause --- no GPU visible, an empty \opt{CUDA\_VISIBLE\_DEVICES}, a driver older
-than the wheel's CUDA runtime, or a build carrying no kernels for this
-architecture --- and prints the full device report into the run's log.
-
-That last case is worth stating on its own, because
-\opt{torch.cuda.is\_available()} cannot detect it: it answers ``is there a
-driver and a device'', not ``can this binary generate code for this device''.
-A \opt{+cu130} wheel on a V100 reports available and then aborts at the first
-kernel launch, since CUDA 13 dropped Volta. Poraqu\^e checks the compute
-capability against the build's own \opt{arch\_list} and refuses before any of
-that. See \S\ref{sec:cuda}.
-
-\opt{strict\_device} applies to \opt{device: auto} as well, which is the
-default and until 26.9.3 was the case it did \emph{not} cover: the \opt{auto}
-branch returned the best available backend before \opt{strict} was consulted,
-so a configuration that set \opt{strict\_device: true} and left \opt{device}
-alone --- the exact pairing this section recommends --- got no protection at
-all. It now refuses when \opt{auto} resolves to the CPU, and names
-\opt{device: cpu} as the way to ask for CPU training deliberately.
-
-\subsection{\opt{num\_workers} and \opt{pin\_memory}}
-
-\opt{num\_workers} and \opt{data.cache\_in\_memory} (\S\ref{sec:cachememory})
-are \textbf{alternatives, not complements}, and the measurement is
-unambiguous. Twenty epochs on 115 structures at $32^3$, on a V100:
+Four norms, on two named axes:
 
 \begin{center}
-\begin{tabular}{@{}lrr@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.193\linewidth}>{\raggedright\arraybackslash}p{0.335\linewidth}>{\raggedright\arraybackslash}p{0.402\linewidth}@{}}
 \toprule
-Variant & Training time & Speedup \\
+\textbf{\opt{norm}} & \textbf{normalized per sample} & \textbf{gradients in the objective} \\
 \midrule
-As shipped & 168.0\,s & 1.0$\times$ \\
-\opt{cache\_in\_memory: true} & \textbf{16.3\,s} & \textbf{10.3$\times$} \\
-\opt{num\_workers: 4}, no cache & 120.2\,s & 1.4$\times$ \\
-Both & 18.8\,s & 8.9$\times$ \\
+\opt{absolute\_\allowbreak{}l2} & no & no \\
+\opt{relative\_\allowbreak{}l2} & yes & no \\
+\opt{absolute\_\allowbreak{}h1} & no & yes \\
+\opt{relative\_\allowbreak{}h1} & yes & yes \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The validation error was identical in all four, as it must be. Each worker is a
-\emph{process} with a cache of its own, so it re-parses the whole dataset on
-its first epoch --- the parse the cache removes is paid $N$ times instead of
-once. Raise \opt{num\_workers} only when the data genuinely does not fit in
-RAM, which is the case \opt{cache\_in\_memory: false} exists for.
+\textbf{Relative} divides each sample's error by its own target norm, so materials whose fields differ by orders of magnitude contribute equally and the value reads directly as a fraction. \textbf{Absolute} does not, so every \emph{voxel} counts equally and a denser system contributes proportionally more gradient: right for a set whose materials are genuinely comparable in magnitude, and usually wrong for a heterogeneous one, which is why \opt{relative\_\allowbreak{}l2} is the default.
 
-\opt{pin\_memory} is a CUDA transfer optimization and nothing else: \opt{auto}
-is true there and false everywhere, since it does not help on Metal and some
-PyTorch versions warn when asked for it.
+\textbf{H1} adds \opt{sobolev\_\allowbreak{}weight} times the same error on the spatial gradients. Worth using when the derivative matters: $\tau_\mathrm{vW}$ depends on $\nabla\rho$, so gradient noise is amplified in low-density regions. Both halves are taken in the \emph{same} norm, so the weight is a pure ratio between values and derivatives rather than also absorbing a change of scale.
 
-\subsection{\opt{tf32}}
-
-\opt{tf32} keeps float32's range and drops its mantissa to ten bits inside the
-tensor cores. It is a real speedup on Ampere and later, and \textbf{exactly
-nothing} before it --- a V100 has no TF32 path --- so it is on by default and
-costs nothing where it does not apply. Ignored off CUDA.
-
-\subsection{There is no \opt{compile} key}
-\label{sec:no-torch-compile}
-
-There was one, for a version, and it was removed in 26.9.3 after being
-measured. Setting \opt{compile}, \opt{compile\_mode} or
-\opt{compile\_dynamic} now raises and says why, rather than being accepted and
-ignored.
-
-\textbf{Inductor does not generate code for complex operators.} Every compiled
-run said so, in as many words, and \opt{SpectralConv3d}'s weights are complex
---- it \emph{is} the Fourier neural operator. So the one part of the model
-compilation was invoked to fuse is the part Inductor hands back to eager, while
-the wrapper and the graph breaks are still paid for. 150 epochs, two
-repetitions, one V100:
-
-\begin{center}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-arm & s/epoch & first epoch (cold $\to$ warm) & val rel $L^2$ \\
-\midrule
-off & \textbf{0.6289} & 3.8\,s & 0.280563 \\
-\opt{mode="default"} & 0.6785 ($+7.9$\,\%) & 199.8\,s $\to$ 17.6\,s & 0.284980 \\
-\opt{mode="max-autotune"} & 0.6879 ($+9.4$\,\%) & 314.0\,s $\to$ 20.7\,s & 0.272624 \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\opt{TORCH\_LOGS=recompiles} emitted nothing, so \opt{dynamic=True} did hold
-one graph across the 19 shapes: the shape-bucketing worry was unfounded and the
-gain still does not exist. The validation error also moved, reproducibly and
-identically across both repetitions, which disqualifies the arms independently
-of their timing.
-
-On four ranks it did not merely lose. With \opt{--distributed auto} and 60
-epochs, in the same allocation as an uncompiled four-rank run that finished in
-86.6\,s, the compiled run sat \textbf{eighteen minutes in the first epoch
-without printing an epoch line} and was canceled. A configuration key whose
-failure mode is a silent deadlock inside a queue allocation is the hazard
-\opt{strict\_device} exists to remove, pointing the other way.
-
-What was \emph{not} measured, and is worth measuring one day: compiling only
-the real-valued submodules --- \opt{CellEncoder}, FiLM, the pointwise
-convolutions, the projection head, the KAN activations --- and leaving
-\opt{SpectralConv3d} in eager. That is where the 44.4\,\% of elementwise GPU
-time lives. It should come back as an internal decision about which submodules
-to wrap, not as a switch a config file can throw. The condition for re-opening
-whole-model compilation is upstream: Inductor gaining complex-operator codegen.
-
-\subsection{\opt{distributed} and \opt{distributed\_timeout}}
-\label{sec:distributed}
-
-\opt{auto} --- the default --- forms a \opt{DistributedDataParallel} group over
-NCCL \textbf{when the environment already describes one}, and does nothing
-otherwise. A Slurm step with more than one task, or a \opt{torchrun} launch, is
-such an environment; a workstation is not.
-
-It cannot turn a one-process run into a four-GPU one. The launcher decides the
-topology and this key decides only whether to believe it, so on a cluster the
-setting that matters is in the submission script --- see
-section~\ref{sec:multigpu}, which carries the whole of it.
-
-\opt{off} refuses a group inside a multi-task allocation, which is how four
-independent single-GPU jobs are run from one submission and how a scaling
-result is bisected against a single-device baseline.
-
-Three consequences, all visible in the run log. The \textbf{effective batch
-size is \opt{batch\_size} times the world size}, so a four-rank run at
-\opt{batch\_size: 10} steps on 40 samples and is not the same optimizer as the
-one-rank run it is compared against --- halve the learning rate or quarter the
-batch size if the comparison is meant to be of the same optimization.
-\textbf{Rank 0 alone writes} the checkpoint, the metrics, the figures and the
-PDF, and alone prints. And \textbf{the batches are split, not the samples}:
-\opt{ShapeBucketSampler} groups materials by grid shape so no padding ever
-reaches the FFT, and a \opt{DataLoader} takes a \opt{sampler} or a
-\opt{batch\_sampler} and never both --- so the bucketing runs first,
-identically on every rank, and a real \opt{DistributedSampler} partitions the
-resulting \emph{list of batches}. Every rank gets a unique, non-overlapping
-subset and the same \emph{number} of batches, which is not tidiness: DDP
-all-reduces gradients inside each \opt{backward()}, and a rank that runs out of
-batches first leaves the others in a collective that never completes.
-
-\opt{distributed\_timeout} is long on purpose. The first collective happens
-after every rank has read its prepared cache, and a cold parallel-filesystem
-read of a few hundred densities is minutes; a timeout that fires there reports
-itself as a NCCL error and sends the reader looking at the network.
-
-\begin{pnote}
-There is no \opt{DataParallel} fallback and no Gloo backend. Both would let a
-misconfigured run go quietly slower than a single GPU --- the first by
-replicating in one process, the second by distributing across CPU cores inside
-a GPU allocation. Without CUDA the group is refused with a warning naming the
-probable cause, and the run continues on one device.
-\end{pnote}
-
-\subsection{\opt{loss} and \opt{sobolev\_weight}}
-
-Four objectives, on two named axes:
-
-\begin{center}
-\begin{tabular}{@{}lll@{}}
-\toprule
-\opt{loss} & normalized per sample & gradients in the objective \\
-\midrule
-\opt{absolute\_l2} & no  & no  \\
-\opt{relative\_l2} & yes & no  \\
-\opt{absolute\_h1} & no  & yes \\
-\opt{relative\_h1} & yes & yes \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\textbf{Relative} divides each sample's error by its own target norm, so
-materials whose fields differ by orders of magnitude contribute equally and the
-value reads directly as a fraction. \textbf{Absolute} does not, so every
-\emph{voxel} counts equally and a denser system contributes proportionally more
-gradient --- right for a set whose materials are genuinely comparable in
-magnitude, and usually wrong for a heterogeneous one, which is why
-\opt{relative\_l2} is the default.
-
-\textbf{H1} adds \opt{sobolev\_weight} times the same error on the spatial
-gradients. Worth enabling when the derivative matters --- $\tauvW$ depends on
-$\nabla\rho$, so gradient noise is amplified in low-density regions. Both
-halves are taken in the \emph{same} norm, so the weight is a pure ratio between
-values and derivatives rather than also absorbing a change of scale.
-
-\textbf{\opt{spin\_loss} decides how a spin-polarized target enters the data
-term.} A \file{CHGCAR} written with \opt{ISPIN = 2} carries $(\rho, m)$, and
-there are two ways to score it. \opt{joint}, the default, is one norm over both
-channels: each channel's error divided by the whole $(\rho, m)$ target's norm
-and combined in quadrature, identically
-$\lVert\delta(\rho,m)\rVert/\lVert(\rho,m)\rVert$. \opt{per\_channel} divides
-each channel by \emph{its own} norm and sums them,
-%
-\begin{equation}
-  \mathcal{L} = \mathcal{L}[\rho] + w_m\,\mathcal{L}[m],
-\end{equation}
-%
-with $w_m$ = \opt{magnetization\_weight}. Because $m \equiv 0$ exactly on a
-large fraction of a real set, the magnetization's denominator is floored at
-$\sqrt{\lVert m\rVert^2 + (\eta\lVert\rho\rVert)^2}$, with $\eta$ =
-\opt{magnetization\_floor}. A single-channel target is identical in both modes,
-bit for bit, and under \opt{joint} the weight does nothing --- there is one
-term for it to scale.
-
-\textbf{The default is the measured one, and the arithmetic misleads about
-which should win.} Under \opt{joint} the magnetization's share of the objective
-is $3\times10^{-8}$ in the \emph{median} on the 432-cell CHON set, which is the
-observation that makes \opt{per\_channel} look obviously correct. Measured head
-to head on that cache --- two seeds, 60 epochs, magnetic cells scored by
-predicted over reference $\lVert m\rVert$ and by $m$'s relative $L^2$ --- on 30
-magnetic plus 30 noise cells both work (\opt{joint} 1.00 / 0.084,
-\opt{per\_channel} 1.00 / 0.109); on 12 magnetic plus 100 noise, the real
-11\,\% imbalance, \opt{joint} gives 0.96 / 0.166 and \opt{per\_channel}
-0.001 / 1.000.
-
-What trains the magnetization is the \emph{mean} share, not the median: the
-magnetic cells carry real weight under \opt{joint}, and that is enough.
-\opt{per\_channel} instead hands each of the many noise cells a floored term of
-order one, and a hundred cells saying ``drive $m$ to zero'' bury the dozen
-saying anything else --- so it collapses the magnetization it was introduced to
-rescue. Reach for it only when magnetic cells are not a small minority, and
-measure rather than assume.
-
-\textbf{The validation column follows the objective.} The progress table
-reports \opt{val abs L2}, \opt{val rel L2}, \opt{val abs H1} or
-\opt{val rel H1} --- whichever is running --- and the number behind it is the
-objective's own data term evaluated on the held-out set:
+\textbf{The validation column follows the objective.} The progress table reports \opt{val abs L2}, \opt{val rel L2}, \opt{val abs H1} or \opt{val rel H1}, whichever is running, and the number behind it is the objective's own data term evaluated on the held-out set:
 
 \begin{lstlisting}
     train loss: mean PhysicsInformedLoss per batch   |   val rel H1: held-out error, physical units
@@ -1235,114 +735,365 @@ objective's own data term evaluated on the held-out set:
           epoch     train loss     val rel H1
 \end{lstlisting}
 
-That is not only a label. Early stopping and the checkpoint are decided on this
-number, and while it read \opt{val rel L2} regardless a gradient-constrained run
-was selecting the model that minimized a functional it was not training on. The
-four are not comparable with each other --- which is why the
-\emph{per-structure table at the end of a run reports relative $L^2$ whatever
-the objective was}. That is the number to quote, and the one that lets two runs
-be put side by side.
+That is not only a label. Early stopping and the checkpoint are decided on this number, and while it read \opt{val rel L2} regardless a gradient-constrained run was selecting the model that minimized a functional it was not training on. The four are not comparable with each other, which is why the \textbf{per-structure table at the end of a run reports relative $L^2$ whatever the objective was}. That is the number to quote, and the one that lets two runs be put side by side.
 
-\begin{pnote}
-\opt{loss: sobolev} was renamed on 2026-08-31. It named the gradient term and
-left the norm implicit, and offered no unnormalized form at all. It now raises,
-naming \opt{relative\_h1} (what it did) and \opt{absolute\_h1} as its
-replacements.
-\end{pnote}
+\subsection{\opt{spin}: the two channels of a spin target}
 
-\subsection{\opt{physics\_informed}}
+\label{sec:training-spin}
 
-One block, following the convention of \S\ref{sec:enableblocks}:
+A \opt{CHGCAR} written with \opt{ISPIN = 2} carries $(\rho, m)$, and there are two ways to score it. The block is read only for a two-channel target.
+
+\opt{joint}, the default, is one norm over both channels: each channel's error divided by the whole $(\rho, m)$ target's norm and combined in quadrature, which is identically $\lVert\delta(\rho,m)\rVert/\lVert(\rho,m)\rVert$. \opt{per\_\allowbreak{}channel} divides each channel by \textbf{its own} norm and sums them,
+
+\[\mathcal{L} = \mathcal{L}[\rho] + w_m\,\mathcal{L}[m],\]
+
+with $w_m$ = \opt{magnetization\_\allowbreak{}weight}. Because $m \equiv 0$ exactly on a large fraction of a real set, the magnetization's denominator is floored: $\sqrt{\lVert m\rVert^2 + (\eta\lVert\rho\rVert)^2}$ with $\eta$ = \opt{magnetization\_\allowbreak{}floor}. A single-channel target is identical in both modes, bit for bit, and under \opt{joint} \textbf{\opt{magnetization\_\allowbreak{}weight} does nothing}: there is one term for it to scale.
+
+\textbf{The default is the measured one, and the arithmetic misleads about which should win.} Under \opt{joint} the magnetization's share of the objective is $3\times10^{-8}$ in the \emph{median} on the 432-cell CHON set, which is the observation that makes \opt{per\_\allowbreak{}channel} look obviously correct. Measured head to head on that cache (two seeds, 60 epochs, magnetic cells scored by predicted over reference $\lVert m\rVert$ and by $m$'s relative $L^2$):
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.568\linewidth}>{\raggedright\arraybackslash}p{0.175\linewidth}>{\raggedright\arraybackslash}p{0.187\linewidth}@{}}
+\toprule
+\textbf{training set} & \textbf{\opt{joint}} & \textbf{\opt{per\_\allowbreak{}channel}} \\
+\midrule
+30 magnetic + 30 noise cells & 1.00 / 0.084 & 1.00 / 0.109 \\
+12 magnetic + 100 noise cells (the real 11 \% imbalance) & \textbf{0.96 / 0.166} & \textbf{0.001 / 1.000} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+What trains the magnetization is the \emph{mean} share, not the median: the magnetic cells carry real weight under \opt{joint}, and that is enough. \opt{per\_\allowbreak{}channel} instead hands each of the many noise cells a floored term of order one, and a hundred cells saying "drive $m$ to zero" bury the dozen saying anything else, so it collapses the magnetization it was introduced to rescue. Reach for it only when magnetic cells are not a small minority, and measure rather than assume.
+
+The progress table's \opt{charge} and \opt{mag} columns are the two parts in whichever mode is running, and the held-out error early stopping reads carries the same mode, so the checkpoint is selected on the objective rather than on a third quantity. Not to be confused with \opt{ext2chg.\allowbreak{}occupancies.\allowbreak{}magnetization\_\allowbreak{}weight}, which weights the magnetization \emph{record set} of the per-atom occupancy target.
+
+\subsection{\opt{physics}}
+
+Weighted penalties on the predicted fields, each dimensionless, so a single weight can serve a heterogeneous dataset:
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.221\linewidth}>{\raggedright\arraybackslash}p{0.586\linewidth}>{\raggedright\arraybackslash}p{0.123\linewidth}@{}}
+\toprule
+\textbf{Key} & \textbf{Constraint it penalizes the violation of} & \textbf{Default} \\
+\midrule
+\opt{electron\_\allowbreak{}count} & $\int\rho\,d\mathbf{r} = N$ (density operator) & \opt{0.\allowbreak{}0} \\
+\opt{positivity} & non-negativity of the predicted field & \opt{0.\allowbreak{}0} \\
+\opt{von\_\allowbreak{}weizsacker} & $\tau \ge \tau_\mathrm{vW}$ (kinetic operator) & \opt{0.\allowbreak{}0} \\
+\bottomrule
+\end{tabular}
+\end{center}
 
 \begin{lstlisting}
 training:
-  physics_informed:
-    enable: auto              # auto | true | false
-    electron_count_weight: 0.1
+  physics:
+    electron_count: 0.1
 \end{lstlisting}
 
+All three default to zero, so the objective is the plain supervised baseline until one is chosen deliberately, and there is no switch beside them: \textbf{all zero is off.} A run with every weight at zero skips the machinery altogether, which is not merely a change of objective. Every constraint acts on \emph{decoded} fields, so with one live the loop must copy the reference field to the device on every batch, invert the target transform over the prediction inside the autograd graph, invert the input transform too, and in delta-density mode copy the baseline across and add it back twice. Off, all of that is work whose result is discarded. Measured: 2.4 \% of a step on Apple Metal and \textbf{6.6 \% on a V100}, where the per-batch copy crosses PCIe.
+
+(The orbital-free stationarity residual, which used to be a fourth weight, is not configurable: training never read \opt{xc}, so the term ran without $v_\mathrm{xc}$. \opt{experiments/\allowbreak{}euler\_\allowbreak{}lagrange} is where it lives.)
+
+\subsubsection*{Charge conservation}
+
+\opt{electron\_\allowbreak{}count} is the first constraint to reach for:
+
+\[
+\mathcal{L}_{N} = \left\langle \left(
+\frac{\int\hat\rho\,d^3r - \int\rho\,d^3r}{\int\rho\,d^3r}
+\right)^{2} \right\rangle ,
+\]
+
+the squared relative error between the integral of the \textbf{predicted} density and the integral of the \textbf{reference} one, the valence electron count. Two things make it the first constraint to reach for:
+
+\emph{It needs no labels.} The reference density is in every batch, so $N$ is its own integral. That is what lets it work on an archive that publishes $\rho$ and nothing else.
+
+For a density operator with the occupancies on, this constrains the total charge channel of the grid density. The \href{https://vasp.at/wiki/index.php/CHGCAR}{VASP CHGCAR convention} defines its integral as \opt{NELECT}; the PAW occupancy records are separate targets and are not summed into that integral. Magnetization is not constrained by this term. The loss uses physical units after the inverse transform and restoration of the atomic baseline in \opt{delta} mode. Using the reference integral also preserves the electron count of charged training structures.
+
+This is a \textbf{soft penalty}, so a positive weight does not guarantee exact conservation. The validation score includes the weighted mean squared count error; the log reports \opt{val \textbar{}dN/\allowbreak{}N\textbar{}} before output normalization. The JSON history contains \opt{train\_\allowbreak{}electron\_\allowbreak{}count\_\allowbreak{}loss}, \opt{val\_\allowbreak{}electron\_\allowbreak{}count\_\allowbreak{}loss}, and \opt{val\_\allowbreak{}electron\_\allowbreak{}count\_\allowbreak{}error} (a relative fraction, not a percentage). Conservation is exact at inference, where the density is renormalized to the valence count (\opt{-{}-no-normalize} opts out).
+
+\emph{It fixes what the data term cannot.} A relative $L^2$ is indifferent to a percent of charge spread thinly through the interstitial region, and a total energy is not. Across a chemical space where $N$ runs from ten to ninety electrons per cell, nothing else pins the scale per material.
+
+A weight of \opt{0.\allowbreak{}1} sits an order of magnitude below the data term, which is the intended balance: the physics guides, the data decides. The configuration under \opt{experiments/\allowbreak{}chon\_\allowbreak{}ext2chg/\allowbreak{}configs/\allowbreak{}} that used a weight of \opt{1.\allowbreak{}0} is in the previous schema and a historical record; its weight has not been selected by a hyperparameter sweep. The training log reports one number, \opt{train loss}: the \textbf{total} objective the optimizer stepped on, data fidelity plus every weighted constraint. That total is the only quantity comparable between two runs; the individual terms are reported by the loss unweighted, so they do not sum to it.
+
+\begin{pwarn}
+Introduce them one at a time against a measured baseline, and only once the data term has converged: a physics residual evaluated at random initialization is noise. A badly scaled constraint degrades accuracy while looking principled.
+\end{pwarn}
+
+Where a constraint can be imposed structurally, prefer that: \opt{chg2tau.\allowbreak{}head: pauli} enforces $\tau\ge\tau_\mathrm{vW}$ exactly, whereas \opt{von\_\allowbreak{}weizsacker} only discourages violating it.
+
+\section{\opt{fine\_\allowbreak{}tuning} --- start from a trained checkpoint}
+
+A block, off unless present. Fine-tuning needs the section in the configuration (the command-line flags \opt{-{}-pretrained} and \opt{-{}-fine-tune-lr} override its values and do not switch it on):
+
 \begin{center}
-\begin{tabular}{@{}lp{8.2cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.143\linewidth}>{\raggedright\arraybackslash}p{0.379\linewidth}>{\raggedright\arraybackslash}p{0.408\linewidth}@{}}
 \toprule
-Key & Constraint it penalizes the violation of \\
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
 \midrule
-\opt{enable} & --- decides whether any of the below is evaluated \\
-\opt{electron\_count\_weight} & $\int\rho\,\mathrm{d}\rr = N$
-(\opt{ext2pseudo}) \\
-\opt{positivity\_weight} & Non-negativity of the predicted field \\
-\opt{von\_weizsacker\_weight} & $\tau \ge \tauvW$ (\opt{pseudo2tau}) \\
-\opt{euler\_lagrange\_weight} & Orbital-free stationarity residual
-(\opt{ext2pseudo}) \\
+\opt{checkpoint} & \opt{models/\allowbreak{}poraque\_\allowbreak{}models/\allowbreak{}poraque\_\allowbreak{}models.\allowbreak{}poraque} & the base bundle to adapt \\
+\opt{learning\_\allowbreak{}rate} & \opt{1.\allowbreak{}0e-5} & much lower than a fresh fit, which is the point \\
+\opt{freeze\_\allowbreak{}lifting} & \opt{false} & hold the input embedding fixed and adapt the rest \\
+\opt{lora} & \opt{false} & freeze every weight and learn low-rank adapters --- a block \\
+\opt{lora.\allowbreak{}rank} & \opt{8} & adapter rank \\
+\opt{lora.\allowbreak{}alpha} & \opt{16.\allowbreak{}0} & the update is scaled by alpha / rank \\
+\opt{lora.\allowbreak{}dropout} & \opt{0.\allowbreak{}0} & adapter dropout \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-All four weights default to zero, so the objective is the plain supervised
-baseline until one is enabled deliberately. Each term is dimensionless, so a
-single weight can serve a heterogeneous dataset.
+\begin{lstlisting}
+fine_tuning:
+  checkpoint: models/mp_general/mp_general.poraque
+  learning_rate: 1.0e-5
+  lora:
+    rank: 8
+\end{lstlisting}
 
-\opt{enable} has three states, and the middle one is why it exists.
-\opt{auto}, the default, answers from the weights --- the run is
-physics-informed if and only if one of them is positive, which is what every
-configuration written before the switch existed already meant. \opt{true}
-\textbf{raises} when no weight is set: a run that declares physics-informed
-training and silently optimizes the supervised baseline has an entirely
-ordinary loss curve and a report that says otherwise. \opt{false} zeroes the
-weights and warns if one was live, and also skips the per-batch decode the
-constraints act on --- measured at 2.4\,\% of a step on Apple Metal and
-6.6\,\% on a V100, where the copy crosses PCIe.
+The normalizations come from the checkpoint and are never refitted. It cannot be combined with \opt{training.\allowbreak{}validation.\allowbreak{}kfold}, and it is refused for an operator with its occupancies on (a pretrained bundle has no occupancy layer to adapt). See Chapter~\ref{ch:finetuning}.
 
-\begin{pwarn}
-Not \opt{off}, and not \opt{no}. Anything that is not \opt{auto}, \opt{true} or
-\opt{false} raises rather than being coerced: \opt{bool("off")} is \opt{True}
-in Python, so a config saying \opt{off} would have switched the constraints
-\textbf{on}.
-\end{pwarn}
+\section{\opt{runtime} --- the hardware}
 
-\begin{pwarn}
-Introduce them one at a time against a measured baseline, and only once the
-data term has converged --- a physics residual evaluated at random
-initialization is noise. A badly scaled constraint degrades accuracy while
-looking principled.
-\end{pwarn}
-
-Where a constraint can be imposed structurally, prefer that:
-\opt{pauli\_residual} enforces $\tau\ge\tauvW$ exactly, whereas
-\opt{von\_weizsacker\_weight} only discourages violating it.
-
-\section{\opt{output} --- what is written}
+Settings that change how fast a run is, never what it computes.
 
 \begin{center}
-\begin{tabular}{@{}llp{6.6cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.239\linewidth}>{\raggedright\arraybackslash}p{0.113\linewidth}>{\raggedright\arraybackslash}p{0.578\linewidth}@{}}
 \toprule
-Key & Default & Meaning \\
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
 \midrule
-\opt{root} & \file{models} & Parent of the run folder. Everything goes in
-\file{<root>/<name>/}; \opt{null} disables \emph{all} output. \\
-\opt{checkpoint} & \opt{true} & Write \file{<name>.poraque}. \\
-\opt{write\_log} & \opt{true} & Write \file{log/}: the log, the metrics JSON
-and the resolved configuration. \\
-\opt{plot\_figures} & \opt{true} & Render \file{plots/}. \\
-\opt{write\_pdf\_report} & \opt{true} & Typeset \file{report/}. \\
-\opt{log}, \opt{json} & \opt{null} & Override the two log paths. \opt{null}
-derives them from \opt{task.name}; set them only to write outside the run
-folder. \\
-\opt{plot\_format} & \opt{png} & \opt{png}, \opt{pdf} or \opt{svg}. \\
-\opt{dpi} & \opt{200} & Raster resolution for saved figures. \\
-\opt{save\_raw\_plot\_data} & \opt{false} & Write the numbers behind each
-figure beside it, so a plot can be redrawn without re-running the model. \\
+\opt{device} & \opt{auto} & \opt{auto}, \opt{cuda}, \opt{cuda:1}, \opt{mps} or \opt{cpu} \\
+\opt{strict\_\allowbreak{}device} & \opt{false} & abort instead of falling back to the CPU --- see below \\
+\opt{distributed} & \opt{auto} & \opt{auto} or \opt{off}; multi-GPU over NCCL when the launcher describes a group \\
+\opt{workers} & \opt{auto} & processes that \emph{build} the cache, one material each --- see below (Section~\ref{sec:cacheworkers}) \\
+\opt{loader\_\allowbreak{}workers} & \opt{0} & DataLoader worker processes --- read \opt{data.\allowbreak{}cache.\allowbreak{}in\_\allowbreak{}memory} first \\
+\opt{tf32} & \opt{true} & TensorFloat-32 matmul and convolution; CUDA, Ampere and later \\
+\opt{readout\_\allowbreak{}cache\_\allowbreak{}mib} & \opt{1024} & device memory for the \opt{ext2chg} read-out's kernels \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\subsection{\opt{device} and \opt{strict\_\allowbreak{}device}}
+
+\label{sec:strict-device}
+
+\opt{device: auto} prefers CUDA, then Apple Metal, then the CPU. An explicit backend that is unavailable \textbf{warns and falls back to the CPU}, so a configuration written on a machine with a GPU still runs on a laptop.
+
+That is right on a workstation and expensive in a queue. \opt{strict\_\allowbreak{}device: true} turns the fallback into an error:
+
+\begin{lstlisting}
+runtime:
+  device: cuda
+  strict_device: true
+\end{lstlisting}
+
+\textbf{Every HPC configuration should set it.} Without it, a job that cannot reach its GPU takes its place in the queue, warns into a log nobody reads until afterwards, and trains on the CPU \emph{inside} the GPU allocation until the wall clock ends. The refusal names the probable cause (no GPU visible, an empty \opt{CUDA\_\allowbreak{}VISIBLE\_\allowbreak{}DEVICES}, a driver older than the wheel's CUDA runtime, or a build carrying no kernels for this architecture) and prints the full device report into the run's log.
+
+That last case is worth stating on its own, because \opt{torch.\allowbreak{}cuda.\allowbreak{}is\_\allowbreak{}available()} cannot detect it: it answers "is there a driver and a device", not "can this binary generate code for this device". A \opt{+cu130} wheel on a V100 reports available and then aborts at the first kernel launch, since CUDA 13 dropped Volta. Poraqu\^e checks the compute capability against the build's own \opt{arch\_\allowbreak{}list} and refuses before any of that. See NVIDIA GPUs (Section~\ref{sec:cuda}).
+
+\opt{strict\_\allowbreak{}device} applies to \opt{device: auto} as well, which is the default: it refuses when \opt{auto} resolves to the CPU, and names \opt{device: cpu} as the way to ask for CPU training deliberately.
+
+\subsection{\opt{workers}}
+
+\label{sec:cacheworkers}
+
+How many processes \textbf{build} the cache, one material each. \opt{auto} (the default), a count, or \opt{0} for the single-process build (\opt{-{}-cache-workers} on the command line). Not to be confused with \opt{loader\_\allowbreak{}workers} (Section~\ref{sec:num-workers-and-pin-memory}), which loads an already-built cache during training and is the opposite trade.
+
+The build is not the FFT work it looks like. Measured per material on the 97-cell platinum set at \opt{resolution: 48}:
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.621\linewidth}>{\raggedright\arraybackslash}p{0.309\linewidth}@{}}
+\toprule
+\textbf{stage} & \textbf{share of the clock} \\
+\midrule
+Fortran \opt{E17.\allowbreak{}11} text reading and writing & \textbf{86 \%} \\
+computing V\_ext (POTCAR tables + one FFT) & 8 \% \\
+\textbf{spectral downsampling: the FFT} & \textbf{2.2 \%} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+So a thread count cannot help: there is no BLAS call anywhere in the path, and every transform goes through \opt{np.\allowbreak{}fft}, which is single-threaded. A cache job that asks for eight cores and sets \opt{OMP\_\allowbreak{}NUM\_\allowbreak{}THREADS=8} uses one of them. What scales is \textbf{materials}: \opt{\_\allowbreak{}build\_\allowbreak{}one} is independent per material, and it already writes every field to \opt{.\allowbreak{}partial-\textless{}pid\textgreater{}} and moves it into place with \opt{os.\allowbreak{}replace}, so a pool needs no lock and the result is byte-identical to the single-process build.
+
+Measured on eight cores, 16 materials at 108$^3$:
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.185\linewidth}>{\raggedright\arraybackslash}p{0.373\linewidth}>{\raggedright\arraybackslash}p{0.373\linewidth}@{}}
+\toprule
+\textbf{workers} & \textbf{text storage} & \textbf{HDF5 storage} \\
+\midrule
+1 & 2.764 s/material & 1.515 s/material \\
+2 & 1.462 s (1.89$\times$) & 0.832 s (1.82$\times$) \\
+4 & 0.868 s (3.18$\times$) & 0.518 s (2.92$\times$) \\
+8 & 0.684 s (4.04$\times$) & 0.440 s (3.44$\times$) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+On the full 97-cell set the \opt{-{}-cache-only} cache stage went from \textbf{656.9 s to 246.1 s} at the 4 workers \opt{auto} picks there, 2.67$\times$, not 4$\times$, because per-material time rises 1.49$\times$ under memory-bandwidth contention on the 288$^3$ grids. Against the 961.8 s the build cost before the two serial redundancies (reading only the header for the grid shape, and splitting the text block in chunks) were removed, it is 4.0$\times$.
+
+\opt{auto} takes the smallest of three numbers and says which bound it hit:
+
+\begin{lstlisting}
+  workers: 4 (auto: 8 usable core(s); 4 within the 8 GiB budget at ~1995 MiB
+  each, sized on the largest grid at 23.89 M voxels; 97 material(s))
+\end{lstlisting}
+
+\begin{itemize}
+  \item the cores this process \textbf{may} use (\opt{sched\_\allowbreak{}getaffinity}, which is what Slurm's \opt{-{}-cpus-per-task} restricts a task to; the node's core count is the wrong number on a shared node);
+  \item a memory budget divided by an estimate taken from the \textbf{largest} native grid in the set. Measured by building one material per process: a 108$^3$ density peaked at 498 MiB and a 288$^3$ one at 1558 MiB, so the model is 400 MiB fixed plus 70 B per voxel. The largest rather than the average, because every worker may be handed the nanoparticle and sizing on the mean is how a build goes into swap on the last eleven materials. The budget is \textbf{80 \% of the job's Slurm allocation} where there is one (\opt{SLURM\_\allowbreak{}MEM\_\allowbreak{}PER\_\allowbreak{}NODE}, or \opt{SLURM\_\allowbreak{}MEM\_\allowbreak{}PER\_\allowbreak{}CPU} $\times$ \opt{SLURM\_\allowbreak{}CPUS\_\allowbreak{}PER\_\allowbreak{}TASK}) and 8 GiB otherwise; a constant would pick four workers on a \opt{-{}-cpus-per-task=8 -{}-mem=32G} node and idle half the allocation, which is the exact job this exists for;
+  \item the number of materials.
+\end{itemize}
+
+Below \textbf{1 M native voxels in total} \opt{auto} stays single-process whatever the core count: a \opt{spawn}ed pool costs 0.49--0.60 s for each worker to import the package, and the build runs at 1.03 s per million voxels, so a pool on a toy set is pure loss. An explicit count ignores that floor.
+
+Materials are handed out \textbf{largest first}: their native grids span a factor of 19 in this set and the cost is linear in voxels, so in discovery order the biggest cells form a tail with idle cores behind them. Rows therefore print in completion order rather than alphabetically, and \opt{i/\allowbreak{}N} counts materials finished. Raise the job's memory request along with its core count: a 288$^3$ density needs \textasciitilde{}1.6 GiB per worker.
+
+\subsection{\opt{loader\_\allowbreak{}workers}}
+
+\label{sec:num-workers-and-pin-memory}
+
+\opt{loader\_\allowbreak{}workers} and \opt{data.\allowbreak{}cache.\allowbreak{}in\_\allowbreak{}memory} (Section~\ref{sec:cachememory}) are \textbf{alternatives, not complements}, and the measurement is unambiguous. Twenty epochs on 115 structures at 32$^3$, on a V100:
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.501\linewidth}>{\raggedright\arraybackslash}p{0.269\linewidth}>{\raggedright\arraybackslash}p{0.159\linewidth}@{}}
+\toprule
+\textbf{variant} & \textbf{training time} & \textbf{speedup} \\
+\midrule
+as shipped & 168.0 s & 1.0$\times$ \\
+\opt{cache.\allowbreak{}in\_\allowbreak{}memory: true} & \textbf{16.3 s} & \textbf{10.3$\times$} \\
+\opt{loader\_\allowbreak{}workers: 4}, no cache & 120.2 s & 1.4$\times$ \\
+both & 18.8 s & 8.9$\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The validation error was identical in all four, as it must be. Each worker is a \emph{process} with a cache of its own, so it re-parses the whole dataset on its first epoch; the parse the cache removes is paid N times instead of once. Raise \opt{loader\_\allowbreak{}workers} only when the data genuinely does not fit in RAM, which is the case \opt{cache.\allowbreak{}in\_\allowbreak{}memory: false} exists for. Pinned memory is a CUDA transfer optimization and nothing else, so it is on there and off elsewhere, and is not a key.
+
+\subsection{\opt{tf32}}
+
+\opt{tf32} keeps float32's range and drops its mantissa to ten bits inside the tensor cores. It is a real speedup on Ampere and later, and \textbf{exactly nothing} before it (a V100 has no TF32 path), so it is on by default and costs nothing where it does not apply. Ignored off CUDA. An equivariance check under it reads \textasciitilde{}1e-3 and is not a bug.
+
+\subsection{\opt{readout\_\allowbreak{}cache\_\allowbreak{}mib}}
+
+The \opt{ext2chg} read-out's kernels depend only on a cell and its grid, so they are built once per geometry (on the CPU, with SciPy's Bessel functions) and kept on the device, least recently used evicted first, within this budget. A training split whose kernels exceed it rebuilds the evicted ones every epoch, and that rebuild then dominates the epoch: 64 MiB was far below the \textasciitilde{}360 MB the 785 CHONPS geometries need at a 6 \AA{}$^{-1}$ band, and the 1024 MiB default holds them all. The setting changes how often a kernel is computed, never what it is, so it is not part of the checkpoint.
+
+\subsection{There is no \opt{compile} key}
+
+\label{sec:no-torch-compile}
+
+There was one, for a version, and it was removed in 26.9.3 after being measured. Setting \opt{compile}, \opt{compile\_\allowbreak{}mode} or \opt{compile\_\allowbreak{}dynamic} raises and says why, rather than being accepted and ignored.
+
+\textbf{Inductor does not generate code for complex operators.} Every compiled run said so:
+
+\begin{lstlisting}
+torch/_inductor/lowering.py:1917: UserWarning: Torchinductor does not support
+code generation for complex operators. Performance may be worse than eager.
+\end{lstlisting}
+
+\opt{SpectralConv3d}'s weights are complex, and it \emph{is} the Fourier neural operator. So the one part of the model compilation was invoked to fuse is the part Inductor hands back to eager, while the wrapper and the graph breaks are still paid for. That is the mechanism behind the numbers: 150 epochs, two repetitions, one V100:
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.254\linewidth}>{\raggedright\arraybackslash}p{0.208\linewidth}>{\raggedright\arraybackslash}p{0.321\linewidth}>{\raggedright\arraybackslash}p{0.147\linewidth}@{}}
+\toprule
+\textbf{arm} & \textbf{s/epoch} & \textbf{first epoch (cold $\to$ warm)} & \textbf{val rel L2} \\
+\midrule
+off & \textbf{0.6289} & 3.8 s & 0.280563 \\
+\opt{mode="default"} & 0.6785 (+7.9 \%) & 199.8 s $\to$ 17.6 s & 0.284980 \\
+\opt{mode="max-autotune"} & 0.6879 (+9.4 \%) & 314.0 s $\to$ 20.7 s & 0.272624 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\opt{TORCH\_\allowbreak{}LOGS=recompiles} emitted nothing, so \opt{dynamic=True} did hold one graph across the 19 shapes: the shape-bucketing worry was unfounded and the gain still does not exist. The validation error also moved, reproducibly and identically across both repetitions, which disqualifies the arms independently of their timing.
+
+On four ranks it did not merely lose. With \opt{-{}-distributed auto} and 60 epochs, in the same allocation as an uncompiled four-rank run that finished in 86.6 s, the compiled run sat \textbf{eighteen minutes in the first epoch without printing an epoch line} and was canceled. A configuration key whose failure mode is a silent deadlock inside a queue allocation is the hazard \opt{strict\_\allowbreak{}device} (Section~\ref{sec:strict-device}) exists to remove, pointing the other way.
+
+What was \emph{not} measured, and is worth measuring one day: compiling only the real-valued submodules (\opt{CellEncoder}, FiLM, the pointwise convolutions, the projection head) and leaving \opt{SpectralConv3d} in eager. That is where the 44.4 \% of elementwise GPU time lives. It should come back as an internal decision about which submodules to wrap, not as a switch a config file can throw. The condition for re-opening whole-model compilation is upstream: Inductor gaining complex-operator codegen.
+
+\subsection{\opt{distributed}}
+
+\label{sec:distributed}
+
+\opt{auto}, the default, forms a \opt{DistributedDataParallel} group over NCCL \textbf{when the environment already describes one}, and does nothing otherwise. A Slurm step with more than one task, or a \opt{torchrun} launch, is such an environment; a workstation is not.
+
+It cannot turn a one-process run into a four-GPU one. The launcher decides the topology and this key decides only whether to believe it, so on a cluster the setting that matters is in the submission script:
+
+\begin{lstlisting}
+#SBATCH --ntasks-per-node=4          # one task per GPU
+#SBATCH --gres=gpu:4
+srun poraque-train --config configs/train_simple.yaml --distributed auto
+\end{lstlisting}
+
+See Several GPUs, under Slurm (Section~\ref{sec:multigpu}) for the full script and for how \opt{MASTER\_\allowbreak{}ADDR} and \opt{MASTER\_\allowbreak{}PORT} are derived from the allocation.
+
+\opt{off} refuses a group inside a multi-task allocation, which is how four independent single-GPU jobs are run from one submission and how a scaling result is bisected against a single-device baseline.
+
+Three consequences, all of them visible in the run log:
+
+\begin{itemize}
+  \item The \textbf{effective batch size is \opt{batch\_\allowbreak{}size} $\times$ the world size}. A four-rank run at \opt{batch\_\allowbreak{}size: 10} steps on 40 samples, so it is not the same optimizer as the one-rank run it is compared against: halve the learning rate or quarter the batch size if the comparison is meant to be of the same optimization.
+  \item \textbf{Rank 0 alone writes} the checkpoint, the metrics, the figures and the PDF, and alone prints.
+  \item \textbf{The batches are split, not the samples.} \opt{ShapeBucketSampler} groups materials by grid shape so no padding ever reaches the FFT, and a \opt{DataLoader} takes a \opt{sampler} or a \opt{batch\_\allowbreak{}sampler} and never both, so the bucketing runs first, identically on every rank, and a real \opt{DistributedSampler} partitions the resulting \emph{list of batches}. Each rank gets a unique, non-overlapping subset, and every rank gets the same \emph{number} of batches, which is not tidiness: DDP all-reduces gradients inside each \opt{backward()}, and a rank that runs out of batches first leaves the others in a collective that never completes.
+\end{itemize}
+
+The collective timeout is long (30 minutes) on purpose, and is not a key. The first collective happens after every rank has read its prepared cache, and a cold parallel-filesystem read of a few hundred densities is minutes; a timeout that fires there reports itself as a NCCL error and sends the reader looking at the network.
+
+\begin{pnote}
+There is no \opt{DataParallel} fallback and no Gloo backend. Both would let a misconfigured run go quietly slower than a single GPU: the first by replicating in one process, the second by distributing across CPU cores inside a GPU allocation. Without CUDA the group is refused with a warning naming the probable cause, and the run continues on one device.
+\end{pnote}
+
+\section{\opt{report} --- what is written}
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.144\linewidth}>{\raggedright\arraybackslash}p{0.128\linewidth}>{\raggedright\arraybackslash}p{0.658\linewidth}@{}}
+\toprule
+\textbf{Key} & \textbf{Default} & \textbf{Meaning} \\
+\midrule
+\opt{figures} & \opt{true} & render \opt{plots/\allowbreak{}}: loss curves, parity over every structure, field slices \\
+\opt{pdf} & \opt{true} & typeset \opt{report/\allowbreak{}}; needs a LaTeX toolchain \\
+\opt{format} & \opt{png} & \opt{png}, \opt{pdf} or \opt{svg} \\
+\opt{dpi} & \opt{200} & raster resolution for saved figures \\
+\opt{raw\_\allowbreak{}data} & \opt{false} & write the numbers behind each figure beside it \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The checkpoint, the log, the metrics JSON and the resolved configuration are always written when \opt{run.\allowbreak{}output} is set; \opt{run.\allowbreak{}output: null} is the one switch that silences them all. \opt{-{}-no-report} and \opt{-{}-no-plots} turn the PDF and the figures off from the shell.
+
+\subsection{What the report's performance table says}
+
+One row per split (\opt{train}, \opt{validation}, \opt{all}) and five columns:
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.300\linewidth}>{\raggedright\arraybackslash}p{0.630\linewidth}@{}}
+\toprule
+\textbf{Column} & \textbf{What it answers} \\
+\midrule
+rel. $L^2$ & The headline error, and the one every other number in this manual is quoted in. \\
+rel. $H^1$ & Values \emph{and} gradients. A prediction can match a density pointwise and still be rough, and $\tau_\mathrm{vW}$ depends on $\nabla\rho$, so a small $L^2$ beside a large $H^1$ is a model whose energetics will disappoint. \\
+MAE & The typical voxel, in the field's own units, where a squared error is not readable as a quantity. \\
+Max. error & The worst voxel. Means and RMS both hide a single catastrophic site, and near a nucleus is exactly where one occurs. \\
+$\lvert\Delta N\rvert$ & Conservation. For the density operator this is the electron-count error in electrons, and it is the metric a pointwise loss controls worst. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The \opt{train} and \opt{validation} rows read against each other \textbf{are} the generalization gap. That is the single most useful thing the table says, and it is why the splits are rows.
+
+\begin{pnote}
+The rel. $H^1$ here is the textbook relative Sobolev norm, which has no free parameter, \textbf{not} the $H^1$ objective \opt{loss.\allowbreak{}norm: relative\_\allowbreak{}h1} minimizes, whose value depends on \opt{sobolev\_\allowbreak{}weight} and so cannot be compared between two runs. Every column is computed without consulting the loss, for exactly that reason.
+
+For a two-channel model every number is the \textbf{density} channel; the magnetization is measured separately, as \opt{magnetization\_\allowbreak{}relative\_\allowbreak{}l2} in the metrics JSON, and the report says so in its caveats.
+
+The table lists \emph{splits}, not structures: it used to print one row per material, so a 115-material run made six pages of numbers nobody reads individually. The per-structure figures, and \opt{mse}, \opt{rmse}, \opt{r2}, \opt{nrmse\_\allowbreak{}range} and \opt{jsd}, which are not typeset, are all in \opt{log/\allowbreak{}\textless{}name\textgreater{}.\allowbreak{}json}, which is machine-readable and has no margins.
+\end{pnote}
 
 \subsection{The resource profile}
+
 \label{sec:resource-profile}
 
 The last thing \opt{poraque-train} prints is what the run cost:
 
 \begin{lstlisting}
-RESOURCE PROFILING SUMMARY
-==========================================================
+[RESOURCES]
   stage                               wall time     peak RSS
   ----------------------------------------------------------
   cache                                   0.0 s    222.6 MiB
@@ -1358,49 +1109,22 @@ RESOURCE PROFILING SUMMARY
   ----------------------------------------------------------
   total (wall clock)                      3.1 s    552.8 MiB
   device: cpu   outside the stages above: 0.1 s
+  peak RSS: the process's high-water resident set so far (getrusage), so it never falls between rows
 \end{lstlisting}
 
-\noindent
-That is a synthetic smoke run; the shape is what matters. Each stage is timed
-after a device synchronization, so a GPU stage is charged for its compute rather
-than for the kernels it queued. The memory columns answer the question an
-allocation is sized from:
+(That is a synthetic smoke run of the grid-alone operators; the shape is what matters. Like every block of the log it opens with its \opt{[NAME]} header; see the Manual.) Each stage is timed after a device synchronization, so a GPU stage is charged for its compute rather than for the kernels it queued. The memory columns answer the question an allocation is sized from:
 
-\begin{description}
-  \item[peak RSS] is the process's high-water resident set, read from the
-    operating system rather than sampled, so a spike between two samples cannot
-    be missed. It is a running maximum and never falls; the stage where it
-    jumps is the one that needed the memory. DataLoader workers are separate
-    processes and are reported on a line of their own.
-  \item[peak VRAM], on CUDA, is \opt{torch.cuda.max\_memory\_allocated}
-    \emph{within} each stage --- the peak statistics are reset at every
-    boundary, so the column does fall. The summary adds the most the caching
-    allocator reserved, which is the number \opt{nvidia-smi} shows and the one
-    an out-of-memory error is about.
-  \item[MPS at end] is what the Metal driver held when the stage ended. MPS
-    exposes no peak, so on a Mac this column is a floor, not a maximum.
-\end{description}
+\begin{itemize}
+  \item \textbf{peak RSS} is the process's high-water resident set, read from the operating system rather than sampled, so a spike between two samples cannot be missed. It is a running maximum and never falls; the stage where it jumps is the one that needed the memory. DataLoader workers are separate processes and are reported on a line of their own.
+  \item \textbf{peak VRAM}, on CUDA, is \opt{torch.\allowbreak{}cuda.\allowbreak{}max\_\allowbreak{}memory\_\allowbreak{}allocated} \emph{within} each stage (the peak statistics are reset at every boundary, so the column does fall). The summary adds the most the caching allocator reserved, which is the number \opt{nvidia-smi} shows and the one an out-of-memory error is about.
+  \item \textbf{MPS at end} is what the Metal driver held when the stage ended. MPS exposes no peak, so on a Mac this column is a floor, not a maximum.
+\end{itemize}
 
-\begin{pwarn}
-The summary prints from a \opt{finally}, so a run that raises --- an
-out-of-memory error, a bad file, a Ctrl-C --- still reports every stage it
-finished and marks the one it died in \opt{(interrupted)}: the run whose cost
-most needs explaining is the one that did not finish. A job killed by a signal
-is not so lucky. Slurm ends a job at its time limit with \opt{SIGTERM}, which
-Python does not turn into an exception, so that run leaves no summary; the
-metrics JSON of a finished run is the record to size the next allocation from.
-\end{pwarn}
+The summary prints from a \opt{finally}, so a run that raises (an out-of-memory error, a bad file, a Ctrl-C) still reports every stage it finished and marks the one it died in \opt{(interrupted)}: the run whose cost most needs explaining is the one that did not finish. A job killed by a signal is not so lucky. Slurm ends a job at its time limit with \opt{SIGTERM}, which Python does not turn into an exception, so that run leaves no summary; the metrics JSON of a finished run is the record to size the next allocation from. \opt{-{}-cache-only} prints it too, with the cache as its only stage. The same record is in the metrics JSON under \opt{resources}; cross-validation times the whole of each operator's folds as one stage.
 
-\opt{--cache-only} prints the summary too, with the cache as its only stage.
-The same record is in the metrics JSON under \opt{resources}; \opt{--kfold}
-times the whole cross-validation of each task as one stage.
+\subsection{\opt{raw\_\allowbreak{}data}}
 
-\subsection{\opt{save\_raw\_plot\_data}}
-
-A figure is an argument someone will later want to make differently --- in a
-journal's colors, at a journal's size, with two runs on one axis. Re-running
-the model to get the numbers back is the expensive way to do that, so with this
-on each figure method writes what it drew, beside what it drew:
+A figure is an argument someone will later want to make differently: in a journal's colors, at a journal's size, with two runs on one axis. Re-running the model to recover the numbers is the expensive way to do that, so with this on each figure method writes what it drew, beside what it drew:
 
 \begin{lstlisting}
 plots/ext2pseudo_loss_curves.png       plots/ext2pseudo_loss_curves.csv
@@ -1409,173 +1133,108 @@ plots/ext2pseudo_parity.png            plots/ext2pseudo_parity.csv
 plots/ext2pseudo_s000_field_slice.png  plots/ext2pseudo_s000_field_slice.npz
 \end{lstlisting}
 
-The sidecar shares the \textbf{stem} of its figure, so the pairing is a
-property of the directory listing rather than of a convention to remember.
-Tabular figures get a CSV; the slice figure gets a compressed \file{.npz},
-because what it draws are three 2D arrays and a CSV of a $108\times108$ grid is
-neither smaller nor easier to read back.
+The sidecar shares the \textbf{stem} of its figure, so the pairing is a property of the directory listing rather than of a convention to remember. Tabular figures get a CSV; the slice figure gets a compressed \opt{.\allowbreak{}npz}, because what it draws are three 2D arrays and a CSV of a 108$\times$108 grid is neither smaller nor easier to read back.
 
-\begin{description}
-  \item[The loss curve] is one row per epoch: \opt{epoch}, \opt{train\_loss},
-    and the validation column \emph{named for the norm it holds}
-    (\opt{val\_rel\_l2}, or \opt{val\_abs\_h1} for an \opt{absolute\_h1} run).
-    Epochs on which validation was not measured leave that cell \textbf{empty}
-    rather than interpolated: filling them would put points in the file the run
-    never measured. There is no physics column --- \opt{train\_loss} is the
-    total the optimizer stepped on, and the per-term breakdown is not recorded.
-  \item[The parity plot] is one row per \emph{occupied} bin: \opt{split},
-    \opt{reference}, \opt{prediction}, \opt{count}, \opt{density}. Long format,
-    because that pivots straight back into a \opt{pcolormesh}; occupied bins
-    only, because a 200-bin grid is 40\,000 cells of which a few thousand carry
-    anything. The bin edges go in their own file, since a log axis makes them
-    unrecoverable from the centers. \opt{count} is what the figure drew, so on
-    log axes it leaves out every sampled voxel at which reference or prediction
-    is not positive; the panel titles give the sample itself. A spin-polarized
-    run writes the same pair again for $m$, as
-    \file{<task>\_parity\_magnetization}.
-  \item[The slice figure] stores the three panels as arrays --- \opt{reference},
-    \opt{prediction} and \opt{error} --- together with the color limits the
-    figure used. The error is \emph{stored}, not left to be recomputed: a reader
-    who reconstructs it and gets something else then knows the file is
-    inconsistent, rather than trusting their own subtraction.
-\end{description}
+\begin{itemize}
+  \item \textbf{The loss curve} is one row per epoch: \opt{epoch}, \opt{train\_\allowbreak{}loss}, and the validation column \emph{named for the norm it holds} (\opt{val\_\allowbreak{}rel\_\allowbreak{}l2}, or \opt{val\_\allowbreak{}abs\_\allowbreak{}h1} for an \opt{absolute\_\allowbreak{}h1} run). Epochs on which validation was not measured leave that cell \textbf{empty} rather than interpolated; filling them would put points in the file the run never measured. There is no physics column: \opt{train\_\allowbreak{}loss} is the total the optimizer stepped on, and the per-term breakdown is not recorded.
+  \item \textbf{The parity plot} is one row per \emph{occupied} bin: \opt{split}, \opt{reference}, \opt{prediction}, \opt{count}, \opt{density}. Long format, because that pivots straight back into a \opt{pcolormesh}; occupied bins only, because a 200-bin grid is 40 000 cells of which a few thousand carry anything. The bin edges go in their own file, since a log axis makes them unrecoverable from the centers. \opt{count} is what the figure drew, so on log axes it leaves out every sampled voxel at which reference or prediction is not positive; the panel titles give the sample itself. A spin-polarized run writes the same pair again for $m$, as \opt{\textless{}task\textgreater{}\_\allowbreak{}parity\_\allowbreak{}magnetization}.
+  \item \textbf{The slice figure} stores the three panels as arrays (\opt{reference}, \opt{prediction}, \opt{error}) with the color limits the figure used. The error is \emph{stored}, not left to be recomputed: a reader who reconstructs it and gets something else then knows the file is inconsistent, rather than trusting their own subtraction.
+\end{itemize}
 
-It needs \opt{plot\_figures}. The data is written by the figure methods as they
-draw, which is what guarantees the file and the image show the same numbers
-rather than two independent computations of them.
-
-The resolved configuration is written next to \opt{json} with the suffix
-\file{\_config.yaml}. PDF reports are assembled in a temporary directory that
-is removed afterwards, so no \file{.tex}, \file{.aux} or \file{.log} files are
-left behind.
-
-\section{\opt{symbolic} --- distilling a formula}
-
-Chapter~\ref{ch:symbolic} covers this feature; the keys are listed here for
-completeness. It is off by default and needs the optional \opt{symbolic}
-install extra.
-
-\begin{center}
-\begin{tabular}{@{}p{4.5cm}p{3.1cm}p{7.4cm}@{}}
-\toprule
-Key & Default & Meaning \\
-\midrule
-\opt{enable\_symbolic\_} \opt{distillation} & \opt{false} & Search for a
-closed-form expression after training. \\
-\opt{target} & \opt{model} & \opt{model} distils the operator's predictions;
-\opt{reference} fits the DFT data. \\
-\opt{features} & \opt{gga} & Variables given to the engine: \opt{gga}
-$(\rho, p, q)$, \opt{enhancement} $(p, q)$, or \opt{raw}. \\
-\opt{epsilon} & \opt{1e-8} & Vacuum threshold in $e/a_0^3$; clamps every
-denominator and drops voxels below it. \\
-\opt{unary\_operations} & \opt{[exp, log, sqrt, abs]} & Unary alphabet, passed
-to the engine untouched. \\
-\opt{binary\_operations} & \opt{['+', '-', '*', /, \textasciicircum]} & Binary
-alphabet. \\
-\opt{iterations} & \opt{40} & Search iterations --- the main quality/time
-knob. \\
-\opt{population\_size} & \opt{33} & Individuals per population. \\
-\opt{populations} & \opt{15} & Populations run in parallel. \\
-\opt{max\_depth} & \opt{10} & Ceiling on expression depth. \\
-\opt{max\_size} & \opt{30} & Ceiling on node count. \\
-\opt{parsimony} & \opt{0.0032} & Penalty per node; higher gives shorter,
-worse-fitting expressions. \\
-\opt{n\_samples} & \opt{4000} & Voxels sampled across the dataset. \\
-\opt{seed} & \opt{0} & Seeds the sampling and the engine. \\
-\opt{template} & \opt{none} & How the target is factorized: \opt{none},
-\opt{thomas\_fermi} or \opt{pauli}. \\
-\opt{data\_loss} & \opt{mse} & The unpenalized part of the objective;
-\opt{mae} is more robust on a density whose tails span orders of magnitude. \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\subsection*{\opt{symbolic.physics} --- constraints on the search}
-
-\begin{center}
-\begin{tabular}{@{}p{4.9cm}p{2.3cm}p{7.8cm}@{}}
-\toprule
-Key & Default & Meaning \\
-\midrule
-\opt{enable} & \opt{true} & Penalize violations \emph{inside} the
-evolutionary loop rather than filtering the front afterwards. \\
-\opt{positivity\_weight} & \opt{100.0} & $F \ge 0$, on the batch. \\
-\opt{thomas\_fermi\_weight} & \opt{100.0} & $F(0,0) = 1$: the uniform gas. \\
-\opt{von\_weizsacker\_weight} & \opt{100.0} & $F \to 0$ as $p \to \infty$:
-one orbital. \\
-\opt{p\_infinity} & \opt{1.0e6} & The reduced gradient standing in for
-$p \to \infty$ in that probe. \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\begin{pwarn}[title={Two blocks of physics weights, and they are not the same}]
-\opt{training.physics\_informed} constrains the \textbf{neural
-operator}: charge conservation, positivity of a predicted density, the
-Euler--Lagrange residual. Its terms are added to a training loss over voxels,
-and its own \opt{enable} decides whether any of them is evaluated ---
-\opt{auto} answers from the weights, \opt{true} refuses to be an empty claim,
-\opt{false} also skips the per-batch decode the terms act on.
-
-\opt{symbolic.physics} constrains a \textbf{candidate algebraic expression}
-for the Pauli enhancement factor. Its terms are added to a symbolic-regression
-fitness over synthetic probe points.
-
-Separate objectives, on separate objects, evaluated at different times by
-different engines. Two of the key names appear in both ---
-\opt{positivity\_weight} and \opt{von\_weizsacker\_weight} --- and mean
-different things in each, which is exactly why they live in separate blocks
-rather than sharing a prefix. Both are now the same \emph{shape} ---
-\opt{\{enable: ..., weights\}} --- which makes the collision easier to see and
-no less real.
-\end{pwarn}
-
-\noindent
-Filtering the front after a run only measures how few candidates were
-physical; by then the populations have spent their budget converging on forms
-that must be discarded. With \opt{enable} on, the objective is
-\[
-  \mathcal{L} = \mathcal{L}_{\rm data}
-  + w_{+}\,\overline{\min(F,0)^2}
-  + w_{\rm TF}\,|F(0,0) - 1|
-  + w_{\rm vW}\,|F(p_\infty, 0)| .
-\]
-The first term is evaluated on the batch, the other two on probe points --- so
-this needs the engine's \emph{full objective}, not an elementwise loss, which
-only ever sees \opt{(prediction, target)} pairs and can never evaluate a
-candidate where the data does not sit.
-
-\begin{pnote}
-The \opt{loss} column of the reported front is then this \emph{constrained}
-objective and is not comparable with an unconstrained run's. The $R^2$ and
-relative $L^2$ are computed from the expression itself and are unaffected.
-\end{pnote}
+It needs \opt{figures}. The data is written by the figure methods as they draw, which is what guarantees the file and the image show the same numbers rather than two independent computations of them. PDF reports are assembled in a temporary directory that is removed afterwards, so no \opt{.\allowbreak{}tex}, \opt{.\allowbreak{}aux} or \opt{.\allowbreak{}log} files are left behind.
 
 \section{Worked examples}
 
-\paragraph{Train the deployable models.}
+The short form of the platinum run, both operators, is \opt{configs/\allowbreak{}train\_\allowbreak{}simple.\allowbreak{}yaml}. The ones below change one thing each.
+
+Train the deployable models: nothing held out, the Pauli head for the kinetic operator (which, for now, means the grid alone):
+
 \begin{lstlisting}
-task: all
-model:    {pauli_residual: true}
-training: {valid_fraction: 0, epochs: 200}
+run:
+  name: poraque_models
+ext2chg:
+  occupancies: false
+chg2tau:
+  head: pauli
+  occupancies: false
+training:
+  epochs: 200
+  validation:
+    fraction: 0
 \end{lstlisting}
 
-\paragraph{Measure generalization.}
+Measure generalization:
+
 \begin{lstlisting}
-task: all
-training: {enable_kfold: true, k_folds: 5}
+run:
+  name: poraque_models_cv
+ext2chg:
+  occupancies: false
+training:
+  validation:
+    kfold: 5
 \end{lstlisting}
 
-\paragraph{A fast smoke test.}
+Two runs over the same data with different physics, kept side by side. The baseline leaves the weights at zero, which also skips the per-batch decode the constraints need:
+
 \begin{lstlisting}
-data:     {resolution: 20}
-model:    {width: 8, modes: 4, n_layers: 2, projection_channels: 16}
-training: {epochs: 10}
+run:
+  name: agaupt_baseline
+ext2chg:
+  occupancies: false
 \end{lstlisting}
 
-\paragraph{Higher fidelity, if the hardware allows.}
 \begin{lstlisting}
-data:     {resolution: 64}
-model:    {width: 32, modes: 12, n_layers: 4}
-training: {epochs: 400, batch_size: 2}
+run:
+  name: agaupt_charge_conserving
+ext2chg:
+  occupancies: false
+training:
+  physics:
+    electron_count: 0.1
+\end{lstlisting}
+
+A Materials Project download, which ships no \opt{POTCAR} and no \opt{TAUCAR}: the density operator on the grid alone, with the library that generated the data.
+
+\begin{lstlisting}
+run:
+  name: mp_ag_au_pt
+data:
+  path: data/MP
+  potcar_dir: /opt/vasp/potpaw_PBE
+ext2chg:
+  occupancies: false
+\end{lstlisting}
+
+A fast smoke test:
+
+\begin{lstlisting}
+data:
+  grid:
+    resolution: 20
+ext2chg:
+  occupancies: false
+  model:
+    width: 8
+    modes: 4
+    layers: 2
+    projection_channels: 16
+training:
+  epochs: 10
+\end{lstlisting}
+
+Higher fidelity, if the hardware allows:
+
+\begin{lstlisting}
+data:
+  grid:
+    resolution: 64
+ext2chg:
+  model:
+    width: 32
+    modes: 12
+    layers: 4
+training:
+  epochs: 400
+  batch_size: 2
 \end{lstlisting}

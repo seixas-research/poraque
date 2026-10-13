@@ -46,24 +46,44 @@ entry points are registered at install time, not import time.
 | --- | --- | --- |
 | CUDA build of PyTorch | NVIDIA GPUs | [see below](nvidia-gpus) |
 | `pdflatex` / `latexmk` | automatic PDF reports | TeX Live or MacTeX |
-| `sympy` | [symbolic distillation](symbolic/index.md) | `pip install -e ".[symbolic]"` |
-
-The `symbolic` extra is one package now, and it is only for *reporting*: SymPy
-renders a distilled expression as LaTeX and checks its asymptotic limits. The
-search itself is `poraque.ml.gp` — genetic programming in NumPy, with SciPy
-fitting the constants — and both of those are already hard dependencies, so
-nothing about distillation needs a second install any more.
-
-Until 2026-09-03 this extra carried PySR and, through it, a **Julia
-toolchain** fetched on first use. That was the reason it was kept separate, and
-removing it was an HPC decision rather than a scientific one: on a
-supercomputer a first-use download is a network fetch from a compute node, a
-writable depot on a filesystem that may be read-only or purged between jobs, a
-precompilation pass per architecture, and a second language runtime inside an
-MPI job.
 
 Apple Silicon needs nothing extra: the Metal (MPS) backend ships with the
 standard PyTorch wheel and is selected automatically.
+
+(c-kernels)=
+### Optional C kernels
+
+Two small C kernels speed up work that PyTorch and pure Python do poorly.
+`spectral` is the contraction of the Fourier layer for CPU inference
+({mod}`poraque.ml.backend`); `codec` is the text codec of volumetric grid
+blocks, which makes dataset cache builds 3.2–3.4× faster
+({mod}`poraque.fields.vasp.codec`). Both ship as C source in the wheel;
+**installation compiles nothing**. Each kernel is compiled on its first use
+into `~/.cache/poraque` (or `$PORAQUE_CACHE_DIR`), under a file name that
+hashes the source, the Python ABI, the compiler flags and the platform, so a
+stale library is never loaded. The compiler is `$CC`, else `cc`, `clang` or
+`gcc`.
+
+To compile them up front, check each against its Python reference and see what
+loaded, for instance as a setup step on a cluster so that no job pays for the
+compile or races another to it:
+
+```bash
+poraque-compile                  # build what is missing, check, report
+poraque-compile --rebuild        # recompile even if cached
+poraque-compile --clean          # delete cached libraries no current kernel loads
+poraque-compile --only codec     # one kernel (spectral or codec)
+```
+
+The exit status is 0 when every requested kernel loaded and 1 otherwise;
+either way everything still runs on the Python path, more slowly.
+`PORAQUE_C_BACKEND=0` disables both kernels.
+
+Build on the kind of machine that will run the kernel, or at least mind the
+CPU. The `codec` uses portable flags only (no `-march=native`), so a library
+built on a login node cannot crash a compute node with a different CPU. The
+`spectral` kernel still tries `-march=native` (`-mcpu=native` on ARM) first,
+which is faster; build it on the node type that will run inference.
 
 (nvidia-gpus)=
 ## NVIDIA GPUs
@@ -162,11 +182,11 @@ block of every command's output; see {doc}`output`.
 
 Poraquê trains data-parallel over NCCL when the launcher describes a group, and
 on one device when it does not. It cannot invent ranks: **the launcher decides
-the topology and `training.distributed` decides only whether to believe it.**
+the topology and `runtime.distributed` decides only whether to believe it.**
 The shipped submission script is `scripts/slurm/poraque_ddp.sbatch`:
 
 ```bash
-sbatch scripts/slurm/poraque_ddp.sbatch configs/train.yaml
+sbatch scripts/slurm/poraque_ddp.sbatch configs/train_simple.yaml
 ```
 
 The line that matters is `--ntasks-per-node`, which must equal the number of
@@ -177,7 +197,7 @@ GPUs:
 #SBATCH --ntasks-per-node=4          # one task per GPU. Not optional.
 #SBATCH --gres=gpu:4
 
-srun poraque-train --config configs/train.yaml --device cuda \
+srun poraque-train --config configs/train_simple.yaml --device cuda \
                    --strict-device --distributed auto
 ```
 
@@ -207,9 +227,9 @@ Three things to know before reading a scaling number:
   the one-rank run it is being compared against.
 - **Rank 0 alone writes** the checkpoint, the metrics, the figures and the PDF,
   and alone prints. Four ranks opening one log truncate each other's.
-- **`num_workers` gets worse, not better, under DDP.** Each rank is already a
+- **`loader_workers` gets worse, not better, under DDP.** Each rank is already a
   process with a field cache of its own. One rank per GPU, cache on, no
-  workers — see [`data.cache_in_memory`](cache-in-memory).
+  workers — see [`data.cache.in_memory`](cache-in-memory).
 
 To bisect a result, run the same allocation single-GPU with `--distributed off`
 and compare `seconds_per_epoch` in the metrics JSON.
@@ -232,22 +252,22 @@ differed in a way nothing recorded.
 
 A training run starts by building its dataset cache — reading every density,
 computing the external potential, spectrally downsampling, writing the result
-under `data.cache` — and none of that touches a GPU. On a cold parallel
+under `data.cache.dir` — and none of that touches a GPU. On a cold parallel
 filesystem it is minutes to hours, and inside a GPU allocation it is minutes
 to hours of idle accelerators. So split the run into two jobs:
 
 ```bash
 # 1. a CPU-only job: build the cache and exit
-cache=$(sbatch --parsable scripts/slurm/poraque_cache.sbatch configs/train.yaml)
+cache=$(sbatch --parsable scripts/slurm/poraque_cache.sbatch configs/train_simple.yaml)
 
 # 2. the multi-GPU job, released when the first succeeds; same config
-sbatch --dependency=afterok:${cache} scripts/slurm/poraque_ddp.sbatch configs/train.yaml
+sbatch --dependency=afterok:${cache} scripts/slurm/poraque_ddp.sbatch configs/train_simple.yaml
 ```
 
 The first script runs
 
 ```bash
-poraque-train --config configs/train.yaml --cache-only
+poraque-train --config configs/train_simple.yaml --cache-only
 ```
 
 which builds the cache exactly as a training run would and then stops —
@@ -267,29 +287,31 @@ exit status 0 and a summary:
                 ...
   elements    : Pt
   on disk     : 458.9 MiB
-  decoded     : ~134.2 MiB in RAM per task (data.cache_in_memory: True, budget 4.0 GiB)
+  decoded     : ~134.2 MiB in RAM per task (data.cache.in_memory: True, budget 4.0 GiB)
 ```
 
 Three things about the mode are worth knowing:
 
 - **It forces the CPU and forms no group**, whatever the config says.
-  `training.device: cuda`, `strict_device: true` and `distributed: auto` can
+  `runtime.device: cuda`, `strict_device: true` and `distributed: auto` can
   stay in the file for the GPU job; the CPU job overrides all three for its own
   process and touches nothing on disk but the cache.
 - **The GPU job rebuilds nothing** as long as its config keeps the cache
-  fingerprint — `data.resolution`, `data.max_spacing`, `data.storage`,
-  `data.compression`, `data.spin`, `data.potcar_dir` and the data paths — as
+  fingerprint — `data.grid.resolution`, `data.grid.max_spacing`,
+  `data.cache.storage`, `data.cache.compression`, `data.spin`,
+  `data.potcar_dir` and the data path — as
   it was. Its cache
   table then reads `cached` on every row and training starts at once. Change
   one of those keys and the GPU job builds a *different* cache, on the GPU
   node, which is what the split exists to avoid.
 - **Read the `decoded` line before requesting memory.** It is the size of the
-  fields held in RAM by [`data.cache_in_memory`](cache-in-memory), and the
+  fields held in RAM by [`data.cache.in_memory`](cache-in-memory), and the
   number `auto` compares against its budget; a GPU job whose request is below
   it either declines the cache (10× slower) or is killed.
 
-One task, not four: the builder is single-process, and several tasks would
-each build the whole cache. Re-running `--cache-only` on a cache that already
+One task, not four: the builder is one task with several processes
+(`runtime.workers: auto` reads `--cpus-per-task`), and several tasks would each
+build the whole cache. Re-running `--cache-only` on a cache that already
 exists is cheap — present materials are left alone — so an interrupted CPU job
 is resubmitted, not restarted.
 

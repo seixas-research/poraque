@@ -36,20 +36,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Physics"
 ]
 
-[project.optional-dependencies]
-#   pip install -e ".[symbolic]"
-#
-# One package, and it is only for *reporting*: the search itself is
-# `poraque.ml.gp`, genetic programming in NumPy with SciPy fitting the
-# constants, and both of those are hard dependencies above. SymPy renders a
-# result as LaTeX and checks its asymptotic limits. The engine is native on
-# purpose: a second language runtime (Julia) is a network fetch, a writable
-# depot and a precompilation pass on a compute node, for minutes of work at
-# the end of a run that already took hours.
-symbolic = [
-    'sympy',
-]
-
 [project.urls]
 "Homepage" = "https://github.com/seixas-research/poraque"
 
@@ -60,6 +46,7 @@ poraque-committee = "poraque_committee:main"
 poraque-active-learning = "poraque_active_learning:main"
 poraque-atoms = "poraque_atoms:main"
 poraque-vasp = "poraque_vasp:main"
+poraque-compile = "poraque_compile:main"
 poraque-mp = "poraque.data.materials_project:main"
 
 [tool.hatch.build.targets.wheel]
@@ -72,15 +59,17 @@ only-include = [
     "scripts/poraque_active_learning.py",
     "scripts/poraque_atoms.py",
     "scripts/poraque_vasp.py",
+    "scripts/poraque_compile.py",
 ]
 
-# The C kernel ships as *source* and is compiled on first use into a user
-# cache (see poraque.ml.backend). Shipping the .c rather than a built object
-# keeps the wheel pure-Python and platform-independent, and costs one ~1 s
-# compile the first time a CPU inference runs. Without this rule hatchling
-# would install only the .py files and the backend could never be built.
+# The C kernels ship as *source* and are compiled on first use into a user
+# cache (see poraque.utils.cbuild), or up front by `poraque-compile`. Shipping
+# the .c rather than a built object keeps the wheel pure-Python and
+# platform-independent, and costs one ~1 s compile per kernel. Without this
+# rule hatchling would install only the .py files and no kernel could build.
 [tool.hatch.build.targets.wheel.force-include]
 "src/poraque/ml/_spectral.c" = "poraque/ml/_spectral.c"
+"src/poraque/fields/vasp/_codec.c" = "poraque/fields/vasp/_codec.c"
 
 [tool.hatch.version]
 path = "src/poraque/version.py"

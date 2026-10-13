@@ -16,10 +16,10 @@ and checked that none of them was zero, and two things followed from that.
 **A run could claim the method and not use it.** Every weight defaults to zero,
 so a configuration that named the block, set nothing in it, and reported
 "physics-informed" trained the plain supervised baseline with an entirely
-ordinary loss curve. ``physics_informed: true`` now raises rather than letting
-that happen; ``"auto"`` — the default — answers from the weights, which is what
-every configuration written before the key existed already meant, so no
-existing run changes.
+ordinary loss curve. The loss's ``physics_informed=True`` now raises rather
+than letting that happen; ``"auto"`` answers from the weights. Since
+2026-10-13 a configuration has no switch at all: ``training.physics`` holds the
+weights, and the run always builds its objective with ``"auto"``.
 
 **And the loop paid for the constraints whether or not it had any.** Every
 term acts on *decoded* fields, so the training loop copied the reference field
@@ -36,7 +36,6 @@ can disagree with the objective it is stepping on.
 """
 
 import os
-import warnings
 
 import pytest
 import torch
@@ -91,8 +90,8 @@ class TestExt2chgChargeConservation:
     def test_cli_configuration_activates_the_term(self):
         from scripts.poraque_train import build_loss
 
-        config = TrainingConfig.from_dict({"training": {"physics_informed": {
-            "enable": True, "electron_count_weight": 1.}}})
+        config = TrainingConfig.from_dict({"training": {"physics": {
+            "electron_count": 1.}}})
         criterion = build_loss(config, "ext2chg")
         prediction = torch.ones(1, 1, 4, 4, 4)
         terms = criterion(prediction, prediction, cell=torch.eye(3).unsqueeze(0),
@@ -117,27 +116,26 @@ class TestAutoAnswersFromTheWeights:
         loss = PhysicsInformedLoss(task="ext2pseudo", **ACTIVE)
         assert loss.physics_informed is True
 
-    def test_the_shipped_config_lets_its_own_weights_decide(self):
+    @pytest.mark.parametrize("name", ["train_simple.yaml",
+                                      "train_complete_and_commented.yaml"])
+    def test_the_shipped_configs_let_their_own_weights_decide(self, name):
         """
-        ``configs/train.yaml`` leaves the key at ``auto``, and ``auto`` reads
-        the file rather than overriding it.
+        A shipped config's weights decide, and nothing else does.
 
         Written first as "the shipped config *is* physics-informed", which was
         true of the file on the day and is not a property of the mechanism: the
-        moment somebody zeroed the four weights for an ablation — which is
-        exactly what the key is for — an ordinary config edit became a test
-        failure. What has to hold is that the default defers, whatever the
-        weights happen to be, because any other default would silently change
-        the objective of the configuration the repository ships.
+        moment somebody zeroed the weights for an ablation an ordinary config
+        edit became a test failure. Since 2026-10-13 there is no switch beside
+        the weights at all, so what has to hold is that the objective the run
+        builds is physics-informed exactly when a weight is nonzero.
         """
-        shipped = os.path.join(os.path.dirname(__file__), "..", "configs",
-                               "train.yaml")
-        config = TrainingConfig.from_yaml(shipped)
-        assert config.training.physics_informed_enabled == "auto"
+        import scripts.poraque_train as train_script
 
-        weights = config.training.physics_weights()
-        live = sum(weights.values()) > 0.0
-        loss = PhysicsInformedLoss(task="ext2pseudo", **weights)
+        shipped = os.path.join(os.path.dirname(__file__), "..", "configs",
+                               name)
+        config = TrainingConfig.from_yaml(shipped)
+        live = sum(config.training.physics_weights().values()) > 0.0
+        loss = train_script.build_loss(config, "ext2pseudo")
         assert loss.physics_informed is live
 
 
@@ -158,8 +156,8 @@ class TestTrueRefusesToBeAnEmptyClaim:
         with pytest.raises(ValueError) as raised:
             PhysicsInformedLoss(task="ext2pseudo", physics_informed=True)
         message = str(raised.value)
-        assert "training.physics_informed" in message
-        assert "physics_informed.enable: false" in message
+        assert "training.physics" in message
+        assert "physics_informed='auto'" in message
 
     def test_it_is_content_when_a_weight_is_set(self):
         loss = PhysicsInformedLoss(task="ext2pseudo", physics_informed=True,
@@ -200,29 +198,6 @@ class TestFalseMakesTheWeightsInertAndSaysSo:
         assert set(quiet) == {"total", "data"}
         assert "positivity" in loud
         assert float(quiet["total"]) < float(loud["total"])
-
-    def test_the_run_warns_that_a_live_weight_is_being_ignored(self):
-        """
-        A non-zero weight under a switch that ignores it is the configuration a
-        reader will later take as evidence that it applied.
-        """
-        import scripts.poraque_train as train_script
-
-        config = TrainingConfig.from_dict({"training": {
-            "physics_informed": {"enable": False, "positivity_weight": 0.5}}})
-        with pytest.warns(RuntimeWarning, match="inert"):
-            train_script.build_loss(config, "ext2pseudo")
-
-    def test_it_does_not_warn_about_weights_that_are_zero_anyway(self):
-        import scripts.poraque_train as train_script
-
-        config = TrainingConfig.from_dict(
-            {"training": {"physics_informed": {"enable": False}}})
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            loss = train_script.build_loss(config, "ext2pseudo")
-        assert loss.physics_informed is False
-
 
 class TestOnlyThreeSpellingsAreUnderstood:
     """
@@ -311,77 +286,39 @@ class TestTheLoopSkipsTheDecodeRatherThanComputingIt:
 
 class TestTheOldKeyNamesItsReplacement:
     """
-    ``training.physics`` raises rather than being quietly ignored.
+    The previous spellings raise rather than being quietly ignored.
 
-    An ignored block of weights is the worst of the three outcomes: the run
-    trains without the constraints it was configured with and reports nothing.
+    An ignored block of weights is the worst of the outcomes: the run trains
+    without the constraints it was configured with and reports nothing.
     ``RETIRED_KEYS`` is this repository's idiom for exactly that, and it is
-    used here rather than a compatibility shim.
+    used here rather than a compatibility shim. The name ``training.physics``
+    itself went round a loop: retired in 26.9.5, it is the block again since
+    2026-10-13, now holding the weights alone with no switch beside them.
     """
 
-    def test_the_old_spelling_raises(self):
-        with pytest.raises(ValueError, match="physics"):
-            TrainingConfig.from_dict({"training": {
-                "physics": {"positivity_weight": 0.1}}})
-
-    def test_the_error_names_the_new_key_and_the_switch(self):
+    def test_the_previous_block_names_the_new_one(self):
         with pytest.raises(ValueError) as raised:
-            TrainingConfig.from_dict({"training": {"physics": {}}})
-        message = str(raised.value)
-        assert "training.physics_informed" in message
-        assert "enable" in message
+            TrainingConfig.from_dict({"training": {
+                "physics_informed": {"positivity_weight": 0.1}}})
+        assert "training.physics" in str(raised.value)
 
     def test_the_intermediate_spelling_raises_too(self):
-        """
-        ``physics`` became ``physics_informed_setup`` in 26.9.5 and that became
-        the ``physics_informed`` block in 26.9.8, so there are two dead
-        spellings, not one. A config written against the middle one is as
-        stale as a config written against the first.
-        """
+        """A config written against the 26.9.5 spelling is as stale as any."""
         with pytest.raises(ValueError, match="physics_informed_setup"):
             TrainingConfig.from_dict({"training": {
                 "physics_informed_setup": {"positivity_weight": 0.1}}})
 
-    def test_the_bare_switch_says_it_is_a_block_now(self):
-        """
-        ``physics_informed: auto`` is not an unknown key --- the key is still
-        there, it is the *shape* that changed --- so it cannot be caught by
-        ``RETIRED_KEYS`` and needs its own message.
-        """
-        with pytest.raises(ValueError, match="must be a block"):
-            TrainingConfig.from_dict({"training": {"physics_informed": "auto"}})
+    def test_the_old_weight_names_are_refused(self):
+        """``positivity_weight`` is ``positivity`` inside the block."""
+        with pytest.raises(ValueError, match="positivity_weight"):
+            TrainingConfig.from_dict({"training": {
+                "physics": {"positivity_weight": 0.1}}})
 
-    def test_the_symbolic_block_is_untouched(self):
-        """
-        ``symbolic.physics`` keeps its name, and the rename is what finally
-        makes the pair readable: two of the weights collide by name and mean
-        different things, one over voxels and one over probe points.
-        """
-        config = TrainingConfig.from_dict({"symbolic": {
-            "physics": {"enable": False}}})
-        assert config.symbolic.physics["enable"] is False
-
-
-class TestTheRunRefusesAnEmptyClaimBeforeTheCacheIsBuilt:
-    """
-    Timing, not merely correctness.
-
-    The objective is built per task and the first task is built *after* every
-    field has been downsampled. A refusal that waits until then costs an hour
-    to deliver a message about a one-line configuration error.
-    """
-
-    def test_it_exits_on_the_command_line(self):
-        import scripts.poraque_train as train_script
-
-        config = TrainingConfig.from_dict(
-            {"training": {"physics_informed": {"enable": True}}})
-        with pytest.raises(SystemExit, match="every constraint weight"):
-            train_script.validate_physics_settings(config)
-
-    def test_it_is_content_with_a_workable_configuration(self):
-        import scripts.poraque_train as train_script
-
+    def test_the_euler_lagrange_term_is_not_a_setting(self):
+        """It ran without v_xc and was never a correctness measure."""
+        with pytest.raises(ValueError, match="euler_lagrange"):
+            TrainingConfig.from_dict({"training": {
+                "physics": {"euler_lagrange": 0.1}}})
         config = TrainingConfig.from_dict({"training": {
-            "physics_informed": {"enable": True, "positivity_weight": 0.2}}})
-        assert train_script.validate_physics_settings(config) is None
+            "physics": {"positivity": 0.2}}})
+        assert config.training.physics_weights()["euler_lagrange_weight"] == 0.0

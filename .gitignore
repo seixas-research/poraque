@@ -186,6 +186,7 @@ models/
 # `poraque-mp` re-fetches on demand, so the repository carries the query rather
 # than its result. The metadata beside them is small and stays.
 data/MP/
+data/CHON/
 
 # VASP files
 POTCAR
@@ -224,14 +225,8 @@ latex/article/
 outputs/
 
 # Claude Code session context (local only, not part of the repository)
-CLAUDE.md
-FUTURE.md
-CUDA_*
-from_*
-
-# Local reading notes on external literature (not part of the repository)
-report.md
-
-
-data/CHON/
 .claude/
+CLAUDE.md
+HISTORY.md
+BACKUP.md
+ROADMAP.md

@@ -728,8 +728,8 @@ class PhysicsInformedLoss(nn.Module):
                 "zero, so the objective would be the supervised baseline "
                 "under a name that says it is not. Set one of "
                 + ", ".join(self.PHYSICS_WEIGHT_NAMES)
-                + " in training.physics_informed, or set "
-                  "training.physics_informed.enable: false.")
+                + " (in a configuration, a weight under training.physics), "
+                  "or pass physics_informed='auto'.")
         return bool(requested)
 
     def forward(self, prediction, target, cell=None, physical_prediction=None,

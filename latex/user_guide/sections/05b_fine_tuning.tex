@@ -6,14 +6,41 @@ specific material family, and a poor substitute for one. Fine-tuning continues
 that fit on the smaller set at a much lower learning rate: what the base model
 learned about the general map is kept, and only the specialization is learned.
 
-\begin{lstlisting}
-# 1. the base model, trained across everything you have
-poraque-train --config configs/train.yaml
+Fine-tuning is switched on by the \emph{presence} of a \opt{fine\_tuning:}
+section in the configuration. The flags \opt{--pretrained} and
+\opt{--fine-tune-lr} override the section's values; they do not create it, and
+without the section they are refused. It is not yet available to an operator
+with its PAW occupancies on (a pretrained bundle has no occupancy layer to
+adapt), so the sections below say \opt{occupancies: false}.
 
-# 2. specialize it on one family
-poraque-train --config configs/train.yaml \
-    --fine-tune --pretrained models/poraque_models.poraque \
-    --root data/oxides --checkpoint-dir models/oxides
+\begin{lstlisting}
+# base.yaml: the model trained across everything you have
+run:
+  name: general
+ext2chg:
+  occupancies: false
+chg2tau:
+  occupancies: false
+\end{lstlisting}
+
+\begin{lstlisting}
+# oxides.yaml: specialize it on one family
+run:
+  name: oxides
+data:
+  path: data/oxides
+ext2chg:
+  occupancies: false
+chg2tau:
+  occupancies: false
+fine_tuning:
+  checkpoint: models/general/general.poraque
+\end{lstlisting}
+
+\begin{lstlisting}
+poraque-train --config base.yaml
+poraque-train --config oxides.yaml
+poraque-train --config oxides.yaml --fine-tune-lr 5e-6
 \end{lstlisting}
 
 \section{What comes from the checkpoint}
@@ -50,13 +77,13 @@ which is precisely what differs between material families.
 
 \begin{lstlisting}
 fine_tuning:
-  freeze_lifting_layers: true
+  freeze_lifting: true
 \end{lstlisting}
 
 The run reports what was actually frozen, so it never has to be inferred:
 
 \begin{lstlisting}
-      fine-tuning from : models/poraque_models.poraque
+      fine-tuning from : models/general/general.poraque
       architecture     : inferred from the checkpoint (4,202,001 parameters)
       transforms       : taken from the checkpoint
       frozen           : lifting path, 1,392 parameters;
@@ -78,27 +105,28 @@ undoing the pre-training the freeze was meant to preserve.
 \toprule
 Key & Default & Meaning \\
 \midrule
-\opt{enable} & \opt{false} & Start from \opt{pretrained\_checkpoint} instead of
-a fresh initialization. \\
-\opt{pretrained\_} \opt{checkpoint} & \file{models/poraque\_} \file{models.poraque}
+\opt{fine\_tuning} & off & The section's presence starts from \opt{checkpoint}
+instead of a fresh initialization; \opt{false} turns it off, \opt{true} takes
+every default. \\
+\opt{checkpoint} & \file{models/poraque\_models/} \file{poraque\_models.poraque}
 & Base bundle to adapt. \\
-\opt{learning\_rate} & \opt{1e-05} & Replaces \opt{training.learning\_rate} for
-this run. \\
-\opt{freeze\_lifting\_} \opt{layers} & \opt{false} & Hold the input lifting
-path fixed. Ignored under \opt{use\_lora}. \\
-\opt{use\_lora} & \opt{false} & Freeze everything and learn a low-rank
+\opt{learning\_rate} & \opt{1.0e-05} & Replaces
+\opt{training.optimizer.learning\_rate} for this run. \\
+\opt{freeze\_lifting} & \opt{false} & Hold the input lifting
+path fixed. Ignored under \opt{lora}. \\
+\opt{lora} & \opt{false} & A block: freeze everything and learn a low-rank
 correction; see below. \\
-\opt{lora\_rank} & \opt{8} & $r$; cost and capacity are both linear in it. \\
-\opt{lora\_alpha} & \opt{16.0} & The update is scaled by
-\opt{lora\_alpha / lora\_rank}. \\
-\opt{lora\_dropout} & \opt{0.0} & Dropout on the adapter's input. \\
+\opt{lora.rank} & \opt{8} & $r$; cost and capacity are both linear in it. \\
+\opt{lora.alpha} & \opt{16.0} & The update is scaled by
+\opt{alpha / rank}. \\
+\opt{lora.dropout} & \opt{0.0} & Dropout on the adapter's input. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 \section{LoRA --- adapting a model that does not fit}
 
-\opt{use\_lora: true} freezes every trained weight and learns a rank-$r$
+A \opt{lora} block freezes every trained weight and learns a rank-$r$
 correction beside the model's \textbf{dense ($1\times1\times1$) lifting and
 projection} convolutions:
 
@@ -117,7 +145,7 @@ does not:
       LoRA             : 3 adapted layer(s), rank 8, alpha 16
       trainable        : 1,320 of 3,153,673 parameters (0.042%); the rest is frozen
       NOTE: the checkpoint will hold the ADAPTER only and name this base;
-            it cannot be loaded without poraque_models.poraque.
+            it cannot be loaded without general.poraque.
 \end{lstlisting}
 
 $B$ starts at \textbf{zero}, so $BA = 0$ and the adapted model \emph{is} the
@@ -142,7 +170,7 @@ generality.
 records where its base lives, which is the whole economy of the method --- the
 frozen tensors are already on disk in the model being adapted. Move or delete
 that base and the fine-tune cannot be loaded; the error says so and names the
-file. \opt{freeze\_lifting\_layers} is ignored under LoRA, which freezes
+file. \opt{freeze\_lifting} is ignored under LoRA, which freezes
 everything anyway, and the run says so rather than appearing to apply both.
 \end{pnote}
 
@@ -161,9 +189,9 @@ after the architecture inside it:
 \toprule
 File & Contents \\
 \midrule
-\file{models/poraque\_models.poraque} & The universal model: both operators in one
+\file{models/<name>/<name>.poraque} & The universal model: both operators in one
 file. \\
-\file{models/poraque\_finetuned.poraque} & A fine-tune, specialized to one
+\file{models/<name>/<name>\_finetuned.poraque} & A fine-tune, specialized to one
 family. \\
 \bottomrule
 \end{tabular}
@@ -204,14 +232,15 @@ one outside a group that holds the license.
 The extension is a label, not a different serialization. Nothing inspects it
 when loading, so a checkpoint under any name loads fine.
 
-A fine-tune is \textbf{never} written over the base model. The two coexist in
-the same directory, and a run that would genuinely overwrite its own base is
-refused --- before training starts, not after.
+A fine-tune is \textbf{never} written over the base model: it is
+\file{<name>\_finetuned.poraque} in its own run directory, and a run that would
+genuinely overwrite its own base is refused --- before training starts, not
+after.
 
 The PDF report leads its Configuration section with the fine-tuning facts and
 carries a caveat at the top, so a reader cannot mistake a specialized model's
 scores for a general one's. The checkpoint's \opt{config} records
-\opt{fine\_tuning.pretrained\_checkpoint}, the learning rate and whether the
+\opt{fine\_tuning.checkpoint}, the learning rate and whether the
 lifting layers were frozen, so a checkpoint can always be traced back to its
 parent.
 

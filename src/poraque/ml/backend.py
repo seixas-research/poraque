@@ -51,8 +51,8 @@ Every failure path falls back to :func:`torch.einsum`:
 * ``PORAQUE_C_BACKEND=0`` in the environment.
 
 So the backend is an optimization and never a dependency. The one thing it must
-never do is *silently* change a number, which is what :func:`selftest` and
-``tests/test_backend.py`` exist to prevent.
+never do is *silently* change a number, which is what :func:`selftest` exists
+to prevent.
 
 Controlling it
 --------------
@@ -72,14 +72,10 @@ Controlling it
 """
 
 import ctypes
-import hashlib
 import os
-import shutil
-import subprocess
-import sys
-import sysconfig
-import tempfile
 import threading
+
+from ..utils import cbuild
 
 #: Source file compiled by :func:`build`.
 SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -101,61 +97,25 @@ _STATUS = "not yet loaded"
 # ===================================================================== #
 # Where the compiled library lives
 # ===================================================================== #
-def cache_dir():
-    """Directory holding the compiled library."""
-    override = os.environ.get("PORAQUE_CACHE_DIR")
-    if override:
-        return os.path.abspath(override)
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
-        os.path.expanduser("~"), ".cache")
-    return os.path.join(base, "poraque")
-
-
 def source_fingerprint():
     """
-    Short hash of the C source, the ABI and the interpreter.
+    Short hash of the C source, the ABI, the flags and the platform.
 
     Part of the library's filename, so editing ``_spectral.c`` or upgrading
     Python produces a *different* cache entry instead of silently reusing a
-    stale one. A rebuilt kernel that is never loaded is the kind of bug that
-    only shows up as a benchmark that stopped improving.
+    stale one.
     """
-    digest = hashlib.sha256()
-    try:
-        with open(SOURCE, "rb") as handle:
-            digest.update(handle.read())
-    except OSError:
-        digest.update(b"missing")
-    digest.update(str(ABI).encode())
-    digest.update(sysconfig.get_platform().encode())
-    return digest.hexdigest()[:16]
+    return cbuild.source_fingerprint(SOURCE, ABI, _flag_sets())
 
 
 def library_path():
     """Full path of the cached shared library for this source."""
-    suffix = ".dll" if sys.platform == "win32" else (
-        ".dylib" if sys.platform == "darwin" else ".so")
-    return os.path.join(cache_dir(),
-                        f"poraque_spectral_{source_fingerprint()}{suffix}")
-
-
-def enabled():
-    """Whether the environment permits the C backend at all."""
-    return os.environ.get("PORAQUE_C_BACKEND", "1").strip().lower() not in (
-        "0", "off", "false", "no")
+    return cbuild.library_path(SOURCE, "poraque_spectral", ABI, _flag_sets())
 
 
 # ===================================================================== #
 # Building
 # ===================================================================== #
-def compiler():
-    """The C compiler to use, or ``None`` when there is none."""
-    for name in (os.environ.get("CC"), "cc", "clang", "gcc"):
-        if name and shutil.which(name):
-            return shutil.which(name)
-    return None
-
-
 def _flag_sets():
     """
     Compiler flag sets to try, best first.
@@ -168,16 +128,11 @@ def _flag_sets():
     put the C path's arithmetic out of step with PyTorch's.
     """
     base = ["-O3", "-funroll-loops", "-fPIC", "-shared", "-pthread"]
-    tuning = ["-mcpu=native"] if _is_arm() else ["-march=native"]
+    tuning = cbuild.native_tuning()
     # Last resort drops threading rather than the whole kernel: a
     # serial C contraction still beats einsum by ~7x at batch 1.
     return [base + tuning, base,
             ["-O3", "-fPIC", "-shared", "-DPORAQUE_NO_PTHREADS"]]
-
-
-def _is_arm():
-    machine = (sysconfig.get_platform() or "").lower()
-    return "arm" in machine or "aarch64" in machine
 
 
 def build(force=False, log=None):
@@ -196,63 +151,8 @@ def build(force=False, log=None):
     str or None
         Path to the library, or ``None`` if it could not be built.
     """
-    target = library_path()
-    if os.path.exists(target) and not force:
-        return target
-    if not os.path.exists(SOURCE):
-        if log:
-            log(f"  C backend: no source at {SOURCE}")
-        return None
-
-    driver = compiler()
-    if driver is None:
-        if log:
-            log("  C backend: no C compiler found (tried $CC, cc, clang, gcc)")
-        return None
-
-    try:
-        os.makedirs(cache_dir(), exist_ok=True)
-    except OSError as error:
-        if log:
-            log(f"  C backend: cache directory unusable ({error})")
-        return None
-
-    errors = []
-    for flags in _flag_sets():
-        # Compiled to a temporary name in the same directory and moved into
-        # place, so a second process never loads a half-written library.
-        handle, staging = tempfile.mkstemp(dir=cache_dir(), suffix=".partial")
-        os.close(handle)
-        command = [driver, *flags, SOURCE, "-o", staging]
-        try:
-            completed = subprocess.run(command, capture_output=True, text=True,
-                                       timeout=180)
-        except (OSError, subprocess.SubprocessError) as error:
-            errors.append(f"{' '.join(flags)}: {error}")
-            _unlink(staging)
-            continue
-
-        if completed.returncode == 0 and os.path.getsize(staging) > 0:
-            os.replace(staging, target)
-            if log:
-                log(f"  C backend: built with {' '.join(flags)}")
-            return target
-        errors.append(f"{' '.join(flags)}: "
-                      f"{(completed.stderr or '').strip().splitlines()[-1:]}")
-        _unlink(staging)
-
-    if log:
-        log("  C backend: every flag set failed to compile:")
-        for line in errors:
-            log(f"      {line}")
-    return None
-
-
-def _unlink(path):
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
+    return cbuild.build(SOURCE, "poraque_spectral", ABI, _flag_sets(),
+                        force=force, log=log)
 
 
 # ===================================================================== #
@@ -277,7 +177,7 @@ def load(log=None):
         if _HANDLE is not None:
             return _HANDLE or None
 
-        if not enabled():
+        if not cbuild.enabled():
             _HANDLE, _STATUS = False, "disabled by PORAQUE_C_BACKEND"
             return None
 
@@ -543,9 +443,9 @@ def main(argv=None):
     log.title("Poraque C backend")
     log.section("configuration")
     log.fields({"source": SOURCE,
-                "compiler": compiler() or "NONE FOUND",
-                "cache dir": cache_dir(),
-                "enabled": f"{enabled()}  (PORAQUE_C_BACKEND)"})
+                "compiler": cbuild.compiler() or "NONE FOUND",
+                "cache dir": cbuild.cache_dir(),
+                "enabled": f"{cbuild.enabled()}  (PORAQUE_C_BACKEND)"})
 
     if args.rebuild:
         log.section("build")

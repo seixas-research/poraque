@@ -12,7 +12,7 @@ against them. Both fixes have landed, so without that it would benchmark the
 new reader against itself and print 1.0x.
 
 The answer is **processes over materials**, and it is implemented:
-`data.cache_workers` (`--cache-workers`), default `auto`. On the 97-cell
+`runtime.workers` (`--cache-workers`; `data.cache_workers` before the schema was rewritten on 2026-10-13), default `auto`. On the 97-cell
 platinum set the `--cache-only` cache stage went from **10m 57s to 4m 06s**
 (2.67x from the pool, 1.54x more from two serial fixes that came with it,
 4.0x against the original).
@@ -65,15 +65,15 @@ is per-material independent work.
 
 ## What was built
 
-`data.cache_workers: auto | <n> | 0`, in `build_field_cache`.
+`runtime.workers: auto | <n> | 0`, in `build_field_cache`.
 
 - **The pool is over materials.** `_build_one` already wrote every field to
   `.partial-<pid>` and moved it with `os.replace` — discipline bought by a
   regression at LNCC, where two jobs sharing a cold cache interleaved inside
   one `write` and left a zero-length density that *parsed*. The pool inherits
   it, so no lock is needed. A cache built by three workers is **byte-identical**
-  to the serial one; `tests/test_cache_parallel.py` pins that for a text cache
-  and value-for-value for HDF5 (whose store stamps a `created` timestamp, so
+  to the serial one; `tests/test_cache_parallel.py` pinned that (until it was
+  removed on 2026-10-13) for a text cache and value-for-value for HDF5 (whose store stamps a `created` timestamp, so
   comparing its bytes would pin the clock, not the cache).
 - **Longest-processing-time-first.** Materials are handed out largest first
   with `chunksize=1`. The native grids of one dataset span 1.26 M to 23.89 M
@@ -183,7 +183,7 @@ this 8-core machine (four performance + four efficiency cores):
 rises from 44.2 s to 79.5 s as the efficiency cores take work while per-worker
 efficiency holds at 0.91. On a homogeneous node expect close to linear.
 
-`data.storage: hdf5` composes with all of it and removes the text writer
+`data.cache.storage: hdf5` composes with all of it and removes the text writer
 outright: 2.730 → 1.627 s/material serially, 0.440 with eight workers.
 
 ### How `auto` sizes itself, and why memory binds first
@@ -217,7 +217,7 @@ them most.
 **OpenMP** acquires a legitimate home only if the text codec is rewritten in
 C — a `_spectral.c`-shaped extension for the `E17.11` reader and writer, worth
 at most the 45 % of the build that text writing and reading still is. Before
-writing one, note that `data.storage: hdf5` already removes the writer and is a
+writing one, note that `data.cache.storage: hdf5` already removes the writer and is a
 config key.
 
 **MPI**, for an archive that outgrows one node. `ml/distributed.py` cannot be
@@ -251,7 +251,7 @@ shape that fits, and it is what exists now plus a stride.
 **The `poraque-mp` download is a separate question with a separate answer:**
 threads, not processes, because it is network-bound — `--download-workers`,
 default 1 because the bound is the Materials Project's per-key rate limit and
-that is unmeasured. See `FUTURE.md` and the Manual's data page.
+that is unmeasured. See the Manual's data page.
 
 **Still three scans of the same CHGCAR per material.** Fixing
 `FieldGrid.from_file` removed one; `source.read` and `_augmentation_for` →

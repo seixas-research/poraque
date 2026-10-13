@@ -270,6 +270,35 @@ compiler, rejected flags, an unwritable cache, an unsupported dtype or device,
 \opt{PORAQUE\_C\_BACKEND=0} --- falls back to \opt{torch.einsum}. It is an
 optimization and never a dependency.
 
+\subsection{The second kernel: the volumetric text codec}
+
+The same mechanism serves a second kernel, \file{fields/vasp/\_codec.c}, which
+has nothing to do with the operator: it reads and writes the \opt{E17.11}
+text of a \file{CHGCAR} grid block for the dataset cache. In pure Python that
+text was 86\,\% of the cache build per material. The reader parses each
+block in place with \opt{strtod}, which rounds correctly, so every value is
+the double Python's \opt{float()} would produce; it also steps over a block
+without converting it, to reach the augmentation records behind it. The
+writer reproduces \opt{fortran\_exponential} byte for byte. Whole cache
+builds ran 3.2--3.4$\times$ faster, and the cached \file{CHGCAR} and
+\file{TAUCAR} files are byte-identical to the Python path's.
+
+Both kernels share one build path, \file{utils/cbuild.py}: find a compiler,
+try flag sets best first, compile to a temporary file and move it into place,
+and cache the library under a name that hashes the source, the ABI number,
+the flags and the platform, so any change produces a new file rather than
+reusing a stale one. The codec is compiled with portable flags only, without
+\opt{-march=native}: the name records the platform but not the CPU model, so a
+library tuned on a cluster's login node could otherwise be loaded on a compute
+node that lacks its instructions. The codec loses nothing by it, since its
+time is spent in \opt{strtod} and \opt{snprintf}, which live in libc.
+
+Either kernel is compiled on its first use. \opt{poraque-compile} does both up
+front --- the natural place is a cluster's setup step, so no job pays for the
+compile or races another over it --- then checks each against its Python
+reference and reports what loaded; \opt{--clean} deletes cached libraries
+that no current kernel would load.
+
 \begin{pwarn}
 The kernel writes into a plain tensor and records nothing on the autograd
 tape, so it is gated on \opt{torch.is\_grad\_enabled()}. Using it while a graph
@@ -298,19 +327,25 @@ idiom does:
 
 \opt{set\_precision} maps real dtypes to the real target and complex dtypes to
 the matching complex target, which is the only conversion that leaves the
-operator meaning what it meant. It is reached from \opt{model.precision}, and
-is separate from \opt{data.precision}, which governs only how the volumetric
-fields are held in memory.
+operator meaning what it meant. It is reached from each operator's \opt{model.precision}, and is separate from
+how the volumetric fields are held in memory, which is always float64 and no
+longer a setting.
 
 \section{Configuration}
 
-A training run is defined by a YAML file with four sections --- \opt{data},
-\opt{model}, \opt{training}, \opt{output} --- mirroring the four things a run
-needs; Chapter~\ref{ch:pipeline} walks the pipeline end to end. Command-line flags override individual entries, so one committed config
-can be swept from the shell without being edited:
+A training run is defined by a YAML file of eight sections --- \opt{run},
+\opt{data}, \opt{ext2chg}, \opt{chg2tau}, \opt{training}, \opt{fine\_tuning},
+\opt{runtime} and \opt{report}; Chapter~\ref{ch:pipeline} walks the pipeline
+end to end. An operator is trained when its section is present, and each
+carries its own \opt{model}, because the two maps need different networks. A
+feature that can be switched off is a block whose presence is the switch
+(\opt{false} is off, \opt{true} or the bare key is on with the defaults, a
+mapping is on with those settings); there is no \opt{enable} key. Command-line
+flags override individual entries, so one committed config can be swept from
+the shell without being edited:
 
 \begin{lstlisting}
-poraque-train --config configs/train.yaml --epochs 500
+poraque-train --config configs/train_simple.yaml --epochs 500
 \end{lstlisting}
 
 Unknown keys are rejected rather than ignored: a typo such as \opt{learn\_rate}

@@ -1,6 +1,6 @@
 # Query by committee: measuring disagreement on 3D fields
 
-**Scope:** `poraque.ml.committee`, `FieldOperator(init_seed=...)` ·
+**Scope:** `poraque.ml.committee`, `FieldOperator(init_seed=...)`, `--seed` ·
 **Companion:** `docs/notes/roadmap.md`
 
 ## Why we want this
@@ -9,26 +9,39 @@ Reference data costs a plane-wave DFT run. With 12 structures of one element,
 the binding question is *which structure to compute next* — and the honest
 answer today is a guess. A committee turns that guess into a measurement.
 
-The mechanism: train N operators that share their data, architecture and batch
-order, differing only in `init_seed`. Where they agree, the data determined the
-answer. Where they diverge, the initialization did — which is to say the data
-did not pin it down.
+The mechanism: train N operators that share their data and architecture,
+differing in their seed. Where they agree, the data determined the answer.
+Where they diverge, the seed did — which is to say the data did not pin it
+down.
 
 ```bash
 for s in 0 1 2 3 4; do
-  poraque-train --config configs/train.yaml \
-      --init-seed $s --json logs/committee_$s.json \
-      --checkpoint-dir models/committee_$s
+  poraque-train --config configs/train_simple.yaml \
+      --seed $s --name committee_$s --valid-fraction 0
 done
 
 poraque-committee --models "models/committee_*" --task ext2pseudo
 ```
 
-`init_seed` is deliberately **separate from `seed`**. `FieldOperator` saves and
-restores the global RNG state around the weight draw, so members differ in
-their weights and in nothing else. Had a single seed governed both, two members
-would also see different batch orders, and their disagreement would mix
-optimization variance with a reshuffled dataset — measuring neither.
+Each member writes its own `models/committee_$s/` (the name is the run
+directory), which is what the glob matches. The committee tool reads the
+grid-alone density operator, `ext2pseudo`, so the members' `ext2chg` section
+says `occupancies: false` (the default is to train the PAW head too, and such a
+bundle holds `ext2chg` under that task name instead).
+
+**There is one seed now, and it changes more than the weights.** Until
+2026-10-13 `training.init_seed` was deliberately separate from `training.seed`:
+`FieldOperator` saves and restores the global RNG state around the weight draw,
+so members differed in their weights and in nothing else, and their
+disagreement was optimization variance alone rather than a mix of it with a
+reshuffled dataset. `run.seed` now seeds the validation draw, the folds, the
+batch order **and** the initial weights, so two members differ in data order as
+well as in initialization (and, with a validation fraction, in which structures
+they hold out; the command above sets it to 0 so every member sees all of them).
+That is a stronger perturbation and a different one, and it is not what the
+measurement below was made with. The library still has the separate knob,
+`FieldOperator(init_seed=...)`, for a committee that must vary the
+initialization alone; the command line does not expose it.
 
 ## What makes our setup unusual
 
@@ -123,7 +136,7 @@ calculation. If no, it is measuring optimization noise and nothing else.
 
 ### Result: it failed (2026-08-04)
 
-Four members, `--init-seed 0..3`, `--valid-fraction 0`, `ext2pseudo` at
+Four members, `--init-seed 0..3` (the flag of the schema before 2026-10-13, which varied the initialization alone), `--valid-fraction 0`, `ext2pseudo` at
 resolution 32, scored against the cross-validated errors in
 `logs/kfold12b.json`:
 

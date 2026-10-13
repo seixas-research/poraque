@@ -13,13 +13,14 @@ Changed together on 2026-08-26, and grouped here because they are one decision
 seen from three sides: the isolated atom becomes the reference for everything
 that needs a per-element quantity.
 
-**The target is the charge-density variation** (``data.delta_density``, now on
-by default). The operator learns
+**The target is the charge-density variation** (``ext2chg.target: delta``,
+``data.delta_density`` until 2026-10-13, on by default). The operator learns
 :math:`\delta\rho = \rho - \rho_{\rm sup}` and *returns*
 :math:`\delta\rho + \rho_{\rm sup}`, so no caller sees a residual.
 
-**The PAW augmentation comes from the isolated atom** (``data.paw_source``, now
-``"atomic"``), not from averaging the training set's material records.
+**The PAW augmentation comes from the isolated atom** (``data.paw_source:
+atomic`` until 2026-10-13, and since then no longer a choice), not from
+averaging the training set's material records.
 
 **The external potential is computed, never imported.** This one was already
 true; the tests here pin it, because the Pt ``INCAR``s carry an
@@ -51,7 +52,7 @@ from poraque.fields.atomic import (
     resolve_library,
 )
 from poraque.fields.vasp.poscar import Poscar
-from poraque.ml.config import DataConfig, TrainingConfig
+from poraque.ml.config import DataConfig, Ext2chgConfig, TrainingConfig
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ROOT, "scripts"))
@@ -172,17 +173,17 @@ class TestDeltaDensityIsTheDefaultTarget:
         parsed YAML, because a config that states nothing is the case that
         matters — every committed config in this repo states nothing.
         """
-        assert DataConfig().delta_density is True
+        assert Ext2chgConfig().delta_density is True
 
     def test_a_config_that_says_nothing_still_gets_it(self, tmp_path):
         path = tmp_path / "train.yaml"
-        path.write_text("task: ext2pseudo\n")
-        assert TrainingConfig.from_yaml(path).data.delta_density is True
+        path.write_text("ext2chg:\n  occupancies: false\n")
+        assert TrainingConfig.from_yaml(path).delta_density is True
 
     def test_it_can_still_be_turned_off_for_the_ablation(self, tmp_path):
         path = tmp_path / "train.yaml"
-        path.write_text("data:\n  delta_density: false\n")
-        assert TrainingConfig.from_yaml(path).data.delta_density is False
+        path.write_text("ext2chg:\n  target: full\n")
+        assert TrainingConfig.from_yaml(path).delta_density is False
 
     @pytest.mark.parametrize("reference", [None, "no/such/directory"])
     def test_without_a_resolvable_atomic_reference_the_run_fails_loudly(
@@ -195,7 +196,7 @@ class TestDeltaDensityIsTheDefaultTarget:
         the new thing. The error names the key, the CLI that builds a database,
         and the way to opt out.
 
-        Both spellings of the same failure are checked. ``atomic_reference``
+        Both spellings of the same failure are checked. ``data.atoms``
         carries a default path, so on any machine but the one holding the data
         the realistic case is not an unset key but a key pointing somewhere
         that does not exist -- and a bare ``FileNotFoundError`` there would
@@ -204,23 +205,25 @@ class TestDeltaDensityIsTheDefaultTarget:
         from poraque_train import resolve_baseline
         from poraque.ml.tasks import resolve_task
 
-        settings = {"task": "ext2pseudo", "data": {"atomic_reference": reference}}
+        settings = {"ext2chg": {"occupancies": False},
+                    "data": {"atoms": reference}}
         config = TrainingConfig.from_dict(settings)
         with pytest.raises(ValueError) as excinfo:
             resolve_baseline(resolve_task("ext2pseudo"), config, str(tmp_path),
                              lambda *_: None)
 
         message = str(excinfo.value)
-        assert "atomic_reference" in message
+        assert "data.atoms" in message
         assert "poraque-atoms" in message
-        assert "delta_density: false" in message
+        assert "ext2chg.target: full" in message
 
     def test_pseudo2tau_is_unaffected_whatever_the_flag_says(self, tmp_path):
         """There is no atomic superposition of a kinetic energy density."""
         from poraque_train import resolve_baseline
         from poraque.ml.tasks import resolve_task
 
-        config = TrainingConfig.from_dict({"data": {"delta_density": True}})
+        config = TrainingConfig.from_dict({"ext2chg": {"target": "delta"},
+                                           "chg2tau": {"occupancies": False}})
         assert resolve_baseline(resolve_task("pseudo2tau"), config,
                                 str(tmp_path), lambda *_: None) is None
 
@@ -246,7 +249,8 @@ class TestDeltaDensityIsTheDefaultTarget:
             cache / "CHGCAR")
 
         config = TrainingConfig.from_dict(
-            {"data": {"atomic_reference": os.path.dirname(reference)}})
+            {"ext2chg": {"occupancies": False},
+             "data": {"atoms": os.path.dirname(reference)}})
         with pytest.raises(ValueError, match="Si"):
             resolve_baseline(resolve_task("ext2pseudo"), config,
                              str(tmp_path / "cache"), lambda *_: None)
@@ -332,8 +336,9 @@ class TestTheSuperpositionWorksForEveryGeometry:
 # Task 2 — the PAW augmentation source
 # ===================================================================== #
 class TestThePawRecordsComeFromTheIsolatedAtom:
-    def test_the_config_default_is_atomic(self):
-        assert DataConfig().paw_source == "atomic"
+    def test_the_source_is_fixed_to_the_atom(self):
+        """No longer a key: the training-set average was never transferable."""
+        assert DataConfig.FIXED["paw_source"] == "atomic"
 
     def test_the_table_has_the_shape_the_bundle_already_stores(self):
         """

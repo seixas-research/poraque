@@ -328,8 +328,8 @@ class TestTheParityFigureCoversEveryStructure:
 
         path = _config(tmp_path)
         settings = yaml.safe_load(open(path))
-        settings["output"]["plot_figures"] = True
-        settings["training"]["valid_fraction"] = 0.5
+        settings["report"]["figures"] = True
+        settings["training"]["validation"]["fraction"] = 0.5
         with open(path, "w") as handle:
             yaml.safe_dump(settings, handle)
         for index in range(2, 6):
@@ -499,7 +499,7 @@ class TestTheChargeAndMagnetizationPartsOfTheLoss:
         m == 0 identically on 126 of the 432 CHON cells, so an unfloored
         per-channel relative error would divide by zero on a quarter of the
         set. The floored term stays finite and still penalizes a spurious
-        moment, which is the behaviour that matters: the old operator invented
+        moment, which is the behavior that matters: the old operator invented
         one on precisely these cells.
         """
         from poraque.ml.losses import channel_errors, data_error

@@ -196,9 +196,9 @@ Key & Symbol & Section & What it sets \\
 \midrule
 \opt{model.width}               & $C$   & \opt{model} & channels carried through the stack \\
 \opt{model.modes}               & $M_i$ & \opt{model} & Fourier coefficients kept per axis \\
-\opt{model.n\_layers}           & $L$   & \opt{model} & how many times the cycle runs \\
+\opt{model.layers}             & $L$   & \opt{model} & how many times the cycle runs \\
 \opt{model.projection\_channels}& $C_P$ & \opt{model} & hidden width of the read-out \\
-\opt{data.resolution}           & $N$   & \opt{data}  & longest grid axis after downsampling \\
+\opt{data.grid.resolution}      & $N$   & \opt{data}  & longest grid axis after downsampling \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -275,7 +275,7 @@ with the index ranges
 Index & Range & Set by \\
 \midrule
 $o,\,i$      & $1,\dots,C$                  & \opt{width} \\
-$\ell$       & $1,\dots,L$                  & \opt{n\_layers} \\
+$\ell$       & $1,\dots,L$                  & \opt{layers} \\
 $p$          & $1,\dots,C_P$                & \opt{projection\_channels} \\
 $k_1,k_2,k_3$& $k_1<m_1,\ k_2<m_2,\ 0 \le k_3 < m_3$ & \opt{modes}, with \opt{resolution} \\
 $c$          & $1,\dots,4$                  & the four $(\pm k_1, \pm k_2)$ corners \\
@@ -426,12 +426,8 @@ scaling:
 
 \begin{pnote}
 $\sigma$ in Eq.~\eqref{eq:idx-residual} is \opt{model.activation} --- by
-default \opt{silu}, optionally one of the per-channel learnable
-Kolmogorov--Arnold variants --- and so is the read-out's nonlinearity in
+default \opt{silu}; \opt{gelu}, \opt{relu} and \opt{tanh} are the others --- and so is the read-out's nonlinearity in
 Eq.~\eqref{eq:idx-read1}. One key, $L+1$ applications.
-
-A per-channel variant is sized by the layer it sits in: $C$ learned functions
-inside a Fourier block, $C_P$ in the read-out.
 
 \opt{model.projection\_activation} overrides the read-out alone. Its default is
 \opt{null}, meaning ``whatever \opt{activation} is'', which is the only thing a
@@ -457,7 +453,7 @@ which is a statement about old files, not a default for new ones.
     on a grid too coarse to supply that many, fewer are used automatically,
     which is what lets one set of weights serve materials on different grids
     (Section~\ref{sec:discinv}).
-  \item[\opt{n\_layers} --- how many times the cycle is applied.] Depth
+  \item[\opt{layers} --- how many times the cycle is applied.] Depth
     composes the learned convolutions. Two layers of $M$ modes reach further
     than one layer of $M$ modes, because the second acts on a field the first
     has already delocalized --- so depth buys effective range at \emph{linear}
@@ -561,7 +557,7 @@ Change & Parameters & Time \\
 \midrule
 \opt{width} $16 \to 32$               & $3.99\times$ & $2.89\times$ \\
 \opt{modes} $8 \to 12$                & $3.37\times$ & $1.32\times$ \\
-\opt{n\_layers} $3 \to 6$             & $2.00\times$ & $1.97\times$ \\
+\opt{layers} $3 \to 6$             & $2.00\times$ & $1.97\times$ \\
 \opt{projection\_channels} $64 \to 128$ & $1.00\times$ & $1.31\times$ \\
 \bottomrule
 \end{tabular}
@@ -627,7 +623,7 @@ $64^3$, whatever their reported errors say.
 \subsection{Choosing them}
 
 In one clause each: \opt{width} is how much information travels through;
-\opt{modes} is how far it travels in space; \opt{n\_layers} composes the whole
+\opt{modes} is how far it travels in space; \opt{layers} composes the whole
 cycle; and \opt{projection\_channels} is only how the result is read out.
 
 A budget is usually best spent in that reverse order:
@@ -635,7 +631,7 @@ A budget is usually best spent in that reverse order:
 \begin{enumerate}
   \item \opt{projection\_channels}, first, because it is nearly free in
     parameters --- but judge it on the wall clock, not on the model size.
-  \item \opt{n\_layers}, when the operator needs more \emph{range}: it buys
+  \item \opt{layers}, when the operator needs more \emph{range}: it buys
     that linearly, where \opt{modes} buys it cubically.
   \item \opt{width}, when it needs more \emph{capacity}, and pay the square.
   \item \opt{modes}, last and deliberately, after checking it against

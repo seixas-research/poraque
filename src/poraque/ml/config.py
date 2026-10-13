@@ -9,28 +9,44 @@
 r"""
 YAML configuration for neural-operator training runs.
 
-A training run is defined by four groups of settings — where the data is, how
-the operator is shaped, how it is optimized, and where results go — and
-:class:`TrainingConfig` mirrors that structure exactly. Keeping the run
-definition in a file rather than in a shell history makes an experiment
-reproducible and diffable: the config is written next to the results, so a run
-can always be repeated verbatim.
+A run is described by eight sections, each about one thing:
 
-Precedence, highest first:
+.. code-block:: yaml
 
-1. explicit command-line flags,
-2. values in the YAML file,
-3. the defaults declared here.
+    run:          # what the run is called, where it writes, its seed
+    data:         # where the materials are, and how they are cached
+    ext2chg:      # the density operator: V_ext -> pseudo-density + occupancies
+    chg2tau:      # the kinetic operator: pseudo-density + occupancies -> tau
+    training:     # the optimization, shared by both operators
+    fine_tuning:  # start from a trained checkpoint (off unless present)
+    runtime:      # the hardware: device, processes, distribution
+    report:       # figures and the PDF
 
-That ordering is what allows a single committed config to be swept over one
-parameter from the shell (``--epochs 500``) without editing or copying it.
+**An operator is trained when its section is present.** ``ext2chg`` and
+``chg2tau`` are the two tasks a user names; each carries its own ``model``,
+because the two maps need different networks and one shared block forced
+the larger one into a corner of the other (``model.paw.width`` beside
+``model.width``). Turning a task's ``occupancies`` off trains the grid alone
+-- internally the ``ext2pseudo`` or ``pseudo2tau`` task -- so the four
+:class:`~poraque.ml.tasks.TaskSpec` names survive as the vocabulary of the
+code and the checkpoint, while a configuration speaks of two.
 
-Unknown keys are rejected rather than ignored: a typo like ``learn_rate`` would
-otherwise be silently dropped and the run would quietly use the default,
-producing results that do not match the file that appears to describe them.
+**A feature that can be switched off is a block whose presence is the
+switch.** ``false`` turns it off, ``true`` or an empty key turns it on with
+its defaults, a mapping turns it on with those settings; leaving the key out
+takes the default, which the comment beside each one in
+``configs/train_complete_and_commented.yaml`` names. There is no ``enable``
+key anywhere, so no block can be switched off while still listing settings
+that read as if they applied.
+
+Precedence, highest first: command-line flags, the YAML file, the defaults
+declared here. Unknown keys raise rather than being ignored: a typo would
+otherwise leave the default in force under a file that appears to say
+otherwise. Keys and sections of the previous schema raise too, and name
+where their setting went.
 """
 
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field, fields
 
 try:
     import yaml
@@ -39,791 +55,365 @@ except ImportError:  # pragma: no cover - depends on the environment
 
 
 def _require_yaml():
-    if yaml is None:  # pragma: no cover
-        raise ImportError(
-            "Reading or writing YAML configs requires PyYAML: pip install pyyaml"
-        )
+    if yaml is None:
+        raise ImportError("Reading or writing YAML configs requires PyYAML: "
+                          "pip install pyyaml")
 
 
-#: The extension a trained bundle is written under. It lives here, in the
-#: torch-free layer, because this is where :meth:`TrainingConfig.checkpoint_path`
-#: builds the name; :mod:`poraque.ml.training` imports it rather than keeping a
-#: second copy. The name has now been changed twice — ``.pth`` to ``.pfno`` to
-#: ``.poraque`` — and each time the cost was some default path elsewhere still
-#: spelling the old one.
+#: Suffix of a trained checkpoint.
 BUNDLE_SUFFIX = ".poraque"
 
-
-@dataclass
-class TaskConfig:
-    """
-    What is trained, and what the run's artifacts are called.
-
-    Attributes
-    ----------
-    type : str
-        ``"ext2pseudo"``, ``"pseudo2tau"``, ``"ext2chg"``, ``"chg2tau"`` or
-        ``"all"`` (the chain, ``ext2pseudo`` then ``pseudo2tau``).
-    name : str
-        Identifier for **this run**, and the only thing that separates it from
-        another. Everything the run writes goes in one directory named after
-        it::
-
-            models/<name>/
-                <name>.poraque         the weights
-                log/                training log, metrics JSON, resolved config
-                plots/              loss curves, parity, field slices
-                report/             the generated PDF
-
-        Two runs that differ in anything worth keeping — a chemical space, a
-        resolution, a set of physics weights — should differ in ``name``, or
-        the second silently overwrites the first. The default reproduces the
-        historical filename, so a config written before this key existed
-        writes exactly where it always did.
-
-    Notes
-    -----
-    ``task`` also accepts the bare string it used to be::
-
-        task: ext2pseudo                       # same as {type: ext2pseudo}
-
-    which is read as ``type`` with the default ``name``.
-    """
-
-    type: str = "all"
-    # Matches poraque.ml.training.BUNDLE_FILENAME without its suffix, so an
-    # unnamed run writes the file every earlier version wrote.
-    name: str = "poraque_models"
-
-    def names(self):
-        """
-        The task names to train, expanding ``"all"``.
-
-        Returns
-        -------
-        list of str
-        """
-        from .tasks import CHAIN
-
-        return list(CHAIN) if self.type == "all" else [str(self.type)]
+#: Assumed when ``data.path`` is unset: this project's own Pt cells. It names
+#: the *structures* subdirectory rather than ``data/vasp``, because a material
+#: is one subdirectory of the path and no deeper, and the isolated atom beside
+#: it is the reference for the baseline, never a training sample.
+DEFAULT_DATA_PATH = "data/vasp/structures"
 
 
-#: Keys that were removed, and what replaced them. Named in the error so a
-#: config written against the older schema is corrected rather than merely
-#: rejected.
-#:
-#: They went when the data schema was unified (2026-08-31). ``data_paths`` is
-#: the single list; every entry is a directory of per-material subdirectories,
-#: and what a material holds is read rather than declared. ``source`` and
-#: ``code`` were two keys for one question and are now one, ``format``, whose
-#: only values are ``"vasp"`` and ``"auto"`` -- the dataset *layouts* it used
-#: to select between no longer exist.
-#: Keys that were removed or renamed, and what to write instead --- **keyed by
-#: ``(section, key)``**, because the same word is retired in one section and
-#: live in another. ``root`` is gone from ``data`` and is still how
-#: ``output.root`` names the run folder; ``physics`` is gone from ``training``
-#: and is still the symbolic search's own constraint block. Keyed by the bare
-#: word, a config saying ``model: {root: ...}`` would be told to write
-#: ``data_paths``, which is advice about a different section.
-RETIRED_KEYS = {
-    ("data", "code"): "format ('vasp' or 'auto')",
-    # Removed in 26.9.3 after being measured on a V100. Inductor does not
-    # generate code for complex operators -- `SpectralConv3d`'s weights are
-    # complex, so the one part of an FNO compilation was invoked to fuse is the
-    # part it hands back to eager, while the wrapper and the graph breaks are
-    # still paid for. Two modes, two repetitions: +7.9 % and +9.4 % per epoch,
-    # with 200-314 s of cold compilation on top, and a validation error that
-    # moved reproducibly in both arms. On four ranks it did not merely lose, it
-    # sat eighteen minutes in the first epoch without printing an epoch line
-    # and was canceled. See CUDA_4.md sections 7 and 8.
-    ("training", "compile"):
-        "nothing -- torch.compile was measured on the FNO backbone and "
-        "removed; Inductor declines complex codegen, which is the whole of "
-        "the model that mattered",
-    ("training", "compile_mode"): "nothing -- see 'compile'",
-    ("training", "compile_dynamic"): "nothing -- see 'compile'",
-    # Renamed in 26.9.5, then folded into the switch that governs it in 26.9.8.
-    ("training", "physics"):
-        "the training.physics_informed block, which now carries the four "
-        "weights and the `enable` switch (auto | true | false) together",
-    # Unified in 26.9.8. A feature that can be switched off is one block --
-    # `<feature>: {enable: ..., <settings>}` -- rather than a scalar beside a
-    # separate `<feature>_setup` group. The two spellings drifted apart in
-    # practice: `equivariant: false` above a populated `equivariant_setup` is a
-    # configuration that reads as equivariant and is not, and nothing in a
-    # two-key layout puts the switch next to the settings it governs.
-    ("model", "equivariant_setup"):
-        "the model.equivariant block, which now holds the switch too: "
-        "`equivariant: {enable: true, n_radial: 32}`",
-    ("training", "physics_informed_setup"):
-        "the training.physics_informed block, which now holds the switch too: "
-        "`physics_informed: {enable: auto, electron_count_weight: 1.0}`",
-    # Renamed in 26.9.8 to match `fine_tuning.enable` and the `enable` inside
-    # every block. It restated its own section in its own name.
-    ("symbolic", "enable_symbolic_distillation"): "enable",
-    ("data", "train_paths"): "data_paths",
-    ("data", "root"): "data_paths (a list; the single-path fallback is gone)",
-    ("data", "source"):
-        "nothing -- the layout of every path is detected, and every path now "
-        "has the same layout",
+# ---------------------------------------------------------------------- #
+# The previous schema, refused by name
+# ---------------------------------------------------------------------- #
+#: Top-level sections that no longer exist, and what replaced them.
+RETIRED_SECTIONS = {
+    "task": "the task is chosen by which operator sections are present: "
+            "write an `ext2chg:` and/or a `chg2tau:` section; the run's "
+            "name is `run.name`",
+    "model": "every operator carries its own network: `ext2chg.model` and "
+             "`chg2tau.model`",
+    "output": "`run.output` (the parent directory, null writes nothing) and "
+              "the `report` section (figures, pdf, format, dpi, raw_data)",
+    "symbolic": "symbolic distillation was archived to "
+                "experiments/kan_symbolic on 2026-10-13",
 }
+
+#: Keys that moved or went, keyed by ``(section, key)`` because the same word
+#: can be gone from one section and live in another.
+RETIRED_KEYS = {
+    ("data", "data_paths"): "data.path (one directory of materials)",
+    ("data", "cache"): "data.cache.dir",
+    ("data", "resolution"): "data.grid.resolution",
+    ("data", "max_spacing"): "data.grid.max_spacing",
+    ("data", "storage"): "data.cache.storage (text | hdf5)",
+    ("data", "compression"): "data.cache.compression",
+    ("data", "compression_level"): "nothing -- gzip runs at level 4",
+    ("data", "cache_in_memory"): "data.cache.in_memory",
+    ("data", "cache_workers"): "runtime.workers",
+    ("data", "atomic_reference"): "data.atoms",
+    ("data", "delta_density"): "ext2chg.target (delta | full)",
+    ("data", "target_scale"): "nothing -- the asinh scale is fitted",
+    ("data", "pattern"): "nothing -- every subdirectory is a material",
+    ("data", "format"): "nothing -- the files are read as VASP's",
+    ("data", "precision"): "nothing -- fields are held in float64",
+    ("data", "xc"): "nothing -- training never read it",
+    ("data", "sigma"): "nothing -- the Gaussian width is derived per species",
+    ("data", "gaussian_blur"): "nothing",
+    ("data", "blur_method"): "nothing",
+    ("data", "strict_potcar"): "nothing -- what the library served is "
+                               "recorded in the cache",
+    ("data", "paw_source"): "nothing -- the isolated atom's records are used",
+    ("training", "learning_rate"): "training.optimizer.learning_rate",
+    ("training", "weight_decay"): "training.optimizer.weight_decay",
+    ("training", "scheduler"): "nothing -- the schedule is cosine",
+    ("training", "grad_clip"): "nothing -- the gradient norm is clipped at 1",
+    ("training", "valid_fraction"): "training.validation.fraction",
+    ("training", "eval_epoch"): "training.validation.every",
+    ("training", "early_stopping"): "training.validation.patience",
+    ("training", "enable_kfold"): "training.validation.kfold (a number of "
+                                  "folds, or null)",
+    ("training", "k_folds"): "training.validation.kfold",
+    ("training", "seed"): "run.seed",
+    ("training", "init_seed"): "nothing -- run.seed seeds the weights too",
+    ("training", "device"): "runtime.device",
+    ("training", "strict_device"): "runtime.strict_device",
+    ("training", "distributed"): "runtime.distributed",
+    ("training", "distributed_timeout"): "nothing -- 30 minutes",
+    ("training", "num_workers"): "runtime.loader_workers",
+    ("training", "pin_memory"): "nothing -- pinned on CUDA, not elsewhere",
+    ("training", "tf32"): "runtime.tf32",
+    ("training", "sobolev_weight"): "training.loss.sobolev_weight",
+    ("training", "spin_loss"): "training.spin.mode",
+    ("training", "magnetization_weight"): "training.spin.magnetization_weight",
+    ("training", "magnetization_floor"): "training.spin.magnetization_floor",
+    ("training", "physics_informed"): "training.physics (the weights alone; "
+                                      "all zero switches it off)",
+    ("training", "compile"): "nothing -- torch.compile was measured on the "
+                             "FNO backbone and removed",
+    ("fine_tuning", "enable"): "the section's presence (fine_tuning: false "
+                               "turns it off)",
+    ("fine_tuning", "pretrained_checkpoint"): "fine_tuning.checkpoint",
+    ("fine_tuning", "freeze_lifting_layers"): "fine_tuning.freeze_lifting",
+    ("fine_tuning", "use_lora"): "fine_tuning.lora (a block)",
+    ("fine_tuning", "lora_rank"): "fine_tuning.lora.rank",
+    ("fine_tuning", "lora_alpha"): "fine_tuning.lora.alpha",
+    ("fine_tuning", "lora_dropout"): "fine_tuning.lora.dropout",
+}
+for _task in ("ext2chg", "chg2tau"):
+    RETIRED_KEYS.update({
+        (f"{_task}.model", "n_layers"): f"{_task}.model.layers",
+        (f"{_task}.model", "mode_selection"):
+            f"{_task}.model.band (null keeps `modes` per axis)",
+        (f"{_task}.model", "g_max"): f"{_task}.model.band",
+        (f"{_task}.model", "embedding_dim"):
+            f"{_task}.model.cell_conditioning (the width, or false)",
+        (f"{_task}.model", "use_coordinates"):
+            "nothing -- coordinates are appended exactly when the model is "
+            "not equivariant",
+        (f"{_task}.model", "projection_activation"):
+            "nothing -- the read-out follows `activation`",
+        (f"{_task}.model", "kan_setup"):
+            "nothing -- the KAN activations were archived to "
+            "experiments/kan_symbolic; use silu, gelu, relu or tanh",
+        (f"{_task}.model.equivariant", "spherical_cutoff"):
+            "nothing -- the retained modes are always a ball",
+    })
 
 
 def retired_replacement(section, key):
-    """
-    What to write instead of a retired key, or ``None`` if it is simply unknown.
-
-    Exact match on ``(section, key)`` and no fallback to the bare word. A
-    near-miss hint is worse than none: ``model: {root: ...}`` answered with
-    "write ``data_paths``" sends the reader to a section they were not editing,
-    and the plain "unknown key, here are the valid ones" it gets instead is
-    both true and enough.
-    """
+    """What to write instead of a retired key, or ``None`` if merely unknown."""
     return RETIRED_KEYS.get((section, key))
 
 
-#: Assumed when ``data.data_paths`` is unset: this project's own bulk cells.
-#:
-#: It names the *structures* subdirectory rather than ``data/vasp`` itself,
-#: because a material is one subdirectory of a listed path and no deeper. The
-#: Pt dataset keeps its bulk cells in ``data/vasp/structures`` and its isolated
-#: atoms in ``data/vasp/isolated_atoms``, and that separation is the point: a
-#: single atom in a 10 A box is the *reference* for the delta-density baseline
-#: and the PAW records, never a training sample. A default naming the parent
-#: would either find nothing or, if the walk were deepened, quietly train on
-#: the atom.
-DEFAULT_DATA_PATH = "data/vasp/structures"
+# ---------------------------------------------------------------------- #
+# The machinery: sections, blocks, parsing and dumping
+# ---------------------------------------------------------------------- #
+def section(cls, **defaults):
+    """A sub-section that is always there, with these defaults."""
+    return field(default_factory=lambda: cls(**defaults),
+                 metadata={"section": cls, "defaults": defaults})
+
+
+def block(cls, on=False, **defaults):
+    """A switchable block: ``None`` when off, an instance of ``cls`` when on."""
+    return field(default_factory=(lambda: cls(**defaults)) if on
+                 else (lambda: None),
+                 metadata={"block": cls, "defaults": defaults})
+
+
+def _yaml_literal(value):
+    return {None: "null", True: "true", False: "false"}.get(value, repr(value))
+
+
+def _parse(cls, mapping, path, defaults=None):
+    """Build ``cls`` from a mapping, recursing into sections and blocks."""
+    if mapping is None:
+        mapping = {}
+    if not isinstance(mapping, dict):
+        raise ValueError(f"{path} must be a block of settings, not "
+                         f"{_yaml_literal(mapping)}.")
+    known = {entry.name: entry for entry in fields(cls)}
+    unknown = sorted(set(mapping) - set(known))
+    if unknown:
+        moved = [f"'{key}' -> {retired_replacement(path, key)}"
+                 for key in unknown if retired_replacement(path, key)]
+        raise ValueError(
+            f"Unknown key(s) in {path}: {unknown}. "
+            + (f"Replaced: {'; '.join(moved)}. " if moved else "")
+            + f"Valid keys: {sorted(known)}.")
+    values = dict(defaults or {})
+    for key, value in mapping.items():
+        values[key] = _value(known[key], value, f"{path}.{key}")
+    return cls(**values)
+
+
+def _value(entry, value, path):
+    """One field's value, parsed according to what the field is."""
+    meta = entry.metadata
+    if "section" in meta:
+        return _parse(meta["section"], value, path, meta["defaults"])
+    if "block" in meta:
+        if value is False:
+            return None
+        if value is True or value is None:
+            value = {}
+        if not isinstance(value, dict):
+            raise ValueError(f"{path} must be false, true or a block of "
+                             f"settings, not {_yaml_literal(value)}.")
+        return _parse(meta["block"], value, path, meta["defaults"])
+    return value
+
+
+def _dump(instance):
+    """The mapping :func:`_parse` reads back to an equal instance."""
+    out = {}
+    for entry in fields(instance):
+        value = getattr(instance, entry.name)
+        if "section" in entry.metadata:
+            out[entry.name] = _dump(value)
+        elif "block" in entry.metadata:
+            out[entry.name] = False if value is None else _dump(value)
+        elif isinstance(value, tuple):
+            out[entry.name] = list(value)
+        else:
+            out[entry.name] = value
+    return out
+
+
+def _check(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_count(value, minimum=1):
+    return isinstance(value, int) and not isinstance(value, bool) \
+        and value >= minimum
+
+
+def _choice(value, allowed, path):
+    _check(value in allowed, f"{path} is {_yaml_literal(value)}; expected one "
+                             f"of {list(allowed)}.")
+
+
+# ---------------------------------------------------------------------- #
+# run, data
+# ---------------------------------------------------------------------- #
+@dataclass
+class RunConfig:
+    """
+    What the run is called, where it writes, and its seed.
+
+    Everything the run writes goes in ``<output>/<name>/``: the checkpoint
+    ``<name>.poraque``, ``log/``, ``plots/`` and ``report/``. ``output: null``
+    writes nothing at all. ``seed`` draws the validation split, the folds,
+    the batch order and the initial weights.
+    """
+
+    name: str = "poraque_models"
+    output: str = "models"
+    seed: int = 42
+
+    def validate(self, path="run"):
+        _check(isinstance(self.name, str) and self.name,
+               f"{path}.name must be a non-empty string.")
+        _check(_is_count(self.seed, 0), f"{path}.seed must be a non-negative "
+                                        f"integer.")
+
+
+@dataclass
+class GridConfig:
+    """
+    The grid every field is cached on.
+
+    ``resolution`` caps the longest axis after spectral downsampling;
+    ``max_spacing`` (Å) refines any axis left coarser than it, never past the
+    native grid -- for long thin cells, whose short axes would otherwise be
+    cached at a fraction of the resolution of the long one.
+    """
+
+    resolution: int = 32
+    max_spacing: float = None
+
+
+@dataclass
+class CacheConfig:
+    """
+    Where the downsampled fields are written, and how.
+
+    ``storage: text`` writes a ``CHGCAR``-format file per field, ``hdf5`` one
+    chunked ``fields.h5`` per material (``compression: gzip | lzf`` there
+    only). ``in_memory`` keeps decoded fields and normalized samples in RAM
+    between epochs; ``auto`` does so under a 4 GiB estimate.
+    """
+
+    dir: str = "data/cache"
+    storage: str = "text"
+    compression: str = None
+    in_memory: object = "auto"
 
 
 @dataclass
 class DataConfig:
-    r"""
-    Where the fields live and how they are prepared.
+    """
+    The dataset: one directory, one subdirectory per material.
 
-    Attributes
-    ----------
-    data_paths : list of str
-        The dataset, as a **list of directories** — the only way a dataset is
-        named, whatever produced it::
-
-            data:
-              data_paths:
-                - data/vasp/structures      # local DFT runs
-                - data/MP                   # a Materials Project download
-                - data/cache/res32          # a cache from an earlier run
-
-        **Every entry has the same shape: a directory of subdirectories, one
-        per material, each holding that material's volumetric files.** That is
-        what a VASP run tree looks like, what ``poraque-mp`` writes, and what
-        the cache builder produces, so one key describes all three and there is
-        nothing to declare about where a path came from. What differs between
-        them is the *content* of a material's directory, and content is read,
-        not configured:
-
-        =====================  ==========================================
-        A material holds       Poraquê
-        =====================  ==========================================
-        inputs + ``CHGCAR``    computes :math:`V_{\rm ext}` from the inputs
-        ``CHGCAR`` alone       computes it from the density's own header
-        ``EXTCAR`` + fields    reads them as they stand
-        =====================  ==========================================
-
-        ``TAUCAR`` is **optional in every case and per material**. A directory
-        that has one contributes to ``pseudo2tau``; one that does not still
-        contributes to ``ext2pseudo``, and is simply absent from the other task's
-        set. Nothing has to be declared, and no run is refused for a
-        :math:`\tau` that was never going to exist — the Materials Project
-        publishes none at all.
-
-        A path holding a **single** material's run directly (its inputs at the
-        top level rather than one level down) is read as that one material, so
-        a single calculation needs no wrapper directory.
-
-        .. warning::
-
-           Mixing a directory of full calculations with one of standalone
-           densities mixes two *definitions* of the external potential — the
-           tabulated local pseudopotential and the Gaussian pseudo-ion model,
-           which differ by roughly 0.1 relative :math:`L_2`. The run warns when
-           it happens. It is a legitimate trade (far more data, a fuzzier
-           input) but never a good accident, and ``potcar_dir`` removes it
-           entirely by giving the standalone densities the same tabulated
-           construction.
-    cache : str
-        Where spectrally downsampled copies are written.
-    pattern : str
-        Prefix filter on the material subdirectories of every path. **Empty by
-        default, which takes all of them** — the only sensible default once one
-        key names every kind of dataset: ``"structure"`` would have excluded
-        every ``mp-124/`` in a Materials Project download, silently, leaving a
-        run to report a dataset of nothing.
-
-        It is a **prefix, not a glob**: matching is
-        ``os.path.basename(child).startswith(pattern)``, so ``"structure"``
-        selects ``structure_0042`` and ``""`` selects everything. Set it to
-        exclude a sibling directory that must not be trained on.
-
-        It is **part of the cache fingerprint**: a cache silently holding a
-        different set of materials than the config describes is the failure the
-        fingerprint exists to prevent.
-    format : str
-        ``"vasp"``, or ``"auto"`` (the default) to detect the code from the
-        files present. Those are the only two values
-        (:data:`~poraque.data.sources.DATA_FORMATS`).
-
-        Until 2026-08-31 this key — then spelled ``source``, beside a separate
-        ``code`` — also chose between three dataset *layouts*: ``"bulk"`` for
-        an archive of standalone densities, ``"prepared"`` for a cache of
-        already-built fields. Both are gone. There is one layout, a directory
-        of per-material subdirectories, and what a material's directory holds
-        is read rather than declared, so the only thing left to name is the
-        code that wrote the files.
-    potcar_dir : str or None
-        A ``POTCAR`` **library** — one subdirectory per pseudopotential, as
-        VASP ships them (``<potcar_dir>/Ag/POTCAR``, optionally ``.gz``/``.Z``;
-        a flat ``POTCAR.Ag`` layout is also recognized).
-
-        It matters most for a Materials Project download, which publishes a
-        structure and a density and no pseudopotentials. Supply the library and
-        the external potential is built from VASP's **tabulated local
-        potential**, reproducing a reference ``EXTCAR`` to a relative
-        :math:`2\\times10^{-5}`; omit it and the **Gaussian pseudo-ion model**
-        stands in, whose residual against that reference is of order
-        :math:`0.1` relative :math:`L_2`.
-
-        The same setting also rescues a local run whose ``POTCAR`` was stripped
-        for licensing. A run that has its own ``POTCAR`` ignores this entirely.
-
-        Choose the library that generated the data. The Materials Project uses
-        the VASP PBE set (``PAW_PBE``); pointing at ``PAW_LDA`` would build a
-        potential the densities were never computed from, which is worse than
-        the Gaussian fallback because it looks exact.
-
-        Missing or unreadable entries fall back to the Gaussian model **with a
-        warning** rather than failing the run: it is a quality difference, not
-        an outage. Which of the two each element got is recorded in the cache
-        fingerprint — see ``strict_potcar``.
-    strict_potcar : bool
-        Refuse the Gaussian fallback instead of taking it, when a
-        ``potcar_dir`` is configured and cannot serve an element. Default
-        ``false``.
-
-        The fallback is right on a workstation and expensive in a queue, and
-        the shape is exactly ``training.strict_device``'s: a job that holds its
-        allocation and quietly computes something other than what was
-        configured. This was found the hard way — a control run on Santos
-        Dumont landed on a node where the library's filesystem was not mounted,
-        warned six times on stderr, trained against analytic pseudo-ion
-        potentials, and produced a validation error that was quoted as a
-        measurement before the cause was noticed.
-
-        Independently of this flag, **what the library actually served is now
-        in the cache fingerprint** (``potcar_source``, per element), so a cache
-        built during an outage no longer matches a later run that can read the
-        library: it rebuilds rather than being reused. ``potcar_dir`` records
-        only the path that was *asked for*, which is what made that cache
-        indistinguishable from the real thing.
-    sigma : float or None
-        Gaussian pseudo-ion width in Å, used only where the Gaussian model is
-        reached — i.e. where no ``POTCAR`` and no ``potcar_dir`` supply a
-        tabulated potential. ``null`` derives it per species from the
-        pseudopotential core radius where one is known, and falls back to
-        :data:`poraque.fields.external.DEFAULT_SIGMA` otherwise. Set it
-        explicitly when a reference ``EXTCAR`` allows it to be fitted.
-    resolution : int
-        Longest grid axis after spectral downsampling. The reduction is a
-        Fourier truncation, exact for band-limited plane-wave fields.
-    target_scale : float or None
-        Fixed ``Asinh`` scale, e/Å³, for the density target of ``ext2pseudo``
-        and ``ext2chg`` (every channel), instead of the fitted median of
-        :math:`|\delta\rho|`. ``null`` (default) fits it.
-    max_spacing : float or None
-        Largest grid spacing in Å after downsampling. ``resolution`` caps the
-        longest axis, so a long, thin cell keeps a handful of points on its
-        short axes; this refines any axis coarser than ``max_spacing`` (never
-        beyond its native grid). ``null`` (default) is ``resolution`` alone.
-        Part of the cache tag and fingerprint.
-    gaussian_blur : float or None
-        Width in Å of a Gaussian blur applied to the computed external
-        potential. ``null`` disables it.
-    blur_method : str
-        ``"spectral"`` (exact, isotropic on any cell) or ``"ndimage"``
-        (:func:`scipy.ndimage.gaussian_filter` with ``mode="wrap"``, which
-        blurs along grid axes and is therefore anisotropic in Cartesian space
-        unless the cell is orthogonal).
-    spin : {"auto", true, false}
-        Whether the densities are spin-polarized (``ISPIN = 2``), in which case
-        a ``CHGCAR`` carries two channels — the total density and the
-        magnetization density — and the operator is built with two channels to
-        match. ``"auto"`` (the default) reads the answer off the data, since a
-        spin-polarized ``CHGCAR`` has a second grid block and a collinear one
-        does not.
-
-        ``"auto"`` is resolved against the **sources**, before anything is
-        written, and for the dataset as a whole — one operator has one channel
-        count, so a cache with two blocks for some materials and one for others
-        could not be trained from. A mixture therefore resolves to spin and its
-        unpolarized members carry ``m = 0``, which is a true statement about a
-        non-magnetic calculation and is what makes an ``ISPIN = 2`` operator a
-        strict generalization of an ``ISPIN = 1`` one.
-
-        ``false`` is a deliberate opt-out that discards the magnetization, and
-        says so in the build log; ``true`` demands it and **raises** on data
-        that has none, rather than fitting a channel to zeros. The resolved
-        value names the cache directory, so the two layouts never share one.
-
-        .. note::
-
-           Until 2026-08-27 this key was flattened to ``spin is True`` before
-           it reached the cache builder, so the default ``"auto"`` meant *no
-           spin*: every ``ISPIN = 2`` magnetization block was discarded on the
-           way in, and the dataset's own auto-detection then reported the cache
-           as unpolarized — which it was, by then. A cache built before that
-           date holds one channel whatever its config said.
-    precision : str
-        Dtype the volumetric fields are **held in**: ``float64`` (the default,
-        and what every field used before this was selectable), ``float32`` or
-        ``float16``.
-
-        A memory setting, not an accuracy one. A 160³ field is 16 MB in double
-        and 8 MB in single, and a committee of five models scoring a pool holds
-        several at once. Integrals over the cell — the electron count, the
-        energy terms — are sums of N³ values, so keep ``float64`` wherever
-        those numbers are the result, and drop to ``float32`` when the field is
-        on its way into a network that computes in single precision anyway.
-        ``float16`` is for archiving a large pool and is too coarse for any
-        integral.
-
-        Distinct from ``model.precision``, which is what the operator
-        *computes* in.
-    xc : str
-        **The exchange-correlation functional the reference data was computed
-        with.** One of :data:`~poraque.ml.physics.XC_FUNCTIONALS` (``"pbe"``,
-        ``"lda"``, ``"pbe-x"``, ``"lda-x"``, ``"none"``), or ``"auto"`` to read
-        it off the calculation.
-
-        This is a statement about the *data*, not a choice about the model.
-        **The training loop does not yet consult it**: the Euler-Lagrange
-        penalty (``euler_lagrange_weight``) is evaluated without
-        :math:`v_{\\rm xc}` and warns to that effect. The setting is honored
-        by the post-training analyses that evaluate the full residual — the
-        ``experiments/euler_lagrange`` scripts and
-        :func:`~poraque.fields.io.resolve_xc` — where getting it wrong does
-        not approximate the right answer: an LDA potential on a PBE density is
-        of order 1 eV away from the PBE one in a valence region, and that
-        error lands entirely in the residual, where it would be misread as the
-        error of the kinetic functional.
-
-        ``"auto"`` resolves in the order VASP itself does: the ``INCAR``
-        ``GGA`` tag if present, else the ``LEXCH`` tag of the pseudopotentials
-        (``PE`` for PBE, ``CA`` for LDA, ``91`` for PW91). A ``PAW_PBE``
-        library therefore resolves to ``"pbe"`` with nothing to declare. Set it
-        explicitly when the data was produced by a code whose settings are not
-        recorded beside it.
-    delta_density : bool
-        Train the density operator on the **charge-density variation**
-
-        .. math::
-
-            \delta\rho(\mathbf r) = \rho(\mathbf r)
-                                    - \rho_{\rm sup}(\mathbf r),
-
-        the residual over a superposition of isolated atoms placed at the
-        structure's own atomic positions, rather than on :math:`\rho` itself.
-        **On by default as of 2026-08-26.**
-
-        Most of a crystal's valence density is its free atoms side by side —
-        measured at ~96 % of the field in :math:`L^2` on this project's cells —
-        so the residual left to learn is roughly twenty times smaller and
-        carries almost none of the four-orders-of-magnitude core peak the
-        ``asinh`` transform exists to absorb. The baseline is built in
-        reciprocal space from the stored atomic form factors, so it is exactly
-        periodic and grid-independent, and works unchanged for **bulk, slab and
-        cluster** samples: nothing in the construction assumes a filled cell.
-
-        **The operator still returns the full density.** :math:`\rho_{\rm sup}`
-        is added back inside
-        :meth:`~poraque.ml.training.FieldOperator.predict`, so every caller —
-        inference, the ASE calculator, the CHGCAR writer — sees an absolute
-        density and never has to know which mode the model was trained in.
-
-        Two consequences, both handled rather than hidden.
-        :math:`\delta\rho` is **signed**, so positivity and the electron count
-        are statements about :math:`\delta\rho + \rho_{\rm sup}`; the training
-        loop restores the baseline before every physics term, and inference
-        does it before clipping or normalizing — see
-        :meth:`poraque.ml.training.FieldOperator.predict`, which fixes that
-        order. And the reported relative :math:`L^2` is always
-        quoted **on the absolute density**, so a delta-mode run is directly
-        comparable with an absolute-mode one.
-
-        Requires ``atomic_reference`` covering every element in the dataset;
-        a run that cannot resolve one **fails loudly** rather than quietly
-        training the old target. Set ``false`` for the absolute-density
-        ablation. Ignored by ``pseudo2tau``: there is no atomic superposition of a
-        kinetic energy density.
-    atomic_reference : str or None
-        Where the isolated atoms come from. Three spellings are accepted,
-        because three are what people actually have:
-
-        - an ``atomic_reference.json`` built by ``poraque-atoms``;
-        - a **directory holding one subdirectory per element**, each an
-          isolated-atom calculation — ``data/vasp/isolated_atoms`` with
-          ``Pt/`` inside it, which is the default and the layout to write new
-          references in. A single atom directory is also accepted, but only
-          the parent form grows to a second element without editing a config.
-          Either is ingested on the spot and memoized into the cache as
-          ``atomic_reference.json``, so the reduction happens once;
-        - a directory that already holds a database, which then wins.
-
-        Each reference must be **one atom in a box** with a ``CHGCAR``. A bulk
-        or slab run has more than one atom and is skipped with a message rather
-        than averaged into something that is the form factor of neither.
-
-        This one path feeds **both** things the isolated atoms are the
-        reference for: the ``delta_density`` superposition baseline, and — via
-        ``paw_source`` — the PAW augmentation occupancies written into a
-        predicted ``CHGCAR``.
-
-        The library is copied **into the checkpoint**, not referenced from it:
-        a delta-density model's weights only mean anything against the
-        particular superposition they were fitted to, so a database that
-        changed afterwards would silently bias every prediction.
-    paw_source : str
-        Which one-center PAW augmentation occupancies a predicted ``CHGCAR``
-        carries. ``"atomic"`` (**the default as of 2026-08-26**) takes them
-        from the isolated-atom database named by ``atomic_reference``;
-        ``"material"`` restores the previous behavior of averaging the
-        *training set's* records per element.
-
-        The occupancies are contractions over converged wavefunctions living
-        inside the core radius, so no grid-based model predicts them and they
-        have to be borrowed from somewhere. The isolated atom is the defensible
-        place to borrow from once slabs and clusters enter the set: it is a
-        fixed, transferable, per-element quantity with its own provenance,
-        whereas a training-set average is a property of whatever happened to be
-        in the training set and is not defined at all for an element that was
-        not.
-
-        It is not the more *accurate* choice for an element the training set
-        does cover — measured on this project's platinum data a free-atom record
-        sat 86.6 % RMS from a bulk site against 9.9 % for the training average,
-        because a free atom and an atom in a metal have genuinely different
-        on-site occupations. That gap is the honest cost of the transferability,
-        and closing it with a learned environment-dependent correction is a
-        ``FUTURE.md`` item.
-
-    storage : str
-        How the prepared cache stores its fields. ``"files"`` (the default, and
-        what every cache built before 2026-08-28 is) writes one
-        ``CHGCAR``-format text file per field; ``"hdf5"`` writes one chunked
-        ``fields.h5`` per material.
-
-        The numbers are identical — the HDF5 store holds exactly what a
-        ``CHGCAR`` holds, in exactly the same convention — so this is a storage
-        decision and not a scientific one. What changes is the cost of holding
-        and reading them. A ``CHGCAR`` spends about 18 bytes of ASCII on each
-        8-byte double and has to be *parsed* on every read; an HDF5 dataset is
-        binary, chunked, and read by the library. On the shipped 140³ platinum
-        density the text file is 99.9 MB and the same field as HDF5 with
-        ``gzip`` is 15.8 MB, and the round trip is exact to a float64 ulp
-        rather than to the text format's eleven significant digits.
-
-        Nothing above the reader knows which layout it is looking at: a field
-        inside a store is addressed as ``fields.h5::CHGCAR`` and every Poraquê
-        reader takes that spelling, so training, inference and the ASE
-        calculator are unchanged. Switching the value **rebuilds** the cache
-        rather than mixing layouts — it is part of the cache fingerprint.
-
-    compression : str
-        HDF5 dataset filter: ``"gzip"``, ``"lzf"``, or ``null`` for none.
-        Requires ``storage: hdf5``; setting it on a text cache raises rather
-        than being ignored, since a compression flag that quietly does nothing
-        reports a saving that never happened.
-
-        Both codecs ship with h5py, so a compressed cache opens on any machine
-        that can open an uncompressed one — no filter plugin to install. HDF5's
-        byte-shuffle filter is applied with either, which on real densities is
-        worth more than several gzip levels and costs nothing:
-        ``gzip`` goes from 1.19x to 1.38x on the platinum density with it, and
-        writes and reads *faster*.
-
-        Measured on that density (21.95 MB of float64 values):
-        ``lzf`` 1.21x at 0.06 s, ``gzip-1`` 1.36x at 0.24 s, ``gzip-4`` 1.38x
-        at 0.31 s, ``gzip-9`` 1.39x at 0.39 s. The ratios are larger on the
-        downsampled fields a cache actually holds (2.1x at 32³), where
-        neighboring points are more strongly correlated. ``lzf`` is the choice
-        when build time matters, ``gzip`` when the archive is written once and
-        read for months.
-
-    compression_level : int
-        Gzip level, 0-9. Ignored by ``lzf``, which has no levels, rather than
-        raising — a run that changes codec should not also have to remember to
-        remove the level.
-
-    cache_in_memory : str or bool
-        Whether the dataset keeps decoded fields in RAM between epochs.
-        ``"auto"`` (the default) decides from the size the cache would take;
-        ``true`` and ``false`` force it.
-
-        This is the single largest performance setting in the file, and the
-        reason is that without it **every epoch re-reads, decompresses and
-        re-parses every field from disk**. Measured on a V100 with 115 cached
-        structures at 32³: ``__getitem__`` was 59 % of ``train()``, 78.9 s over
-        483 calls, and the GPU sat at 2-4 % utilization because it was waiting
-        on ``zlib`` and ``numpy.array`` over a text generator. Turning the cache
-        on took twenty epochs from **168.0 s to 16.3 s — 10.3x** — with the
-        validation error identical to five decimals, and utilization from 1.9 %
-        to 12.1 % (28.2 % on a 300-epoch run, where the fixed start-up cost is
-        amortized).
-
-        It is not a CUDA setting. The parse is the same on MPS and on the CPU;
-        what CUDA adds is a fast device left idle by it.
-
-        ``"auto"`` estimates the decoded size — grid points × itemsize ×
-        channels, over the input and target fields — and enables the cache below
-        :data:`~poraque.ml.data.CACHE_MEMORY_BUDGET`, logging what it decided
-        and what it costs.
-        A cache of 128³ grids over thousands of materials is what the budget
-        exists to refuse; a set that fits is the common case.
-
-        Parallel loading is *not* the alternative it looks like.
-        ``num_workers=4`` alone buys 1.4x, and added to the cache it makes
-        things **worse** (16.3 s to 18.8 s), because each worker is a process
-        that re-parses the whole set into a cache of its own. See
-        ``training.num_workers``.
-
-    cache_workers : str or int
-        Processes that **build** the cache, one material each. ``"auto"`` (the
-        default), a count, or ``0``/``1`` for the single-process build. Not to
-        be confused with ``training.num_workers``, which loads an already-built
-        cache during training and is a different trade (above).
-
-        The cache build is not the FFT work it looks like. Measured per
-        material on the 97-cell platinum set at ``resolution: 48``: the
-        spectral downsampling is **2.2 %** of the clock, and the Fortran
-        ``E17.11`` text codec is **86 %** of it --- one
-        ``np.array(line.split())`` per line read, one ``fortran_exponential``
-        per voxel written, both pure Python. There is no BLAS call in the path
-        and every transform goes through ``np.fft``, which is single-threaded,
-        so ``OMP_NUM_THREADS`` has nothing to act on and a thread count cannot
-        help. Materials are the axis that scales: ``_build_one`` is independent
-        per material and already writes through ``.partial-<pid>`` +
-        ``os.replace``, so a pool is correct without a lock. Measured on eight
-        cores (four performance, four efficiency): **4.0x** on a text cache,
-        **3.4x** on HDF5, the result byte-identical to the serial build.
-
-        ``"auto"`` takes the smallest of the cores this process may use
-        (``sched_getaffinity``, which is what ``--cpus-per-task`` restricts a
-        Slurm task to), an 8 GiB budget divided by an estimate taken from the
-        **largest** native grid in the set, and the number of materials. The
-        largest rather than the average because a set of 108³ bulk cells and
-        288³ nanoparticles sizes its workers on the nanoparticles or it swaps
-        on them.
+    A material is a directory with a density in it; inputs beside it (POSCAR,
+    POTCAR, ...) make the external potential exact, a ``TAUCAR`` makes it a
+    ``chg2tau`` sample. ``potcar_dir`` is the library used where the material
+    ships no POTCAR; ``atoms`` the isolated-atom reference (the δ-density
+    baseline and the PAW records); ``spin`` whether the magnetization is kept.
     """
 
-    data_paths: list = None
-    cache: str = "data/cache"
-    pattern: str = ""
-    format: str = "auto"
-    resolution: int = 32
-    max_spacing: float = None
-    target_scale: float = None
+    path: str = DEFAULT_DATA_PATH
     potcar_dir: str = None
-    strict_potcar: bool = False
-    sigma: float = None
-    gaussian_blur: float = None
-    blur_method: str = "spectral"
-    spin: str = "auto"
-    precision: str = "float64"
-    xc: str = "auto"
-    delta_density: bool = True
-    atomic_reference: str = "data/vasp/isolated_atoms"
-    paw_source: str = "atomic"
-    storage: str = "files"
-    compression: str = None
-    compression_level: int = 4
-    cache_in_memory: str = "auto"
-    cache_workers: str = "auto"
+    atoms: str = "data/vasp/isolated_atoms"
+    spin: object = "auto"
+    grid: GridConfig = section(GridConfig)
+    cache: CacheConfig = section(CacheConfig)
+
+    #: Settings of the cache builder that are no longer choices.
+    FIXED = {"pattern": "", "format": "auto", "sigma": None,
+             "gaussian_blur": None, "blur_method": "spectral",
+             "strict_potcar": False, "precision": "float64",
+             "paw_source": "atomic", "compression_level": 4}
 
     def paths(self):
-        """
-        The directories to train on.
+        """``[path]``: the cache builder takes a list."""
+        return [str(self.path or DEFAULT_DATA_PATH)]
 
-        A bare string is accepted and wrapped, because a single-path dataset is
-        the common case and writing ``data_paths: data/vasp/structures``
-        without the list dashes is the obvious mistake to make. It means
-        exactly what the one-item list means, so refusing it would be pedantry.
+    @property
+    def storage(self):
+        """The cache builder's name for the layout (``files`` or ``hdf5``)."""
+        return "files" if self.cache.storage == "text" else self.cache.storage
 
-        Returns
-        -------
-        list of str
-        """
-        if not self.data_paths:
-            return [DEFAULT_DATA_PATH]
-        if isinstance(self.data_paths, str):
-            return [self.data_paths]
-        return [str(path) for path in self.data_paths]
-
-
-#: The learnable activations ``model.kan_setup.variant`` chooses between. Each
-#: is one learned function *per channel*, applied elementwise; see
-#: :mod:`poraque.ml.kan` for what each parameterizes that function with.
-KAN_VARIANTS = ("bspline", "chebyshev", "rbf", "rational")
-
-#: Assumed when ``activation: kan`` is given with no ``variant``: the original
-#: KAN paper's own parameterization, so the unqualified word means what the
-#: literature means by it — not the cheapest variant, which would be a
-#: performance decision made silently on the user's behalf.
-DEFAULT_KAN_VARIANT = "bspline"
-
-#: ``kan_setup`` keys, and the :class:`~poraque.ml.fno.FNO3d` keyword each
-#: becomes. The ``kan_`` prefix is redundant inside the block and load-bearing
-#: outside it, where these sit beside ``width`` and ``modes``.
-KAN_SETUP_KEYS = {
-    "use_base": "kan_use_base",
-    "grid_size": "kan_grid_size",
-    "spline_order": "kan_spline_order",
-    "grid_range": "kan_grid_range",
-    "degree": "kan_degree",
-    "rational_num_degree": "kan_rational_num_degree",
-    "rational_den_degree": "kan_rational_den_degree",
-}
-
-#: ``model.equivariant`` settings, and the :class:`~poraque.ml.fno.FNO3d`
-#: keyword each becomes. Grouped for the same reason the KAN settings are: all
-#: three are read by one architecture and by no other, so as flat keys they
-#: would sit beside ``width`` and ``modes``, which apply always, and read as
-#: decisions every run should be making.
-EQUIVARIANT_SETUP_KEYS = {
-    "n_radial": "n_radial",
-    "g_basis": "g_basis",
-    "spherical_cutoff": "spherical_cutoff",
-}
-
-#: ``model.paw`` settings --- the operator of the ``ext2chg`` task --- and their
-#: defaults. ``width``, ``modes`` and ``n_layers`` are the field operator's own
-#: names for the same three decisions, so they mean one thing everywhere in this
-#: schema; the other two belong to the occupancy head alone.
-PAW_DEFAULTS = {"width": 64, "modes": 16, "n_layers": 4,
-                "readout_g_max": "auto", "occupancy_weight": 1.0,
-                "neighbor_min": 2.2, "magnetization_weight": 1.0,
-                "readout_cache_mib": 1024}
-PAW_SETUP_KEYS = tuple(PAW_DEFAULTS)
-
-#: ``model.structure_input`` settings: input channels describing the structure,
-#: appended after the potential (``poraque.fields.atomic.structure_channels``).
-STRUCTURE_INPUT_DEFAULTS = {"superposition": True, "elements": "auto"}
-STRUCTURE_INPUT_KEYS = tuple(STRUCTURE_INPUT_DEFAULTS)
-
-#: ``training.physics_informed`` settings: the weight of each constraint on the
-#: **neural operator**. Not :attr:`SymbolicConfig.physics`, which constrains a
-#: candidate algebraic expression and shares two of these names meaning
-#: something else.
-PHYSICS_INFORMED_KEYS = (
-    "electron_count_weight",
-    "positivity_weight",
-    "von_weizsacker_weight",
-    "euler_lagrange_weight",
-)
-
-#: ``symbolic.physics`` settings: the weight of each constraint on the
-#: **symbolic search**. See :attr:`SymbolicConfig.physics` for why two of these
-#: names collide with :data:`PHYSICS_INFORMED_KEYS` and must not be merged.
-SYMBOLIC_PHYSICS_KEYS = (
-    "positivity_weight",
-    "thomas_fermi_weight",
-    "von_weizsacker_weight",
-    "p_infinity",
-)
+    def validate(self, path="data"):
+        _check(isinstance(self.path, str) and self.path,
+               f"{path}.path must be one directory.")
+        _choice(self.spin, ("auto", True, False), f"{path}.spin")
+        _check(_is_count(self.grid.resolution, 4),
+               f"{path}.grid.resolution must be an integer of at least 4.")
+        _check(self.grid.max_spacing is None
+               or (_is_number(self.grid.max_spacing)
+                   and self.grid.max_spacing > 0),
+               f"{path}.grid.max_spacing must be null or a positive length "
+               f"in Ang.")
+        _choice(self.cache.storage, ("text", "hdf5"), f"{path}.cache.storage")
+        _choice(self.cache.compression, (None, "gzip", "lzf"),
+                f"{path}.cache.compression")
+        _check(self.cache.compression is None or self.cache.storage == "hdf5",
+               f"{path}.cache.compression applies to storage: hdf5 only; a "
+               f"text cache is not compressed.")
+        _choice(self.cache.in_memory, ("auto", True, False),
+                f"{path}.cache.in_memory")
 
 
-def split_enable_block(value, label, settings, enable_values=None):
+# ---------------------------------------------------------------------- #
+# The operators
+# ---------------------------------------------------------------------- #
+#: Nonlinearities a model may use (``poraque.ml.fno.ACTIVATIONS``).
+ACTIVATION_NAMES = ("silu", "gelu", "relu", "tanh")
+
+
+@dataclass
+class EquivariantConfig:
     """
-    Split a ``{enable: ..., <settings>}`` block into its switch and its settings.
+    The radial spectral layer: a kernel that depends on :math:`|G|` alone.
 
-    Every optional feature in this schema is one block: the switch that decides
-    whether it applies sits *inside* the settings it governs, rather than
-    beside a separately-named group. The alternative was tried and drifted --
-    ``equivariant: false`` with a populated ``equivariant_setup`` reads as an
-    equivariant run, is not one, and nothing in a two-key layout brings the
-    two halves into the same field of view.
-
-    Parameters
-    ----------
-    value : dict or None
-        The block as the file states it. ``None`` is an empty block, which is
-        the switch at its default and no settings.
-    label : str
-        Dotted config path, for the error messages. It is the whole reason
-        this is a function: ``"Unknown key: n_radal"`` does not say which of
-        four blocks it was in.
-    settings : iterable of str
-        The keys admitted beside ``enable``.
-    enable_values : iterable, optional
-        What ``enable`` may be. Defaults to ``(True, False)``; the
-        physics-informed switch adds ``"auto"``.
-
-    Returns
-    -------
-    enable : object
-        The value of ``enable``, or ``None`` when the block did not state one
-        --- which the caller resolves against its own default, since "unstated"
-        and "stated as the default" differ for :meth:`TrainingConfig.to_yaml`.
-    stated : dict
-        The settings the block actually named, in file order, with ``enable``
-        removed. **Only what was stated**: an unnamed setting is not filled in
-        with a default here, because for two of these blocks the default is
-        resolved downstream against something the config does not know
-        (``g_basis`` against ``model.g_max``, for one).
-
-    Raises
-    ------
-    ValueError
-        If the block is not a mapping --- which is what the pre-26.9.8 scalar
-        spelling looks like from here, and is by far the most likely mistake,
-        so it is named as such --- if ``enable`` is not one of
-        ``enable_values``, or on an unknown setting.
+    ``n_radial`` basis functions spanning ``g_basis`` (1/Å; ``auto`` reads the
+    median band off the training split). On, the operator commutes with every
+    rotation and inversion; the retained modes are a ball and no coordinate
+    channels are appended, both because the property fails otherwise.
     """
-    enable_values = tuple(enable_values if enable_values is not None
-                          else (True, False))
-    if value is None:
-        return None, {}
-    if not isinstance(value, dict):
-        # `equivariant: true` is a config written against the old schema, not
-        # a nonsense value, so the message says how to translate it rather
-        # than only that it is wrong.
-        raise ValueError(
-            f"{label} must be a block, not {value!r}. The switch and its "
-            f"settings are one key now:\n"
-            f"    {label.rsplit('.', 1)[-1]}:\n"
-            f"      enable: {_yaml_literal(value)}\n"
-            f"      # {', '.join(settings) or 'no further settings'}")
 
-    block = dict(value)
-    enable = block.pop("enable", None)
-    if enable is not None and enable not in enable_values:
-        raise ValueError(
-            f"{label}.enable is {enable!r}; expected one of "
-            f"{list(enable_values)}.")
-
-    unknown = sorted(set(block) - set(settings))
-    if unknown:
-        raise ValueError(
-            f"Unknown key(s) in {label}: {unknown}. "
-            f"Valid keys: {sorted(['enable', *settings])}.")
-    return enable, block
-
-
-def _yaml_literal(value):
-    """``True`` -> ``true``, so an error message quotes YAML and not Python."""
-    return {None: "null", True: "true", False: "false"}.get(value, repr(value))
+    n_radial: int = 16
+    g_basis: object = "auto"
 
 
 @dataclass
 class ModelConfig:
     r"""
-    Architecture of the Fourier Neural Operator.
+    One operator's Fourier neural operator.
+
+    ``width`` channels through ``layers`` Fourier blocks, each keeping up to
+    ``modes`` modes per axis. ``band`` (1/Å) keeps the same physical band in
+    every cell instead, still capped at ``modes``; ``null`` keeps ``modes``
+    per axis whatever the cell. ``projection_channels`` is the read-out's
+    hidden width, ``activation`` the nonlinearity of every layer and of the
+    read-out. ``cell_conditioning`` is the width of the lattice embedding
+    every layer is modulated by (FiLM), or ``false``. ``precision`` is what
+    the operator computes in.
 
     The three that set the size
     ---------------------------
@@ -836,7 +426,8 @@ class ModelConfig:
     :meth:`~poraque.ml.fno.FNO3d.forward` rather than the textbook schematic:
 
     **Lift** — the only place :math:`C_{\rm in}` appears. The ``+3`` are the
-    fractional-coordinate channels, present when ``use_coordinates``:
+    fractional-coordinate channels, present when the model is not
+    ``equivariant``:
 
     .. math::
 
@@ -869,7 +460,7 @@ class ModelConfig:
         y^{(\ell)}_o(\mathbf r)
             &\leftarrow \gamma_o(\text{cell})\, y^{(\ell)}_o(\mathbf r)
                + \beta_o(\text{cell})
-               \qquad\text{(FiLM, when \tt cell\_conditioning)} \\[2pt]
+               \qquad\text{(FiLM, unless \tt cell\_conditioning: false)} \\[2pt]
         v^{(\ell)}_o(\mathbf r)
             &= v^{(\ell-1)}_o(\mathbf r)
                + \sigma\big( y^{(\ell)}_o(\mathbf r) \big)
@@ -954,1916 +545,548 @@ class ModelConfig:
     Typical ranges are ``width`` 16-64, ``modes`` 8-16, ``projection_channels``
     64-128; ``modes`` above about 16 is rarely worth its cost, since the high
     coefficients of a smooth field carry little of its norm.
-
-    GroupNorm and FiLM: the rest of the layer
-    -----------------------------------------
-    The two terms in the layer equation that are not sizes. They sit next to
-    each other in :meth:`~poraque.ml.fno.FNOBlock.forward`, and the order is
-    the whole point::
-
-        y = spectral(x) + pointwise(x)      # mix
-        y = norm(y)                         # GroupNorm
-        y = film(y, embedding)              # FiLM
-        return x + activation(y)            # residual
-
-    **GroupNorm** — keeping the stack numerically sane.
-
-    :class:`torch.nn.GroupNorm` splits the :math:`C` channels into :math:`G`
-    groups and, for each *(sample, group)* pair, takes a mean and variance over
-    **both the channels of that group and every voxel** — then normalizes and
-    applies a learned per-channel scale and shift. At ``width: 16`` that is 8
-    groups of 2.
-
-    Why this normalizer and not another, here specifically:
-
-    * **BatchNorm would be wrong twice over.** Batches are small
-      (``batch_size: 4``, and bucketed by grid shape so often smaller) and
-      heterogeneous — different materials, different cells. Statistics over one
-      to four crystals are noise. Worse, BatchNorm keeps *running* statistics
-      and behaves differently in train and eval, so a single-structure
-      :meth:`~poraque.ml.training.FieldOperator.predict` would not reproduce
-      what training saw.
-    * **LayerNorm is the** :math:`G = 1` **case**, pooling every channel into
-      one statistic. :math:`G = 8` keeps the groups partly independent.
-    * **It is grid-shape agnostic.** The statistics are taken over whatever
-      :math:`N_x N_y N_z` is present, so a :math:`24^3` and a :math:`120^3`
-      sample are treated identically. That is a requirement here, not a
-      nicety: one model must serve materials on different grids.
-
-    What it is *for*: the spectral branch multiplies Fourier coefficients by
-    learned complex weights and adds a pointwise branch, once per layer, in a
-    residual stack. Without renormalization the activation scale drifts with
-    depth.
-
-    :func:`~poraque.ml.fno._group_count` exists because ``GroupNorm`` requires
-    ``C % G == 0`` while ``width`` is user-set. It takes the largest divisor of
-    :math:`C` not exceeding 8 — so ``width: 16`` gives 8 groups but
-    ``width: 12`` gives **6**, since ``12 % 8 != 0``. Without it, ``width: 12``
-    would fail at construction.
-
-    **FiLM** — how the unit cell reaches the network.
-
-    Feature-wise linear modulation. One ``Linear(embedding_dim -> 2C)``
-    produces :math:`\gamma` and :math:`\beta`, a pair per channel, and
-
-    .. math::
-
-        y^{(\ell)}_{b,o}(\mathbf r) \leftarrow
-            \big(1 + \gamma_o(\text{cell}_b)\big)\,
-            y^{(\ell)}_{b,o}(\mathbf r) + \beta_o(\text{cell}_b)
-
-    The reshape to ``(B, -1, 1, 1, 1)`` broadcasts over every voxel, so this is
-    **spatially uniform**: one gain and one offset per channel per sample,
-    constant across the grid — which is why it is indifferent to grid shape.
-
-    The embedding comes from :class:`~poraque.ml.fno.CellEncoder`: seven
-    rotation-invariant descriptors — the three lattice lengths, the three angle
-    cosines, and :math:`V^{1/3}`, lengths divided by a 10 Å scale — through an
-    MLP :math:`7 \to E \to E`.
-
-    Why it is needed at all is specific to an FNO. The spectral weights
-    :math:`R` act on *mode indices*, not physical wavevectors: mode :math:`k`
-    on a cell of edge :math:`L` is :math:`|\mathbf G| = 2\pi k / L`. The same
-    :math:`R` therefore means different physics in a 5 Å cell than in a 15 Å
-    one — and because the operator is deliberately grid-shape invariant, two
-    :math:`32^3` samples pass through the layers identically whatever their
-    lattice constant. Without conditioning the network **cannot tell them
-    apart**. The fractional-coordinate channels do not help: they are
-    dimensionless and identical for both cells. FiLM is what carries physical
-    scale in.
-
-    .. note::
-       The zero-init is deliberate. Both the projection weight and its bias are
-       zeroed, and the form is :math:`(1 + \gamma)`, not :math:`\gamma`. At
-       initialization :math:`\gamma = \beta = 0`, so FiLM is *exactly the
-       identity*: the model starts as the unconditioned operator and learns to
-       use the cell only where it earns its place. Written as
-       :math:`\gamma \cdot x` with the same init it would annihilate the signal
-       instead.
-
-    **Why they are adjacent, in that order.** This is the
-    conditional-normalization pattern (cf. conditional BatchNorm, AdaIN):
-    GroupNorm strips each sample's own scale and offset, and FiLM puts back a
-    scale and offset that are a learned function of the cell. Put FiLM first
-    and the normalizer would erase it on the next line.
-
-    .. warning::
-       FiLM's :math:`\gamma, \beta` are **not** GroupNorm's affine parameters,
-       which are conventionally written with the same letters. In the layer
-       equation above, :math:`\gamma_o(\text{cell})` and
-       :math:`\beta_o(\text{cell})` are FiLM's; GroupNorm's own affine is
-       folded inside :math:`\mathrm{GroupNorm}(\cdot)`.
-
-    Neither costs anything worth counting. Measured on ``width`` 16, ``modes``
-    8, ``n_layers`` 3, ``projection_channels`` 64, ``embedding_dim`` 32:
-
-    .. code-block:: text
-
-        spectral R          3,145,728   99.79%
-        FiLM projection         3,168    0.10%
-        CellEncoder MLP         1,312    0.04%
-        GroupNorm affine           96    0.00%
-        TOTAL               3,152,353
-
-    Conditioning and normalization together are 0.15% of the parameters. The
-    spectral tensor is the model.
-
-    Attributes
-    ----------
-    width : int
-        Channel width of the Fourier layers. See above: cost grows as the
-        square, and it is the operator's representational capacity.
-    modes : int
-        Retained Fourier modes per axis, counted from the lowest. A *capacity*
-        limit: on a grid too coarse to supply them, fewer are used
-        automatically. Cost grows as the cube.
-    n_layers : int
-        Number of Fourier layers — how many times the lift/spectral/project
-        cycle is applied. Depth composes the learned convolutions, so it buys
-        effective range at linear cost, unlike ``modes``.
-    projection_channels : int
-        Hidden width of the output projection head. Pointwise and cheap; see
-        above.
-    activation : str
-        ``silu`` (default as of 2026-08-17 — ``silu`` measurably outperformed
-        ``gelu`` on this project's own comparisons, see FUTURE.md), ``gelu``,
-        ``relu``, ``tanh`` — stateless, parameter-free — or ``kan``: a
-        Kolmogorov-Arnold Network-style *learnable* activation, one function
-        per channel, applied elementwise, whose variant and hyperparameters
-        come from ``kan_setup`` below. Every learnable variant is initialized
-        close to ``silu`` (a small learnable perturbation on top of it,
-        matching the base term the original KAN paper itself uses), so
-        switching to one does not destabilize training at step 0.
-    projection_activation : str or None
-        Nonlinearity of the read-out head. ``null`` (the default) follows
-        ``activation``, which is what "the activation" means unless something
-        says otherwise.
-
-        It is separable because it was not always the same: until 2026-08-28
-        the read-out was a hard-coded ``GELU`` while ``activation`` governed
-        only the Fourier layers, so ``model.activation`` selected :math:`L`
-        nonlinearities out of :math:`L+1` and the odd one out appeared in no
-        config. A checkpoint that records no read-out nonlinearity is
-        therefore one written before that change, and
-        :meth:`~poraque.ml.training.FieldOperator.from_state` restores
-        ``gelu`` for it rather than the recorded ``activation`` — otherwise
-        every silu-trained model would quietly start computing something else.
-
-        A per-channel KAN variant here is sized by ``projection_channels``,
-        not by ``width``.
-    kan_setup : dict or None
-        Everything the KAN activation needs, in one block — **read only when**
-        ``activation: kan``. ``null`` (the default) means the defaults below,
-        so a KAN run states only what it changes.
-
-        .. code-block:: yaml
-
-            model:
-              activation: kan
-              kan_setup:
-                variant: bspline          # bspline | chebyshev | rbf | rational
-                use_base: true            # keep the w_c * silu(x) base term
-                grid_size: 8              # bspline, rbf
-                spline_order: 3           # bspline
-                grid_range: [-2.0, 2.0]   # bspline, rbf
-                degree: 6                 # chebyshev
-                rational_num_degree: 4    # rational
-                rational_den_degree: 4    # rational
-
-        It is one block rather than seven flat keys because six of the seven
-        are read by *one* variant each: as flat settings they read as
-        alternatives to ``width`` and ``modes``, which apply always, when in
-        fact almost all of them do nothing in any given run. Grouping them
-        also makes "ignored unless ``activation: kan``" a statement about a
-        single key rather than about seven.
-
-        ``variant`` selects which learned function each channel carries;
-        see :mod:`poraque.ml.kan` for the four. ``use_base`` keeps each
-        channel's ``w_c * silu(x)`` base term (``true``, the default,
-        matching the original KAN paper) or drops it for a "pure" KAN — only
-        the learned residual, no fixed nonlinearity mixed in at all — whose
-        output is then bounded or decays to zero for a wide input tail rather
-        than tracking it.
-
-        ``grid_size`` is the number of knot-grid intervals (``bspline``) or
-        RBF centers minus one (``rbf``, which reuses the same fixed-grid
-        design); more gives the learned function finer local structure at
-        ``width`` extra coefficients each. ``spline_order`` is the B-spline
-        degree (``3`` = cubic, the paper's choice). ``grid_range`` is the
-        ``[low, high]`` support of that grid: a ``bspline`` input outside it
-        is clamped rather than extrapolated, an ``rbf`` input outside it
-        decays towards zero on its own. ``degree`` is the highest Chebyshev
-        order for ``chebyshev`` (``degree + 1`` coefficients per channel).
-        ``rational_num_degree`` and ``rational_den_degree`` are the numerator
-        power and the number of even denominator powers for ``rational``; the
-        denominator is guarded to stay :math:`\geq 1`, so neither can
-        introduce a pole.
-
-        Unknown keys raise, and a ``kan_setup`` given without
-        ``activation: kan`` warns rather than being silently ignored.
-    use_coordinates : bool
-        Append three fractional-coordinate channels to the input, so the
-        operator knows *where* in the cell it is. Dimensionless, so they carry
-        position but not scale — see ``cell_conditioning`` for the latter.
-    cell_conditioning : bool
-        Condition every layer on the lattice through FiLM. ``false`` drops both
-        the modulation and the :class:`~poraque.ml.fno.CellEncoder` entirely,
-        which leaves the operator unable to distinguish two samples on the same
-        grid whose cells differ in size. See "GroupNorm and FiLM" above.
-    embedding_dim : int
-        Width :math:`E` of the cell embedding the FiLM projections read. Costs
-        :math:`E^2 + 8E` once, plus :math:`2CE + 2C` per layer — a fraction of
-        a percent of the model either way.
-    mode_selection : str
-        ``"fixed"`` truncates at a constant mode index; ``"physical"``
-        truncates at a constant wavevector ``g_max``, so every material
-        contributes the same band of physics. Prefer the latter when cell sizes
-        vary widely.
-    g_max : float or None
-        Cutoff wavevector in Å⁻¹, required by ``mode_selection: physical``.
-    pauli_residual : bool
-        For ``pseudo2tau``, predict ``tau = tau_vW[rho] + s*softplus(f)`` so the
-        Hoffmann-Ostenhof bound holds by construction.
-    pauli_scale : float or None
-        Initial Pauli-term scale in eV/Å³; ``null`` fits it from the training
-        split.
-    precision : str
-        Dtype the operator computes in: ``float32`` (the default) or
-        ``float64``.
-
-        ``float64`` roughly doubles time and memory, and is for checking that a
-        physical result is not a single-precision artifact — an energy
-        difference of a few meV assembled from N³ voxel sums has no obvious
-        margin in float32. Conversion goes through
-        :func:`~poraque.ml.fno.set_precision`, because an FNO carries complex
-        spectral weights and neither ``model.double()`` nor
-        ``model.to(torch.float64)`` handles them correctly.
-
-        Distinct from ``data.precision``, which is how the fields are *stored*.
-    learn_pauli_scale : bool
-        Optimize the scale alongside the backbone.
-    equivariant : dict
-        Constrain the Fourier multiplier to a real function of
-        :math:`|\mathbf{G}|` alone, which makes the operator commute with
-        every rotation --- with inversion too, so :math:`O(3)` rather than the
-        :math:`SE(3)` the construction was asked for. One block:
-
-        .. code-block:: yaml
-
-           model:
-             use_coordinates: false     # required, see below
-             equivariant:
-               enable: true
-               n_radial: 32
-
-        ``enable``
-            Off by default; every configuration and checkpoint written before
-            the layer existed is unaffected.
-        ``n_radial``
-            Radial basis size. This is where the capacity goes: the dense layer
-            holds :math:`4C_{\rm in}C_{\rm out}m_1m_2m_3` complex numbers and
-            this one holds :math:`C_{\rm in}C_{\rm out}R` real ones, a factor
-            of 256 at ``width 16, modes 8, n_radial 16``. Buy it back with
-            ``n_radial`` and ``width``, not with ``modes``.
-        ``g_basis``
-            Radius in Å⁻¹ the basis spans, or ``auto``. Unstated it follows
-            ``g_max`` when ``mode_selection: physical`` has already named a
-            band --- and *only* then, since under ``fixed`` that key truncates
-            nothing --- and otherwise a default. Which is why an unstated
-            setting is left unstated here rather than filled in.
-
-            ``auto`` is the one worth reaching for on a set of mixed cell
-            sizes: it takes the median band the modes actually retain over the
-            training split, before the model is built, and the resolved number
-            is what the checkpoint records. A constant cannot fit a set whose
-            retained band edge spans an order of magnitude, and missing is not
-            symmetric --- a basis narrower than the band costs nothing
-            measurable, one wider than it wastes the layer's only capacity and
-            cost 14 % to 43 % where LNCC measured it.
-        ``spherical_cutoff``
-            Discard retained modes outside the largest sphere inscribed in the
-            retained box. On by default and effectively required: a radial
-            multiplier over a *box* of modes is equivariant only under the
-            box's own symmetry group.
-
-        ``use_coordinates`` must be false beside it, and ``enable: true``
-        without that **raises**. The three fractional coordinates are not three
-        scalar fields --- under a rotation they turn into each other.
-    paw : dict
-        The operator of the ``ext2chg`` task, which predicts the pseudo-density
-        *and* each atom's PAW augmentation occupancies. One block:
-
-        .. code-block:: yaml
-
-           task:
-             type: ext2chg
-           model:
-             paw:
-               enable: true
-               width: 64
-               modes: 16
-               n_layers: 4
-
-        ``enable``
-            Off by default. ``task.type: ext2chg`` requires it, and
-            ``task.type: all`` trains ``ext2chg`` beside the chain when it is
-            on; beside ``ext2pseudo`` or ``pseudo2tau`` it **raises**, since nothing
-            would read it.
-        ``width``, ``modes``, ``n_layers``
-            The FNO backbone's size, as for the field operator, and defaulting
-            to 64, 16 and 4. Every other ``model`` setting --- activation,
-            equivariance, mode selection --- applies to it unchanged.
-        ``readout_g_max``
-            The band in Å⁻¹ the occupancy head reads the fields over at each
-            atom, identical for every cell so the readout cannot depend on a
-            grid's spacing. ``auto`` (the default) takes 95 % of the coarsest
-            training grid's Nyquist frequency --- the widest band every
-            structure supplies. A number above that raises before training.
-        ``occupancy_weight``
-            The weight of the per-atom term against the field objective. The
-            validation score the best epoch is chosen on is the same sum on
-            the held-out split, so one number means one thing. 1.0 by
-            default.
-        ``neighbor_min``
-            First of ten geometric neighbor-kernel centers, in Å; the last
-            stays at 5.8 Å. Default 2.2 preserves the Pt basis. Smaller values
-            such as 0.6 resolve short covalent bonds in CHON. Must be at least
-            zero and below 5.8. The checkpoint preserves the actual centers.
-        ``readout_cache_mib``
-            Device memory, in MiB, for the occupancy readout's spectral
-            kernels (one per cell and grid, built on the CPU). Once a
-            training split's kernels exceed it they are evicted and rebuilt
-            every epoch, which is slow; 1024 (the default) held all 785
-            CHONPS geometries at a 6 1/Ang band (~360 MB). A runtime setting:
-            it changes no result and is not in the checkpoint.
-        ``magnetization_weight``
-            Weight of the magnetization record set (the second set of a
-            spin-polarized density) in the occupancy loss, relative to the
-            charge set; 1.0 (the default) weighs every (set, L) block alike,
-            as before. Its L > 0 blocks are as unpredictable from the
-            potential as the field magnetization, so at 1.0 they dominate the
-            occupancy loss and the score the best epoch is chosen on.
-
-        See :mod:`poraque.ml.paw` for the operator, and
-        ``experiments/paw_occupancies`` for the measurements it was designed
-        from.
-    occupancy_channels : int
-        ``chg2tau`` only: the field channels every atom's PAW occupancies are
-        written into, beside the input density, by an equivariant
-        :class:`~poraque.ml.paw.SiteWriter` (atom-centered solid-harmonic
-        Gaussians, one learned map per element and L, shared across M).
-        8 by default; ignored by every other task.
-    structure_input : dict
-        Input channels that describe the structure, appended after
-        :math:`v_{\rm ext}` for ``ext2pseudo`` and ``ext2chg``:
-
-        .. code-block:: yaml
-
-           model:
-             structure_input:
-               enable: true
-               superposition: true    # rho_sup, the delta-density baseline
-               elements: auto         # one superposition per element
-
-        ``enable``
-            Off by default, which is the potential alone, as before.
-        ``superposition``
-            Lead with :math:`\rho_{\rm sup}`.
-        ``elements``
-            ``auto`` gives one channel per element of the training data, a
-            list names them, and ``[]`` gives none. Each is that element's
-            atoms alone, superposed; the checkpoint records the list, and a
-            structure holding an element outside it is refused at inference.
-
-        Every channel is a scalar field built from the isolated-atom library
-        (``data.atomic_reference``, which is therefore required) and is a
-        function of the geometry alone, so equivariance is untouched and the
-        channels are rebuilt from the structure at inference. Measured on 785
-        CHONPS cells: see ``poraque_modifications.md`` in the run directory.
     """
 
     width: int = 16
+    layers: int = 3
     modes: int = 8
-    n_layers: int = 3
+    band: float = None
     projection_channels: int = 64
     activation: str = "silu"
-    projection_activation: str = None
-    kan_setup: dict = None
-    use_coordinates: bool = True
-    cell_conditioning: bool = True
-    embedding_dim: int = 32
-    mode_selection: str = "fixed"
-    g_max: float = None
-    equivariant: dict = field(default_factory=lambda: {"enable": False})
-    paw: dict = field(default_factory=lambda: {"enable": False})
-    structure_input: dict = field(default_factory=lambda: {"enable": False})
-    occupancy_channels: int = 8
-    pauli_residual: bool = False
-    pauli_scale: float = None
-    learn_pauli_scale: bool = True
+    cell_conditioning: object = 32
+    equivariant: EquivariantConfig = block(EquivariantConfig)
     precision: str = "float32"
+
+    # What the backbone constructor calls these.
+    @property
+    def n_layers(self):
+        return self.layers
+
+    @property
+    def mode_selection(self):
+        return "fixed" if self.band is None else "physical"
+
+    @property
+    def g_max(self):
+        return self.band
 
     @property
     def equivariant_enabled(self):
-        """
-        Whether the radial kernel is switched on --- ``model.equivariant.enable``.
-
-        A property rather than a field because the block is the field: reading
-        ``config.model.equivariant`` now yields a dict, and every consumer that
-        wanted the boolean would otherwise spell the same ``.get("enable")``
-        for itself. The dataclass default carries ``enable: False``, but a
-        user block that names only settings does not, so the ``or {}`` and the
-        ``get`` default are both load-bearing.
-        """
-        enable, _ = split_enable_block(
-            self.equivariant, "model.equivariant", EQUIVARIANT_SETUP_KEYS)
-        return bool(enable)
+        return self.equivariant is not None
 
     def equivariant_kwargs(self):
-        """
-        The radial-kernel keywords :class:`~poraque.ml.fno.FNO3d` wants,
-        resolved from the ``equivariant`` block.
-
-        Returns
-        -------
-        dict
-            ``n_radial``, ``g_basis`` and ``spherical_cutoff``, restricted to
-            what the block actually stated — so a non-equivariant run passes
-            nothing and records nothing about a kernel it does not have, and an
-            equivariant one that named only ``n_radial`` still gets the
-            constructor's own ``g_basis`` resolution against ``g_max``.
-
-        Raises
-        ------
-        ValueError
-            On a block that is not a mapping (the pre-26.9.8
-            ``equivariant: true`` spelling, which is named as such), on an
-            unknown setting inside it — it changes the architecture, and a typo
-            quietly ignored changes it back without saying so — or on
-            ``enable: true`` beside ``use_coordinates: true``.
-        """
-        enable, setup = split_enable_block(
-            self.equivariant, "model.equivariant", EQUIVARIANT_SETUP_KEYS)
-
-        if not enable:
-            if setup:
-                import warnings
-
-                warnings.warn(
-                    "model.equivariant names "
-                    f"{sorted(setup)} with enable false, so every setting in "
-                    "the block is ignored: the dense spectral layer has no "
-                    "radial basis to size. Set enable: true, or drop them.",
-                    RuntimeWarning, stacklevel=2,
-                )
+        """``n_radial`` and ``g_basis`` for the radial layer; ``{}`` when off."""
+        if self.equivariant is None:
             return {}
+        return {"n_radial": self.equivariant.n_radial,
+                "g_basis": self.equivariant.g_basis,
+                "spherical_cutoff": True}
 
-        if self.use_coordinates:
-            raise ValueError(
-                "model.equivariant.enable: true requires use_coordinates: "
-                "false. The three fractional-coordinate channels rotate into "
-                "each other rather than each transforming as a scalar, so a "
-                "network that treats every channel alike stops being "
-                "equivariant the moment they are appended -- and they are "
-                "absolute positions, which costs translation equivariance "
-                "outright. Set model.use_coordinates: false.")
+    def fno_kwargs(self):
+        """Keyword arguments for :class:`~poraque.ml.fno.FNO3d`."""
+        conditioning = self.cell_conditioning
+        return {
+            "width": self.width, "modes": self.modes,
+            "n_layers": self.layers,
+            "projection_channels": self.projection_channels,
+            "activation": self.activation,
+            "use_coordinates": self.equivariant is None,
+            "cell_conditioning": conditioning is not False,
+            "embedding_dim": 32 if conditioning is False else conditioning,
+            "mode_selection": self.mode_selection, "g_max": self.band,
+            "equivariant": self.equivariant is not None,
+            **self.equivariant_kwargs(),
+        }
 
-        basis = setup.get("g_basis")
-        if basis is not None and basis != "auto" and not (
-                isinstance(basis, (int, float)) and not isinstance(basis, bool)
-                and basis > 0.0):
-            raise ValueError(
-                f"model.equivariant.g_basis is {basis!r}; expected a positive "
-                f"radius in 1/Ang, or 'auto' to size the basis from the "
-                f"training split.")
-
-        return {EQUIVARIANT_SETUP_KEYS[key]: value
-                for key, value in setup.items()}
-
-    @property
-    def paw_enabled(self):
-        """Whether the ``ext2chg`` operator is switched on --- ``model.paw.enable``."""
-        enable, _ = split_enable_block(self.paw, "model.paw", PAW_SETUP_KEYS)
-        return bool(enable)
-
-    def paw_settings(self):
-        """
-        The ``ext2chg`` operator's settings, defaults filled in.
-
-        Returns
-        -------
-        dict
-            ``width``, ``modes`` and ``n_layers``.
-
-        Raises
-        ------
-        ValueError
-            On a block that is not a mapping, an unknown key, or a setting that
-            is not a positive integer. A block that names settings with
-            ``enable`` off warns instead, as ``model.equivariant`` does: it
-            reads as a configured operator and is not one.
-        """
-        enable, stated = split_enable_block(self.paw, "model.paw",
-                                            PAW_SETUP_KEYS)
-        if not enable and stated:
-            import warnings
-
-            warnings.warn(
-                f"model.paw names {sorted(stated)} with enable false, so every "
-                f"setting in the block is ignored. Set enable: true, or drop "
-                f"them.", RuntimeWarning, stacklevel=2)
-
-        settings = dict(PAW_DEFAULTS, **stated)
-        for key in ("width", "modes", "n_layers"):
-            value = settings[key]
-            if isinstance(value, bool) or not isinstance(value, int) \
-                    or value < 1:
-                raise ValueError(
-                    f"model.paw.{key} is {value!r}; expected a positive "
-                    f"integer.")
-        band = settings["readout_g_max"]
-        if band != "auto" and (isinstance(band, bool)
-                               or not isinstance(band, (int, float))
-                               or not band > 0):
-            raise ValueError(
-                f"model.paw.readout_g_max is {band!r}; expected 'auto' or a "
-                f"positive band in 1/Ang.")
-        weight = settings["occupancy_weight"]
-        if isinstance(weight, bool) or not isinstance(weight, (int, float)) \
-                or weight < 0:
-            raise ValueError(
-                f"model.paw.occupancy_weight is {weight!r}; expected a "
-                f"non-negative number.")
-        budget = settings["readout_cache_mib"]
-        if isinstance(budget, bool) or not isinstance(budget, (int, float)) \
-                or budget < 0:
-            raise ValueError(
-                f"model.paw.readout_cache_mib is {budget!r}; expected a "
-                f"non-negative number of MiB.")
-        magnetization = settings["magnetization_weight"]
-        if isinstance(magnetization, bool) \
-                or not isinstance(magnetization, (int, float)) \
-                or magnetization < 0:
-            raise ValueError(
-                f"model.paw.magnetization_weight is {magnetization!r}; "
-                f"expected a non-negative number.")
-        minimum = settings["neighbor_min"]
-        if isinstance(minimum, bool) or not isinstance(minimum, (int, float)) \
-                or not 0 <= minimum < 5.8:
-            raise ValueError(
-                f"model.paw.neighbor_min is {minimum!r}; expected a number "
-                f"from 0 (inclusive) to 5.8 (exclusive), in Ang.")
-        return settings
-
-    @property
-    def structure_input_enabled(self):
-        """Whether ``model.structure_input.enable`` is on."""
-        enable, _ = split_enable_block(self.structure_input,
-                                       "model.structure_input",
-                                       STRUCTURE_INPUT_KEYS)
-        return bool(enable)
-
-    def structure_input_settings(self, elements=None):
-        """
-        The structure channels to build, or ``None`` when the block is off.
-
-        Parameters
-        ----------
-        elements : sequence of str, optional
-            The training data's elements, which ``elements: auto`` resolves
-            to.
-
-        Returns
-        -------
-        dict or None
-            ``{"superposition": bool, "elements": [str, ...]}``.
-        """
-        enable, stated = split_enable_block(self.structure_input,
-                                            "model.structure_input",
-                                            STRUCTURE_INPUT_KEYS)
-        if not enable:
-            if stated:
-                import warnings
-
-                warnings.warn(
-                    f"model.structure_input names {sorted(stated)} with "
-                    f"enable false, so the block is ignored. Set enable: "
-                    f"true, or drop them.", RuntimeWarning, stacklevel=2)
-            return None
-        settings = dict(STRUCTURE_INPUT_DEFAULTS, **stated)
-        if not isinstance(settings["superposition"], bool):
-            raise ValueError(
-                f"model.structure_input.superposition is "
-                f"{settings['superposition']!r}; expected true or false.")
-        chosen = settings["elements"]
-        if chosen == "auto":
-            if elements is None:
-                raise ValueError("model.structure_input.elements: auto needs "
-                                 "the training data's elements to resolve.")
-            chosen = list(elements)
-        elif chosen is None:
-            chosen = []
-        elif not isinstance(chosen, (list, tuple)) or not all(
-                isinstance(element, str) for element in chosen):
-            raise ValueError(
-                f"model.structure_input.elements is {chosen!r}; expected "
-                f"'auto' or a list of element symbols.")
-        if not settings["superposition"] and not chosen:
-            raise ValueError(
-                "model.structure_input is enabled with superposition false "
-                "and no elements: that is no channel at all.")
-        return {"superposition": settings["superposition"],
-                "elements": [str(element) for element in chosen]}
-
-    def activation_kwargs(self):
-        """
-        The activation name and KAN keywords :class:`~poraque.ml.fno.FNO3d`
-        wants, resolved from ``activation`` and ``kan_setup``.
-
-        ``activation: kan`` plus ``kan_setup.variant: chebyshev`` becomes the
-        backbone's ``activation="kan_chebyshev"``, so the checkpoint's
-        ``architecture`` record and :func:`~poraque.ml.kan.build_activation`
-        keep the one flat name they have always used. The grouping is a
-        property of the *config file*, not of the model.
-
-        Returns
-        -------
-        tuple of (str, dict)
-            The activation name, and the ``kan_*`` keywords to pass with it —
-            empty for every stateless activation, so a non-KAN run allocates
-            and records nothing about KANs.
-
-        Raises
-        ------
-        ValueError
-            On a ``kan_*`` name in ``activation`` (the pre-``kan_setup``
-            spelling), an unknown ``variant``, or an unknown ``kan_setup`` key.
-            A silently accepted typo here changes the architecture and nothing
-            says so.
-        """
-        name = str(self.activation)
-        setup = dict(self.kan_setup or {})
-
-        if name != "kan" and name.startswith("kan"):
-            raise ValueError(
-                f"model.activation={name!r} is the old flat spelling. The "
-                f"variant now lives in its own block:\n\n"
-                f"    model:\n      activation: kan\n      kan_setup:\n"
-                f"        variant: {name[len('kan_'):]}\n")
-
-        if name != "kan":
-            if setup:
-                import warnings
-
-                warnings.warn(
-                    f"model.kan_setup was given with activation={name!r}, "
-                    f"which is not a KAN, so every setting in it is ignored. "
-                    f"Set activation: kan, or drop the block.",
-                    RuntimeWarning, stacklevel=2,
-                )
-            return name, {}
-
-        unknown = sorted(set(setup) - {"variant"} - set(KAN_SETUP_KEYS))
-        if unknown:
-            raise ValueError(
-                f"Unknown key(s) in model.kan_setup: {unknown}. "
-                f"Valid keys: {['variant'] + sorted(KAN_SETUP_KEYS)}.")
-
-        variant = str(setup.pop("variant", DEFAULT_KAN_VARIANT))
-        if variant not in KAN_VARIANTS:
-            raise ValueError(
-                f"Unknown model.kan_setup.variant {variant!r}; expected one "
-                f"of {sorted(KAN_VARIANTS)}.")
-
-        return f"kan_{variant}", {KAN_SETUP_KEYS[key]: value
-                                  for key, value in setup.items()}
+    def validate(self, path):
+        for key in ("width", "layers", "modes", "projection_channels"):
+            _check(_is_count(getattr(self, key)),
+                   f"{path}.{key} is {getattr(self, key)!r}; expected a "
+                   f"positive integer.")
+        _check(self.band is None or (_is_number(self.band) and self.band > 0),
+               f"{path}.band is {self.band!r}; expected null or a positive "
+               f"band in 1/Ang.")
+        _choice(self.activation, ACTIVATION_NAMES, f"{path}.activation")
+        _check(self.cell_conditioning is False
+               or _is_count(self.cell_conditioning),
+               f"{path}.cell_conditioning is {self.cell_conditioning!r}; "
+               f"expected the embedding width or false.")
+        _choice(self.precision, ("float32", "float64"), f"{path}.precision")
+        if self.equivariant is not None:
+            _check(_is_count(self.equivariant.n_radial),
+                   f"{path}.equivariant.n_radial must be a positive integer.")
+            basis = self.equivariant.g_basis
+            _check(basis == "auto" or (_is_number(basis) and basis > 0),
+                   f"{path}.equivariant.g_basis is {basis!r}; expected a "
+                   f"positive radius in 1/Ang, or 'auto'.")
 
 
 @dataclass
-class TrainingConfig_:
-    r"""
-    Optimization settings.
-
-    Attributes
-    ----------
-    epochs : int
-        Passes over the training set.
-    batch_size : int
-        Maximum samples per batch *within one grid-shape bucket*; materials of
-        different shape are never mixed.
-    samples_per_step : int
-        Structures per optimizer step, accumulated over consecutive bucketed
-        batches, each batch's loss weighted by its size. ``0`` (default) steps
-        once per batch, which weighs a structure by the inverse of its
-        bucket's batch size --- on a set of mostly unique grid shapes, a
-        structure alone in its bucket counts four times one in the commonest.
-    learning_rate, weight_decay : float
-        AdamW hyper-parameters.
-    scheduler : str or None
-        ``"cosine"`` or ``null``.
-    grad_clip : float
-        Global gradient-norm clip; ``0`` disables.
-    valid_fraction : float
-        Fraction of structures held out for validation, drawn by shuffling the
-        structure list with ``seed``. Defaults to ``0.2``, so an ordinary run
-        reports a genuine held-out score rather than a training fit, and
-        ``early_stopping`` has something to watch.
-
-        Set it to ``0`` to train on **every** structure. That is the right
-        choice for the final deployable artifact — it uses all the data — but
-        its metrics are then a training fit and carry no generalization claim,
-        and early stopping cannot act.
-
-        The split is at the **structure level**, like ``k_folds``: whole
-        materials move together. At least one structure is always kept on each
-        side, so a non-zero fraction on a two-structure dataset gives 1 + 1
-        rather than an empty validation set.
-
-        Ignored when ``enable_kfold`` is set, which supplies its own splits.
-    eval_epoch : int
-        Evaluate and log every this many epochs. Validation is *only* computed
-        on those epochs, so raising it on a large validation set is a genuine
-        speed-up rather than only a quieter log.
-    early_stopping : int
-        Stop after this many epochs without an improvement in the **validation**
-        error, and restore the best weights seen. ``0`` disables it and always
-        runs the full ``epochs``.
-
-        Requires a validation split (``valid_fraction > 0``): with
-        nothing held out there is only the training loss, which falls
-        monotonically by construction and so can never signal that training
-        should stop. The run says so rather than appearing to be protected.
-
-        Counted in epochs, but only *checked* on the epochs where validation is
-        computed, so a patience shorter than ``eval_epoch`` behaves like
-        ``eval_epoch``.
-    enable_kfold : bool
-        Run K-fold cross-validation instead of a single fit. This is the only
-        variation on the training protocol: every other run trains once on the
-        ``valid_fraction`` split.
-
-        It answers a different question — whether the architecture generalizes
-        — and produces *K* models rather than one to deploy.
-    k_folds : int
-        Number of folds. Splitting is at the **structure level**: each fold
-        holds out whole materials, never a subset of voxels from a material
-        that also appears in training. A voxel-level split would let the model
-        see the same material in both halves and would report a
-        wildly optimistic score that says nothing about transfer to a new
-        material.
-
-        Capped at the number of structures; ``k_folds`` equal to that count is
-        leave-one-out.
-    seed : int
-        Seed for the data pipeline: the validation draw, the fold partition and
-        the batch order. Also seeds the weight initialization unless
-        ``init_seed`` overrides it.
-    init_seed : int or None
-        Seed for the **weight initialization only**, leaving everything else on
-        ``seed``. ``null`` means "use ``seed``".
-
-        Separating the two is what makes a *query-by-committee* ensemble
-        interpretable: train N models that share ``seed`` and differ only in
-        ``init_seed``, and their disagreement isolates the spread of
-        optimization outcomes instead of confounding it with a reshuffled
-        dataset.
-    device : str
-        ``"auto"`` (CUDA, then Apple MPS, then CPU), or an explicit backend.
-    strict_device : bool
-        Abort when ``device`` cannot be honored, instead of falling back to
-        the CPU with a warning. Default ``false``, so nothing changes for a
-        workstation — where the fallback is the right behavior, since a
-        configuration written on a machine with a GPU should still run on a
-        laptop.
-
-        **Every HPC configuration should set it to ``true``.** In a queue the
-        fallback is not graceful, it is expensive: the job waits for its GPU
-        allocation, the warning goes into a log nobody reads until afterwards,
-        and the run trains on the CPU *inside* the GPU allocation until the
-        wall clock ends. That is a day of queue time to learn that the wrong
-        PyTorch wheel was installed. It has happened on this project.
-
-        The strict message names the probable cause — no GPU visible, an empty
-        ``CUDA_VISIBLE_DEVICES``, a driver older than the wheel's CUDA runtime,
-        or a build with no kernels for this architecture. The last is the one
-        ``torch.cuda.is_available()`` cannot detect on its own; see
-        :func:`~poraque.ml.device.cuda_capability_supported`.
-    distributed : str
-        Multi-GPU training. ``"auto"`` (the default) forms a
-        ``DistributedDataParallel`` group over NCCL **when the environment
-        already describes one** — a Slurm step with more than one task, or a
-        ``torchrun`` launch — and does nothing otherwise. ``"off"`` refuses to,
-        which is how a four-task allocation is made to run four independent
-        single-GPU jobs, and how a distributed run is bisected against a
-        single-device one.
-
-        ``"auto"`` cannot turn a one-process run into a four-GPU one: the
-        launcher decides the topology and this key decides only whether to
-        believe it. On Santos Dumont that means ``--ntasks-per-node=4`` beside
-        ``--gres=gpu:4`` in the submission script; requesting four GPUs and
-        launching one task leaves ``SLURM_NTASKS`` at 1 and looks from inside
-        the process exactly like a single-GPU run that was asked for, which is
-        why the run log prints the Slurm variables it saw.
-
-        Rank 0 alone prints and writes the checkpoint, the metrics, the figures
-        and the PDF. The **effective batch size is** ``batch_size`` **times the
-        world size**, so a four-rank run is not the same optimizer as the
-        one-rank run it is compared against.
-
-        There is deliberately no ``DataParallel`` fallback. Single-process
-        multi-GPU is slower than one GPU for a model of a few megabytes, it
-        changes the effective batch size silently, and offering it would mean a
-        laptop run and a cluster run differed in a way nothing recorded.
-    distributed_timeout : float
-        Minutes before a collective is declared failed. The default of 30 is
-        long on purpose: the first collective happens after every rank has read
-        its prepared cache, and a cold parallel-filesystem read of a few
-        hundred densities is minutes. A timeout that fires there reports itself
-        as a NCCL error and sends the reader looking at the network.
-    num_workers : int
-        DataLoader worker processes. ``0`` (the default) loads in the main
-        process.
-
-        Under ``distributed`` this arithmetic gets worse, not better: each rank
-        is already a process with a field cache of its own, and workers on top
-        multiply the copies again. One rank per GPU, cache on, no workers is
-        where to start.
-
-        **Read ``data.cache_in_memory`` before raising this.** The two are
-        alternatives, not complements, and the measurement is unambiguous: on a
-        V100 with 115 structures, ``num_workers=4`` alone took twenty epochs
-        from 168.0 s to 120.2 s (1.4x), while the in-memory cache took the same
-        run to 16.3 s (10.3x) — and adding the four workers *to* the cache put
-        it back up to 18.8 s. Each worker is a process with a cache of its own,
-        so it re-parses the whole dataset on its first epoch and the parse is
-        paid N times instead of once.
-
-        It is worth raising only when the data genuinely does not fit in RAM,
-        which is the case ``cache_in_memory: false`` exists for.
-    pin_memory : str or bool
-        Page-locked host staging buffers for the host-to-device copy.
-        ``"auto"`` (the default) means ``true`` on CUDA and ``false``
-        everywhere else, which is the whole of the decision: pinning is a CUDA
-        transfer optimization, it does nothing on MPS, and some PyTorch
-        versions warn when asked for it there.
-    tf32 : bool
-        Allow TensorFloat-32 matmuls and convolutions. Ignored off CUDA, and a
-        no-op on anything before Ampere — **including the V100 this list was
-        measured on**, which has no TF32 path at all. It is here for the next
-        cluster.
-    loss : str
-        The data-fidelity objective. Four names, on two named axes:
-
-        ==================  ==========  ==========================
-        ``loss``            normalized  gradients in the objective
-        ==================  ==========  ==========================
-        ``absolute_l2``     no          no
-        ``relative_l2``     yes         no
-        ``absolute_h1``     no          yes
-        ``relative_h1``     yes         yes
-        ==================  ==========  ==========================
-
-        **Relative** divides each sample's error by its own target norm, so
-        every material counts equally and the number reads as a fraction;
-        **absolute** does not, so every voxel counts equally and a dense system
-        contributes proportionally more gradient. **H1** adds
-        ``sobolev_weight`` times the same error on the spatial gradients.
-
-        Both halves of an :math:`H^1` are taken in the same norm, so the weight
-        is a pure ratio between values and derivatives rather than also
-        absorbing a change of scale.
-
-        The progress table names the norm it is watching --- ``val rel L2``,
-        ``val abs H1`` and so on --- and the number behind it is the
-        objective's own data term on the held-out set. It has to be, because
-        early stopping and the checkpoint are decided on it. The per-structure
-        table at the end of a run reports relative :math:`L^2` whatever the
-        objective was, so two runs remain comparable.
-
-        Replaces ``"sobolev"`` (2026-08-31), which named the gradient term and
-        left the norm implicit, and offered no unnormalized form at all.
-    optimizer : str
-        ``adamw`` (default), ``adam`` or ``sgd``.
-
-        The default has always been an Adam-family method; the key exists so
-        the choice can be *measured* rather than assumed. ``adam`` and
-        ``adamw`` share the same per-parameter adaptive step and differ only in
-        how ``weight_decay`` is applied: Adam folds it into the gradient, where
-        the adaptive denominator then rescales it, so a parameter with small
-        historical gradients is decayed harder than one with large ones. AdamW
-        applies it straight to the weight, decoupled, which is what makes
-        ``weight_decay`` mean the same thing for every parameter — and matters
-        here because an FNO's pointwise and spectral weights differ in scale by
-        orders of magnitude.
-
-        At ``weight_decay: 0`` the two are numerically identical, so a
-        comparison run at that setting measures nothing.
-
-        ``sgd`` (momentum 0.9) is the non-adaptive control.
-    sobolev_weight : float
-        Weight of the gradient term for the two :math:`H^1` losses; ignored by
-        the two :math:`L^2` ones. It scales the reported column too, which is
-        ``<L2 term> + sobolev_weight * <L2 of the gradient>`` in the same
-        norm -- so at zero the objective and the column are both a plain
-        :math:`L^2`, and the log says so rather than claiming an :math:`H^1`
-        the run is not measuring.
-    spin_loss : str
-        How the two channels of a spin-polarized target enter the data term:
-        ``joint`` or ``per_channel``. Read only when the target carries a
-        magnetization; a one-channel run is identical either way.
-
-        ``joint`` (the default) is one norm over both channels at once ---
-        each channel's error over the whole :math:`(\rho, m)` target's norm,
-        combined in quadrature, which is identically
-        :math:`\lVert\delta(\rho, m)\rVert/\lVert(\rho, m)\rVert`.
-        ``per_channel`` divides each channel by **its own** norm (floored, see
-        ``magnetization_floor``) and sums them with
-        ``magnetization_weight``.
-
-        **The default is the measured one, and the arithmetic is misleading
-        about which should win.** Under ``joint`` the magnetization's share of
-        the objective is its share of the joint norm, which on the 432-cell
-        CHON set is :math:`3\times10^{-8}` in the *median* --- the number that
-        makes ``per_channel`` look obviously right. It is not: measured
-        head-to-head on that cache (two seeds, 60 epochs, held-out magnetic
-        cells scored by predicted/reference :math:`\lVert m\rVert`),
-
-        .. code-block:: text
-
-            30 magnetic + 30 noise cells   joint 1.00 / rel L2 0.084
-                                           per_channel 1.00 / rel L2 0.109
-            12 magnetic + 100 noise cells  joint 0.96 / rel L2 0.166
-            (the real 11% imbalance)       per_channel 0.001 / rel L2 1.000
-
-        What trains the magnetization is the *mean* share, not the median: the
-        magnetic cells carry real weight under ``joint`` and that is enough.
-        ``per_channel`` instead gives each of the many noise cells a floored
-        term of order one, and 100 cells saying "drive m to zero" overwhelm 12
-        saying anything else --- so it collapses the magnetization it was
-        meant to rescue. Switch to it only with a set whose magnetic cells are
-        not a small minority, and measure.
-    magnetization_weight : float
-        Weight of the **magnetization** term of the data loss, relative to the
-        density term's 1, on a spin-polarized target (``data.spin``). The
-        objective is ``charge + magnetization_weight * mag``, the two terms
-        the log's ``charge`` and ``mag`` columns print, each in the run's norm
-        and over the same denominator --- the whole :math:`(\rho, m)`
-        target's, which stays finite on a cell where :math:`m \equiv 0`.
-
-        A sum rather than a single norm over both channels, because a norm
-        scales each term's gradient by its share of the total: :math:`m` is a
-        few parts in :math:`10^6` of the norm on this project's platinum set,
-        and the magnetization was unlearnable for that reason alone. ``0.0``
-        trains the density alone and says so in the log; ignored outright by a
-        single-channel target, where the objective is unchanged to the last
-        bit.
-
-        Not to be confused with ``model.paw.magnetization_weight``, which
-        weights the magnetization *record set* of the per-atom occupancy
-        target. The two are the same idea at the two ends of the same
-        operator, and a bare ``--set magnetization_weight`` reaches this one.
-    magnetization_floor : float
-        :math:`\eta`: a floor on the magnetization term's denominator, as a
-        fraction of :math:`\lVert\rho\rVert`. The term is
-
-        .. math::
-
-            \lVert\delta m\rVert /
-            \sqrt{\lVert m\rVert^2 + (\eta\lVert\rho\rVert)^2},
-
-        Read only under ``spin_loss: per_channel``. Above the floor the term
-        is the honest relative error of :math:`m` and
-        below it the term measures a spurious predicted moment against a fixed
-        fraction of the density. The floor is needed because :math:`m` is
-        *exactly* zero on a large fraction of a real set --- 126 of the 432
-        CHON cells, with 239 more in the numerical noise at
-        :math:`\lVert m\rVert/\lVert\rho\rVert \le 10^{-4}` --- and an
-        unfloored per-channel relative error would divide by zero on a quarter
-        of them.
-
-        The default :math:`10^{-2}` sits above that noise band and below the
-        46 CHON cells that are genuinely magnetic, so those get a true
-        relative error while the dead ones get a bounded penalty for inventing
-        a moment. Lower it to chase weaker polarization, raise it if the
-        magnetization term dominates the early epochs.
-    physics_informed : dict
-        The physics-informed objective: the switch and the four constraint
-        weights, in one block.
-
-        .. code-block:: yaml
-
-           training:
-             physics_informed:
-               enable: auto            # auto | true | false
-               electron_count_weight: 1.0
-               positivity_weight: 0.0
-               von_weizsacker_weight: 0.0
-               euler_lagrange_weight: 0.0
-
-        The weights are on the **neural operator**, and all default to zero,
-        so the objective is the supervised baseline until one is set
-        deliberately.
-
-        .. important::
-
-           Not ``symbolic.physics``. This block constrains the *network* over
-           voxels; that one constrains a *candidate algebraic expression* over
-           probe points. Two of the names collide
-           (``positivity_weight``, ``von_weizsacker_weight``) and mean
-           different things in each, which is why they are two blocks and not
-           one with a prefix.
-
-        ``enable`` decides whether any of it is evaluated.
-
-        ``"auto"`` (the default) answers from the weights: the run is
-        physics-informed iff at least one of them is positive. That is what
-        every configuration written before this key existed already meant, so
-        nothing changes for one.
-
-        ``true`` **raises** when no weight is set. A run that declares
-        physics-informed training and silently optimizes the supervised
-        baseline is the failure the flag exists to prevent — its loss curve is
-        entirely ordinary and its report says "physics-informed".
-
-        ``false`` switches them off, and it is not only a change of objective.
-        Every constraint acts on *decoded* fields, so with any of them live the
-        training loop must, on every batch, copy the reference field to the
-        device, run the target transform's inverse over the prediction —
-        inside the autograd graph, so it is paid again on the backward pass and
-        its activations are held for the duration — run the input transform's
-        inverse too, and in delta-density mode copy the baseline across and add
-        it back twice. With the constraints off, all of that is work whose
-        result is discarded, and ``false`` (or ``"auto"`` with no weight set)
-        skips it rather than computing it.
-
-        **The weights.**
-
-        **The shape of the objective.**
-        :class:`~poraque.ml.losses.PhysicsInformedLoss` builds one scalar,
-
-        .. math::
-
-            \mathcal{L} = \mathcal{L}_{\rm data}(\hat y, y)
-                        + \sum_i w_i \, \mathcal{L}_i ,
-
-        and two structural decisions matter more than the individual terms.
-
-        *The data term acts on normalized fields; every physics term acts on
-        decoded ones.* A density is ``Asinh``- or ``Log``-transformed for the
-        fit, and :math:`\int\rho\,d^3r = N` is simply not true of the
-        transform's output. Constraints are statements about physics, not
-        about whatever normalization the training happens to use.
-
-        *Every term is dimensionless by construction* — each is divided by its
-        own scale. Without that, one weight could not serve a dataset spanning
-        a light semiconductor and a transition-metal oxide, whose raw
-        penalties differ by orders of magnitude.
-
-        The loss returns a dict rather than a scalar. ``total`` reports the
-        number the optimizer stepped on; the electron-count component is also
-        recorded separately as an unweighted diagnostic.
-
-        **Which term applies to which model.** They are not all available to
-        every operator, and a weight set for the wrong task is silently inert:
-
-        .. code-block:: text
-
-            weight                   ext2pseudo  ext2chg  pseudo2tau  chg2tau  needs
-            positivity_weight           x        -        x        x     nothing
-            electron_count_weight       x        x        -        -     N, or a reference rho
-            euler_lagrange_weight       x        -        -        -     v_ext (the input)
-            von_weizsacker_weight       -        -        x        -     rho   (the input)
-
-        ``positivity_weight`` — *both models.*
-
-        .. math::
-
-            \mathcal{L}_{+} = \frac{\langle\,\mathrm{ReLU}(-f)^2\,\rangle}
-                                   {\langle f^{2}\rangle}
-
-        Both :math:`\rho` and :math:`\tau` are non-negative *by definition*. An
-        unconstrained head can ring below zero near a nucleus, and a negative
-        density is not a small error but a meaningless one that propagates into
-        every energy integral. Prefer a ``Log`` output parameterization where
-        you can: it makes positivity **structural rather than penalized**, and
-        a constraint that cannot be violated beats one that is merely
-        expensive to violate.
-
-        ``electron_count_weight`` — *``ext2pseudo`` and ``ext2chg``.*
-
-        .. math::
-
-            \mathcal{L}_{N} = \left\langle \left(
-                \frac{\int\hat\rho\,d^3r - N}{N}\right)^{2}\right\rangle
-
-        Particle-number conservation is exact and is the cheapest useful
-        constraint there is — one reduction. It also fixes precisely the degree
-        of freedom a pointwise loss controls worst: a per-voxel MSE is nearly
-        indifferent to a uniform 2 % error in :math:`\rho`, but the
-        electrostatic terms are of order :math:`10^{4}` eV, so that 2 % moves a
-        total energy by tens of eV — by a different amount for every structure,
-        so it does not cancel.
-
-        :math:`N` comes from the pseudopotentials when available (exact),
-        otherwise from the integral of the reference density in the batch. That
-        fallback is what keeps the term active on an archive that ships
-        densities and no valence table — which is every public one.
-
-        With residual targets, both densities are decoded and the atomic
-        superposition is restored before integration. Only the total-charge
-        channel is constrained, never magnetization or PAW occupancy records.
-        This is a soft penalty; it does not impose an exact integral. The
-        validation score includes the weighted squared count error, and the
-        history records the mean absolute relative count error separately.
-
-        ``von_weizsacker_weight`` — *``pseudo2tau`` only.*
-
-        .. math::
-
-            \mathcal{L}_{\rm vW} =
-              \frac{\langle\,\mathrm{ReLU}(\tau_{\rm vW}[\rho] - \hat\tau)^2\,
-                    \rangle}{\langle \tau_{\rm vW}^{2}\rangle} ,
-              \qquad \tau_{\rm vW} = \frac{|\nabla\rho|^{2}}{8\rho}
-
-        The Hoffmann-Ostenhof bound :math:`\tau \ge \tau_{\rm vW}[\rho]` is a
-        **theorem**, not a heuristic, which is why it can be weighted
-        aggressively. It is **one-sided**: a prediction above the bound is
-        free, one below is penalized quadratically. And :math:`\tau_{\rm vW}`
-        is built from the network's own *input*, so it needs no extra labels.
-
-        This is the same physics as the Pauli enhancement factor
-        :math:`F = (\tau - \tau_{\rm vW})/\tau_{\rm TF}` the symbolic search
-        fits: the bound is exactly the statement :math:`F \ge 0`.
-
-        ``euler_lagrange_weight`` — *``ext2pseudo`` only, and the deepest of the
-        four.* At the ground state the orbital-free variational condition holds
-        pointwise,
-
-        .. math::
-
-            \frac{\delta T_s}{\delta\rho}(\mathbf r) + v_{\rm ext}(\mathbf r)
-            + v_{H}[\rho](\mathbf r) + v_{xc}[\rho](\mathbf r) = \mu ,
-
-        with a **constant** :math:`\mu`. Subtracting the cell average removes
-        :math:`\mu` — unknown and material-dependent — and leaves a residual
-        that must vanish for the exact density. Because it involves only
-        :math:`v_{\rm ext}` (the input) and :math:`\hat\rho` (the output), it
-        is **self-contained and needs no additional labels**: it asks whether
-        this density is the *ground state* of this potential, which a
-        supervised loss never asks.
-
-        Two caveats. :math:`\delta T_s/\delta\rho` defaults to a
-        Thomas-Fermi + :math:`\lambda\,`von-Weizsäcker surrogate with
-        :math:`\lambda = 1/9`, the second-order gradient expansion — an
-        approximation, so this term is softer than the other three. And
-        :math:`v_{xc}` is optional; omitting it weakens the constraint but does
-        not bias it, since what is enforced is the *constancy* of the sum.
-
-        Passing a trained ``pseudo2tau`` operator's :math:`\tau` as ``kinetic=``
-        to :func:`~poraque.ml.physics.euler_lagrange_residual` replaces the
-        surrogate with the **learned** functional, closing the loop between the
-        two models. Available from the library; the training script does not
-        wire it up.
-
-        **Using them.** Introduce one at a time against a measured baseline. A
-        badly scaled constraint degrades accuracy while looking principled, and
-        with all four on at once you cannot tell which one did it. Roughly in
-        order of confidence: ``electron_count`` (exact, cheap, fixes the
-        worst-controlled degree of freedom), ``von_weizsacker`` (a theorem,
-        one-sided, free), ``positivity`` (true, but a ``Log`` head is better),
-        ``euler_lagrange`` (the deepest statement, resting on an approximate
-        kinetic functional).
-
-        ``0.1`` puts a constraint an order of magnitude below the data term,
-        which is the intended balance: the physics guides, the data decides.
-
+class StructureInputConfig:
     """
+    Channels describing the structure, appended after the potential.
+
+    ``superposition`` adds ρ_sup, the isolated atoms superposed; ``elements``
+    adds one superposition per element (``auto``: every element of the
+    cache, or a list, or ``[]``). Built from ``data.atoms``.
+    """
+
+    superposition: bool = True
+    elements: object = "auto"
+
+
+@dataclass
+class OccupancyHeadConfig:
+    """
+    ``ext2chg``'s per-atom head: each atom's PAW augmentation occupancies.
+
+    ``weight`` multiplies the occupancy term against the field objective, in
+    training and in the choice of best epoch alike; ``magnetization_weight``
+    weights the magnetization's record set within it. ``readout_band`` (1/Å)
+    is what the head reads around each atom, ``auto`` 95 % of the coarsest
+    grid's Nyquist; ``neighbor_min`` (Å) the first of the ten radial centers
+    the neighbor expansion uses (0.6 also covers short CHON bonds).
+    """
+
+    weight: float = 1.0
+    magnetization_weight: float = 1.0
+    readout_band: object = "auto"
+    neighbor_min: float = 2.2
+
+
+@dataclass
+class Ext2chgConfig:
+    """
+    The density operator, V_ext → pseudo-density + PAW occupancies.
+
+    ``target: delta`` learns ρ − ρ_sup (the atoms superposed) and adds the
+    superposition back on output; ``full`` learns ρ itself.
+    ``occupancies: false`` trains the grid alone.
+    """
+
+    target: str = "delta"
+    structure_input: StructureInputConfig = block(StructureInputConfig)
+    model: ModelConfig = section(ModelConfig, width=64, layers=4, modes=16)
+    occupancies: OccupancyHeadConfig = block(OccupancyHeadConfig, on=True)
+
+    @property
+    def task_name(self):
+        """The internal task: ``ext2chg``, or ``ext2pseudo`` for the grid."""
+        return "ext2pseudo" if self.occupancies is None else "ext2chg"
+
+    @property
+    def delta_density(self):
+        return self.target == "delta"
+
+    def structure_input_settings(self, elements=None):
+        """``{superposition, elements}`` with ``auto`` resolved, or ``None``."""
+        if self.structure_input is None:
+            return None
+        chosen = self.structure_input.elements
+        if chosen == "auto":
+            if elements is None:
+                raise ValueError("ext2chg.structure_input.elements: auto "
+                                 "needs the training data's elements to "
+                                 "resolve.")
+            chosen = list(elements)
+        elif chosen is None:
+            chosen = []
+        return {"superposition": self.structure_input.superposition,
+                "elements": [str(element) for element in chosen]}
+
+    def paw_settings(self, readout_cache_mib=1024):
+        """The occupancy head's settings, as the operator builder wants them."""
+        head = self.occupancies or OccupancyHeadConfig()
+        return {"width": self.model.width, "modes": self.model.modes,
+                "n_layers": self.model.layers,
+                "readout_g_max": head.readout_band,
+                "occupancy_weight": head.weight,
+                "neighbor_min": head.neighbor_min,
+                "magnetization_weight": head.magnetization_weight,
+                "readout_cache_mib": readout_cache_mib}
+
+    def validate(self, path="ext2chg"):
+        _choice(self.target, ("delta", "full"), f"{path}.target")
+        self.model.validate(f"{path}.model")
+        if self.structure_input is not None:
+            _check(self.target == "delta",
+                   f"{path}.structure_input is built from the isolated atoms, "
+                   f"which only target: delta loads.")
+            _check(isinstance(self.structure_input.superposition, bool),
+                   f"{path}.structure_input.superposition must be true or "
+                   f"false.")
+            chosen = self.structure_input.elements
+            _check(chosen in ("auto", None) or (
+                isinstance(chosen, (list, tuple))
+                and all(isinstance(item, str) for item in chosen)),
+                f"{path}.structure_input.elements is {chosen!r}; expected "
+                f"'auto' or a list of element symbols.")
+            _check(self.structure_input.superposition or chosen not in
+                   (None, [], ()),
+                   f"{path}.structure_input has superposition false and no "
+                   f"elements: that is no channel at all.")
+        head = self.occupancies
+        if head is not None:
+            band = head.readout_band
+            _check(band == "auto" or (_is_number(band) and band > 0),
+                   f"{path}.occupancies.readout_band is {band!r}; expected "
+                   f"'auto' or a positive band in 1/Ang.")
+            for key in ("weight", "magnetization_weight"):
+                value = getattr(head, key)
+                _check(_is_number(value) and value >= 0,
+                       f"{path}.occupancies.{key} is {value!r}; expected a "
+                       f"non-negative number.")
+            _check(_is_number(head.neighbor_min)
+                   and 0 <= head.neighbor_min < 5.8,
+                   f"{path}.occupancies.neighbor_min is "
+                   f"{head.neighbor_min!r}; expected a length from 0 "
+                   f"(inclusive) to 5.8 Ang (exclusive).")
+
+
+@dataclass
+class OccupancyInputConfig:
+    """
+    ``chg2tau``'s per-atom input: each atom's occupancies written as fields.
+
+    ``channels`` is how many field channels the records are written into, by
+    one learned map per element and angular momentum.
+    """
+
+    channels: int = 8
+
+
+@dataclass
+class Chg2tauConfig:
+    """
+    The kinetic operator, pseudo-density + PAW occupancies → τ.
+
+    ``head: pauli`` predicts τ = τ_vW[ρ] + s·softplus(f), which makes
+    τ ≥ τ_vW structural, with the scale ``s`` fitted on the training split
+    and learned; ``plain`` predicts τ directly. ``occupancies: false`` trains
+    on the grid alone.
+    """
+
+    head: str = "plain"
+    model: ModelConfig = section(ModelConfig)
+    occupancies: OccupancyInputConfig = block(OccupancyInputConfig, on=True)
+
+    @property
+    def task_name(self):
+        """The internal task: ``chg2tau``, or ``pseudo2tau`` for the grid."""
+        return "pseudo2tau" if self.occupancies is None else "chg2tau"
+
+    @property
+    def pauli_residual(self):
+        return self.head == "pauli"
+
+    @property
+    def occupancy_channels(self):
+        return (self.occupancies or OccupancyInputConfig()).channels
+
+    def validate(self, path="chg2tau"):
+        _choice(self.head, ("plain", "pauli"), f"{path}.head")
+        self.model.validate(f"{path}.model")
+        if self.occupancies is not None:
+            _check(_is_count(self.occupancies.channels),
+                   f"{path}.occupancies.channels must be a positive integer.")
+            _check(self.head == "plain",
+                   f"{path}.head: pauli is implemented for the grid alone; "
+                   f"set occupancies: false, or head: plain.")
+
+
+# ---------------------------------------------------------------------- #
+# training, fine_tuning, runtime, report
+# ---------------------------------------------------------------------- #
+@dataclass
+class OptimizerConfig:
+    """AdamW (or Adam, SGD) on a cosine schedule, gradient norm clipped at 1."""
+
+    name: str = "adamw"
+    learning_rate: float = 2e-3
+    weight_decay: float = 1e-4
+
+
+@dataclass
+class LossConfig:
+    """
+    The objective: an L² or H¹ norm, absolute or relative per sample.
+
+    ``sobolev_weight`` weights the gradient term of the two H¹ norms.
+    """
+
+    norm: str = "relative_l2"
+    sobolev_weight: float = 0.1
+
+
+@dataclass
+class SpinLossConfig:
+    """
+    How the two channels of a spin target are combined.
+
+    ``joint`` divides both by the norm of the whole (ρ, m) target;
+    ``per_channel`` divides each by its own, floored at
+    ``magnetization_floor``·‖ρ‖, and weights m by ``magnetization_weight``.
+    The two weights are read under ``per_channel`` only.
+    """
+
+    mode: str = "joint"
+    magnetization_weight: float = 1.0
+    magnetization_floor: float = 0.01
+
+
+@dataclass
+class ValidationConfig:
+    """
+    The held-out data and what is done with it.
+
+    ``fraction`` of the structures is held out (0 trains on everything);
+    ``every`` epochs it is evaluated; ``patience`` evaluations' worth of
+    epochs without improvement stops the run and restores the best weights
+    (0 never stops). ``kfold: K`` cross-validates over K folds instead.
+    """
+
+    fraction: float = 0.2
+    every: int = 10
+    patience: int = 300
+    kfold: int = None
+
+
+@dataclass
+class PhysicsConfig:
+    r"""
+    Physics penalties on the predicted fields, weighted against the data.
+
+    ``electron_count``: ∫ρ = N; ``positivity``: ρ, τ ≥ 0;
+    ``von_weizsacker``: :math:`\tau \ge |\nabla\rho|^2/8\rho`. All zero
+    switches the block off.
+    """
+
+    electron_count: float = 0.0
+    positivity: float = 0.0
+    von_weizsacker: float = 0.0
+
+
+@dataclass
+class OptimizationConfig:
+    """How both operators are trained."""
 
     epochs: int = 500
     batch_size: int = 4
     samples_per_step: int = 0
-    learning_rate: float = 2e-3
-    weight_decay: float = 1e-4
-    optimizer: str = "adamw"
-    scheduler: str = "cosine"
-    grad_clip: float = 1.0
-    valid_fraction: float = 0.2
-    enable_kfold: bool = False
-    k_folds: int = 5
-    eval_epoch: int = 10
-    early_stopping: int = 300
-    seed: int = 42
-    init_seed: int = None
-    device: str = "auto"
-    strict_device: bool = False
-    distributed: str = "auto"
-    distributed_timeout: float = 30.0
-    num_workers: int = 0
-    pin_memory: str = "auto"
-    tf32: bool = True
-    loss: str = "relative_l2"
-    sobolev_weight: float = 0.1
-    spin_loss: str = "joint"
-    magnetization_weight: float = 1.0
-    magnetization_floor: float = 1e-2
-    physics_informed: dict = field(default_factory=lambda: {
-        "enable": "auto",
-        "electron_count_weight": 0.0,
-        "positivity_weight": 0.0,
-        "von_weizsacker_weight": 0.0,
-        "euler_lagrange_weight": 0.0,
-    })
+    optimizer: OptimizerConfig = section(OptimizerConfig)
+    loss: LossConfig = section(LossConfig)
+    spin: SpinLossConfig = section(SpinLossConfig)
+    validation: ValidationConfig = section(ValidationConfig)
+    physics: PhysicsConfig = section(PhysicsConfig)
+
+    #: No longer choices.
+    SCHEDULER = "cosine"
+    GRAD_CLIP = 1.0
 
     @property
-    def physics_informed_enabled(self):
-        """
-        ``training.physics_informed.enable``: ``"auto"``, ``True`` or ``False``.
-
-        Unstated is ``"auto"``, which is what every configuration written
-        before the switch existed already meant. Resolving what ``"auto"``
-        comes out as is :class:`~poraque.ml.losses.PhysicsInformedLoss`'s job,
-        not this one --- it is the object that holds the weights, so it is the
-        only place the answer cannot disagree with them.
-        """
-        enable, _ = split_enable_block(
-            self.physics_informed, "training.physics_informed",
-            PHYSICS_INFORMED_KEYS, enable_values=("auto", True, False))
-        return "auto" if enable is None else enable
+    def kfold_enabled(self):
+        return self.validation.kfold is not None
 
     def physics_weights(self):
-        """
-        The four constraint weights, every one of them present.
+        """The four weights :class:`~poraque.ml.losses.PhysicsInformedLoss` takes."""
+        return {"electron_count_weight": float(self.physics.electron_count),
+                "positivity_weight": float(self.physics.positivity),
+                "von_weizsacker_weight": float(self.physics.von_weizsacker),
+                "euler_lagrange_weight": 0.0}
 
-        Returns
-        -------
-        dict
-            ``electron_count_weight``, ``positivity_weight``,
-            ``von_weizsacker_weight`` and ``euler_lagrange_weight``, defaulting
-            to zero. Complete rather than as-stated, unlike
-            :meth:`ModelConfig.equivariant_kwargs`: a weight has one default
-            and it is zero, so filling it in here cannot overrule a resolution
-            that happens later.
-        """
-        _, stated = split_enable_block(
-            self.physics_informed, "training.physics_informed",
-            PHYSICS_INFORMED_KEYS, enable_values=("auto", True, False))
-        return {key: float(stated.get(key, 0.0))
-                for key in PHYSICS_INFORMED_KEYS}
+    @property
+    def physics_enabled(self):
+        return any(self.physics_weights().values())
 
-
-@dataclass
-class OutputConfig:
-    """
-    Where a run's artifacts go, and which of them are produced.
-
-    One directory per model
-    -----------------------
-    Everything a run writes lives under ``<root>/<name>/``::
-
-        models/pt_w16_m8_l3/
-            pt_w16_m8_l3.poraque        the weights
-            log/                     the training log, the metrics JSON,
-                                     and the resolved config
-            plots/                   loss curves, parity, slices, histograms
-            report/                  the generated PDF
-
-    A trained model is not one file: it is weights plus the numbers that say
-    how good they are, the figures behind those numbers, and the configuration
-    that produced them. Scattering those across ``models/``, ``logs/``,
-    ``results/plots/`` and ``reports/`` made them four things to keep in step,
-    and made "delete this experiment" or "send me that model" a job of
-    collecting fragments by filename. Here they arrive and leave together.
-
-    ``root`` is the only path setting; ``name`` (from ``task.name``) is the
-    only thing that distinguishes two runs.
-
-    Attributes
-    ----------
-    root : str or None
-        Parent directory for every run folder. ``null`` disables **all**
-        output — no weights, no log, no figures, no report — which is what a
-        smoke test wants and nothing else does.
-    write_log : bool
-        Write ``log/<name>.log``, ``log/<name>.json`` and the resolved
-        ``log/<name>_config.yaml``. On by default: the JSON is what
-        ``poraque-committee --against`` reads, and the archived config is what
-        makes the run repeatable after the source config is edited.
-    plot_figures : bool
-        Render the figures into ``plots/``. Off costs nothing else — the
-        metrics are computed either way — and saves the matplotlib time on a
-        long sweep.
-    write_pdf_report : bool
-        Typeset the PDF into ``report/``. Needs a LaTeX toolchain; without one
-        the source ``.tex`` is written instead and the run says so.
-    checkpoint : bool
-        Write the ``.poraque``. Off only makes sense for a run whose purpose is
-        the metrics, such as a k-fold estimate.
-    log, json : str or None
-        Explicit override for the log and metrics paths. ``null`` (the
-        default) puts them under the run folder as described above. Set them
-        only to write somewhere the layout does not cover.
-    plot_format : str
-        Image format for saved figures.
-    dpi : int
-        Raster resolution for saved figures.
-    save_raw_plot_data : bool
-        Write the numbers behind each figure beside it, so a plot can be
-        redrawn for publication without re-running the model. Off by default:
-        it is a few hundred kilobytes per run and most runs never need it.
-
-        Each file takes the **stem of the figure it belongs to**, so the
-        pairing is visible in a directory listing::
-
-            plots/ext2pseudo_loss_curves.png     plots/ext2pseudo_loss_curves.csv
-            plots/ext2pseudo_parity.png          plots/ext2pseudo_parity.csv
-            plots/ext2pseudo_s000_field_slice.png
-            plots/ext2pseudo_s000_field_slice.npz
-
-        Tabular figures get a CSV; the slice figure gets a compressed ``.npz``,
-        because what it draws are three 2D arrays and a CSV of a 108x108 grid
-        is neither smaller nor easier to read back.
-
-        Requires ``plot_figures``: the data is written by the figure methods
-        as they draw, which is what guarantees the file and the image show the
-        same numbers rather than two independent computations of them.
-    """
-
-    root: str = "models"
-    write_log: bool = True
-    plot_figures: bool = True
-    write_pdf_report: bool = True
-    checkpoint: bool = True
-    log: str = None
-    json: str = None
-    plot_format: str = "png"
-    dpi: int = 200
-    save_raw_plot_data: bool = False
+    def validate(self, path="training"):
+        for key in ("epochs", "batch_size"):
+            _check(_is_count(getattr(self, key)),
+                   f"{path}.{key} must be a positive integer.")
+        _check(_is_count(self.samples_per_step, 0),
+               f"{path}.samples_per_step must be a non-negative integer.")
+        _choice(self.optimizer.name, ("adamw", "adam", "sgd"),
+                f"{path}.optimizer.name")
+        _check(_is_number(self.optimizer.learning_rate)
+               and self.optimizer.learning_rate > 0,
+               f"{path}.optimizer.learning_rate must be positive.")
+        _choice(self.loss.norm, ("absolute_l2", "relative_l2", "absolute_h1",
+                                 "relative_h1"), f"{path}.loss.norm")
+        _choice(self.spin.mode, ("joint", "per_channel"), f"{path}.spin.mode")
+        _check(_is_number(self.validation.fraction)
+               and 0 <= self.validation.fraction < 1,
+               f"{path}.validation.fraction must be in [0, 1).")
+        _check(_is_count(self.validation.every),
+               f"{path}.validation.every must be a positive integer.")
+        _check(_is_count(self.validation.patience, 0),
+               f"{path}.validation.patience must be a non-negative integer.")
+        _check(self.validation.kfold is None
+               or _is_count(self.validation.kfold, 2),
+               f"{path}.validation.kfold is {self.validation.kfold!r}; "
+               f"expected null or a number of folds of at least 2.")
+        for key in ("electron_count", "positivity", "von_weizsacker"):
+            value = getattr(self.physics, key)
+            _check(_is_number(value) and value >= 0,
+                   f"{path}.physics.{key} must be a non-negative weight.")
 
 
 @dataclass
-class SymbolicConfig:
-    r"""
-    Symbolic distillation: fit a closed-form expression to what was learned.
+class LoRAConfig:
+    """Rank-``rank`` adapters on the dense lifting and projection layers."""
 
-    A Fourier Neural Operator is accurate and opaque. Symbolic regression
-    searches the space of short algebraic expressions for one that reproduces
-    the same mapping, trading a little accuracy for something that can be read,
-    published and checked against known physics.
-
-    .. warning::
-       The features are **semi-local** — :math:`\rho` and its derivatives at a
-       point — so the search can only recover a semi-local functional. The
-       non-local part of what the operator learned is outside the hypothesis
-       space by construction and will show up as irreducible residual, not as a
-       failure of the search. A poor fit is therefore evidence *about the
-       physics*, not only about the run.
-
-    Attributes
-    ----------
-    enable : bool
-        Run the search after training. Off by default: it is minutes to hours
-        of CPU on top of the fit, and it needs an extra dependency.
-
-        Spelled ``enable`` since 26.9.8, matching ``fine_tuning.enable`` and
-        the ``enable`` inside every other optional block. It was
-        ``enable_symbolic_distillation``, which restated its own section in its
-        own name — ``symbolic.enable_symbolic_distillation`` — and was the
-        longest key in the schema, wide enough to set the configuration
-        table's column width in the PDF report.
-    target : str
-        ``"model"`` distils the trained operator's own predictions — what the
-        network learned, faithful to it including its errors. ``"reference"``
-        fits the DFT data directly, which is plain symbolic regression against
-        ground truth and answers a different question.
-    features : str
-        The **input variables**. ``template`` is the independent second knob
-        and selects what is fitted *against* them.
-
-        ``"gga"`` gives the density together with its dimensionless reduced
-        derivatives — the reduced gradient
-        :math:`p = |\nabla\rho|/(2k_F\rho)` and reduced Laplacian
-        :math:`q = \nabla^2\rho/(4k_F^2\rho)`, with
-        :math:`k_F = (3\pi^2\rho)^{1/3}`. These are the GGA and meta-GGA
-        variables a semi-local kinetic functional is written in.
-
-        ``"reduced"`` gives :math:`(p, q)` alone. With ``template: pauli``
-        this is the form the literature uses, in which Thomas-Fermi is
-        :math:`F = 1` and von Weizsäcker is :math:`F = 0`, and every constant
-        to be found is order unity. :math:`\rho` is dropped on purpose:
-        :math:`p` and :math:`q` are invariant under the coordinate scaling
-        that fixes :math:`T_s`, so a dimensionless :math:`F` cannot depend on
-        the density, and offering it only gives the search a way to fit the
-        particular densities in the dataset.
-
-        ``"raw"`` gives :math:`(\rho, |\nabla\rho|, \nabla^2\rho)`:
-        dimensional, kept for checking the reduced forms against something
-        unprocessed.
-
-        ``"enhancement"`` is a kept alias for ``"reduced"`` with
-        ``template: pauli``, and **overrides** whatever ``template`` is set
-        beside it. Prefer the explicit pair in a new config.
-    template : str
-        Factorization of the target before the search sees it.
-
-        ``"pauli"`` fits the **Pauli enhancement factor**
-
-        .. math::
-
-            F = \frac{\tau - \tau_{\rm vW}}{\tau_{\rm TF}},
-            \qquad
-            \tau = \tau_{\rm vW} + \tau_{\rm TF}\,F,
-
-        which is the well-posed target of orbital-free DFT:
-        :math:`\tau_{\rm vW} = |\nabla\rho|^2/8\rho` is known in closed form,
-        and :math:`\tau - \tau_{\rm vW} \ge 0` by Hoffmann-Ostenhof. Leaving
-        :math:`\tau_{\rm vW}` in the target means fitting a quantity that is
-        mostly already known, and near the von Weizsäcker limit it means
-        fitting a near-cancellation between two large numbers.
-
-        ``"thomas_fermi"`` fits the plain ratio :math:`F = \tau/\tau_{\rm TF}`.
-        ``"none"`` fits the target directly.
-
-        A template *gives away* the part of the physics that is already known,
-        so the search works on the part that is not — and every constant it
-        must find becomes order unity.
-    epsilon : float
-        Vacuum threshold in atomic units. Denominators are clamped at it and
-        voxels at or below it are dropped, because :math:`p` and :math:`q` in
-        vacuum are ratios of two vanishing numbers — noise with a plausible
-        magnitude, which corrupts a fit more quietly than a gap would.
-    constraints : dict
-        Per-operator limits on argument complexity, passed to the engine.
-        ``{"^": [-1, 1]}`` by default: the base is unconstrained (``-1``) and
-        the **exponent** is held to complexity 1.
-
-        Unconstrained exponents are the main source of nonsense in a power
-        operator — a fractional power of a negative quantity leaves the reals,
-        and an exponent that is itself a subtree is unreadable and almost never
-        physical. Real functionals have simple exponents: ``5/3``, ``4/3``,
-        ``2``.
-    physics : dict
-        Physics constraints on the **symbolic search**, and nothing else.
-
-        .. important::
-
-           This is not ``training.physics_informed``. That block
-           constrains the *neural
-           operator* — charge conservation, positivity of a predicted density,
-           the Euler-Lagrange residual — and its terms are added to a training
-           loss over voxels. This block constrains a *candidate algebraic
-           expression* for the Pauli enhancement factor, and its terms are
-           added to a symbolic-regression fitness over probe points.
-
-           They are separate objectives on separate objects, evaluated at
-           different times by different engines. Two of the names collide
-           (``positivity_weight``, ``von_weizsacker_weight``) and mean
-           different things in each, which is exactly why they live in
-           separate blocks rather than sharing a prefix.
-
-        ``enable``
-            Penalize violations **inside** the evolutionary loop rather than
-            filtering the front afterwards. On by default.
-
-        Filtering after a run only measures how few candidates were physical;
-        by then the populations have already spent their budget converging on
-        forms that must be discarded. With this on, the engine's objective
-        becomes
-
-        .. math::
-
-            \mathcal{L} = \mathcal{L}_{\rm data}
-            + w_{+}\,\frac1n\sum_i \min(F_i, 0)^2
-            + \sum_{\ell} w_\ell\,\frac{|F(\mathbf x_\ell) - t_\ell|}{s_\ell},
-
-        with the second term evaluated on the batch and the third on synthetic
-        probe points — :math:`(p, q) = (0, 0)` for Thomas-Fermi and
-        :math:`(p_\infty, 0)` for von Weizsäcker.
-
-        Which terms are active depends on what the run can express, and the
-        log says which:
-
-        - **positivity** always. :math:`\tau \ge 0`, and
-          :math:`\tau - \tau_{\rm vW} \ge 0` by Hoffmann-Ostenhof, so a
-          negative prediction is unphysical under every template.
-        - **both limits** under ``template: pauli`` or
-          ``template: thomas_fermi``, provided :math:`p` and :math:`q` are
-          among the variables.
-        - **neither limit** under ``template: none``, where the fitted
-          quantity is :math:`\tau` rather than an enhancement factor, or under
-          ``features: raw``, where there is no :math:`p` to take a limit in.
-          They are still checked after the search, as they always were.
-
-        .. note::
-           The ``loss`` column of the reported front is then this
-           **constrained** objective and is not comparable with an
-           unconstrained run's. The :math:`R^2` and relative :math:`L^2` are
-           computed separately from the expression itself and are unaffected.
-
-        ``positivity_weight``, ``thomas_fermi_weight``, ``von_weizsacker_weight``
-            Penalty weights, four orders of magnitude above a converged data
-            term by default. These are constraints, not regularizers: the
-            intent is that no accuracy gain can buy a violation. Each limit
-            carries its weight once, however many probe points express it.
-
-        ``p_infinity``
-            The reduced gradient standing in for :math:`p \to \infty` in the
-            von Weizsäcker probe. Large enough that no smooth interpolating
-            form is still in its crossover region, and small enough that
-            :math:`p^{8/3}` stays far inside the range of the 32-bit float the
-            engine searches in.
-    data_loss : {"mse", "mae"}
-        The unpenalized part of that objective — the data term, not a
-        constraint, which is why it stays here rather than under ``physics``.
-        ``mae`` is the more robust choice on a density whose tails span orders
-        of magnitude.
-    unary_operations, binary_operations : list of str
-        The operator alphabet handed to the engine. Keep it small: the search
-        space grows combinatorially, and an operator that cannot appear in the
-        answer only dilutes the population. ``/`` and ``log`` are the usual
-        sources of singularities on a density that approaches zero.
-    iterations : int
-        Search iterations. The single biggest quality/time knob.
-    population_size, populations : int
-        Individuals per population, and how many run in parallel.
-    max_depth, max_size : int
-        Ceilings on expression depth and node count — the parsimony that keeps
-        the result readable rather than a fitted polynomial in disguise.
-    parsimony : float
-        Penalty per node in the fitness. Higher gives shorter, worse-fitting
-        expressions.
-    n_samples : int
-        Voxels sampled across the dataset. A single 32³ structure is already
-        32 768 points and the search cost is linear in them, so the default
-        trades a negligible amount of statistics for a tractable run.
-    seed : int
-        Seeds the sampling always, and the search only under
-        ``deterministic``.
-    deterministic : bool
-        Make the search reproducible. The engine requires **serial**
-        evaluation for this, so it costs the parallelism across populations —
-        roughly a factor of ``populations`` in wall-clock.
-
-        Off by default because a single search is one sample of a stochastic
-        process either way, and reading one expression as *the* answer is the
-        mistake this setting can otherwise encourage. Turn it on to reproduce
-        a specific result, not to make the result more trustworthy.
-
-        With it off, ``seed`` is deliberately **not** passed to the engine: a
-        seed that cannot deliver reproducibility is a promise the run does not
-        keep, and the engine warns about exactly that.
-    """
-
-    enable: bool = False
-    target: str = "model"
-    features: str = "gga"
-    template: str = "none"
-    epsilon: float = 1e-8
-    constraints: dict = field(default_factory=lambda: {"^": [-1, 1]})
-    data_loss: str = "mse"
-    physics: dict = field(default_factory=lambda: {
-        "enable": True,
-        "positivity_weight": 1.0e2,
-        "thomas_fermi_weight": 1.0e2,
-        "von_weizsacker_weight": 1.0e2,
-        "p_infinity": 1.0e6,
-    })
-    unary_operations: list = field(
-        default_factory=lambda: ["exp", "log", "sqrt", "abs"])
-    binary_operations: list = field(
-        default_factory=lambda: ["+", "-", "*", "/", "^"])
-    iterations: int = 40
-    population_size: int = 33
-    populations: int = 15
-    max_depth: int = 10
-    max_size: int = 30
-    parsimony: float = 0.0032
-    n_samples: int = 4000
-    seed: int = 0
-    deterministic: bool = False
+    rank: int = 8
+    alpha: float = 16.0
+    dropout: float = 0.0
 
 
 @dataclass
 class FineTuningConfig:
-    r"""
-    Adapt a trained operator to a narrower class of materials.
+    """
+    Start from a trained checkpoint instead of a fresh initialization.
 
-    A model fitted across a broad dataset is a good *starting point* for a
-    specific family, and a poor substitute for one. Fine-tuning continues that
-    fit on the smaller set at a much lower learning rate, keeping what the base
-    model learned about the general map while letting it specialize.
-
-    .. important::
-       The **normalizations come from the checkpoint**, not from the new
-       dataset. Refitting them would rescale the network's inputs out from
-       under weights that were trained against the old scale, which destroys
-       most of what the pre-training bought. It also means the new data must
-       fall in a comparable range: fine-tuning on a family whose densities are
-       an order of magnitude away is transfer learning in name only.
-
-    Attributes
-    ----------
-    enable : bool
-        Start from ``pretrained_checkpoint`` instead of a fresh
-        initialization.
-    pretrained_checkpoint : str
-        Bundle to start from. The **architecture is read from its tensors**,
-        so the ``model`` section of this config is ignored for the shape of
-        the network — a remembered hyper-parameter that disagreed with the
-        weights could only load mismatched tensors.
-    learning_rate : float
-        Optimizer step for the fine-tune, replacing ``training.learning_rate``.
-        Much smaller by default: the base learning rate would walk the weights
-        away from the solution being adapted before the small dataset could
-        constrain them.
-    freeze_lifting_layers : bool
-        Hold the input lifting layer fixed and train the rest. The lifting map
-        is the most general part of the network — it embeds the input field
-        before any operator acts — so it is the part least in need of
-        specialization, and freezing it leaves fewer parameters for a small
-        dataset to overfit.
-
-        The projection head is deliberately *not* frozen: it decodes to
-        physical units, which is exactly what differs between material
-        families.
-
-        Ignored when ``use_lora`` is on, which freezes everything.
-    use_lora : bool
-        **Low-Rank Adaptation**: freeze every trained weight and learn a
-        rank-:math:`r` correction :math:`W' = W + \frac{\alpha}{r}BA` beside
-        the dense (:math:`1\times1\times1`) lifting and projection
-        convolutions.
-
-        On this project's shipped model that is **1 320 trainable parameters
-        against 3 152 353 frozen — 0.042 %** — so the optimizer state and the
-        saved file shrink by three orders of magnitude (12.0 MB to 7.6 kB) and
-        the fine-tune fits where a full one does not.
-
-        :math:`B` starts at zero, so the adapted model *is* the base model
-        until the first step: a fine-tune that began anywhere else would have
-        discarded some of what it set out to adapt.
-
-        .. warning::
-
-           The spectral weights are **not** adapted. They hold ~99.8 % of the
-           parameters, but a rank-:math:`r` factorization of a 5-index complex
-           kernel is a choice of which axes to pair rather than one
-           decomposition, and adapting them would also stop being cheap. What
-           LoRA says here is *keep the learned operator, re-fit how fields
-           enter and leave it* — so a family whose operator genuinely differs
-           is out of its reach, and the honest answer there is a full
-           fine-tune. It buys memory, not generality.
-    lora_rank : int
-        :math:`r`, the rank of the correction. Cost and capacity are both
-        linear in it.
-    lora_alpha : float
-        Scaling numerator; the update is multiplied by ``lora_alpha /
-        lora_rank``, which is what keeps a learning rate roughly transferable
-        between ranks.
-    lora_dropout : float
-        Dropout on the adapter's input. Off by default.
+    Normalizations come from ``checkpoint`` and are never refitted.
+    ``freeze_lifting`` holds the input embedding fixed; ``lora`` freezes every
+    weight and learns low-rank adapters instead.
     """
 
-    enable: bool = False
-    pretrained_checkpoint: str = "models/poraque_models" + BUNDLE_SUFFIX
+    checkpoint: str = "models/poraque_models/poraque_models" + BUNDLE_SUFFIX
     learning_rate: float = 1e-5
-    freeze_lifting_layers: bool = False
-    use_lora: bool = False
-    lora_rank: int = 8
-    lora_alpha: float = 16.0
-    lora_dropout: float = 0.0
+    freeze_lifting: bool = False
+    lora: LoRAConfig = block(LoRAConfig)
+
+    # What the fine-tuning code calls these.
+    @property
+    def pretrained_checkpoint(self):
+        return self.checkpoint
+
+    @property
+    def use_lora(self):
+        return self.lora is not None
 
 
+@dataclass
+class RuntimeConfig:
+    """
+    The hardware, which changes how fast a run is and never what it computes.
+
+    ``device``: auto (CUDA, then MPS, then CPU) or a backend;
+    ``strict_device`` refuses a fallback. ``distributed: auto`` forms a DDP
+    group when Slurm or torchrun describes one. ``workers``: processes that
+    build the cache (``auto``, a count, or ``0``); ``loader_workers``: DataLoader processes.
+    ``tf32``: TensorFloat-32 on Ampere and later. ``readout_cache_mib``:
+    device memory for ``ext2chg``'s readout kernels.
+    """
+
+    device: str = "auto"
+    strict_device: bool = False
+    distributed: str = "auto"
+    workers: object = "auto"
+    loader_workers: int = 0
+    tf32: bool = True
+    readout_cache_mib: int = 1024
+
+    #: No longer choices.
+    PIN_MEMORY = "auto"
+    DISTRIBUTED_TIMEOUT = 30.0
+
+    def validate(self, path="runtime"):
+        _choice(self.distributed, ("auto", "off"), f"{path}.distributed")
+        _check(_is_count(self.loader_workers, 0),
+               f"{path}.loader_workers must be a non-negative integer.")
+        _check(_is_number(self.readout_cache_mib)
+               and self.readout_cache_mib >= 0,
+               f"{path}.readout_cache_mib must be a non-negative number.")
+
+
+@dataclass
+class ReportConfig:
+    """
+    Figures and the PDF, under ``<run.output>/<run.name>/``.
+
+    ``raw_data`` writes the numbers behind every figure beside it.
+    """
+
+    figures: bool = True
+    pdf: bool = True
+    format: str = "png"
+    dpi: int = 200
+    raw_data: bool = False
+
+
+# ---------------------------------------------------------------------- #
+# The run
+# ---------------------------------------------------------------------- #
 @dataclass
 class TrainingConfig:
     """
     Complete definition of a training run.
 
-    Parameters
-    ----------
-    task : TaskConfig
-        What to train, and the name every output file is built from.
-    data, model, training, output, symbolic : dataclass
-        The five setting groups.
-
     Examples
     --------
-    >>> config = TrainingConfig.from_yaml("configs/train.yaml")  # doctest: +SKIP
-    >>> config.model.width                                              # doctest: +SKIP
-    16
+    >>> config = TrainingConfig.from_yaml("configs/train_simple.yaml")  # doctest: +SKIP
+    >>> config.task_names()                                             # doctest: +SKIP
+    ['ext2chg', 'chg2tau']
     """
 
-    task: TaskConfig = field(default_factory=TaskConfig)
-    data: DataConfig = field(default_factory=DataConfig)
-    model: ModelConfig = field(default_factory=ModelConfig)
-    training: TrainingConfig_ = field(default_factory=TrainingConfig_)
-    output: OutputConfig = field(default_factory=OutputConfig)
-    symbolic: SymbolicConfig = field(default_factory=SymbolicConfig)
-    fine_tuning: FineTuningConfig = field(default_factory=FineTuningConfig)
+    run: RunConfig = section(RunConfig)
+    data: DataConfig = section(DataConfig)
+    ext2chg: Ext2chgConfig = block(Ext2chgConfig)
+    chg2tau: Chg2tauConfig = block(Chg2tauConfig)
+    training: OptimizationConfig = section(OptimizationConfig)
+    fine_tuning: FineTuningConfig = block(FineTuningConfig)
+    runtime: RuntimeConfig = section(RuntimeConfig)
+    report: ReportConfig = section(ReportConfig)
 
-    # Order matters twice: it is the order the run header prints, and the order
-    # a bare (undotted) override is resolved against.
-    _SECTIONS = {"task": TaskConfig, "data": DataConfig, "model": ModelConfig,
-                 "training": TrainingConfig_, "output": OutputConfig,
-                 "symbolic": SymbolicConfig, "fine_tuning": FineTuningConfig}
+    #: The order the sections print in.
+    SECTIONS = ("run", "data", "ext2chg", "chg2tau", "training",
+                "fine_tuning", "runtime", "report")
 
     # ------------------------------------------------------------------ #
     # Construction
     # ------------------------------------------------------------------ #
-    @staticmethod
-    def _task_section(value):
-        """
-        Read ``task`` in either spelling.
-
-        It began as a bare string and became a section when the run gained a
-        ``name``. Both are accepted permanently rather than transitionally:
-        ``task: ext2pseudo`` is the shorter and clearer form when the defaults for
-        everything else will do, and every config written before the section
-        existed keeps working unchanged.
-        """
-        if value is None:
-            return {}
-        if isinstance(value, str):
-            return {"type": value}
-        return dict(value)
-
     @classmethod
     def from_dict(cls, mapping):
         """
-        Build a config from a nested mapping, validating every key.
-
-        Parameters
-        ----------
-        mapping : dict
-            Parsed YAML contents.
-
-        Returns
-        -------
-        TrainingConfig
+        Build and validate a configuration from a plain mapping.
 
         Raises
         ------
         ValueError
-            On an unknown top-level key or an unknown key inside a section.
-            Silent acceptance would let a typo change nothing while appearing
-            to change something.
+            On an unknown or retired section or key, naming the replacement
+            where there is one, and on any value out of range.
         """
         mapping = dict(mapping or {})
-        known = set(cls._SECTIONS)
-        unknown = sorted(set(mapping) - known)
+        retired = sorted(set(mapping) & set(RETIRED_SECTIONS))
+        if retired:
+            raise ValueError(
+                "Removed configuration section(s): "
+                + "; ".join(f"'{name}' -- {RETIRED_SECTIONS[name]}"
+                            for name in retired) + ".")
+        unknown = sorted(set(mapping) - set(cls.SECTIONS))
         if unknown:
-            raise ValueError(
-                f"Unknown configuration section(s): {unknown}. "
-                f"Expected any of {sorted(known)}."
-            )
-        mapping["task"] = cls._task_section(mapping.get("task"))
-
-        sections = {}
-        for name, section_class in cls._SECTIONS.items():
-            values = dict(mapping.get(name) or {})
-            valid = {f.name for f in fields(section_class)}
-            bad = sorted(set(values) - valid)
-            if bad:
-                # A key that was removed rather than never existing gets its
-                # replacement named. "Unknown key: root" beside a list of
-                # twenty valid ones says the config is wrong; it does not say
-                # what to write instead, and this one has a precise answer.
-                retired = [f"'{key}' -> {replacement}"
-                           for key, replacement in
-                           ((key, retired_replacement(name, key))
-                            for key in bad)
-                           if replacement]
-                raise ValueError(
-                    f"Unknown key(s) in section '{name}': {bad}. "
-                    + (f"Replaced: {'; '.join(retired)}. " if retired else "")
-                    + f"Valid keys: {sorted(valid)}."
-                )
-            sections[name] = section_class(**values)
-
-        config = cls(**sections)
-        config.validate_blocks()
+            raise ValueError(f"Unknown configuration section(s): {unknown}. "
+                             f"Expected any of {list(cls.SECTIONS)}.")
+        known = {entry.name: entry for entry in fields(cls)}
+        config = cls(**{name: _value(known[name], value, name)
+                        for name, value in mapping.items()})
+        config.validate()
         return config
-
-    #: Every ``{enable: ..., <settings>}`` block in the schema: where it lives,
-    #: the settings it admits, and what ``enable`` may be. One table rather
-    #: than four call sites, so a new block is registered rather than
-    #: hand-validated -- and so :meth:`validate_blocks` cannot check three of
-    #: them and forget the fourth.
-    ENABLE_BLOCKS = (
-        ("model", "equivariant", EQUIVARIANT_SETUP_KEYS, (True, False)),
-        ("model", "paw", PAW_SETUP_KEYS, (True, False)),
-        ("model", "structure_input", STRUCTURE_INPUT_KEYS, (True, False)),
-        ("training", "physics_informed", PHYSICS_INFORMED_KEYS,
-         ("auto", True, False)),
-        ("symbolic", "physics", SYMBOLIC_PHYSICS_KEYS, (True, False)),
-    )
-
-    def task_names(self):
-        """
-        The tasks this run trains, with ``model.paw`` taken into account.
-
-        ``task.type`` alone answers for the chain; ``model.paw.enable`` is the
-        switch for ``ext2chg``, and the two are checked against each other
-        here rather than left to drift. ``all`` with the block on trains the
-        chain and ``ext2chg``.
-
-        Returns
-        -------
-        list of str
-
-        Raises
-        ------
-        ValueError
-            On ``task.type: ext2chg`` with the block off, or on the block on
-            beside a single chain task that would never read it.
-        """
-        names = self.task.names()
-        enabled = self.model.paw_enabled
-        kind = str(self.task.type)
-        if kind == "ext2chg" and not enabled:
-            raise ValueError(
-                "task.type: ext2chg trains the operator model.paw describes, "
-                "and model.paw.enable is false. Set model.paw.enable: true.")
-        if enabled and kind not in ("ext2chg", "all"):
-            raise ValueError(
-                f"model.paw.enable is true beside task.type: {kind}, which "
-                f"never reads it. Use task.type: ext2chg, or all to train it "
-                f"beside the chain, or set enable: false.")
-        if enabled and kind == "all":
-            names.append("ext2chg")
-        return names
-
-    def validate_blocks(self):
-        """
-        Check the shape of every ``enable`` block, before anything runs.
-
-        :meth:`from_dict` calls this, so a configuration read from YAML is
-        refused at load rather than several minutes into a run --- which for
-        these three keys is a real difference: the equivariance block is not
-        consulted until the model is built, and the physics weights not until
-        the loss is, both of them after the field cache.
-
-        What it checks is *structural*: that each block is a mapping (a scalar
-        is the pre-26.9.8 spelling, and is named as such), that ``enable`` is
-        one of the values that block accepts, and that every other key is one
-        the block admits. What it deliberately does **not** check is anything
-        that depends on another section --- ``equivariant.enable: true``
-        against ``use_coordinates``, say --- which stays where the model is
-        built, beside the reason for it.
-
-        Raises
-        ------
-        ValueError
-            Naming the block, the key and the valid alternatives.
-        """
-        for section, key, settings, allowed in self.ENABLE_BLOCKS:
-            split_enable_block(getattr(getattr(self, section), key),
-                               f"{section}.{key}", settings,
-                               enable_values=allowed)
 
     @classmethod
     def from_yaml(cls, path):
-        """
-        Read a configuration from a YAML file.
-
-        Parameters
-        ----------
-        path : str or pathlib.Path
-
-        Returns
-        -------
-        TrainingConfig
-        """
+        """Read a configuration from a YAML file."""
         _require_yaml()
         with open(path, "r") as handle:
             return cls.from_dict(yaml.safe_load(handle) or {})
 
     def to_dict(self):
-        """Nested plain-``dict`` representation."""
-        return asdict(self)
+        """Every setting, as a plain mapping :meth:`from_dict` reads back."""
+        return _dump(self)
 
     def to_yaml(self, path=None, minimal=False):
         """
-        Serialize to YAML.
+        The configuration as YAML, written to ``path`` when given.
 
-        Parameters
-        ----------
-        path : str or pathlib.Path, optional
-            When given, write to this file. The resolved config is worth
-            saving beside the results: it records what actually ran, including
-            command-line overrides.
-        minimal : bool, optional
-            Write only the settings that differ from the defaults. Every key
-            is optional, so the result is an equivalent config — and a far
-            shorter one, since most of a typical file restates a default.
-
-            Not the right choice for the copy archived beside a run: that one
-            should record every value that was in force, so it still
-            reproduces the run if a default later changes.
-
-        Returns
-        -------
-        str
-            The YAML text.
+        ``minimal`` keeps only what differs from the defaults.
         """
         _require_yaml()
         payload = self.non_default_dict() if minimal else self.to_dict()
@@ -2874,96 +1097,158 @@ class TrainingConfig:
                 handle.write(text)
         return text
 
-    # ------------------------------------------------------------------ #
-    # Overrides
-    # ------------------------------------------------------------------ #
+    def non_default_dict(self):
+        """The settings that differ from a default configuration's."""
+        def trim(current, reference):
+            if not isinstance(current, dict) or not isinstance(reference,
+                                                               dict):
+                return current
+            out = {}
+            for key, value in current.items():
+                if key not in reference:
+                    out[key] = value
+                elif isinstance(value, dict) and isinstance(reference[key],
+                                                            dict):
+                    nested = trim(value, reference[key])
+                    if nested:
+                        out[key] = nested
+                elif value != reference[key]:
+                    out[key] = value
+            return out
+
+        reference = type(self)()
+        # A task section that is on is compared against its own defaults,
+        # not against `false`.
+        for name in ("ext2chg", "chg2tau"):
+            if getattr(self, name) is not None:
+                setattr(reference, name, _value(
+                    next(e for e in fields(self) if e.name == name), {}, name))
+        current = self.to_dict()
+        trimmed = trim(current, reference.to_dict())
+        for name in ("ext2chg", "chg2tau"):
+            if current[name] is not False and name not in trimmed:
+                trimmed[name] = None
+        return trimmed
+
+    def validate(self):
+        """Check every section; called by :meth:`from_dict` and the overrides."""
+        self.run.validate()
+        self.data.validate()
+        self.training.validate()
+        self.runtime.validate()
+        for name in ("ext2chg", "chg2tau"):
+            operator = getattr(self, name)
+            if operator is not None:
+                operator.validate(name)
+        if self.training.kfold_enabled:
+            _check(self.fine_tuning is None,
+                   "training.validation.kfold trains every fold from "
+                   "scratch, so it cannot be combined with fine_tuning.")
+        return self
+
     def apply_overrides(self, overrides):
         """
-        Apply command-line overrides in place.
+        Apply ``{"dotted.path": value}`` overrides, skipping ``None`` values.
 
-        Only non-``None`` values are applied, which is how "flag was not given"
-        is distinguished from "flag was given a falsy value" — important for
-        booleans and zeros.
-
-        Parameters
-        ----------
-        overrides : dict
-            ``{"section.key": value}`` or ``{"key": value}`` for the top level.
-            A bare key is resolved against the sections and must match exactly
-            one of them.
-
-        Returns
-        -------
-        TrainingConfig
-            ``self``, for chaining.
+        A path walks sections and blocks (``training.optimizer.learning_rate``,
+        ``ext2chg.model.width``). Setting a block to ``true``, ``false`` or a
+        mapping switches it; a path into a block that is off is refused,
+        rather than switching it on behind the configuration's back.
 
         Raises
         ------
         ValueError
-            On a key no section carries, or --- since 26.9.8 --- on a bare key
-            that **several** carry. Four names are duplicated across sections
-            (``enable``, ``learning_rate``, ``precision``, ``seed``), and the
-            rule until now was "first match wins", which resolved ``precision``
-            to ``data.precision`` and ``seed`` to ``training.seed`` without
-            saying so. Those are not obviously the intended ones: ``precision``
-            is how the *fields are stored* in one section and what the
-            *operator computes in* in the other, and someone writing the bare
-            word almost certainly means one specifically. Guessing is the one
-            thing an override must not do, so an ambiguous bare key now names
-            the sections and asks for a dotted one.
+            On an unknown path, a path into a block that is off, or a value
+            the result does not validate with.
         """
         for key, value in (overrides or {}).items():
             if value is None:
                 continue
-            if "." in key:
-                section_name, attribute = key.split(".", 1)
-                section = getattr(self, section_name)
-                if not hasattr(section, attribute):
+            parts = key.split(".")
+            target = self
+            for depth, part in enumerate(parts[:-1]):
+                known = {entry.name: entry for entry in fields(target)} \
+                    if hasattr(target, "__dataclass_fields__") else {}
+                if part not in known:
                     raise ValueError(f"Unknown override {key!r}.")
-                setattr(section, attribute, value)
-            elif key == "task":
-                # `--task ext2pseudo`, and any caller still passing the bare
-                # string the key used to hold.
-                self.task.type = value
-            else:
-                carriers = [name for name in self._SECTIONS
-                            if hasattr(getattr(self, name), key)]
-                if not carriers:
-                    raise ValueError(f"Unknown override {key!r}.")
-                if len(carriers) > 1:
+                child = getattr(target, part)
+                if child is None:
                     raise ValueError(
-                        f"Ambiguous override {key!r}: "
-                        f"{', '.join(f'{s}.{key}' for s in carriers)} all "
-                        f"exist. Name the section.")
-                setattr(getattr(self, carriers[0]), key, value)
-        return self
+                        f"Override {key!r} reaches into "
+                        f"{'.'.join(parts[:depth + 1])}, which is off. "
+                        f"Switch it on in the configuration first.")
+                target = child
+            known = {entry.name: entry for entry in fields(target)}
+            last = parts[-1]
+            if last not in known:
+                raise ValueError(f"Unknown override {key!r}.")
+            setattr(target, last, _value(known[last], value, key))
+        return self.validate()
 
     # ------------------------------------------------------------------ #
-    # Consumers
+    # The tasks
     # ------------------------------------------------------------------ #
+    def task_names(self):
+        """
+        The internal tasks this run trains, density operator first.
+
+        ``ext2chg`` or ``ext2pseudo`` for the ``ext2chg`` section (by its
+        ``occupancies``), ``chg2tau`` or ``pseudo2tau`` for ``chg2tau``.
+
+        Raises
+        ------
+        ValueError
+            When neither section is present: there is nothing to train.
+        """
+        names = [operator.task_name for operator in (self.ext2chg,
+                                                     self.chg2tau)
+                 if operator is not None]
+        if not names:
+            raise ValueError("Nothing to train: the configuration has neither "
+                             "an `ext2chg:` nor a `chg2tau:` section.")
+        return names
+
+    def operator(self, task_name):
+        """The section describing internal task ``task_name``."""
+        section_name = {"ext2chg": "ext2chg", "ext2pseudo": "ext2chg",
+                        "chg2tau": "chg2tau", "pseudo2tau": "chg2tau"}.get(
+            str(task_name))
+        if section_name is None:
+            raise ValueError(f"Unknown task {task_name!r}.")
+        operator = getattr(self, section_name)
+        if operator is None or operator.task_name != task_name:
+            raise ValueError(f"This configuration does not train "
+                             f"{task_name!r}.")
+        return operator
+
+    def model(self, task_name):
+        """The :class:`ModelConfig` of internal task ``task_name``."""
+        return self.operator(task_name).model
+
+    def model_kwargs(self, task_name):
+        """Keyword arguments for the :class:`~poraque.ml.fno.FNO3d` of a task."""
+        return self.model(task_name).fno_kwargs()
+
+    @property
+    def delta_density(self):
+        """Whether the density target is the residual over the atoms."""
+        return self.ext2chg is None or self.ext2chg.delta_density
+
+    # ------------------------------------------------------------------ #
+    # Where things go
+    # ------------------------------------------------------------------ #
+    def run_name(self):
+        return str(self.run.name or "poraque_models")
+
     def run_dir(self):
-        """
-        The run's own directory, ``<output.root>/<task.name>``.
-
-        Everything else hangs off this. ``None`` when ``output.root`` is
-        ``null``, which switches off all output.
-
-        Returns
-        -------
-        str or None
-        """
-        if not self.output.root:
+        """``<run.output>/<run.name>``, or ``None`` when nothing is written."""
+        if not self.run.output:
             return None
         import os
 
-        return os.path.join(self.output.root, self.run_name())
+        return os.path.join(self.run.output, self.run_name())
 
-    def run_name(self):
-        """The run's name, falling back to the historical default."""
-        return str(self.task.name or "poraque_models")
-
-    def _subdir(self, name, wanted):
-        """One subdirectory of the run folder, or ``None`` when switched off."""
+    def _subdir(self, name, wanted=True):
         root = self.run_dir()
         if root is None or not wanted:
             return None
@@ -2972,70 +1257,33 @@ class TrainingConfig:
         return os.path.join(root, name)
 
     def log_dir(self):
-        """``<run>/log``, or ``None`` when ``write_log`` is off."""
-        return self._subdir("log", self.output.write_log)
+        return self._subdir("log")
 
     def plot_dir(self):
-        """``<run>/plots``, or ``None`` when ``plot_figures`` is off."""
-        return self._subdir("plots", self.output.plot_figures)
+        return self._subdir("plots", self.report.figures)
 
     def report_dir(self):
-        """``<run>/report``, or ``None`` when ``write_pdf_report`` is off."""
-        return self._subdir("report", self.output.write_pdf_report)
+        return self._subdir("report", self.report.pdf)
 
     def checkpoint_path(self):
-        """
-        ``<run>/<name>.poraque``, or ``None`` when checkpointing is off.
-
-        A fine-tune gets its own stem. It is a specialization, usually onto a
-        narrower set of materials, and writing it over the general model would
-        replace something broad with something narrow, silently and by default.
-
-        Returns
-        -------
-        str or None
-        """
+        """``<run dir>/<name>.poraque`` (``_finetuned`` for a fine-tune)."""
         root = self.run_dir()
-        if root is None or not self.output.checkpoint:
+        if root is None:
             return None
         import os
 
         stem = self.run_name()
-        if self.fine_tuning.enable:
+        if self.fine_tuning is not None:
             stem += "_finetuned"
         return os.path.join(root, stem + BUNDLE_SUFFIX)
 
     def log_path(self):
-        """
-        The plain-text log: ``output.log``, or ``<run>/log/<name>.log``.
-
-        Returns
-        -------
-        str or None
-        """
-        return self._log_artifact(self.output.log, ".log")
+        return self._log_artifact(".log")
 
     def json_path(self):
-        """
-        The metrics: ``output.json``, or ``<run>/log/<name>.json``.
+        return self._log_artifact(".json")
 
-        Returns
-        -------
-        str or None
-        """
-        return self._log_artifact(self.output.json, ".json")
-
-    def _log_artifact(self, explicit, suffix):
-        """
-        An explicit path, or one inside the run's ``log/`` directory.
-
-        Deriving is what lets a config name a run once. Every artifact comes
-        from ``task.name``; the log and the metrics were the two a user had to
-        repeat, and the only two that two different runs could end up sharing
-        while writing separate weights.
-        """
-        if explicit is not None:
-            return explicit or None
+    def _log_artifact(self, suffix):
         directory = self.log_dir()
         if directory is None:
             return None
@@ -3043,75 +1291,13 @@ class TrainingConfig:
 
         return os.path.join(directory, f"{self.run_name()}{suffix}")
 
-    def non_default_dict(self):
-        """
-        Only the settings that differ from the defaults.
-
-        A config is far shorter than it looks: of the 78 keys a full one
-        carries, ``configs/train.yaml`` changes three. This is what makes a
-        committed config readable as *the description of one experiment*
-        rather than as a dump of every knob.
-
-        Returns
-        -------
-        dict
-            Nested ``{section: {key: value}}``, sections with nothing to say
-            omitted entirely.
-        """
-        reference = type(self)().to_dict()
-        current = self.to_dict()
-        trimmed = {}
-        for section, values in current.items():
-            if not isinstance(values, dict):
-                if values != reference.get(section):
-                    trimmed[section] = values
-                continue
-            changed = {key: value for key, value in values.items()
-                       if reference.get(section, {}).get(key, object()) != value}
-            if changed:
-                trimmed[section] = changed
-        return trimmed
-
-    def model_kwargs(self):
-        """
-        Keyword arguments for :class:`~poraque.ml.fno.FNO3d`.
-
-        The Pauli-head settings are excluded: they configure
-        :class:`~poraque.ml.training.FieldOperator`, not the backbone. So is
-        ``precision``, which is applied to the built model by
-        :func:`~poraque.ml.fno.set_precision` rather than passed to its
-        constructor — the conversion has to reach the complex spectral weights,
-        and a constructor argument would only cover the ones it allocates
-        itself.
-        """
-        excluded = {"pauli_residual", "pauli_scale", "learn_pauli_scale",
-                    "precision", "activation", "kan_setup", "equivariant",
-                    "paw", "structure_input", "occupancy_channels"}
-        kwargs = {f.name: getattr(self.model, f.name)
-                  for f in fields(self.model) if f.name not in excluded}
-        # `activation` and `kan_setup` are one setting in the file and two in
-        # the constructor: the block is expanded into `kan_*` keywords here,
-        # and only when a KAN was actually asked for.
-        name, kan = self.model.activation_kwargs()
-        kwargs["activation"] = name
-        kwargs.update(kan)
-        # Same shape, same reason -- and since 26.9.8 the switch is inside the
-        # block, so both halves are unpacked here. The constructor keeps its
-        # flat `equivariant=` / `n_radial=` keywords: the grouping is a
-        # property of the config file, and every checkpoint's `architecture`
-        # record is unchanged by it.
-        kwargs["equivariant"] = self.model.equivariant_enabled
-        kwargs.update(self.model.equivariant_kwargs())
-        return kwargs
-
-    #: How a value is written back out in :meth:`describe`. The header echoes a
-    #: YAML file, so it uses YAML's spellings: a reader comparing the two
-    #: should not have to translate ``None`` into ``null`` in their head.
+    # ------------------------------------------------------------------ #
+    # The run header
+    # ------------------------------------------------------------------ #
     _LITERALS = {None: "null", True: "true", False: "false"}
 
     @classmethod
     def _describe_value(cls, value):
-        """One setting, spelled as the YAML file spells it."""
         if isinstance(value, bool) or value is None:
             return cls._LITERALS[value]
         if isinstance(value, (list, tuple)):
@@ -3120,19 +1306,10 @@ class TrainingConfig:
 
     @classmethod
     def _describe_section(cls, mapping, indent):
-        """
-        One ``key = value`` per line, with the ``=`` signs aligned.
-
-        Recursive, because ``training.physics_informed`` is itself a
-        mapping and a
-        nested dict rendered as a repr is exactly the unreadable run this
-        avoids.
-        """
         pad = " " * indent
         scalars = [key for key, value in mapping.items()
                    if not (isinstance(value, dict) and value)]
         width = max([len(str(key)) for key in scalars] or [0])
-
         lines = []
         for key, value in mapping.items():
             if isinstance(value, dict) and value:
@@ -3144,41 +1321,12 @@ class TrainingConfig:
         return lines
 
     def describe(self):
-        """
-        Multi-line human-readable summary, for the log header.
-
-        **One setting per line**, indented under its section, with the ``=``
-        signs aligned within each. The run header is where a reader checks
-        what is switched on before committing hours of GPU to it, and a
-        comma-separated section wrapped across the terminal at whatever column
-        it happened to reach: the settings that mattered were wherever the
-        wrapping put them, and ``training.physics_informed`` was 116
-        characters of
-        ``{'electron_count_weight': 0.0, ...}`` riding on the end of one.
-
-        Values are written in YAML's spelling — ``null``, ``true``, ``false``
-        — so the header and the file it came from read the same.
-
-        Returns
-        -------
-        str
-
-        Examples
-        --------
-        >>> print(TrainingConfig().describe())            # doctest: +SKIP
-        task:
-          type = all
-          name = poraque_models
-        data:
-          data_paths = null
-          cache      = data/cache
-          ...
-        """
+        """Every setting, one per line, nested blocks indented."""
         lines = []
-        for name in self._SECTIONS:
-            section = getattr(self, name)
-            lines.append(f"{name}:")
-            lines.extend(self._describe_section(
-                {entry.name: getattr(section, entry.name)
-                 for entry in fields(section)}, indent=2))
+        for name, values in self.to_dict().items():
+            if isinstance(values, dict):
+                lines.append(f"{name}:")
+                lines.extend(self._describe_section(values, indent=2))
+            else:
+                lines.append(f"{name}: {self._describe_value(values)}")
         return "\n".join(lines)

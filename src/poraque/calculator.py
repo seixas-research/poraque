@@ -1078,6 +1078,8 @@ class PoraquePAW(Calculator):
                                            device=device)
             data = (read_bundle(density_bundle).get("config")
                     or {}).get("data", {})
+            # The grid settings live under `data.grid` since 2026-10-13.
+            data = {**data, **(data.get("grid") or {})}
         if kinetic_operator is None:
             kinetic_task = "chg2tau" if first("chg2tau") else "pseudo2tau"
             kinetic_bundle = first(kinetic_task)

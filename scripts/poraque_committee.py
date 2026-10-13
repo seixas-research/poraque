@@ -85,12 +85,13 @@ Usage
 Installed (``pip install -e .``), this is the ``poraque-committee`` console
 command and runs from any directory::
 
-    # 1. train the members (same seed, different init_seed). One --name per
+    # 1. train the members, one --seed each; with --valid-fraction 0 the
+    #    seed changes only the initial weights and the batch order. One --name per
     #    member is all it takes: everything each run writes lands in
     #    models/committee_<s>/, weights and log together.
     for s in 0 1 2 3; do
-      poraque-train --config configs/train.yaml \
-          --init-seed $s --name committee_$s \
+      poraque-train --config configs/train_simple.yaml \
+          --seed $s --name committee_$s \
           --valid-fraction 0 --no-plots --no-report
     done
 
@@ -135,8 +136,8 @@ def member_bundle(entry):
     """
     The checkpoint inside one member directory, whatever the run named it.
 
-    ``poraque-train`` writes ``<output.root>/<name>/<name>.poraque``, and
-    ``task.name`` is exactly the key a user is told to set so two runs cannot
+    ``poraque-train`` writes ``<run.output>/<name>/<name>.poraque``, and
+    ``run.name`` is exactly the key a user is told to set so two runs cannot
     overwrite each other. Looking only for :data:`BUNDLE_FILENAME` therefore
     finds the members of a *default* run and none of the members of a named
     one — and reports it as "no committee here", which sends the user back to
@@ -190,7 +191,7 @@ def resolve_bundles(pattern):
         raise SystemExit(
             f"{pattern!r} matched {len(paths)} checkpoint(s); a committee "
             f"needs at least two. Train members with poraque-train "
-            f"--init-seed S --name committee_S, one per seed."
+            f"--seed S --name committee_S, one per seed."
         )
     return paths
 

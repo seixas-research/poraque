@@ -175,8 +175,7 @@ That is the shape of a VASP run, and it is the shape
 straight into a training config with no rearranging::
 
     data:
-      data_paths:
-        - data/MP
+      path: data/MP
 
 The cost of putting the id in the *filename* instead — one flat directory of
 ``CHGCAR_mp-124.gz`` — was not tidiness: nothing could be placed *beside* a

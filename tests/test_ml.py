@@ -791,7 +791,7 @@ class TestOptimizerSelection:
         from poraque.ml.config import TrainingConfig
         from poraque.ml.training import build_optimizer
 
-        assert TrainingConfig().training.optimizer == "adamw"
+        assert TrainingConfig().training.optimizer.name == "adamw"
         assert isinstance(build_optimizer(self._parameters()),
                           torch.optim.AdamW)
 

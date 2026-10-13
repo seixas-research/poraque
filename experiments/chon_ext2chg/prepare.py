@@ -19,7 +19,7 @@ from poraque_train import cache_tag
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="configs/train_ext2chg_chon.yaml")
+    parser.add_argument("--config", default="experiments/chon_ext2chg/configs/train_ext2chg_chon.yaml")
     parser.add_argument("--limit", type=int)
     args = parser.parse_args()
     config = TrainingConfig.from_yaml(args.config)

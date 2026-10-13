@@ -2,8 +2,8 @@
 
 Every Poraquê command writes its output the same way. `poraque-train`,
 `poraque-inference`, `poraque-atoms`, `poraque-vasp`, `poraque-mp`,
-`poraque-committee`, `poraque-active-learning` and the C backend's report
-(`python -m poraque.ml.backend`) all report through one writer,
+`poraque-committee`, `poraque-active-learning`, `poraque-compile` and the C
+backend's report (`python -m poraque.ml.backend`) all report through one writer,
 {class}`poraque.utils.logging.Logger`, so a person who has read one log can
 find their way around any other, and a script that reads one can read them
 all.
@@ -59,7 +59,7 @@ An abridged `poraque-train` run:
   Local external potential -> valence charge density.
 
 [EXT2PSEUDO DATASET]
-  field cache         : in RAM, ~36.0 KiB (data.cache_in_memory: auto)
+  field cache         : in RAM, ~36.0 KiB (data.cache.in_memory: auto)
   training structures : 2
   ...
 
@@ -100,8 +100,8 @@ metrics JSON; the log is what to grep while the run is still going.
 
 | Command | Blocks, in order of appearance |
 | --- | --- |
-| `poraque-train` | `RUN`, `CONFIGURATION`, `CACHE`, then per task `<TASK> DATASET`, `<TASK> MODEL`, `<TASK> TRAINING`, `<TASK> RESULTS`, `<TASK> AGGREGATE OVER TRAINING` / `VALIDATION`, `OCCUPANCIES` (`ext2chg`), `SYMBOLIC DISTILLATION <TASK>`, `<TASK> FILES`; then `CHECKPOINT`, `OVERALL`, `OUTPUT`, `RESOURCES` |
-| `poraque-train --kfold` | per task `<TASK> FOLDS`, `<TASK> FOLD i/K`, `<TASK> K-FOLD SUMMARY` in place of the single fit's |
+| `poraque-train` | `RUN`, `CONFIGURATION`, `CACHE`, then per task `<TASK> DATASET`, `<TASK> MODEL`, `<TASK> TRAINING`, `<TASK> RESULTS`, `<TASK> AGGREGATE OVER TRAINING` / `VALIDATION`, `OCCUPANCIES` (`ext2chg`), `<TASK> FILES`; then `CHECKPOINT`, `OVERALL`, `OUTPUT`, `RESOURCES` |
+| `poraque-train --kfold K` | per task `<TASK> FOLDS`, `<TASK> FOLD i/K`, `<TASK> K-FOLD SUMMARY` in place of the single fit's |
 | `poraque-train --cache-only` | `RUN`, `CONFIGURATION`, `CACHE`, `CACHE SUMMARY`, `RESOURCES` |
 | `poraque-inference` | `RUNTIME`, `INPUT`, `GRID`, `POTENTIAL`, `DENSITY`, `PAW RECORDS`, `KINETIC ENERGY DENSITY`, `HARTREE POTENTIAL`, `COMPARISON`, `ENERGY`, `FIGURES`, `OUTPUT FILES` — those the run produces |
 | `poraque-atoms` | `INPUT`, `ATOMS`, `OUTPUT FILES`, `USAGE`; with `--show`, `DATABASE`, `ENTRIES`, `NOTES` |
@@ -109,10 +109,12 @@ metrics JSON; the log is what to grep while the run is still going.
 | `poraque-mp` | `SEARCH`, `TASKS`, `SIZES`, `SAMPLE`, `DOWNLOAD`, `DECOMPRESS`, `RECOMPRESS`, `DRY RUN`, `SUMMARY FILES`, `STRUCTURES` — those the mode reaches; `--estimate` adds `ESTIMATE`, `PROJECTION` and `STORAGE` |
 | `poraque-committee` | `PURPOSE`, `COMMITTEE`, `RANKING`, `CALIBRATION`, `MEASURED ERRORS`, `CAVEATS`, `OUTPUT FILES` |
 | `poraque-active-learning` | `PURPOSE`, `COMMITTEE`, `SCORING`, `STATISTICS`, `RANKING`, `SELECTION`, `PROMOTION`, `CAVEATS`, `OUTPUT FILES` |
+| `poraque-compile` | `CONFIGURATION`, then `SPECTRAL KERNEL` and `CODEC KERNEL` (status, library, check; one only with `--only`), `CLEAN` (with `--clean`), `NEXT STEPS` |
 | `python -m poraque.ml.backend` | `CONFIGURATION`, `BUILD`, `STATUS`, `BENCHMARK`, `NEXT STEPS` |
 
-`<TASK>` is the task's name in upper case, so an `all` run has an
-`EXT2PSEUDO TRAINING` and a `PSEUDO2TAU TRAINING`.
+`<TASK>` is the internal task's name in upper case, so a run with both
+operators and the occupancies off has an `EXT2PSEUDO TRAINING` and a
+`PSEUDO2TAU TRAINING` (`EXT2CHG` and `CHG2TAU` with them on).
 
 ## Two blocks worth reading closely
 
@@ -147,7 +149,7 @@ in an HDF5 cache — so the closing caveat about chemical breadth is computed
 from the data rather than asserted.
 
 The training progress table, the per-structure results and the resource
-profile are described where their settings are: [`eval_epoch`](configuration.md),
+profile are described where their settings are: [`validation.every`](configuration.md),
 [`spin`](spin-key) and [the resource profile](resource-profile).
 
 ## Where it goes

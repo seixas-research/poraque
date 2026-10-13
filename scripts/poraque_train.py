@@ -17,38 +17,41 @@ next to the results, recording exactly what ran.
 
 Tasks
 -----
-``ext2pseudo``
-    ``EXTCAR`` -> ``CHGCAR``, the Hohenberg-Kohn map.
-``pseudo2tau``
-    ``CHGCAR`` -> ``TAUCAR``, the kinetic energy density functional.
+A configuration trains the operators whose sections it has:
 
-The two are **independent**. ``task: ext2pseudo`` builds one network, trains one
-objective and writes one model; nothing about :math:`\tau` is instantiated,
-loaded or differentiated. That is what makes the vast public archives of
-charge densities usable: they publish no kinetic energy density, and needing
-one would rule them out entirely. A task the data cannot supply is reported and
-skipped rather than failing the run, so ``task: all`` on a density-only archive
-trains what it can.
+``ext2chg``
+    ``EXTCAR`` -> ``CHGCAR``: the pseudo-density and each atom's PAW
+    augmentation occupancies. With ``occupancies: false`` the grid alone, the
+    internal ``ext2pseudo`` task -- the Hohenberg-Kohn map.
+``chg2tau``
+    ``CHGCAR`` -> ``TAUCAR``: the kinetic energy density from the
+    pseudo-density and the occupancies. With ``occupancies: false`` from the
+    grid alone, the internal ``pseudo2tau`` task.
+
+The two are **independent**. A run with only an ``ext2chg:`` section builds
+one network, trains one objective and writes one model; nothing about
+:math:`\tau` is instantiated, loaded or differentiated. That is what makes the
+vast public archives of charge densities usable: they publish no kinetic
+energy density, and needing one would rule them out entirely. A task the data
+cannot supply is reported and skipped rather than failing the run, so both
+sections on a density-only archive train what they can.
 
 Data sources
 ------------
-``data.data_paths`` is a **list of directories**, and every entry has the same
-shape: subdirectories, one per material, each holding that material's
-volumetric files::
+``data.path`` is **one directory**, and every subdirectory of it is a
+material holding its volumetric files::
 
     data:
-      data_paths:
-        - data/vasp/structures  # local DFT runs
-        - data/MP               # a poraque-mp download
-        - data/cache/res32      # a cache from an earlier run
+      path: data/vasp/structures
 
-so local runs and a Materials Project download train as one dataset with
-nothing said about where either came from. What a material's directory *holds*
-decides how it is read — inputs beside the density mean the external potential
-is computed from them, a density alone means it is computed from the density's
-own header — and ``TAUCAR`` is optional per material throughout. See
-:mod:`poraque.data.sources`, and note the caveat there about mixing two
-definitions of :math:`V_{\rm ext}` — the run warns when it happens.
+A VASP run tree, a ``poraque-mp`` download and a cache from an earlier run all
+have that shape, so nothing is said about where the data came from. What a
+material's directory *holds* decides how it is read -- inputs beside the
+density mean the external potential is computed from them, a density alone
+means it is computed from the density's own header -- and ``TAUCAR`` is
+optional per material throughout. See :mod:`poraque.data.sources`, and note the
+caveat there about mixing two definitions of :math:`V_{\rm ext}` -- the run
+warns when it happens.
 
 Method notes
 ------------
@@ -59,9 +62,9 @@ precision. Interpolation would alias, break periodicity at the cell boundary
 and shift the integral.
 
 **One protocol, one variation.** A run trains a single model per task on a
-train/validation split sized by ``training.valid_fraction`` (a fifth by default),
+train/validation split sized by ``training.validation.fraction`` (a fifth by default),
 and reports metrics in **physical units** on the held-out structures. Setting
-``enable_kfold`` swaps that for K-fold cross-validation, which is the only
+``training.validation.kfold`` swaps that for K-fold cross-validation, which is the only
 other protocol; nothing else changes how training is organized.
 
 Usage
@@ -69,10 +72,10 @@ Usage
 Installed (``pip install -e .``), this is the ``poraque-train`` console command
 and runs from any directory::
 
-    poraque-train --config configs/train.yaml
-    poraque-train --config configs/train.yaml --epochs 500
-    poraque-train --config configs/train.yaml --device mps
-    poraque-train --config configs/train.yaml --kfold
+    poraque-train --config configs/train_simple.yaml
+    poraque-train --config configs/train_simple.yaml --epochs 500
+    poraque-train --config configs/train_simple.yaml --device mps
+    poraque-train --config configs/train_simple.yaml --task ext2chg
 
 Running this file directly — ``python scripts/poraque_train.py`` — is
 equivalent, and needs nothing installed.
@@ -96,7 +99,6 @@ if os.path.isdir(_SRC):
 import torch  # noqa: E402
 
 from poraque.fields import (  # noqa: E402
-    FIELD_DTYPES,
     charge_channel,
     field_integral,
     set_default_dtype,
@@ -126,14 +128,7 @@ from poraque.ml.distributed import (  # noqa: E402
 from poraque.ml.fno import PRECISIONS  # noqa: E402
 from poraque.ml.training import OPTIMIZERS  # noqa: E402
 from poraque.ml.losses import PhysicsInformedLoss  # noqa: E402
-from poraque.ml.symbolic import (  # noqa: E402
-    DATA_LOSSES,
-    FEATURE_SCHEMES,
-    TEMPLATES,
-    result_to_dict,
-    symbolic_physics,
-)
-from poraque.ml.tasks import CHAIN, resolve_task  # noqa: E402
+from poraque.ml.tasks import resolve_task  # noqa: E402
 from poraque.utils.logging import RULE, Logger, header  # noqa: E402
 
 #: Display label and unit per field, for figures.
@@ -166,7 +161,7 @@ def model_name(config):
 
 def bundle_path(config):
     """
-    Where the trained weights go: ``<output.root>/<name>/<name>.poraque``.
+    Where the trained weights go: ``<run.output>/<run.name>/<run.name>.poraque``.
 
     Returns
     -------
@@ -207,6 +202,27 @@ def report_filename(config, task_name, n_tasks=1, kind="report"):
     if n_tasks >= 2:
         stem += f"_{task_name}"
     return f"{stem}_{kind}.pdf"
+
+
+def flat_settings(config):
+    """
+    Every setting as ``{"dotted.path": value}``, for the report's appendix.
+
+    Flattened all the way down: ``ext2chg.model.equivariant.n_radial`` is one
+    row, where a one-level flattening would print the nested blocks as dicts.
+    A block that is off is one row reading ``false``.
+    """
+    rows = {}
+
+    def walk(prefix, value):
+        if isinstance(value, dict) and value:
+            for key, item in value.items():
+                walk(f"{prefix}.{key}" if prefix else key, item)
+        else:
+            rows[prefix] = value
+
+    walk("", config.to_dict())
+    return rows
 
 
 def section(log, name):
@@ -261,15 +277,21 @@ def resolved_spin(data):
 
     from poraque.data import discover_records, resolve_source
 
-    options = {"potcar_dir": data.potcar_dir, "sigma": data.sigma,
-               "gaussian_blur": data.gaussian_blur,
-               "blur_method": data.blur_method, "pattern": data.pattern,
-               "format": data.format}
+    options = {"potcar_dir": data.potcar_dir, "sigma": data.FIXED["sigma"],
+               "gaussian_blur": data.FIXED["gaussian_blur"],
+               "blur_method": data.FIXED["blur_method"], "pattern": data.FIXED["pattern"],
+               "format": data.FIXED["format"]}
     try:
         sources = [resolve_source(path, **options) for path in data.paths()]
         records = discover_records(sources, required=("CHGCAR",))
-        return any(record.source.is_spin_polarized(record)
-                   for record in records)
+        # The same memoized probe the cache builder uses, so the two passes
+        # over the densities -- this one names the cache directory -- read
+        # each file at most once across all runs.
+        from poraque.data.cache import probe_spin
+
+        return any(probe_spin([record.files.get("CHGCAR")
+                               for record in records],
+                              memo_root=data.cache.dir))
     except Exception:                                   # noqa: BLE001
         return False
 
@@ -284,13 +306,9 @@ def cache_tag(data):
     cache built from a mixture are different datasets under the same
     resolution.
     """
-    tag = f"res{data.resolution}"
-    if data.max_spacing:
-        tag += f"_h{data.max_spacing:g}"
-    if data.gaussian_blur:
-        tag += f"_blur{data.gaussian_blur:g}{data.blur_method[:4]}"
-    if data.sigma:
-        tag += f"_sig{data.sigma:g}"
+    tag = f"res{data.grid.resolution}"
+    if data.grid.max_spacing:
+        tag += f"_h{data.grid.max_spacing:g}"
     if data.potcar_dir:
         # A tabulated potential and a Gaussian one are different fields, not
         # different roundings of one, so they must never share a cache.
@@ -313,7 +331,7 @@ def cache_tag(data):
 
 def build_cache(config, log, workers=None):
     """
-    Downsample every material under ``data.data_paths`` into one dataset.
+    Downsample every material under ``data.path`` into one dataset.
 
     Each path is detected independently — a directory of DFT runs, an archive
     of standalone ``CHGCAR`` files, or a prepared cache — and all of them land
@@ -335,18 +353,18 @@ def build_cache(config, log, workers=None):
 
     data = config.data
     paths = data.paths()
-    target = os.path.join(data.cache, cache_tag(data))
+    target = os.path.join(data.cache.dir, cache_tag(data))
 
     section(log, "cache")
     log(f"  path: {target}")
     log(f"  sources: {len(paths)} path(s)")
 
     build_field_cache(
-        paths, target, resolution=data.resolution,
-        max_spacing=data.max_spacing,
-        potcar_dir=data.potcar_dir, sigma=data.sigma,
-        gaussian_blur=data.gaussian_blur, blur_method=data.blur_method,
-        pattern=data.pattern, format=data.format, log=log,
+        paths, target, resolution=data.grid.resolution,
+        max_spacing=data.grid.max_spacing,
+        potcar_dir=data.potcar_dir, sigma=data.FIXED["sigma"],
+        gaussian_blur=data.FIXED["gaussian_blur"], blur_method=data.FIXED["blur_method"],
+        pattern=data.FIXED["pattern"], format=data.FIXED["format"], log=log,
         # Passed through as given, INCLUDING "auto", which build_field_cache
         # resolves against the sources. It used to be flattened here with
         # `data.spin is True`, which made "auto" -- the default -- mean *no
@@ -356,16 +374,16 @@ def build_cache(config, log, workers=None):
         # One chunked fields.h5 per material instead of three text files, when
         # asked for. Both are in the cache fingerprint, so changing either
         # rebuilds rather than mixing layouts in one directory.
-        storage=data.storage, compression=data.compression,
-        compression_level=data.compression_level,
+        storage=data.storage, compression=data.cache.compression,
+        compression_level=data.FIXED["compression_level"],
         # Whether a configured POTCAR library that cannot serve an element is
         # an error or a documented degradation. Either way, what it *did* serve
         # goes into the cache fingerprint.
-        strict_potcar=data.strict_potcar,
+        strict_potcar=data.FIXED["strict_potcar"],
         # One process per material. The build is a Python text codec, not FFT
         # work -- the spectral downsampling is 2.2 % of it -- so the cores the
         # job asked for are only used if the materials are split across them.
-        workers=data.cache_workers if workers is None else workers,
+        workers=config.runtime.workers if workers is None else workers,
     )
 
     # The PAW augmentation records travel with the weights, so a prediction can
@@ -373,7 +391,7 @@ def build_cache(config, log, workers=None):
     # it. They come from the *native-resolution* sources, not the cache: the
     # one-center terms are on-site quantities and do not live on the FFT grid
     # at all, so downsampling neither changes nor carries them.
-    sources = [resolve_source(path, pattern=data.pattern, format=data.format,
+    sources = [resolve_source(path, pattern=data.FIXED["pattern"], format=data.FIXED["format"],
                               potcar_dir=data.potcar_dir)
                for path in paths]
     # The augmentation records now come from the ISOLATED ATOMS by default
@@ -382,17 +400,17 @@ def build_cache(config, log, workers=None):
     # they have to be once slabs and clusters join the set: a training-set
     # average is a property of whatever happened to be in it.
     library = None
-    if data.paw_source == "atomic" and data.atomic_reference:
+    if data.FIXED["paw_source"] == "atomic" and data.atoms:
         from poraque.fields.atomic import resolve_library
 
         try:
-            library = resolve_library(data.atomic_reference, cache=target,
+            library = resolve_library(data.atoms, cache=target,
                                       log=log)
         except (FileNotFoundError, ValueError) as error:
             log(f"  PAW reference: {error}")
     records = discover_records(sources, required=("CHGCAR",))
     build_paw_reference(records, target, log, library=library,
-                        source=data.paw_source)
+                        source=data.FIXED["paw_source"])
     # The radial core density of each element, from the POTCAR that built
     # V_ext -- the material's own, else potcar_dir -- so the checkpoint carries
     # it and inference needs no POTCAR to know it.
@@ -454,9 +472,9 @@ def report_cache_only(config, cache, log):
 
     storage = config.data.storage
     if storage == "hdf5":
-        codec = config.data.compression or "uncompressed"
-        if config.data.compression == "gzip":
-            codec += f"-{config.data.compression_level}"
+        codec = config.data.cache.compression or "uncompressed"
+        if config.data.cache.compression == "gzip":
+            codec += f"-{config.data.FIXED['compression_level']}"
         storage = f"hdf5 (one fields.h5 per material, {codec})"
     else:
         storage = "files (one CHGCAR-format text file per field)"
@@ -473,15 +491,15 @@ def report_cache_only(config, cache, log):
     log(f"  on disk     : {format_bytes(cache_disk_bytes(cache))}")
     if decoded:
         log(f"  decoded     : ~{format_bytes(decoded)} in RAM per task "
-            f"(data.cache_in_memory: {config.data.cache_in_memory}, "
+            f"(data.cache.in_memory: {config.data.cache.in_memory}, "
             f"budget {format_bytes(CACHE_MEMORY_BUDGET)})")
     for task in (t for t, n in per_task.items() if not n):
         log(f"  NOTE: no cached material carries both fields of {task}; the "
             f"GPU job will skip it.")
     log("")
     log("  The GPU job reads this cache and rebuilds nothing, provided its")
-    log("  config keeps data.resolution, data.max_spacing, data.storage,")
-    log("  data.compression, data.spin and data.potcar_dir as they are here --")
+    log("  config keeps data.grid, data.cache.storage, data.cache.compression,")
+    log("  data.spin and data.potcar_dir as they are here --")
     log("  those are the cache fingerprint. Submit it with the same config, e.g.")
     log("    sbatch scripts/slurm/poraque_ddp.sbatch <config>")
     log("")
@@ -911,47 +929,20 @@ def build_loss(config, task_name):
     """
     Assemble the objective from the ``training`` section of the config.
 
-    ``physics_informed`` is handed to the loss rather than resolved here: the
-    answer under ``"auto"`` is a statement about the weights, and the weights
-    are what the loss is built from. Resolving it in two places is how the
-    objective and the training loop's decision about whether to decode a
-    prediction come to disagree.
+    The physics weights switch themselves on: the penalties are evaluated
+    when any of them is nonzero, which the loss decides from the weights it
+    is built with, so the objective and the training loop's decision about
+    whether to decode a prediction cannot disagree.
     """
-    physics = config.training.physics_weights()
-    enable = config.training.physics_informed_enabled
-    if enable is False:
-        # Reported, because a block of non-zero weights sitting under a switch
-        # that turns them off is exactly the configuration someone will later
-        # read as evidence that they applied.
-        stated = [key for key, value in physics.items() if value]
-        if stated:
-            import warnings
-
-            warnings.warn(
-                f"training.physics_informed.enable is false, so "
-                f"{', '.join(sorted(stated))} in the same block are inert. "
-                f"Remove the switch to honor them.",
-                RuntimeWarning, stacklevel=2,
-            )
-    if physics["euler_lagrange_weight"] and enable is not False:
-        import warnings
-
-        warnings.warn(
-            "The Euler-Lagrange residual is evaluated WITHOUT v_xc, which is "
-            "of the same order as the kinetic potential it is weighed "
-            "against; data.xc is not consulted during training. Treat the "
-            "residual as a consistency measure, not a correctness one.",
-            RuntimeWarning, stacklevel=2,
-        )
     return PhysicsInformedLoss(
         task=task_name,
-        loss=config.training.loss,
-        sobolev_weight=config.training.sobolev_weight,
-        magnetization_weight=config.training.magnetization_weight,
-        spin_loss=config.training.spin_loss,
-        magnetization_floor=config.training.magnetization_floor,
-        **physics,
-        physics_informed=enable,
+        loss=config.training.loss.norm,
+        sobolev_weight=config.training.loss.sobolev_weight,
+        magnetization_weight=config.training.spin.magnetization_weight,
+        spin_loss=config.training.spin.mode,
+        magnetization_floor=config.training.spin.magnetization_floor,
+        **config.training.physics_weights(),
+        physics_informed="auto",
     )
 
 
@@ -967,14 +958,14 @@ def resolve_baseline(task, config, cache, log):
     flag there is better than refusing a config that sets it once for a run
     training both tasks.
     """
-    if not config.data.delta_density:
+    if not config.delta_density:
         return None
     if task.target_field != "CHGCAR":
-        log(f"      NOTE: data.delta_density is ignored for {task.name} -- "
+        log(f"      NOTE: ext2chg.target: delta does not apply to {task.name} -- "
             f"its target is {task.target_field}, which has no atomic "
             f"superposition.")
         return None
-    reference = config.data.atomic_reference
+    reference = config.data.atoms
     from poraque.fields.atomic import resolve_library
 
     # Unset and set-but-absent are the same failure to a run: neither can name
@@ -991,23 +982,23 @@ def resolve_baseline(task, config, cache, log):
         why = None
 
     if library is None:
-        where = (f"data.atomic_reference is {reference!r}, and {why}"
+        where = (f"data.atoms is {reference!r}, and {why}"
                  if why else
-                 "data.atomic_reference is unset, so nothing says where the "
+                 "data.atoms is unset, so nothing says where the "
                  "isolated atoms are")
         raise ValueError(
-            f"data.delta_density is on (the default since 2026-08-26) and the "
+            f"ext2chg.target is delta (the default) and the "
             f"target is rho - rho_sup, but {where}.\n\n"
             "Point it at a directory holding one subdirectory per element, "
             "each a single-atom calculation, or at a database built from "
             "them:\n\n"
             "    data:\n"
-            "      atomic_reference: data/vasp/isolated_atoms\n\n"
+            "      atoms: data/vasp/isolated_atoms\n\n"
             "A directory is ingested on the spot and memoized into the cache. "
             "To build the database ahead of time instead:\n\n"
             "    poraque-atoms <atom dirs> --output atomic_reference.json\n\n"
-            "Or set `data.delta_density: false` to train on the absolute "
-            "density, which is what runs before this date did.")
+            "Or set `ext2chg.target: full` to train on the absolute "
+            "density.")
 
     missing = _uncovered_elements(cache, library)
     if missing:
@@ -1016,7 +1007,7 @@ def resolve_baseline(task, config, cache, log):
             f"dataset also contains {missing}. A superposition missing whole "
             f"atoms is wrong in a way that looks entirely plausible, so it is "
             f"refused rather than built partially. Add an isolated-atom "
-            f"calculation for {missing}, or set data.delta_density: false.")
+            f"calculation for {missing}, or set ext2chg.target: full.")
 
     log(f"      delta-density mode: target is rho - rho_sup, baseline from "
         f"{len(library)} atom(s) {library.elements()}")
@@ -1036,15 +1027,15 @@ def resolve_structure_input(task, config, cache, baseline, log):
     """
     if task.input_field != "EXTCAR":
         return None
-    settings = config.model.structure_input_settings(
+    settings = config.operator(task.name).structure_input_settings(
         elements=dataset_elements(cache))
     if settings is None:
         return None
     if baseline is None:
         raise SystemExit(
-            "model.structure_input builds its channels from the isolated-atom "
-            "library, and this run has none: keep data.delta_density on and "
-            "set data.atomic_reference.")
+            "ext2chg.structure_input builds its channels from the isolated-atom "
+            "library, and this run has none: keep ext2chg.target: delta and "
+            "set data.atoms.")
     names = (["superposition"] if settings["superposition"] else []) \
         + settings["elements"]
     log(f"      structure input: {len(names)} channel(s) beside the "
@@ -1089,13 +1080,13 @@ def build_operator(task, train_set, config, log, validation=None):
     target_transform = train_set.target_transform
 
     head = {}
-    if config.model.pauli_residual and task.name == "pseudo2tau":
+    model = config.model(task.name)
+    if task.name == "pseudo2tau" and config.chg2tau.pauli_residual:
         from poraque.ml import fit_pauli_scale, pauli_bound_violation
 
-        scale = (config.model.pauli_scale if config.model.pauli_scale
-                 else fit_pauli_scale(train_set))
+        scale = fit_pauli_scale(train_set)
         head = {"pauli_residual": True, "pauli_scale": scale,
-                "learn_pauli_scale": config.model.learn_pauli_scale}
+                "learn_pauli_scale": True}
         log(f"      head: tau = tau_vW[rho] + s*softplus(f)   s = {scale:.4f} eV/Ang^3")
         for entry in pauli_bound_violation(train_set):
             if entry["violations"]:
@@ -1118,7 +1109,7 @@ def build_operator(task, train_set, config, log, validation=None):
     # architecture record holds a radius and not a word. `.update` rather than
     # a second `**`: both dicts carry the key, and `f(**a, **b)` on a shared
     # key is a TypeError.
-    model_kwargs = config.model_kwargs()
+    model_kwargs = config.model_kwargs(task.name)
     if task.site_target is not None:
         model_kwargs.update(resolve_occupancy_head(train_set, config, log,
                                                    sets=out_channels,
@@ -1131,13 +1122,13 @@ def build_operator(task, train_set, config, log, validation=None):
 
     # init_seed reaches FieldOperator, which isolates the draw from the global
     # stream; the manual_seed here keeps the ambient behavior when it is unset.
-    torch.manual_seed(config.training.seed)
+    torch.manual_seed(config.run.seed)
     operator = FieldOperator(
         task, input_transform=source_transform, target_transform=target_transform,
-        device=config.training.device,
-        strict_device=config.training.strict_device,
-        training_resolution=config.data.resolution,
-        init_seed=config.training.init_seed,
+        device=config.runtime.device,
+        strict_device=config.runtime.strict_device,
+        training_resolution=config.data.grid.resolution,
+        init_seed=config.run.seed,
         in_channels=in_channels, out_channels=out_channels,
         # From the *dataset*, not re-resolved from the config: the operator's
         # baseline has to be bit-for-bit the one the targets were built with,
@@ -1146,22 +1137,22 @@ def build_operator(task, train_set, config, log, validation=None):
         structure_input=getattr(train_set, "structure_input", None),
         **model_kwargs, **head,
     )
-    if config.model.precision != "float32":
-        operator.set_precision(config.model.precision)
+    if model.precision != "float32":
+        operator.set_precision(model.precision)
     readout = getattr(operator.model, "readout", None)
     if readout is not None:
         # Runtime, not architecture: set on the built head, never recorded.
-        mib = config.model.paw_settings()["readout_cache_mib"]
+        mib = config.runtime.readout_cache_mib
         readout.cache_bytes = int(float(mib) * 1024 ** 2)
         log(f"      readout kernel cache: {float(mib):g} MiB")
-    # Off the built backbone, not the config: an ext2chg operator's size is
-    # model.paw's, and the log must describe what was built.
+    # Off the built backbone, not the config: the log must describe what was
+    # built.
     backbone = getattr(operator.model, "backbone", operator.model)
     log(f"      model: {type(operator.model).__name__} width={backbone.width} "
         f"modes={max(backbone.modes)} layers={len(backbone.blocks)}  "
         f"({operator.model.n_parameters():,} parameters)")
-    if config.model.precision != "float32":
-        log(f"      precision: {config.model.precision} — roughly twice the "
+    if model.precision != "float32":
+        log(f"      precision: {model.precision} — roughly twice the "
             f"time and memory of the float32 default")
     report_mode_selection(train_set, config, log, modes=max(backbone.modes))
     report_radial_basis(train_set, backbone, log)
@@ -1187,16 +1178,16 @@ def resolve_strict_device(config, log):
         When ``strict_device`` is set and the request cannot be honored.
     """
     try:
-        return resolve_device(config.training.device,
-                              strict=config.training.strict_device)
+        return resolve_device(config.runtime.device,
+                              strict=config.runtime.strict_device)
     except RuntimeError as error:
         log("")
         log(f"  {error}")
         log("")
-        for line in device_report(config.training.device):
+        for line in device_report(config.runtime.device):
             log(f"    {line}")
         raise SystemExit(
-            f"training.device: {config.training.device!r} could not be "
+            f"runtime.device: {config.runtime.device!r} could not be "
             f"honored and training.strict_device is set, so this run stops "
             f"here rather than spending a GPU allocation on the CPU. "
             f"Set strict_device: false to allow the fallback.") from None
@@ -1225,8 +1216,8 @@ def loader_settings(config, distributed=None):
     dict
     """
     return {
-        "num_workers": config.training.num_workers,
-        "pin_memory": config.training.pin_memory,
+        "num_workers": config.runtime.loader_workers,
+        "pin_memory": config.runtime.PIN_MEMORY,
         "distributed": distributed,
     }
 
@@ -1255,15 +1246,15 @@ def report_field_cache(train_set, validation, config, log):
     declined" is only actionable beside the number that declined it.
     """
     cost = train_set.cache_bytes + (validation.cache_bytes if validation else 0)
-    requested = config.data.cache_in_memory
+    requested = config.data.cache.in_memory
     if train_set.cache:
         log(f"  field cache         : in RAM, ~{format_bytes(cost)} "
-            f"(data.cache_in_memory: {requested})")
+            f"(data.cache.in_memory: {requested})")
         return
     log("  field cache         : OFF -- every epoch re-reads and re-parses "
         "every field")
     log(f"                        ~{format_bytes(cost)} decoded "
-        f"(data.cache_in_memory: {requested}"
+        f"(data.cache.in_memory: {requested}"
         + (f", budget {format_bytes(CACHE_MEMORY_BUDGET)}"
            if str(requested).lower() == "auto" else "") + ")")
 
@@ -1355,7 +1346,7 @@ def resolve_occupancy_input(train_set, config, log, sets):
 
     layouts = resolve_site_layouts(train_set, log)
     transform = OccupancyTransform.fit(train_set, layouts, sets=sets)
-    channels = int(config.model.occupancy_channels)
+    channels = int(config.chg2tau.occupancy_channels)
     log(f"      occupancy input: {sets} record set(s) per atom, normalized on "
         f"{len(train_set)} training structures, written into {channels} "
         f"field channel(s)")
@@ -1367,8 +1358,8 @@ def resolve_occupancy_head(train_set, config, log, sets, validation=None):
     r"""
     Everything the ``ext2chg`` occupancy head needs, resolved from the data.
 
-    * **The backbone's size** from ``model.paw`` (``width``, ``modes``,
-      ``n_layers``); every other ``model`` setting applies as it stands.
+    * **The backbone's size** from ``ext2chg.model`` (``width``, ``modes``,
+      ``layers``).
     * **The record layout of each element**: its projector channels, from the
       POTCAR that built :math:`V_{\rm ext}`, as the cache recorded them in
       ``paw_profiles.json``. Without a POTCAR a record cannot be laid out, so
@@ -1385,7 +1376,7 @@ def resolve_occupancy_head(train_set, config, log, sets, validation=None):
     """
     from poraque.ml.paw import OccupancyTransform
 
-    settings = config.model.paw_settings()
+    settings = config.ext2chg.paw_settings(config.runtime.readout_cache_mib)
     layouts = resolve_site_layouts(train_set, log)
 
     # Over the validation grids too: the band is a property of the geometry,
@@ -1407,10 +1398,10 @@ def resolve_occupancy_head(train_set, config, log, sets, validation=None):
             f"coarsest training grid's {nyquist:.3f})")
     elif float(band) > nyquist:
         raise SystemExit(
-            f"model.paw.readout_g_max = {band:g} 1/Ang, and the coarsest "
+            f"ext2chg.occupancies.readout_band = {band:g} 1/Ang, and the coarsest "
             f"training grid resolves {nyquist:.3f}. Every structure has to "
             f"supply the band, or the readout would use a narrower one on "
-            f"some. Lower it, set it to auto, or raise data.resolution.")
+            f"some. Lower it, set it to auto, or raise data.grid.resolution.")
     else:
         log(f"      readout band: |G| <= {float(band):g} 1/Ang (coarsest "
             f"training grid resolves {nyquist:.3f})")
@@ -1561,9 +1552,10 @@ def resolve_radial_basis(train_set, config, log, modes=None):
     dict
         ``{"g_basis": float}`` when the config said ``auto``, else empty.
     """
-    if not config.model.equivariant_enabled:
+    model = config.model(train_set.task.name)
+    if not model.equivariant_enabled:
         return {}
-    if config.model.equivariant_kwargs().get("g_basis") != "auto":
+    if model.equivariant_kwargs().get("g_basis") != "auto":
         return {}
 
     from poraque.ml.fno import resolve_g_basis
@@ -1572,8 +1564,8 @@ def resolve_radial_basis(train_set, config, log, modes=None):
     if not cells:
         return {}
     resolved = resolve_g_basis(
-        cells, shapes, config.model.modes if modes is None else modes,
-        mode_selection=config.model.mode_selection, g_max=config.model.g_max)
+        cells, shapes, model.modes if modes is None else modes,
+        mode_selection=model.mode_selection, g_max=model.g_max)
     log(f"      g_basis: auto -> {resolved:.3f} 1/Ang, the median band the "
         f"{len(cells)} training structures retain")
     return {"g_basis": resolved}
@@ -1641,7 +1633,8 @@ def report_radial_basis(train_set, model, log):
             f"{model.n_radial - useful:.0f} of {model.n_radial} radial "
             f"functions sit where no mode exists.")
         log("      That is the layer's only capacity: measured, a basis this "
-            "wide cost 14-43 %. Set model.equivariant.g_basis: auto.")
+            "wide cost 14-43 %. Set model.equivariant.g_basis: auto in the "
+            "operator's section.")
 
 
 def report_mode_selection(train_set, config, log, modes=None):
@@ -1658,10 +1651,11 @@ def report_mode_selection(train_set, config, log, modes=None):
     3 of 8 modes — about 5 % of the spectral parameters the model allocated —
     and the run would otherwise look identical to one that used all of them.
     """
-    if config.model.mode_selection != "physical" or config.model.g_max is None:
+    model = config.model(train_set.task.name)
+    if model.mode_selection != "physical" or model.g_max is None:
         return
 
-    ceiling = config.model.modes if modes is None else modes
+    ceiling = model.modes if modes is None else modes
     counts = []
     # The cells come from the dataset's own samples rather than from a second
     # read of the files: they are already the geometry `physical_modes` will be
@@ -1669,7 +1663,7 @@ def report_mode_selection(train_set, config, log, modes=None):
     for cell in training_geometry(train_set)[0]:
         lengths = np.linalg.norm(cell, axis=-1)
         counts.append([min(int(ceiling),
-                           max(1, int(np.floor(config.model.g_max * length
+                           max(1, int(np.floor(model.g_max * length
                                                / (2.0 * np.pi)))))
                        for length in lengths])
     if not counts:
@@ -1677,7 +1671,7 @@ def report_mode_selection(train_set, config, log, modes=None):
 
     counts = np.asarray(counts)
     lowest, highest = int(counts.min()), int(counts.max())
-    log(f"      mode selection: physical, g_max = {config.model.g_max:g} "
+    log(f"      mode selection: physical, g_max = {model.g_max:g} "
         f"1/Ang -> {lowest}-{highest} of {ceiling} modes retained")
     if highest < ceiling:
         starved = int((counts < ceiling).all(axis=1).sum())
@@ -1685,7 +1679,7 @@ def report_mode_selection(train_set, config, log, modes=None):
             f"modes the model allocates.")
         log(f"      {starved}/{len(counts)} structures use fewer on every "
             f"axis; the unused spectral weights are dead parameters.")
-        log(f"      A cell needs L >= {ceiling * 2 * np.pi / config.model.g_max:.1f} "
+        log(f"      A cell needs L >= {ceiling * 2 * np.pi / model.g_max:.1f} "
             f"Ang to supply {ceiling} modes at this g_max. Raise g_max, or "
             f"lower modes.")
 
@@ -1718,7 +1712,7 @@ def load_pretrained_operator(task, train_set, validation, config, log):
     path = settings.pretrained_checkpoint
     if not os.path.exists(path):
         raise SystemExit(
-            f"fine_tuning.pretrained_checkpoint={path!r} does not exist. "
+            f"fine_tuning.checkpoint={path!r} does not exist. "
             f"Train a base model first, or point at one.")
 
     available = bundle_tasks(path)
@@ -1727,7 +1721,7 @@ def load_pretrained_operator(task, train_set, validation, config, log):
             f"{path} holds no {task.name!r} model; it contains {available}. "
             f"Fine-tuning needs a base model for the task being trained.")
 
-    operator = load_bundle(path, task.name, device=config.training.device)
+    operator = load_bundle(path, task.name, device=config.runtime.device)
     log(f"      fine-tuning from : {path}")
     log(f"      architecture     : inferred from the checkpoint "
         f"({operator.model.n_parameters():,} parameters)")
@@ -1748,34 +1742,34 @@ def load_pretrained_operator(task, train_set, validation, config, log):
         # Everything is frozen and the adapters added; `freeze_lifting_layers`
         # would be a no-op on top of that and is skipped rather than applied
         # to nothing, so the report cannot claim two mechanisms are running.
-        counts = apply_lora(operator.model, rank=settings.lora_rank,
-                            alpha=settings.lora_alpha,
-                            dropout=settings.lora_dropout)
+        counts = apply_lora(operator.model, rank=settings.lora.rank,
+                            alpha=settings.lora.alpha,
+                            dropout=settings.lora.dropout)
         # Recorded on the operator so `state()` can write a checkpoint that
         # holds the adapter and names the base, instead of the whole model.
         operator.lora = {
-            "rank": int(settings.lora_rank),
-            "alpha": float(settings.lora_alpha),
-            "dropout": float(settings.lora_dropout),
+            "rank": int(settings.lora.rank),
+            "alpha": float(settings.lora.alpha),
+            "dropout": float(settings.lora.dropout),
             "base_checkpoint": os.path.abspath(path),
         }
-        adaptation = (f"LoRA r={settings.lora_rank} "
-                      f"alpha={settings.lora_alpha:g}")
+        adaptation = (f"LoRA r={settings.lora.rank} "
+                      f"alpha={settings.lora.alpha:g}")
         share = 100.0 * counts["trainable"] / max(
             counts["trainable"] + counts["frozen"], 1)
         log(f"      LoRA             : {counts['adapters']} adapted layer(s), "
-            f"rank {settings.lora_rank}, alpha {settings.lora_alpha:g}")
+            f"rank {settings.lora.rank}, alpha {settings.lora.alpha:g}")
         log(f"      trainable        : {counts['trainable']:,} of "
             f"{counts['trainable'] + counts['frozen']:,} parameters "
             f"({share:.3f}%); the rest is frozen")
         log("      NOTE: the checkpoint will hold the ADAPTER only and name "
             "this base;")
         log(f"            it cannot be loaded without {os.path.basename(path)}.")
-        if settings.freeze_lifting_layers:
+        if settings.freeze_lifting:
             log("      NOTE: fine_tuning.freeze_lifting_layers is ignored "
                 "under LoRA, which")
             log("            freezes every base weight already.")
-    elif settings.freeze_lifting_layers:
+    elif settings.freeze_lifting:
         counts = freeze_lifting_layers(operator.model)
         adaptation = "full fine-tune, lifting frozen"
         log(f"      frozen           : lifting path, "
@@ -1787,7 +1781,7 @@ def load_pretrained_operator(task, train_set, validation, config, log):
         "fine-tuned": "yes",
         "adaptation": adaptation,
         "fine-tuning learning rate": f"{settings.learning_rate:g}",
-        "lifting layers": ("frozen" if (settings.freeze_lifting_layers
+        "lifting layers": ("frozen" if (settings.freeze_lifting
                                         or settings.use_lora)
                            else "trainable"),
         "trainable parameters": f"{counts['trainable']:,}",
@@ -1873,7 +1867,7 @@ def resolve_validation_split(dataset, config):
     """
     Choose the structures held out for validation.
 
-    The split is defined by one number, ``training.valid_fraction``: that share
+    The split is defined by one number, ``training.validation.fraction``: that share
     of the structures is drawn at random and kept back. ``0`` trains on every
     structure, at the cost of turning the reported metrics into a training fit.
 
@@ -1895,21 +1889,21 @@ def resolve_validation_split(dataset, config):
         logged so the record shows the protocol, not only the result.
     """
     names = [m.identifier for m in dataset.materials]
-    fraction = float(config.training.valid_fraction or 0.0)
+    fraction = float(config.training.validation.fraction or 0.0)
 
     # Range-check before the zero case: a negative value is a typo, and
     # treating it as "no split" would silently change the protocol rather than
     # reporting the mistake.
     if not 0.0 <= fraction < 1.0:
         raise SystemExit(
-            f"training.valid_fraction must lie in [0, 1), got {fraction}."
+            f"training.validation.fraction must lie in [0, 1), got {fraction}."
         )
 
     if fraction == 0.0:
         return set(), "none - trained on every structure, metrics are TRAINING FIT"
     if len(names) < 2:
         raise SystemExit(
-            f"valid_fraction needs at least two structures to split; the "
+            f"training.validation.fraction needs at least two structures to split; the "
             f"dataset has {len(names)}."
         )
 
@@ -1919,10 +1913,10 @@ def resolve_validation_split(dataset, config):
     count = int(round(fraction * len(names)))
     count = max(1, min(count, len(names) - 1))
 
-    seed = config.training.seed
+    seed = config.run.seed
     order = np.random.default_rng(seed).permutation(len(names))
     selected = {names[i] for i in order[:count]}
-    return selected, (f"valid_fraction={fraction:g} -> {count}/{len(names)} "
+    return selected, (f"fraction={fraction:g} -> {count}/{len(names)} "
                       f"structures, seed={seed}")
 
 
@@ -2130,20 +2124,20 @@ def validate_fine_tuning_settings(config):
     of GPU to discover.
     """
     settings = config.fine_tuning
-    if not settings.enable:
+    if settings is None:
         return
 
-    path = settings.pretrained_checkpoint
+    path = settings.checkpoint
     if not path:
-        raise SystemExit("fine_tuning.enable is set but "
-                         "fine_tuning.pretrained_checkpoint is empty.")
+        raise SystemExit("fine_tuning is on and fine_tuning.checkpoint is "
+                         "empty.")
     if not os.path.exists(path):
         legacy = resolve_bundle_path(path)
         if legacy == path:
             raise SystemExit(
-                f"fine_tuning.pretrained_checkpoint={path!r} does not exist. "
+                f"fine_tuning.checkpoint={path!r} does not exist. "
                 f"Train a base model first, or point at one.")
-        settings.pretrained_checkpoint = legacy
+        settings.checkpoint = legacy
 
     if settings.learning_rate <= 0:
         raise SystemExit(
@@ -2151,89 +2145,70 @@ def validate_fine_tuning_settings(config):
             f"positive.")
 
     if settings.use_lora:
-        if settings.lora_rank <= 0:
+        if settings.lora.rank <= 0:
             raise SystemExit(
-                f"fine_tuning.lora_rank={settings.lora_rank!r} must be "
+                f"fine_tuning.lora.rank={settings.lora.rank!r} must be "
                 f"positive: a rank-0 correction is identically zero, so the "
                 f"run would train nothing and report a flat loss curve.")
-        if settings.lora_alpha <= 0:
+        if settings.lora.alpha <= 0:
             raise SystemExit(
-                f"fine_tuning.lora_alpha={settings.lora_alpha!r} must be "
+                f"fine_tuning.lora.alpha={settings.lora.alpha!r} must be "
                 f"positive; it scales the correction by alpha / rank.")
-        if not 0.0 <= settings.lora_dropout < 1.0:
+        if not 0.0 <= settings.lora.dropout < 1.0:
             raise SystemExit(
-                f"fine_tuning.lora_dropout={settings.lora_dropout!r} must be "
+                f"fine_tuning.lora.dropout={settings.lora.dropout!r} must be "
                 f"in [0, 1).")
 
     destination = bundle_path(config)
     if destination:
         if os.path.abspath(destination) == os.path.abspath(
-                settings.pretrained_checkpoint):
+                settings.checkpoint):
             raise SystemExit(
                 f"the fine-tuned model would be written over its own base "
-                f"checkpoint at {destination}. Point output.root "
+                f"checkpoint at {destination}. Point run.output "
                 f"somewhere else.")
 
 
-def compute_dtype(config):
+def compute_dtype(config, task_name):
     """
     The torch dtype the batches must be produced in.
 
-    Set by ``model.precision``, not by ``data.precision``: the first governs
-    what the operator computes in, and a dataset yielding float32 into a
+    Set by the task's ``model.precision``: the fields are held in float64
+    whatever the operator computes in, and a dataset yielding float32 into a
     float64 model fails with ``Input type (float) and bias type (double)
-    should be the same``. The two settings are separate on purpose -- fields
-    may be held in float64 and fed to a float32 operator -- but the tensor
-    handed to the model is the model's business.
+    should be the same``. The tensor handed to the model is the model's
+    business.
 
     Returns
     -------
     torch.dtype
     """
-    return PRECISIONS[config.model.precision][0]
+    return PRECISIONS[config.model(task_name).precision][0]
 
 
 def validate_precision_settings(config):
     """
-    Check the two precision settings before anything is read or built.
+    Refuse ``model.precision: float64`` on an accelerator that has none.
 
-    Both are names rather than dtypes, so a typo is caught here — at the cost
-    of a millisecond, on the command line — instead of surfacing as a numpy or
-    torch error somewhere inside the cache build.
+    Apple's Metal backend has no float64 at all -- not slow, absent. Caught
+    here rather than left to surface as a TypeError from inside the first
+    conversion, and refused rather than quietly rerouted to the CPU: that
+    substitution changes the run's speed by an order of magnitude and is the
+    user's call to make. The names themselves are checked by the config.
     """
-    if config.data.precision not in FIELD_DTYPES:
-        raise SystemExit(
-            f"data.precision={config.data.precision!r} is not known; expected "
-            f"one of {sorted(FIELD_DTYPES)}. This is how the volumetric fields "
-            f"are stored in memory.")
-    if config.model.precision not in PRECISIONS:
-        raise SystemExit(
-            f"model.precision={config.model.precision!r} is not known; "
-            f"expected one of {sorted(PRECISIONS)}. This is what the operator "
-            f"computes in.")
-    if (config.data.precision == "float16"
-            and config.model.precision == "float64"):
-        raise SystemExit(
-            "data.precision='float16' with model.precision='float64' asks for "
-            "double-precision arithmetic on data that carries about three "
-            "decimal digits. Raise data.precision, or lower model.precision.")
-
-    # Apple's Metal backend has no float64 at all -- not slow, absent. Caught
-    # here rather than left to surface as a TypeError from inside the first
-    # conversion, and refused rather than quietly rerouted to the CPU: that
-    # substitution changes the run's speed by an order of magnitude and is the
-    # user's call to make.
-    if config.model.precision == "float64":
-        device = resolve_device(config.training.device,
-                                strict=config.training.strict_device)
+    for name in ("ext2chg", "chg2tau"):
+        operator = getattr(config, name)
+        if operator is None or operator.model.precision != "float64":
+            continue
+        device = resolve_device(config.runtime.device,
+                                strict=config.runtime.strict_device)
         if device.type == "mps":
             raise SystemExit(
-                f"model.precision='float64' cannot run on {describe_device(device)}: "
-                f"the Metal backend does not implement double precision.\n"
-                f"  Set training.device: cpu to run this in float64, or "
-                f"model.precision: float32 to keep the accelerator.\n"
-                f"  (data.precision is unaffected — fields may still be held "
-                f"in float64 while the operator computes in float32.)")
+                f"{name}.model.precision='float64' cannot run on "
+                f"{describe_device(device)}: the Metal backend does not "
+                f"implement double precision.\n"
+                f"  Set runtime.device: cpu to run this in float64, or "
+                f"{name}.model.precision: float32 to keep the accelerator.")
 
 
 def validate_loss_settings(config):
@@ -2250,54 +2225,24 @@ def validate_loss_settings(config):
     from poraque.ml.losses import resolve_data_loss, resolve_spin_loss
 
     try:
-        resolve_data_loss(config.training.loss)
+        resolve_data_loss(config.training.loss.norm)
     except ValueError as error:
         raise SystemExit(f"training.{error}") from None
     try:
-        resolve_spin_loss(config.training.spin_loss)
+        resolve_spin_loss(config.training.spin.mode)
     except ValueError as error:
         raise SystemExit(str(error)) from None
 
 
-def validate_activation_settings(config):
-    """
-    Resolve ``model.activation`` and ``model.kan_setup`` before anything runs.
-
-    The block is only expanded when the model is built, which is after the
-    cache. A typo in ``kan_setup.variant`` would otherwise surface once every
-    field has been downsampled, having changed nothing about that work.
-    """
-    try:
-        config.model.activation_kwargs()
-    except ValueError as error:
-        raise SystemExit(str(error))
-
-
-def validate_equivariance_settings(config):
-    """
-    Resolve ``model.equivariant`` and its block before anything runs.
-
-    Same timing argument as :func:`validate_activation_settings`, and one more
-    besides: ``equivariant: true`` beside the default ``use_coordinates: true``
-    is a contradiction the constructor refuses, and refusing it here means the
-    run says so on the command line rather than after the cache is built.
-    """
-    try:
-        config.model.equivariant_kwargs()
-    except ValueError as error:
-        raise SystemExit(str(error))
-
-
 def validate_paw_settings(config, training=True):
     """
-    Resolve ``model.paw`` against ``task.type`` before anything runs.
+    Refuse what the per-atom tasks do not support yet, before anything runs.
 
-    The block's shape and values, and that ``task.type`` and
-    ``model.paw.enable`` agree, are checked here rather than after the cache.
-    Two paths the operator does not support yet are refused as well, since
-    each would otherwise fail inside a fold or a checkpoint load:
-    cross-validation, which fits the occupancy transform per fold, and
-    fine-tuning, whose pretrained bundle has no occupancy head to adapt.
+    That there is something to train is checked here too. Two paths the
+    sited operators do not support are refused, since each would otherwise
+    fail inside a fold or a checkpoint load: cross-validation, which fits the
+    occupancy transform per fold, and fine-tuning, whose pretrained bundle
+    has no occupancy layer to adapt.
 
     Parameters
     ----------
@@ -2307,7 +2252,6 @@ def validate_paw_settings(config, training=True):
         refused anything.
     """
     try:
-        config.model.paw_settings()
         names = config.task_names()
     except ValueError as error:
         raise SystemExit(str(error))
@@ -2315,12 +2259,12 @@ def validate_paw_settings(config, training=True):
     sited = [name for name in ("ext2chg", "chg2tau") if name in names]
     if not training or not sited:
         return
-    if config.training.enable_kfold:
+    if config.training.kfold_enabled:
         raise SystemExit(
             f"{sited[0]} does not run under --kfold yet: its occupancy "
             f"transform is fitted on the training split, and the fold loop "
-            f"does not fit one per fold. Use training.valid_fraction instead.")
-    if config.fine_tuning.enable:
+            f"does not fit one per fold. Use training.validation.fraction instead.")
+    if (config.fine_tuning is not None):
         raise SystemExit(
             f"{sited[0]} cannot be fine-tuned yet: a pretrained bundle carries "
             f"no occupancy layer to adapt. Train it from scratch.")
@@ -2341,73 +2285,10 @@ def validate_physics_settings(config):
         PhysicsInformedLoss(
             task="ext2pseudo",
             **config.training.physics_weights(),
-            physics_informed=config.training.physics_informed_enabled,
+            physics_informed="auto",
         )
     except (ValueError, TypeError) as error:
         raise SystemExit(str(error))
-
-
-def validate_symbolic_settings(settings):
-    """
-    Check the symbolic settings before anything is trained.
-
-    Distillation runs *after* the fit, so a typo in ``features`` would
-    otherwise surface an hour in, with the search — not the training — as the
-    only casualty but the feedback uselessly late. Checked here it costs a
-    millisecond and fails on the command line.
-    """
-    if not settings.enable:
-        return
-    if settings.template not in TEMPLATES:
-        raise SystemExit(
-            f"symbolic.template={settings.template!r} is not known; expected "
-            f"one of {list(TEMPLATES)}.")
-    if settings.features not in FEATURE_SCHEMES:
-        raise SystemExit(
-            f"symbolic.features={settings.features!r} is not a known feature "
-            f"scheme; expected one of {list(FEATURE_SCHEMES)}.")
-    if settings.target not in ("model", "reference"):
-        raise SystemExit(
-            f"symbolic.target={settings.target!r} is not known; expected "
-            f"'model' (distil the trained operator) or 'reference' (fit the "
-            f"DFT data).")
-    if settings.epsilon <= 0:
-        raise SystemExit(
-            f"symbolic.epsilon={settings.epsilon!r} must be positive: it is a "
-            f"density floor and clamps every denominator.")
-    if settings.data_loss not in DATA_LOSSES:
-        raise SystemExit(
-            f"symbolic.data_loss={settings.data_loss!r} is not known; expected "
-            f"one of {sorted(DATA_LOSSES)}.")
-    physics = symbolic_physics(settings)
-    unknown = set(physics) - {"enable", "positivity_weight",
-                              "thomas_fermi_weight", "von_weizsacker_weight",
-                              "p_infinity"}
-    if unknown:
-        raise SystemExit(
-            f"Unknown key(s) in symbolic.physics: {sorted(unknown)}.\n"
-            f"  Note that this block constrains the symbolic *search*. The "
-            f"terms that constrain the neural operator -- electron count, "
-            f"Euler-Lagrange -- belong in training.physics_informed.")
-    if physics["enable"] and float(physics["p_infinity"]) <= 0:
-        raise SystemExit(
-            f"symbolic.physics.p_infinity={physics['p_infinity']!r} must be "
-            f"positive: it is the reduced gradient standing in for the von "
-            f"Weizsacker limit, and p is a magnitude.")
-    for key in ("positivity_weight", "thomas_fermi_weight",
-                "von_weizsacker_weight"):
-        if float(physics[key]) < 0:
-            raise SystemExit(
-                f"symbolic.physics.{key}={physics[key]!r} must not be "
-                f"negative: a negative penalty rewards the violation it is "
-                f"meant to forbid.")
-    # `poraque.ml.gp` selects by tournaments of three, so the one hard
-    # requirement is that a tournament can choose between anything at all.
-    if settings.population_size < 4:
-        raise SystemExit(
-            f"symbolic.population_size={settings.population_size} is too "
-            f"small: the search selects by tournament and cannot choose "
-            f"between fewer than four individuals.")
 
 
 def progress_checkpoint_path(config, task):
@@ -2431,7 +2312,7 @@ def progress_checkpoint_path(config, task):
         ``None`` when the run writes no output at all.
     """
     run = config.run_dir()
-    if run is None or not config.output.checkpoint:
+    if run is None:
         return None
     os.makedirs(run, exist_ok=True)
     return os.path.join(run, f"{model_name(config)}_{task.name}_best_so_far.pt")
@@ -2447,7 +2328,7 @@ def save_task_checkpoint(task, operator, config, log):
         Path written, or ``None`` when checkpointing is switched off.
     """
     run = config.run_dir()
-    if run is None or not config.output.checkpoint:
+    if run is None:
         return None
 
     path = os.path.join(run,
@@ -2458,129 +2339,6 @@ def save_task_checkpoint(task, operator, config, log):
     save_bundle(path, {task.name: operator}, config=config)
     log(f"  weights secured -> {path}")
     return path
-
-
-def _figure_sink(config):
-    """
-    Somewhere to write the symbolic parity plot when no plot directory is set.
-
-    Returns ``None`` when no PDF report is being built either — with neither
-    output configured there is nothing the figure could appear in, and writing
-    it would only litter.
-    """
-    if not config.report_dir():
-        return None
-
-    from poraque.vis import TrainingReport
-
-    return TrainingReport(os.path.join(config.report_dir(),
-                                       f"{model_name(config)}_figures"),
-                          dpi=config.output.dpi, fmt=config.output.plot_format,
-                          save_data=config.output.save_raw_plot_data)
-
-
-def run_symbolic_distillation(task, dataset, operator, config, log,
-                              validation=None, report=None):
-    r"""
-    Search for a closed-form expression reproducing the trained operator.
-
-    Only ``pseudo2tau`` is attempted. Distillation looks for a *functional of the
-    density*, and ``ext2pseudo`` maps a potential to a density — the Hohenberg-Kohn
-    map, whose whole content is non-local, so a semi-local expression for it
-    would be meaningless rather than merely inaccurate.
-
-    Returns
-    -------
-    SymbolicResult or None
-        ``None`` when the feature is off, the task is not ``pseudo2tau``, or the
-        search failed. A failure is reported and swallowed: it arrives after
-        the model is already trained, and losing a finished fit to an optional
-        analysis would be the worse outcome.
-    """
-    settings = config.symbolic
-    if not settings.enable:
-        return None
-    if task.name != "pseudo2tau":
-        log(f"\n  symbolic distillation: skipped for {task.name} "
-            f"(a density functional is only meaningful for pseudo2tau).")
-        return None
-
-    from poraque.ml.symbolic import distill_dataset
-
-    section(log, f"symbolic distillation {task.name}")
-    start = time.time()
-    try:
-        result = distill_dataset(dataset, settings, operator=operator, log=log,
-                                 validation=validation)
-    except ImportError as error:
-        log(f"  unavailable: {error}")
-        return None
-    except (ValueError, RuntimeError) as error:
-        log(f"  failed: {error}")
-        return None
-
-    # The formula gets the same parity plot the network does, against the same
-    # DFT reference, so the two are read on one scale rather than through two
-    # differently-defined summary numbers.
-    #
-    # It is drawn whenever distillation produced something to draw, not only
-    # when figures were asked for: the PDF report is meant to carry it, and
-    # `plot_figures` and `write_pdf_report` are independent settings, so a run with a
-    # report but no figure directory would otherwise silently lose the one plot
-    # that shows whether the formula is any good. Held-out data is used when
-    # there is any, and the fitted voxels otherwise, with the caption saying
-    # which.
-    scored, provenance = result.validation, "held-out data"
-    if scored.get("reference") is None:
-        scored, provenance = result.fitted, "the fitted voxels (training fit)"
-
-    destination = report if report is not None else _figure_sink(config)
-    if destination is not None:
-        label_text, unit = FIELD_LABELS[task.target_field]
-        previous, destination.prefix = (destination.prefix,
-                                        f"{task.name}_symbolic")
-        try:
-            if scored.get("reference") is not None:
-                result.parity_plot = destination.parity(
-                    scored["reference"], scored["predicted"],
-                    name="parity", label=label_text, unit=unit, log=True,
-                    prediction_label="symbolic formula",
-                    title=f"{task.name} · lowest loss "
-                          f"({result.complexity} nodes) on {provenance}")
-                log(f"  parity plot  : {result.parity_plot}  [{provenance}]")
-
-            # The knee gets its own parity plot, on the same voxels. Two
-            # panels of one number each say less than two plots that can be
-            # laid side by side: the question is whether the shorter formula
-            # gives anything away, and that is visible rather than summarized.
-            knee_scored = (result.knee_validation
-                           if result.knee_validation.get("reference") is not None
-                           else result.knee_fitted)
-            if knee_scored.get("reference") is not None:
-                result.knee_parity_plot = destination.parity(
-                    knee_scored["reference"], knee_scored["predicted"],
-                    name="parity_knee", label=label_text, unit=unit, log=True,
-                    prediction_label="symbolic formula",
-                    title=f"{task.name} · Pareto knee "
-                          f"({result.knee.get('complexity')} nodes) on "
-                          f"{provenance}")
-                log(f"  knee parity  : {result.knee_parity_plot}")
-
-            if result.pareto:
-                result.pareto_plot = destination.pareto(
-                    result.pareto, knee=result.knee, name="pareto",
-                    title=f"{task.name} · accuracy against complexity")
-                log(f"  pareto plot  : {result.pareto_plot}")
-        finally:
-            destination.prefix = previous
-
-    log(f"\n{result.summary()}")
-    log(f"  search time  : {time.time() - start:.1f} s")
-    log("")
-    log("  NOTE: the features are semi-local, so this is the best semi-local")
-    log("  functional matching the operator -- not a reconstruction of it. The")
-    log("  residual measures how much of the learned map is non-local.")
-    return result
 
 
 def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
@@ -2594,7 +2352,7 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
     grid shape and shuffles both within and across those groups — so a gradient
     step generally mixes several.
 
-    ``training.valid_fraction`` holds back a fifth of the structures by
+    ``training.validation.fraction`` holds back a fifth of the structures by
     default, so the reported score is genuinely held out and ``early_stopping``
     has something to watch. Set it to ``0`` when the goal is the final artifact
     trained on *all* the data — in which case the metrics become a **training
@@ -2617,8 +2375,8 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
     if profile is None:
         from poraque.ml.profiling import ResourceProfile
 
-        profile = ResourceProfile(config.training.device
-                                  if config.training.device != "auto" else None)
+        profile = ResourceProfile(config.runtime.device
+                                  if config.runtime.device != "auto" else None)
     title(log, f"TASK {task.name}: {task.input_field} -> {task.target_field}")
     log(f"  {task.description}")
 
@@ -2628,8 +2386,8 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
     structure_input = resolve_structure_input(task, config, cache, baseline,
                                               log)
     dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
-                               dtype=compute_dtype(config), baseline=baseline,
-                               cache=config.data.cache_in_memory,
+                               dtype=compute_dtype(config, task.name), baseline=baseline,
+                               cache=config.data.cache.in_memory,
                                structure_input=structure_input)
     validation_names, split_origin = resolve_validation_split(dataset, config)
 
@@ -2640,18 +2398,18 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
 
     train_set = FieldPairDataset(cache, task=task, materials=train_records,
                                  spin=config.data.spin,
-                                 dtype=compute_dtype(config), baseline=baseline,
-                                 cache=config.data.cache_in_memory,
+                                 dtype=compute_dtype(config, task.name), baseline=baseline,
+                                 cache=config.data.cache.in_memory,
                                  structure_input=structure_input)
     source_transform, target_transform = train_set.fit_transforms(
-        target_scale=config.data.target_scale)
+        target_scale=None)
     validation = (FieldPairDataset(cache, task=task, materials=test_records,
                                    input_transform=source_transform,
                                    target_transform=target_transform,
                                    spin=config.data.spin,
-                                   dtype=compute_dtype(config),
+                                   dtype=compute_dtype(config, task.name),
                                    baseline=baseline,
-                                   cache=config.data.cache_in_memory,
+                                   cache=config.data.cache.in_memory,
                                    structure_input=structure_input)
                   if test_records else None)
     report_field_cache(train_set, validation, config, log)
@@ -2684,7 +2442,7 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
 
     section(log, f"{task.name} model")
     fine_tuning = None
-    if config.fine_tuning.enable:
+    if (config.fine_tuning is not None):
         operator, fine_tuning = load_pretrained_operator(
             task, train_set, validation, config, log)
     else:
@@ -2695,24 +2453,24 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
     # the weights away from the solution being adapted before a small dataset
     # could constrain them.
     learning_rate = (config.fine_tuning.learning_rate if fine_tuning
-                     else config.training.learning_rate)
+                     else config.training.optimizer.learning_rate)
     if fine_tuning:
         log(f"      learning rate    : {learning_rate:g} "
             f"(fine-tuning; base training uses "
-            f"{config.training.learning_rate:g})")
+            f"{config.training.optimizer.learning_rate:g})")
 
     # Early stopping needs something to watch. With no validation split the
     # library would warn -- rightly, for a caller who asked for both -- but here
     # the two are merely the shipped defaults, and a default configuration must
     # not warn. Say it plainly in the log instead.
-    patience = config.training.early_stopping
+    patience = config.training.validation.patience
     if patience and validation is None:
         log(f"  early stopping      : inactive ({patience} epochs requested, "
             f"but nothing is held out to measure improvement against)")
         patience = 0
 
     section(log, f"{task.name} training")
-    log(f"  progress (every {config.training.eval_epoch} epochs):")
+    log(f"  progress (every {config.training.validation.every} epochs):")
     progress = progress_checkpoint_path(config, task)
     if progress is not None:
         log(f"    best weights are written to {os.path.basename(progress)} as "
@@ -2723,14 +2481,15 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
         operator, train_set, validation=validation, checkpoint=progress,
         epochs=config.training.epochs, batch_size=config.training.batch_size,
         learning_rate=learning_rate,
-        weight_decay=config.training.weight_decay,
-        optimizer=config.training.optimizer,
-        scheduler=config.training.scheduler, grad_clip=config.training.grad_clip,
+        weight_decay=config.training.optimizer.weight_decay,
+        optimizer=config.training.optimizer.name,
+        scheduler=config.training.SCHEDULER, grad_clip=config.training.GRAD_CLIP,
         samples_per_step=config.training.samples_per_step,
-        loss=build_loss(config, task.name), seed=config.training.seed,
-        eval_every=config.training.eval_epoch, early_stopping=patience,
+        loss=build_loss(config, task.name), seed=config.run.seed,
+        eval_every=config.training.validation.every, early_stopping=patience,
         log=log, verbose=True,
-        occupancy_weight=config.model.paw_settings()["occupancy_weight"],
+        occupancy_weight=(config.ext2chg.occupancies.weight
+                          if task.name == "ext2chg" else 1.0),
         **loader_settings(config, distributed),
     )
     elapsed = time.time() - start
@@ -2751,21 +2510,21 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
     # gets its own pair, on linear axes: it is signed.
     from poraque.vis.parity import ParityAccumulator
 
-    parity = {"train": ParityAccumulator(seed=config.training.seed),
-              "validation": ParityAccumulator(seed=config.training.seed)}
+    parity = {"train": ParityAccumulator(seed=config.run.seed),
+              "validation": ParityAccumulator(seed=config.run.seed)}
     magnetization_parity = {
-        "train": ParityAccumulator(seed=config.training.seed),
-        "validation": ParityAccumulator(seed=config.training.seed)}
+        "train": ParityAccumulator(seed=config.run.seed),
+        "validation": ParityAccumulator(seed=config.run.seed)}
     report = None
     showcase = None
     figure_dir = plot_directory(config)
     if figure_dir:
         from poraque.vis import TrainingReport
 
-        report = TrainingReport(figure_dir, dpi=config.output.dpi,
-                                fmt=config.output.plot_format,
+        report = TrainingReport(figure_dir, dpi=config.report.dpi,
+                                fmt=config.report.format,
                                 prefix=f"{task.name}",
-                                save_data=config.output.save_raw_plot_data)
+                                save_data=config.report.raw_data)
         figures.append(report.loss_curves(
             history, title=f"{task.name} ({len(train_set)} training structures)"))
 
@@ -2852,10 +2611,10 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
                      validation_metrics, log)
 
     if not validation_names:
-        log("\n      NOTE: valid_fraction is 0, so nothing was held out and these")
+        log("\n      NOTE: validation.fraction is 0, so nothing was held out and these")
         log("      are TRAINING-FIT numbers. They show the model can represent the")
         log("      data; they are not a generalization estimate. Raise")
-        log("      valid_fraction, or run --kfold, for that.")
+        log("      validation.fraction, or run --kfold, for that.")
 
     # ---------------- persist ---------------- #
     # The operator is handed back to main(), which writes every task into one
@@ -2872,24 +2631,16 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
 
     # ---------------- the weights, before anything optional ---------------- #
     # The unified bundle is written once every task has trained, which is
-    # correct but leaves the trained weights unpersisted while the optional
-    # analyses below run. Symbolic distillation is a long stochastic search
-    # over expressions -- minutes to hours, on data the fit has already
-    # produced -- and losing a finished fit to a post-hoc analysis is not a
-    # trade worth making, so a single-task copy goes to disk first and the
-    # unified bundle supersedes it.
+    # correct but leaves the trained weights unpersisted while the report
+    # below is typeset -- and a LaTeX failure, or the next task's crash, is
+    # not worth losing a finished fit to. A single-task copy goes to disk
+    # first and the unified bundle supersedes it.
     save_task_checkpoint(task, operator, config, log)
     if progress is not None and os.path.exists(progress):
         # The bundle beside it holds the same weights with the config and the
         # architecture record, so the bare state would only be a second answer
         # to "which file is the model".
         os.remove(progress)
-
-    # ---------------- symbolic distillation ---------------- #
-    if config.symbolic.enable:
-        profile.begin(f"{task.name}: symbolic distillation")
-    symbolic = run_symbolic_distillation(task, train_set, operator, config, log,
-                                         validation=validation, report=report)
 
     # ---------------- PDF report ---------------- #
     profile.begin(f"{task.name}: PDF report")
@@ -2949,11 +2700,7 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
             unit=task.target_unit, caveats=caveats,
             filename=report_filename(config, task.name, n_tasks),
             summary=summary,
-            configuration={f"{section}.{key}": value
-                           for section, values in config.to_dict().items()
-                           if isinstance(values, dict)
-                           for key, value in values.items()},
-            symbolic=symbolic,
+            configuration=flat_settings(config),
         )
         log(f"  PDF report      -> {pdf}")
 
@@ -2985,8 +2732,6 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
         "history": curves,
         "early_stopping": stopping,
         "fine_tuning": fine_tuning,
-        "symbolic": (result_to_dict(symbolic) if symbolic is not None
-                     else None),
         # Not serialized into the JSON summary; main() pops it to build the
         # unified bundle once every task has trained.
         "operator": operator,
@@ -3033,9 +2778,9 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None,
     Each fold trains a fresh model on :math:`K-1` groups of structures and
     scores it on the held-out group, in physical units. The result is a
     *generalization estimate* with a spread, not a deployable model: it fits
-    *K* of them. Leave ``enable_kfold`` off for the artifact to ship.
+    *K* of them. Leave ``training.validation.kfold`` null for the artifact to ship.
 
-    ``valid_fraction`` is ignored here — the folds define the splits.
+    ``training.validation.fraction`` is ignored here — the folds define the splits.
 
     Parameters
     ----------
@@ -3049,25 +2794,25 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None,
     """
     task = resolve_task(task_name)
     if profile is not None:
-        profile.begin(f"{task.name}: {config.training.k_folds}-fold "
+        profile.begin(f"{task.name}: {config.training.validation.kfold}-fold "
                       f"cross-validation")
     from poraque.vis.parity import ParityAccumulator
 
     # One accumulator across every fold: each structure is predicted exactly
     # once, by the one model that never saw it, which makes this the purest
     # held-out parity plot the project draws.
-    held_out = ParityAccumulator(seed=config.training.seed)
-    held_out_magnetization = ParityAccumulator(seed=config.training.seed)
+    held_out = ParityAccumulator(seed=config.run.seed)
+    held_out_magnetization = ParityAccumulator(seed=config.run.seed)
     baseline = resolve_baseline(task, config, cache, log)
     structure_input = resolve_structure_input(task, config, cache, baseline,
                                               log)
     dataset = FieldPairDataset(cache, task=task, spin=config.data.spin,
-                               dtype=compute_dtype(config), baseline=baseline,
-                               cache=config.data.cache_in_memory,
+                               dtype=compute_dtype(config, task.name), baseline=baseline,
+                               cache=config.data.cache.in_memory,
                                structure_input=structure_input)
     names = [m.identifier for m in dataset.materials]
-    folds = structure_level_folds(names, config.training.k_folds,
-                                  config.training.seed)
+    folds = structure_level_folds(names, config.training.validation.kfold,
+                                  config.run.seed)
     by_name = {m.identifier: m for m in dataset.materials}
 
     title(log, f"TASK {task.name}: {task.input_field} -> {task.target_field}"
@@ -3075,7 +2820,7 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None,
     log(f"  {task.description}")
     section(log, f"{task.name} folds")
     log(f"  structures : {len(names)}")
-    log(f"  folds      : {len(folds)} (requested {config.training.k_folds})")
+    log(f"  folds      : {len(folds)} (requested {config.training.validation.kfold})")
     if len(folds) == len(names):
         log("               = leave-one-out, since k equals the structure count")
     for index, group in enumerate(folds, 1):
@@ -3096,12 +2841,12 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None,
 
         train_set = FieldPairDataset(cache, task=task, materials=train_records,
                                      spin=config.data.spin,
-                                     dtype=compute_dtype(config),
+                                     dtype=compute_dtype(config, task.name),
                                      baseline=baseline,
-                                     cache=config.data.cache_in_memory,
+                                     cache=config.data.cache.in_memory,
                                      structure_input=structure_input)
         source_transform, target_transform = train_set.fit_transforms(
-            target_scale=config.data.target_scale)
+            target_scale=None)
         # dtype was dropped here once, so a float64 run crashed at the first
         # validation pass with a float/double mismatch. `cache` was dropped
         # here too, in the change that added it -- with the same shape of
@@ -3110,9 +2855,9 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None,
                                    input_transform=source_transform,
                                    target_transform=target_transform,
                                    spin=config.data.spin,
-                                   dtype=compute_dtype(config),
+                                   dtype=compute_dtype(config, task.name),
                                    baseline=baseline,
-                                   cache=config.data.cache_in_memory,
+                                   cache=config.data.cache.in_memory,
                                    structure_input=structure_input)
         if index == 1:
             report_field_cache(train_set, val_set, config, log)
@@ -3124,15 +2869,15 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None,
         history = train(
             operator, train_set, validation=val_set,
             epochs=config.training.epochs, batch_size=config.training.batch_size,
-            learning_rate=config.training.learning_rate,
-            weight_decay=config.training.weight_decay,
-            optimizer=config.training.optimizer,
-            scheduler=config.training.scheduler,
-            grad_clip=config.training.grad_clip,
+            learning_rate=config.training.optimizer.learning_rate,
+            weight_decay=config.training.optimizer.weight_decay,
+            optimizer=config.training.optimizer.name,
+            scheduler=config.training.SCHEDULER,
+            grad_clip=config.training.GRAD_CLIP,
             samples_per_step=config.training.samples_per_step,
-            loss=build_loss(config, task.name), seed=config.training.seed,
-            eval_every=config.training.eval_epoch,
-            early_stopping=config.training.early_stopping,
+            loss=build_loss(config, task.name), seed=config.run.seed,
+            eval_every=config.training.validation.every,
+            early_stopping=config.training.validation.patience,
             log=log, verbose=True,
             **loader_settings(config, distributed),
         )
@@ -3167,10 +2912,10 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None,
                 from poraque.vis import TrainingReport
 
                 report = TrainingReport(
-                    plot_directory(config), dpi=config.output.dpi,
-                    fmt=config.output.plot_format,
+                    plot_directory(config), dpi=config.report.dpi,
+                    fmt=config.report.format,
                     prefix=f"{task.name}_fold{index}_{name}",
-                    save_data=config.output.save_raw_plot_data)
+                    save_data=config.report.raw_data)
                 figures.append(report.loss_curves(
                     history, title=f"{task.name} · fold {index}"))
                 figures.append(report.field_comparison(
@@ -3205,9 +2950,9 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None,
         from poraque.vis import TrainingReport
 
         report = TrainingReport(
-            plot_directory(config), dpi=config.output.dpi,
-            fmt=config.output.plot_format, prefix=f"{task.name}_kfold",
-            save_data=config.output.save_raw_plot_data)
+            plot_directory(config), dpi=config.report.dpi,
+            fmt=config.report.format, prefix=f"{task.name}_kfold",
+            save_data=config.report.raw_data)
         figures.append(report.global_parity(
             held_out, label=label_text, unit=unit,
             log=(task.target_field in ("CHGCAR", "TAUCAR")),
@@ -3243,8 +2988,8 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None,
                 "validation scores": str(len(records)),
                 "epochs per fold": str(config.training.epochs),
                 "device": describe_device(
-                    resolve_device(config.training.device,
-                                   strict=config.training.strict_device)),
+                    resolve_device(config.runtime.device,
+                                   strict=config.runtime.strict_device)),
                 "mean relative L2": f"{aggregate['relative_l2']['mean']:.5g}"
                                     f" +/- {aggregate['relative_l2']['std']:.3g}",
                 "mean MAE": f"{aggregate['mae']['mean']:.5g}"
@@ -3259,10 +3004,7 @@ def run_task_kfold(task_name, cache, config, log, n_tasks=1, distributed=None,
                 "With few folds the spread is wide; quote the standard "
                 "deviation alongside the mean.",
             ],
-            configuration={f"{section}.{key}": value
-                           for section, values in config.to_dict().items()
-                           if isinstance(values, dict)
-                           for key, value in values.items()},
+            configuration=flat_settings(config),
         )
         log(f"\n  consolidated report -> {pdf}")
 
@@ -3283,117 +3025,92 @@ def build_parser():
     """Command-line interface. Every override defaults to ``None``.
 
     A ``None`` default is what lets the resolver distinguish "flag absent" from
-    "flag set to a falsy value", so ``--early-stopping 0`` disables early
-    stopping instead of being mistaken for an unset flag.
+    "flag set to a falsy value", so ``--patience 0`` disables early stopping
+    instead of being mistaken for an unset flag. Each ``dest`` is the dotted
+    path of the setting it overrides.
     """
     parser = argparse.ArgumentParser(
         description="Train Poraque's Fourier Neural Operators from a YAML config.",
     )
     parser.add_argument("--config", default=None,
-                        help="YAML configuration file (defaults are used if omitted)")
+                        help="YAML configuration file; the operators trained "
+                             "are the sections it has (ext2chg, chg2tau)")
+    parser.add_argument("--task", default=None, choices=["ext2chg", "chg2tau"],
+                        help="train only this one of the operators the "
+                             "configuration describes")
 
-    parser.add_argument("--task", dest="task.type", default=None,
-                        choices=["all", "ext2pseudo", "pseudo2tau", "ext2chg",
-                                 "chg2tau"])
-    parser.add_argument("--name", dest="task.name", default=None,
-                        metavar="NAME",
-                        help="name this run's outputs: models/NAME.poraque, "
-                             "reports/NAME_report.pdf and a NAME/ subdirectory "
-                             "of the plot directory (default: poraque_models)")
-    group = parser.add_argument_group("data overrides")
-    group.add_argument("--data-paths", dest="data.data_paths", nargs="+",
-                       default=None, metavar="DIR",
-                       help="one or more dataset directories. Each holds one "
-                            "subdirectory per material, whatever produced it "
-                            "-- a VASP run tree, a poraque-mp download, a "
-                            "cache from an earlier run -- and all of them are "
-                            "pooled. What a material's directory holds is "
-                            "read, not declared")
-    group.add_argument("--cache", dest="data.cache", default=None)
-    group.add_argument("--pattern", dest="data.pattern", default=None)
-    group.add_argument("--format", dest="data.format", default=None,
-                       choices=["auto", "vasp"],
-                       help="the DFT code that wrote the files, or 'auto' to "
-                            "detect it per directory (default)")
-    group.add_argument("--resolution", dest="data.resolution", type=int, default=None)
+    group = parser.add_argument_group("run")
+    group.add_argument("--name", dest="run.name", default=None, metavar="NAME",
+                       help="name of the run: everything goes in "
+                            "<output>/NAME/ (default: poraque_models)")
+    group.add_argument("--output", dest="run.output", default=None,
+                       metavar="DIR",
+                       help="parent of the run folder (default: models)")
+    group.add_argument("--seed", dest="run.seed", type=int, default=None,
+                       help="seeds the split, the folds, the batch order and "
+                            "the initial weights. Vary it across runs to "
+                            "build a query-by-committee ensemble")
+
+    group = parser.add_argument_group("data")
+    group.add_argument("--data", dest="data.path", default=None, metavar="DIR",
+                       help="the dataset: one directory, one subdirectory per "
+                            "material")
+    group.add_argument("--cache", dest="data.cache.dir", default=None,
+                       metavar="DIR")
+    group.add_argument("--resolution", dest="data.grid.resolution", type=int,
+                       default=None)
     group.add_argument("--potcar-dir", dest="data.potcar_dir", default=None,
                        metavar="DIR",
-                       help="POTCAR library (<dir>/Ag/POTCAR, ...). Used where "
-                            "the data ships no pseudopotentials -- an MP "
-                            "download, or a run whose POTCAR was stripped -- "
-                            "to build the exact tabulated external potential "
-                            "instead of the Gaussian model")
-    group.add_argument("--sigma", dest="data.sigma", type=float, default=None,
-                       metavar="A",
-                       help="Gaussian pseudo-ion width in Angstrom for the "
-                            "computed external potential; defaults to the "
-                            "POTCAR core radius where one is available")
-    group.add_argument("--gaussian-blur", dest="data.gaussian_blur", type=float,
-                       default=None,
-                       help="Gaussian blur width in Angstrom for the computed "
-                            "external potential")
-    group.add_argument("--blur-method", dest="data.blur_method", default=None,
-                       choices=["spectral", "ndimage"])
+                       help="POTCAR library (<dir>/Ag/POTCAR, ...), used where "
+                            "a material ships no pseudopotential, to build the "
+                            "exact tabulated external potential instead of "
+                            "the Gaussian model")
+    group.add_argument("--cache-in-memory", dest="data.cache.in_memory",
+                       default=None, type=_auto_or_bool,
+                       help="auto | true | false -- keep decoded fields in RAM "
+                            "between epochs (default auto). Off, every epoch "
+                            "re-parses every file; measured at 10x on real "
+                            "data")
 
-    group = parser.add_argument_group("model overrides")
-    group.add_argument("--width", dest="model.width", type=int, default=None)
-    group.add_argument("--modes", dest="model.modes", type=int, default=None)
-    group.add_argument("--layers", dest="model.n_layers", type=int, default=None)
-    group.add_argument("--projection", dest="model.projection_channels",
-                       type=int, default=None)
-    group.add_argument("--pauli-head", dest="model.pauli_residual",
-                       action="store_const", const=True, default=None,
-                       help="tau = tau_vW[rho] + s*softplus(f) for pseudo2tau")
-    group.add_argument("--no-pauli-head", dest="model.pauli_residual",
-                       action="store_const", const=False, default=None)
-
-    group = parser.add_argument_group("training overrides")
+    group = parser.add_argument_group("training")
     group.add_argument("--epochs", dest="training.epochs", type=int, default=None)
     group.add_argument("--batch-size", dest="training.batch_size", type=int,
                        default=None)
-    group.add_argument("--optimizer", dest="training.optimizer", default=None,
-                       choices=list(OPTIMIZERS),
+    group.add_argument("--optimizer", dest="training.optimizer.name",
+                       default=None, choices=list(OPTIMIZERS),
                        help="adamw (default), adam or sgd")
-    group.add_argument("--learning-rate", dest="training.learning_rate",
-                       type=float, default=None)
-    group.add_argument("--valid-fraction", dest="training.valid_fraction",
+    group.add_argument("--learning-rate",
+                       dest="training.optimizer.learning_rate", type=float,
+                       default=None)
+    group.add_argument("--valid-fraction", dest="training.validation.fraction",
                        type=float, default=None, metavar="F",
                        help="fraction of structures held out for validation "
                             "(default 0.2); 0 trains on every structure and "
                             "reports a training fit")
-    group.add_argument("--kfold", dest="training.enable_kfold",
-                       action="store_const", const=True, default=None,
-                       help="run K-fold cross-validation instead, ignoring "
-                            "--valid-fraction")
-    group.add_argument("--k-folds", dest="training.k_folds", type=int,
-                       default=None, help="number of folds (capped at the "
-                                          "number of structures; equal to it "
-                                          "is leave-one-out)")
-    group.add_argument("--eval-epoch", dest="training.eval_epoch", type=int,
+    group.add_argument("--kfold", dest="training.validation.kfold", type=int,
+                       nargs="?", const=5, default=None, metavar="K",
+                       help="run K-fold cross-validation instead (default "
+                            "K 5, capped at the number of structures)")
+    group.add_argument("--every", dest="training.validation.every", type=int,
                        default=None, metavar="N",
                        help="evaluate and log every N epochs (default 10)")
-    group.add_argument("--early-stopping", dest="training.early_stopping",
+    group.add_argument("--patience", dest="training.validation.patience",
                        type=int, default=None, metavar="N",
                        help="stop after N epochs without validation "
                             "improvement and restore the best weights "
                             "(default 300); 0 disables. Needs a validation "
                             "split")
-    group.add_argument("--seed", dest="training.seed", type=int, default=None,
-                       help="seeds the split, the folds and the batch order")
-    group.add_argument("--init-seed", dest="training.init_seed", type=int,
-                       default=None, metavar="N",
-                       help="seed the weight initialization only, leaving the "
-                            "data pipeline on --seed. Vary it across runs to "
-                            "build a query-by-committee ensemble")
-    group.add_argument("--device", dest="training.device", default=None,
+
+    group = parser.add_argument_group("runtime")
+    group.add_argument("--device", dest="runtime.device", default=None,
                        help="auto | cuda | mps | cpu")
-    group.add_argument("--strict-device", dest="training.strict_device",
+    group.add_argument("--strict-device", dest="runtime.strict_device",
                        action="store_const", const=True, default=None,
                        help="abort instead of falling back to the CPU when "
                             "--device cannot be honored; put this in every "
                             "batch job, where a silent fallback spends the GPU "
                             "allocation not using a GPU")
-    group.add_argument("--distributed", dest="training.distributed",
+    group.add_argument("--distributed", dest="runtime.distributed",
                        default=None, choices=("auto", "off"),
                        help="auto | off -- form a DistributedDataParallel "
                             "group over NCCL when the launcher describes one "
@@ -3408,85 +3125,58 @@ def build_parser():
                             "run it in a CPU-only job, then submit the GPU "
                             "job with the same config, which finds the cache "
                             "and rebuilds nothing")
-    group.add_argument("--cache-in-memory", dest="data.cache_in_memory",
-                       default=None,
-                       help="auto | true | false -- keep decoded fields in RAM "
-                            "between epochs (default auto). Off, every epoch "
-                            "re-parses every file; measured at 10x on real "
-                            "data")
-    group.add_argument("--cache-workers", dest="data.cache_workers",
-                       default=None,
+    group.add_argument("--cache-workers", dest="runtime.workers",
+                       default=None, type=_auto_or_count,
                        help="auto | <n> | 0 -- processes that BUILD the cache, "
                             "one material each (default auto). The build is a "
                             "Python text codec, not FFT work, so this is the "
                             "only setting that uses more than one core: "
                             "measured 4.0x on eight")
-    group.add_argument("--num-workers", dest="training.num_workers", type=int,
-                       default=None,
+    group.add_argument("--loader-workers", dest="runtime.loader_workers",
+                       type=int, default=None,
                        help="DataLoader worker processes (default 0). Prefer "
                             "the in-memory cache: added to it, workers make "
                             "training slower, not faster")
-    group = parser.add_argument_group("fine-tuning")
-    group.add_argument("--fine-tune", dest="fine_tuning.enable",
-                       action="store_const", const=True, default=None,
-                       help="start from a trained checkpoint instead of a "
-                            "fresh initialization, to specialize it on this "
-                            "dataset")
-    group.add_argument("--pretrained", dest="fine_tuning.pretrained_checkpoint",
+
+    group = parser.add_argument_group("fine-tuning (needs a fine_tuning: "
+                                      "section in the config)")
+    group.add_argument("--pretrained", dest="fine_tuning.checkpoint",
                        default=None, metavar="PATH",
-                       help="base bundle to adapt (default: "
-                            "models/poraque_models.poraque)")
+                       help="base bundle to adapt")
     group.add_argument("--fine-tune-lr", dest="fine_tuning.learning_rate",
                        type=float, default=None, metavar="LR",
-                       help="learning rate for the fine-tune, replacing "
-                            "--learning-rate")
-    group.add_argument("--freeze-lifting",
-                       dest="fine_tuning.freeze_lifting_layers",
-                       action="store_const", const=True, default=None,
-                       help="hold the input lifting path fixed and train the "
-                            "rest")
+                       help="learning rate for the fine-tune")
 
-    group = parser.add_argument_group("symbolic distillation")
-    group.add_argument("--symbolic",
-                       dest="symbolic.enable",
-                       action="store_const", const=True, default=None,
-                       help="after training, search for a closed-form "
-                            "expression reproducing the pseudo2tau operator")
-    group.add_argument("--symbolic-target", dest="symbolic.target",
-                       choices=["model", "reference"], default=None,
-                       help="fit the operator's predictions (model) or the "
-                            "DFT data (reference)")
-    group.add_argument("--symbolic-features", dest="symbolic.features",
-                       choices=list(FEATURE_SCHEMES), default=None,
-                       help="variables handed to the engine: (rho, p, q), the "
-                            "enhancement factor on (p, q), or the dimensional "
-                            "(rho, |grad rho|, lap rho)")
-    group.add_argument("--symbolic-template", dest="symbolic.template",
-                       choices=list(TEMPLATES), default=None,
-                       help="factorize the target before the search: "
-                            "thomas_fermi fits the enhancement factor F in "
-                            "tau = tau_TF * F")
-    group.add_argument("--symbolic-epsilon", dest="symbolic.epsilon",
-                       type=float, default=None, metavar="RHO",
-                       help="vacuum threshold in e/a0^3; denominators are "
-                            "clamped at it and voxels below it dropped")
-    group.add_argument("--symbolic-iterations", dest="symbolic.iterations",
-                       type=int, default=None, metavar="N")
-
-    group = parser.add_argument_group("output overrides")
-    group.add_argument("--log", dest="output.log", default=None)
-    group.add_argument("--json", dest="output.json", default=None)
-    group.add_argument("--output-root", dest="output.root", default=None,
-                       metavar="DIR",
-                       help="parent of the run folder; every artifact goes in "
-                            "<DIR>/<name>/ (default: models)")
-
-    group.add_argument("--no-report", dest="output.write_pdf_report",
-                       action="store_false", default=None,
+    group = parser.add_argument_group("report")
+    group.add_argument("--no-report", dest="report.pdf",
+                       action="store_const", const=False, default=None,
                        help="skip the PDF report")
     group.add_argument("--no-plots", action="store_true",
                        help="skip figure generation")
     return parser
+
+
+def _auto_or_bool(text):
+    """``auto``, ``true`` or ``false`` from the command line."""
+    lowered = str(text).lower()
+    if lowered == "auto":
+        return "auto"
+    if lowered in ("true", "yes", "1", "on"):
+        return True
+    if lowered in ("false", "no", "0", "off"):
+        return False
+    raise argparse.ArgumentTypeError(f"{text!r}: expected auto, true or false")
+
+
+def _auto_or_count(text):
+    """``auto`` or a non-negative integer from the command line."""
+    if str(text).lower() == "auto":
+        return "auto"
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: expected auto or a number of processes") from None
 
 
 def run(argv=None):
@@ -3497,21 +3187,30 @@ def run(argv=None):
     # Flags that steer this function rather than describing a run; they must
     # not be fed to `apply_overrides`, which would look for a config section
     # named after each of them.
-    NOT_SETTINGS = ("config", "no_plots", "cache_only")
+    NOT_SETTINGS = ("config", "no_plots", "cache_only", "task")
 
     config = (TrainingConfig.from_yaml(args.config) if args.config
               else TrainingConfig())
     overrides = {k: v for k, v in vars(args).items() if k not in NOT_SETTINGS}
-    config.apply_overrides(overrides)
+    try:
+        config.apply_overrides(overrides)
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
+    if args.task is not None:
+        # Train one of the operators the configuration describes, leaving the
+        # other's section as written for the next run.
+        if getattr(config, args.task) is None:
+            raise SystemExit(f"--task {args.task}: the configuration has no "
+                             f"`{args.task}:` section to train.")
+        for name in ("ext2chg", "chg2tau"):
+            if name != args.task:
+                setattr(config, name, None)
 
     if args.no_plots:
-        config.output.plot_figures = False
+        config.report.figures = False
     validate_fine_tuning_settings(config)
-    validate_symbolic_settings(config.symbolic)
     validate_precision_settings(config)
     validate_loss_settings(config)
-    validate_activation_settings(config)
-    validate_equivariance_settings(config)
     validate_physics_settings(config)
     validate_paw_settings(config, training=not args.cache_only)
 
@@ -3524,37 +3223,30 @@ def run(argv=None):
         # writing. Set here, before discovery, so that a `--cache-only` run
         # launched inside a multi-task allocation by mistake still forms no
         # group and initializes no NCCL.
-        config.training.device = "cpu"
-        config.training.strict_device = False
-        config.training.distributed = "off"
+        config.runtime.device = "cpu"
+        config.runtime.strict_device = False
+        config.runtime.distributed = "off"
 
     # Resolved before anything else, because it decides *which* device this
     # process may use and whether it is allowed to write. Never raises: without
     # a Slurm or torchrun launch it returns a disabled context and everything
     # below takes the single-device path it always took.
-    context = discover_distributed(config.training.distributed)
+    context = discover_distributed(config.runtime.distributed)
     if context:
         # Each rank owns one GPU, and it is `cuda:<local_rank>` rather than
         # whatever `auto` would pick -- which is `cuda:0` for all four,
         # contending for one device and reporting itself as a scaling failure.
-        config.training.device = context.device
+        config.runtime.device = context.device
         initialize_distributed(context,
-                               timeout_minutes=config.training.distributed_timeout)
+                               timeout_minutes=config.runtime.DISTRIBUTED_TIMEOUT)
     if not context.is_main:
         # Rank 0 alone writes. Turned off here, on this process's own copy of
         # the config, rather than guarded at each of the dozen places something
-        # is written: `bundle_path`, `plot_directory`, `report_dir`,
-        # `log_path` and `json_path` all read these flags, so switching them
-        # off once switches off every writer including the ones added later.
-        # The empty strings are for the two artifacts a config can name
-        # explicitly, which would otherwise bypass their own directory flag.
-        config.output.checkpoint = False
-        config.output.plot_figures = False
-        config.output.write_pdf_report = False
-        config.output.write_log = False
-        config.output.log = ""
-        config.output.json = ""
-        config.output.save_raw_plot_data = False
+        # is written: every path -- `bundle_path`, `plot_directory`,
+        # `report_dir`, `log_path`, `json_path` -- hangs off `run.output`, so
+        # clearing it switches off every writer including the ones added later.
+        config.run.output = None
+        config.report.raw_data = False
 
     log = Logger(config.log_path(), silent=not context.is_main)
     # Started before anything is timed, so "total" is the whole run; printed in
@@ -3562,7 +3254,7 @@ def run(argv=None):
     # what it had spent -- the stage it died in is the row most worth reading.
     from poraque.ml.profiling import ResourceProfile
 
-    profile = ResourceProfile(workers=config.training.num_workers)
+    profile = ResourceProfile(workers=config.runtime.loader_workers)
     try:
         # Through the Logger, so the environment that produced a run is recorded
         # in its log rather than only shown once on a terminal that is long
@@ -3571,7 +3263,7 @@ def run(argv=None):
         # Process-wide, and set before anything reads a field: this governs how
         # the volumetric data is held in memory, so it has to be in force
         # before the cache is built rather than applied to fields afterwards.
-        set_default_dtype(config.data.precision)
+        set_default_dtype(config.data.FIXED["precision"])
         device = resolve_strict_device(config, log)
         profile.device = device
         log.title("Poraque - Fourier Neural Operator training")
@@ -3583,20 +3275,20 @@ def run(argv=None):
         # results will land -- further down the page.
         log(f"  run    : {model_name(config)}")
         log(f"  device : {describe_device(device)}  (requested "
-            f"{config.training.device!r})")
+            f"{config.runtime.device!r})")
         # A device that did not resolve to what was asked for is the failure
         # this run is most likely to be quietly wasting itself on, so when it
         # happens the full report goes into the log -- torch build, CUDA
         # runtime, where torch was imported from, the architectures it carries
         # kernels for -- rather than one line saying it ended up on the CPU.
-        requested_kind = str(config.training.device).split(":")[0].lower()
+        requested_kind = str(config.runtime.device).split(":")[0].lower()
         if requested_kind not in ("auto", "", device.type):
-            log(f"  WARNING: {config.training.device!r} was requested and this "
+            log(f"  WARNING: {config.runtime.device!r} was requested and this "
                 f"run is on {device.type}. Set training.strict_device: true to "
                 f"make that an error instead.")
-            for line in device_report(config.training.device):
+            for line in device_report(config.runtime.device):
                 log(f"           {line}")
-        if enable_tf32(device, config.training.tf32):
+        if enable_tf32(device, config.runtime.tf32):
             log("  tf32   : enabled for matmul and cudnn (no effect before "
                 "Ampere)")
         # Printed whether or not a group formed. The usual failure is a
@@ -3635,7 +3327,7 @@ def run(argv=None):
                 else:
                     log(f"           {glyph} ({what}: not written)")
         else:
-            log("  output : nothing written (output.root is null)")
+            log("  output : nothing written (run.output is null)")
         log.section("configuration")
         for line in config.describe().splitlines():
             log(f"  {line}")
@@ -3670,17 +3362,13 @@ def run(argv=None):
 
         names = trainable_tasks(config.task_names(), cache, log)
         # One protocol, one variation: K-fold cross-validation.
-        driver = run_task_kfold if config.training.enable_kfold else run_task
-        if config.training.enable_kfold:
-            # These two settings do nothing under K-fold, and a run that
-            # silently ignores what its config asked for is worse than one
-            # that says so.
-            if config.fine_tuning.enable:
+        driver = run_task_kfold if config.training.kfold_enabled else run_task
+        if config.training.kfold_enabled:
+            # This setting does nothing under K-fold, and a run that silently
+            # ignores what its config asked for is worse than one that says so.
+            if (config.fine_tuning is not None):
                 log("  NOTE: --kfold ignores fine_tuning.* -- every fold "
                     "trains from scratch.")
-            if config.symbolic.enable:
-                log("  NOTE: --kfold ignores symbolic distillation -- it "
-                    "runs only on a deployable single-split model.")
         results = [result for result in
                    (driver(name, cache, config, log, n_tasks=len(names),
                            distributed=context, profile=profile)
@@ -3694,18 +3382,18 @@ def run(argv=None):
                      if r.get("operator") is not None}
         bundle = None
         if operators and config.checkpoint_path():
-            # <output.root>/<name>/<name>.poraque, with a distinct stem for a
+            # <run.output>/<name>/<name>.poraque, with a distinct stem for a
             # fine-tune: it is a specialization, usually to a narrower set of
             # materials, and writing it over the general model would replace
             # something broad with something narrow, silently and by default.
             bundle = bundle_path(config)
 
-            if (config.fine_tuning.enable
+            if ((config.fine_tuning is not None)
                     and os.path.abspath(bundle) == os.path.abspath(
-                        config.fine_tuning.pretrained_checkpoint)):
+                        config.fine_tuning.checkpoint)):
                 raise SystemExit(
                     f"refusing to write the fine-tuned model over its own base "
-                    f"checkpoint at {bundle}. Point output.root "
+                    f"checkpoint at {bundle}. Point run.output "
                     f"somewhere else.")
 
             # Travels with the weights so inference needs neither the POTCARs
@@ -3741,19 +3429,21 @@ def run(argv=None):
                 # Two different situations, and telling a user to "run with
                 # task: all" when they just did -- and the data had no TAUCAR
                 # -- sends them round a loop that cannot terminate.
-                missing = sorted(set(CHAIN) - set(operators))
                 log(f"  NOTE: the bundle holds one task, {sorted(operators)}. "
                     f"It predicts that field and")
-                log("  nothing further; the ASE calculator needs both halves "
-                    "of the chain to")
-                log("  reach a total energy.")
-                if config.task.type == "all":
+                log("  nothing further; a total energy needs both the density "
+                    "and the kinetic")
+                log("  operator.")
+                requested = config.task_names()
+                if len(requested) > 1:
+                    missing = sorted(set(requested) - set(operators))
                     log(f"  {missing} was skipped because this dataset does "
                         f"not carry its target field.")
                     log("  Point a run at data that does, and save both models "
                         "into one bundle.")
                 else:
-                    log(f"  Run with task: all to train {missing} as well.")
+                    log("  Add the other operator's section to train it as "
+                        "well.")
 
         log.section("overall")
         log(f"  {'task':<12s} {'rel L2 (mean)':>14s} {'R2 (mean)':>12s} "
@@ -3789,7 +3479,7 @@ def run(argv=None):
 
         # Archive the resolved config beside the results, so the run is
         # reproducible even if the source config is later edited. With
-        # output.root: null there is nowhere to archive to -- the documented
+        # run.output: null there is nowhere to archive to -- the documented
         # smoke-test setting -- and the run must end cleanly, not crash here
         # after every epoch has already succeeded.
         metrics_path = config.json_path()
@@ -3808,7 +3498,7 @@ def run(argv=None):
             log(f"  resolved config -> {resolved}")
         else:
             log.section("output")
-            log("  output disabled (output.root: null): no log, metrics or "
+            log("  output disabled (run.output: null): no log, metrics or "
                 "config archived")
         if plot_directory(config):
             log(f"  figures         -> {plot_directory(config)}")

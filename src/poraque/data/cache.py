@@ -274,7 +274,9 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
     # Resolved before the spin probe, because the probe is itself a full pass
     # over every density file and takes the same pool.
     worker_count = resolve_cache_workers(workers, records, emit)
-    spin = _resolve_spin(spin, records, emit, workers=worker_count)
+    _report_codec(emit)
+    spin = _resolve_spin(spin, records, emit, workers=worker_count,
+                         memo_root=os.path.dirname(os.path.abspath(str(cache))))
     potcar_source = _resolve_potcar_source(sources, strict_potcar, emit)
 
     if storage not in ("files", "hdf5"):
@@ -321,6 +323,61 @@ def build_field_cache(paths, cache, resolution=32, fields=None,
     return cache
 
 
+#: Environment variables the common BLAS and OpenMP runtimes read their
+#: thread count from, at import.
+BLAS_THREAD_VARIABLES = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                         "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
+                         "NUMEXPR_NUM_THREADS")
+
+
+@contextlib.contextmanager
+def _worker_threads(workers):
+    r"""
+    Give each pool worker its share of the cores for BLAS, then restore.
+
+    V_ext's structure factor is a BLAS matrix product
+    (:func:`~poraque.fields.external.structure_factor`), and a BLAS library
+    starts as many threads as there are cores. Under a pool of ``workers``
+    processes that is ``workers x cores`` threads contending for ``cores``.
+    The runtimes read their thread count once, when NumPy is imported, and a
+    ``spawn`` worker imports it fresh -- so the variables are set in the
+    parent's environment while the workers start, and the parent's own BLAS,
+    already initialized, is untouched. A variable the user set is respected.
+    """
+    share = str(max(1, (os.cpu_count() or 1) // max(1, int(workers))))
+    previous = {name: os.environ.get(name) for name in BLAS_THREAD_VARIABLES}
+    for name, value in previous.items():
+        if value is None:
+            os.environ[name] = share
+    try:
+        yield share
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+
+
+def _report_codec(emit):
+    r"""
+    Load the C text codec here, in the parent, and say which path the build uses.
+
+    Loading first means a missing library is compiled once, before the pool,
+    rather than by every spawned worker at once; the workers then find it in
+    the cache. Saying so means a build that fell back to Python -- no
+    compiler, or ``PORAQUE_C_BACKEND=0`` -- is visible in the log instead of
+    merely several times slower.
+    """
+    from ..fields.vasp import codec
+
+    codec.load(log=emit)
+    if codec.available():
+        emit(f"  text codec: C ({codec.library_path()})")
+    else:
+        emit(f"  text codec: Python -- {codec.describe().split(': ', 1)[-1]}; "
+             f"the cache builds several times slower. `poraque-compile` says "
+             f"why.")
+
+
 def _build_in_parallel(records, cache, resolution, fields, spin, summary,
                        storage, compression, compression_level, max_spacing,
                        worker_count, sources, options, table):
@@ -333,8 +390,7 @@ def _build_in_parallel(records, cache, resolution, fields, spin, summary,
     records the regression that bought the discipline --- two jobs at LNCC
     interleaved inside one ``write`` and left a zero-length density that
     *parsed* --- and the pool inherits it. A cache built by eight workers is
-    byte-identical to the serial one; ``tests/test_cache_parallel.py`` pins
-    that.
+    byte-identical to the serial one.
 
     What the workers do **not** touch is the bookkeeping. ``cache_summary.json``
     and ``cache_fingerprint.json`` are plain ``open(..., "w")`` writes and stay
@@ -358,8 +414,9 @@ def _build_in_parallel(records, cache, resolution, fields, spin, summary,
     # makes the unshippable `log` fail loudly here instead of only on macOS.
     context = multiprocessing.get_context("spawn")
     failures = {}
-    with context.Pool(worker_count, initializer=_initialize_worker,
-                      initargs=(roots, shippable_options(options))) as pool:
+    with _worker_threads(worker_count), \
+            context.Pool(worker_count, initializer=_initialize_worker,
+                         initargs=(roots, shippable_options(options))) as pool:
         for position, (identifier, entry) in enumerate(
                 pool.imap_unordered(_build_one_shipped, payloads), start=1):
             if "error" in entry:
@@ -815,40 +872,131 @@ def _resolve_potcar_source(sources, strict, emit):
 
 
 def _spin_of(path):
-    """Whether one density file carries a magnetization block. Pool-safe."""
+    """
+    Whether one density file carries a magnetization block. Pool-safe.
+
+    ``None`` when the file could not be read: :func:`probe_spin` answers
+    ``False`` for this run but does not remember it, so a transient failure
+    (a file still being written, a flaky filesystem) is probed again next time
+    rather than recorded as unpolarized for good.
+    """
     from ..fields.spin import is_spin_polarized
 
-    try:
-        return bool(path) and bool(is_spin_polarized(path))
-    except (OSError, ValueError):
+    if not path:
         return False
+    try:
+        return bool(is_spin_polarized(path))
+    except (OSError, ValueError):
+        return None
 
 
-def _polarized_records(records, workers):
+#: Per-file answers of the spin probe, beside the caches (``data.cache.dir``).
+SPIN_MEMO = "spin_probe.json"
+
+
+def probe_spin(paths, memo_root=None, workers=1):
     r"""
-    Which records carry a magnetization block, over ``workers`` processes.
+    Whether each density file carries a magnetization block, remembered.
 
-    The probe is :func:`~poraque.fields.spin.is_spin_polarized`, which scans
-    for the repeated grid-dimension line rather than converting any value to
-    float --- already the cheap form. It is still a **linear Python scan of
-    every density in the set**, and on this project's 97 platinum cells it
-    cost 29.2 s before the first field was written: 11 % of the serial build,
-    and under Amdahl the term that would cap the pool at 3.2x however many
-    cores were added. It is per-record independent, so it takes the same pool.
+    The probe (:func:`~poraque.fields.spin.is_spin_polarized`) seeks past the
+    grid of an uncompressed ``CHGCAR``, but a compressed one cannot be seeked:
+    the 432 gzipped CHON densities (8.9 GB) took 34.5 s to answer, every run,
+    and the answer never changes while the file does not. So each answer is
+    kept in ``<memo_root>/spin_probe.json``, keyed by the file's absolute path
+    and validated by its size and modification time: a changed or replaced
+    file is probed again, an unchanged one is not read at all.
 
-    Only the path is sent, so this needs no source and no initializer.
+    Parameters
+    ----------
+    paths : list of str or None
+        Density files; ``None`` (a material without one) answers ``False``.
+    memo_root : str, optional
+        Directory for the memo, normally the cache root. ``None`` probes
+        without remembering.
+    workers : int, optional
+        Processes for the compressed files still to be probed.
+
+    Returns
+    -------
+    list of bool
+    """
+    from ..fields.io.compressed import is_compressed
+
+    memo_path = os.path.join(memo_root, SPIN_MEMO) if memo_root else None
+    memo = {}
+    if memo_path and os.path.exists(memo_path):
+        try:
+            with open(memo_path) as handle:
+                memo = json.load(handle)
+        except (OSError, ValueError):
+            memo = {}
+
+    from ..fields.hdf5 import split_target
+
+    def stamp(path):
+        # A store-backed field is `fields.h5::CHGCAR`: the file to stat is the
+        # store. A missing file still gets no stamp, and its probe below
+        # answers (False) without being remembered.
+        try:
+            info = os.stat(split_target(path)[0])
+        except OSError:
+            return None
+        return [info.st_size, info.st_mtime_ns]
+
+    keys = [os.path.abspath(path) if path else None for path in paths]
+    stamps = [stamp(key) if key else None for key in keys]
+    flags = [None] * len(paths)
+    todo = []
+    for index, (key, current) in enumerate(zip(keys, stamps)):
+        if key is None:
+            flags[index] = False
+        elif current is not None and memo.get(key, {}).get("stamp") == current:
+            flags[index] = bool(memo[key]["polarized"])
+        else:
+            todo.append(index)
+
+    if todo:
+        pending = [paths[index] for index in todo]
+        # A seekable file answers in milliseconds, less than a spawned worker
+        # takes to import the package; only compressed archives need the pool.
+        compressed = sum(1 for path in pending if is_compressed(path))
+        if workers > 1 and compressed > 1:
+            context = multiprocessing.get_context("spawn")
+            count = min(workers, len(pending))
+            with _worker_threads(count), context.Pool(count) as pool:
+                answers = pool.map(_spin_of, pending)
+        else:
+            answers = [_spin_of(path) for path in pending]
+        for index, answer in zip(todo, answers):
+            flags[index] = bool(answer)
+            if stamps[index] is not None and answer is not None:
+                memo[keys[index]] = {"stamp": stamps[index],
+                                     "polarized": bool(answer)}
+        if memo_path:
+            try:
+                os.makedirs(memo_root, exist_ok=True)
+                partial = f"{memo_path}.partial-{os.getpid()}"
+                with open(partial, "w") as handle:
+                    json.dump(memo, handle)
+                os.replace(partial, memo_path)
+            except OSError:
+                pass
+    return flags
+
+
+def _polarized_records(records, workers, memo_root=None):
+    r"""
+    Which records carry a magnetization block (see :func:`probe_spin`).
+
+    Only the path is sent to a worker, so this needs no source and no
+    initializer.
     """
     paths = [record.files.get("CHGCAR") for record in records]
-    if workers > 1 and len(records) > 1:
-        context = multiprocessing.get_context("spawn")
-        with context.Pool(min(workers, len(records))) as pool:
-            flags = pool.map(_spin_of, paths)
-    else:
-        flags = [_spin_of(path) for path in paths]
+    flags = probe_spin(paths, memo_root=memo_root, workers=workers)
     return [record for record, polarized in zip(records, flags) if polarized]
 
 
-def _resolve_spin(requested, records, emit, workers=1):
+def _resolve_spin(requested, records, emit, workers=1, memo_root=None):
     r"""
     Turn ``spin="auto"`` into a decision, by looking at the data.
 
@@ -892,7 +1040,16 @@ def _resolve_spin(requested, records, emit, workers=1):
         When ``spin=True`` is asked of a dataset that carries no magnetization
         anywhere -- a channel the data has no values for cannot be trained.
     """
-    polarized = _polarized_records(records, workers)
+    if requested is False:
+        # The answer is already "one channel": a magnetization block, where
+        # there is one, is dropped by the reader. Probing would only count the
+        # blocks for a log line, and on a compressed archive -- which cannot be
+        # seeked -- that count is a full decompression of every density.
+        emit("  spin: off (data.spin: false); any magnetization block is "
+             "discarded and the cache holds the total density only.")
+        return False
+
+    polarized = _polarized_records(records, workers, memo_root=memo_root)
 
     if requested is True:
         if not polarized:
@@ -903,13 +1060,6 @@ def _resolve_spin(requested, records, emit, workers=1):
                 "noise to zero. Use data.spin: auto, or check ISPIN in the "
                 "INCARs that produced these densities.")
         resolved = True
-    elif requested is False:
-        resolved = False
-        if polarized:
-            emit(f"  spin: DISCARDING the magnetization block of "
-                 f"{len(polarized)} of {len(records)} material(s) "
-                 f"(data.spin: false). The cache will hold the total density "
-                 f"only.")
     else:
         resolved = bool(polarized)
 

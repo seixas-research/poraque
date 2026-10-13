@@ -42,11 +42,14 @@ The result is written in `CHGCAR` format.
 ## 3. Train
 
 ```bash
-poraque-train --config configs/train.yaml
+poraque-train --config configs/train_simple.yaml
 ```
 
-This trains **one** `ext2pseudo` model and **one** `pseudo2tau` model on the combined
-data of every structure, then writes, under `models/<task.name>/`:
+`configs/train_simple.yaml` is the platinum run in forty lines: a `data:`
+section, then one section per operator. An operator is trained when its section
+is present, so this file trains **one** `ext2chg` model and **one** `chg2tau`
+model on the combined data of every structure, then writes, under
+`models/<run.name>/`:
 
 | Output | Contents |
 | --- | --- |
@@ -60,10 +63,13 @@ one `[NAME]` block per stage — the cache, each task's dataset, model, training
 and results, the resource profile last. {doc}`../output` describes the layout
 and how to read it from a script.
 
-`task.type` also names the two tasks that carry the PAW augmentation
-occupancies beside the chain: `ext2chg` predicts them with the pseudo-density,
-and `chg2tau` reads them with it to predict $\tau$. See
-{ref}`the configuration reference <paw>`.
+The two operators carry the PAW augmentation occupancies: `ext2chg` predicts
+them with the pseudo-density, and `chg2tau` reads them with it to predict
+$\tau$. They need the `POTCAR`, which gives each element's record layout. For
+data without one (a Materials Project download, say) write
+`occupancies: false` in the operator's section and it trains on the grid alone,
+the `ext2pseudo` and `pseudo2tau` maps that the logs and the checkpoint still
+call it by. See {ref}`the configuration reference <paw>`.
 
 ## 4. Predict a new structure
 
@@ -228,8 +234,8 @@ on-site density — and it covers only the elements the model was trained on.
 A real calculation beside the structure always wins over the table: its records
 are *that* system's, where the table is an average over others.
 
-**With an `ext2chg` operator in the bundle** — trained with `model.paw.enable`
-beside `task.type: all` — the records are predicted for *this* structure from
+**With an `ext2chg` operator in the bundle** — trained with its
+`occupancies` on, the default — the records are predicted for *this* structure from
 its own potential, and `--paw-source auto` takes them ahead of the table:
 
 ```text
@@ -255,15 +261,19 @@ held out. For a tighter estimate — every structure scored by a model that neve
 saw it — run the cross-validation protocol instead:
 
 ```bash
-poraque-train --config configs/train.yaml --kfold
+poraque-train --config configs/train_simple.yaml --kfold 5
 ```
 
-That is the only variation on the training protocol. It fits *K* models and
-reports a spread, so it produces a number to quote rather than a model to
-deploy; set `k_folds` to the number of structures for leave-one-out.
+That is the only variation on the training protocol (`training.validation.kfold`
+in the file). It fits *K* models and reports a spread, so it produces a number
+to quote rather than a model to deploy; set *K* to the number of structures
+for leave-one-out. It is not yet available to an operator with its occupancies
+on, so for now set `occupancies: false` in both sections for a cross-validated
+run.
 
-For the artifact you actually ship, set `valid_fraction: 0` so training uses
-every structure — accepting that its own metrics are then a training fit.
+For the artifact you actually ship, set `training.validation.fraction: 0` so
+training uses every structure — accepting that its own metrics are then a
+training fit.
 
 ## 6. Drive it from ASE
 
@@ -272,7 +282,7 @@ from ase.build import bulk
 from poraque.calculator import Poraque
 
 atoms = bulk("Pt", "fcc", a=3.92, cubic=True)
-atoms.calc = Poraque("models/poraque_models.poraque", potcar_dir="POTCARs")
+atoms.calc = Poraque("models/platinum/platinum.poraque", potcar_dir="POTCARs")
 
 rho = atoms.calc.get_charge_density(atoms)   # ChargeDensity, e/Ang^3
 print(rho.electron_count())                  # 44.0, the valence count

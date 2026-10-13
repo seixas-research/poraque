@@ -4,11 +4,11 @@
 Read a symbolic expression straight out of a trained KAN activation.
 
 This is a *readout*, not a fit: every learnable variant in
-``poraque.ml.kan`` already is a fixed functional form (SiLU plus a small
+``kan`` already is a fixed functional form (SiLU plus a small
 residual built from stored coefficients), so `symbolic_expression` builds a
 SymPy expression directly from a channel's own `state_dict` entries -- no
 symbolic-regression search involved. That is the different, more literal
-sense of "KAN interpretability" from `poraque.ml.symbolic`, which fits a
+sense of "KAN interpretability" from `symbolic`, which fits a
 short expression to what a whole trained *operator* computes; see that
 module (and its own `experiments/euler_lagrange`) for the search-based kind.
 
@@ -22,7 +22,7 @@ base-carrying variants (`kan_chebyshev`, `kan_bspline`, `kan_rbf`,
    weights, as a closed-form SymPy expression;
 2. runs the real operator on a real, held-out platinum structure
    (`struct_016`, never trained on by any of these eight runs -- see
-   FUTURE.md's per-structure validation tables) and captures the actual
+   the README's per-structure validation tables) and captures the actual
    pre-activation values a real forward pass sends into that channel;
 3. evaluates the symbolic expression at those exact values and diffs it
    against what the network's own `forward()` produced there.
@@ -50,7 +50,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from poraque.fields import ExternalPotential  # noqa: E402
 from poraque.ml import load_bundle  # noqa: E402
-from poraque.ml.kan import BSplineKANActivation, symbolic_expression  # noqa: E402
+from kan import BSplineKANActivation, symbolic_expression  # noqa: E402
 
 BASE_CHECKPOINTS = {
     "kan_chebyshev": "models/pt_w16_m8_l3_kanchebyshev/pt_w16_m8_l3_kanchebyshev.poraque",

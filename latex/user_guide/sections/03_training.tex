@@ -4,11 +4,12 @@
 \section{The short version}
 
 \begin{lstlisting}
-poraque-train --config configs/train.yaml
+poraque-train --config configs/train_simple.yaml
 \end{lstlisting}
 
-This trains \textbf{one} \opt{ext2pseudo} model and \textbf{one} \opt{pseudo2tau}
-model on the combined data of every structure, and writes:
+An operator is trained when its section is present in the configuration, and
+this file has two: it trains \textbf{one} \opt{ext2chg} model and \textbf{one}
+\opt{chg2tau} model on the combined data of every structure, and writes:
 
 Everything it writes lands in \emph{one directory named after the run}, so a
 trained model and the evidence for it stay together:
@@ -45,7 +46,7 @@ MAE & The typical voxel, in the field's own units, where a squared error is not
 readable as a quantity. \\
 Max.\ error & The worst voxel. Means and RMS both hide a single catastrophic
 site, and near a nucleus is exactly where one occurs. \\
-$|\Delta N|$ & Conservation. For \opt{ext2pseudo} this is the electron-count error
+$|\Delta N|$ & Conservation. For the density operator this is the electron-count error
 in electrons, and it is the metric a pointwise loss controls worst. \\
 \bottomrule
 \end{tabular}
@@ -59,8 +60,8 @@ and it is why the splits are rows.
 
 \begin{pnote}
 The rel.\ $H^1$ here is the textbook relative Sobolev norm, which has no free
-parameter --- \textbf{not} the $H^1$ objective \opt{loss: relative\_h1}
-minimizes, whose value depends on \opt{sobolev\_weight} and so cannot be
+parameter --- \textbf{not} the $H^1$ objective \opt{loss.norm: relative\_h1}
+minimizes, whose value depends on \opt{loss.sobolev\_weight} and so cannot be
 compared between two runs. Every column is computed without consulting the
 loss, for exactly that reason.
 
@@ -76,7 +77,7 @@ in \file{log/<name>.json}, which is machine-readable and has no margins.
 \end{pnote}
 
 \noindent
-\opt{<name>} is \opt{task.name} from the configuration, and it is the only
+\opt{<name>} is \opt{run.name} from the configuration, and it is the only
 thing you set: two runs with different names cannot overwrite each other, and
 there are no output paths to keep in step by hand. A trained model is not one
 file --- it is weights, the numbers that say how good they are, the figures
@@ -97,7 +98,7 @@ million pairs. Each structure contributes a random sample of 10\,000 voxels
 (all of them when its grid is smaller), folded into a sparse, fine histogram the
 moment it is drawn and then discarded, so memory follows the spread of the
 values rather than the number of structures. The draw is seeded from
-\opt{training.seed}, so a rerun draws the same voxels. The four numbers on each
+\opt{run.seed}, so a rerun draws the same voxels. The four numbers on each
 panel come from running sums over the sampled voxels, so they are exact for
 that sample --- but they pool the split into one set, and are not the table's
 mean of per-structure errors.
@@ -109,13 +110,13 @@ batches mix materials --- never one model per material.
 
 \begin{pnote}
 There is \textbf{one} training protocol and \textbf{one} variation on it. By
-default a fifth of the structures (\opt{valid\_fraction}) is held back for
+default a fifth of the structures (\opt{validation.fraction}) is held back for
 validation, so the printed score is genuinely held out and
-\opt{early\_stopping} has something to watch. Nothing else needs selecting.
+\opt{validation.patience} has something to watch. Nothing else needs selecting.
 \end{pnote}
 
 \begin{pwarn}
-Set \opt{valid\_fraction: 0} and nothing is held out, so the metrics become a
+Set \opt{validation.fraction: 0} and nothing is held out, so the metrics become a
 \textbf{training fit}: they show the model can represent the data, not how it
 will do on a new material. On the reference data the training fit is about
 $4\times$ better than the cross-validated score, which is the size of the
@@ -132,21 +133,23 @@ Splitting is always at the \emph{structure} level.
 \subsection{The default split}
 
 \begin{lstlisting}
-poraque-train --config configs/train.yaml \
+poraque-train --config configs/train_simple.yaml \
        --valid-fraction 0.2
 \end{lstlisting}
 
-Structures are shuffled with \opt{seed} and that share is kept back.
+Structures are shuffled with \opt{run.seed} and that share is kept back.
 
 \subsection{K-fold cross-validation}
 \label{sec:kfold}
 
-This is the only variation on the protocol; \opt{valid\_fraction} is ignored,
-since the folds define the splits.
+This is the only variation on the protocol; \opt{validation.fraction} is
+ignored, since the folds define the splits. It is not yet available to an
+operator with its occupancies on, so a cross-validated run says
+\opt{occupancies: false} in its operator sections.
 
 \begin{lstlisting}
-poraque-train --config configs/train.yaml \
-       --kfold --k-folds 5
+poraque-train --config configs/train_simple.yaml \
+       --kfold 5
 \end{lstlisting}
 
 Each fold trains a fresh model on $K-1$ groups and scores it on the held-out
@@ -154,7 +157,7 @@ group. A consolidated PDF reports the mean and standard deviation of each
 metric across folds.
 
 \begin{ptip}
-\opt{k\_folds} is capped at the number of structures; setting it equal to that
+The number of folds (\opt{validation.kfold}, or the argument of \opt{--kfold}; a bare \opt{--kfold} means five) is capped at the number of structures; setting it equal to that
 count is leave-one-out. Whole materials are held out --- never a subset of
 voxels from a material that also appears in training, which would score the
 model on data it had effectively already seen.
@@ -175,7 +178,7 @@ integral error & how well the electron count or $T_s$ is reproduced \\
 \end{tabular}
 \end{center}
 
-For \opt{pseudo2tau} the log also prints the classical orbital-free functionals
+For the kinetic operator the log also prints the classical orbital-free functionals
 (Thomas--Fermi, von Weizsäcker) evaluated on the same input. Beating those is
 the bar --- a learned functional that does not is not adding anything.
 
@@ -201,7 +204,7 @@ margin --- roughly two- to four-fold here.
 
 \begin{pwarn}
 \textbf{Read the held-out column knowing what is in it.} At
-\opt{valid\_fraction: 0.2} with 17 structures the validation set is three
+\opt{validation.fraction: 0.2} with 17 structures the validation set is three
 structures, and at \opt{seed=42} all three are 32-atom cells. So these numbers
 describe the harder cell size only, there is no held-out 27-atom measurement in
 them, and the $\pm$ is the spread over three structures rather than a
@@ -222,13 +225,15 @@ every structure rather than whichever three the seed selected.
 \section{Options worth knowing}
 
 \begin{description}
-  \item[\opt{--pauli-head}] For \opt{pseudo2tau}, predicts
+  \item[\opt{chg2tau.head: pauli}] For the kinetic operator, predicts
     $\tau = \tau_{\rm vW}[\rho] + s\,\mathrm{softplus}(f)$ so the exact bound
     $\tau \ge \tau_{\rm vW}$ holds by construction. Improves accuracy and
-    trains slightly faster; recommended.
-  \item[\opt{--gaussian-blur}] Smooths the external potential. Measured to make
-    no meaningful difference at $32^3$ and to remove information near the ionic
-    cores; leave it off unless working at higher resolution.
+    trains slightly faster; recommended. For now it needs
+    \opt{occupancies: false} beside it. It is a setting of the file, not a flag.
+  \item[\opt{--task}] Trains only one of the operator sections the file
+    describes (\opt{ext2chg} or \opt{chg2tau}).
+  \item[\opt{--seed}] Seeds the validation draw, the folds, the batch order
+    and the initial weights; vary it across runs to build a committee.
   \item[\opt{--device}] \opt{auto}, \opt{cuda}, \opt{mps} or \opt{cpu}. An
     unavailable backend warns and falls back rather than failing.
   \item[\opt{--resolution}] Working grid. Higher is more faithful and much

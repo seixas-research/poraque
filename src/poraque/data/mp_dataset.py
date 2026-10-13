@@ -20,8 +20,8 @@ it::
 
 That is the same shape as a VASP run tree and a prepared cache, so the generic
 reader — :class:`~poraque.data.sources.CalculationSource` — handles it with no
-special case, and a download can be one entry in ``data.data_paths`` beside
-local calculations. What this module adds is what is specific to the archive:
+special case, and a download can be a run's ``data.path``, or sit beside
+local calculations in one directory. What this module adds is what is specific to the archive:
 
 **The files are compressed.** They are read in place, gzip and all, by
 :mod:`poraque.fields.io.compressed`. Nothing is ever expanded on disk.
