@@ -69,7 +69,7 @@ LAYER, CHANNEL, N_VOXELS = 0, 0, 8
 
 
 def show(name, rel_path, field, x_symbol):
-    operator = load_bundle(str(ROOT / rel_path), "ext2chg", device="cpu")
+    operator = load_bundle(str(ROOT / rel_path), "ext2pseudo", device="cpu")
     activation = operator.model.blocks[LAYER].activation
 
     # Capture what the real forward pass actually sends into (and gets

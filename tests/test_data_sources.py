@@ -376,7 +376,7 @@ class TestADownloadIsOneDirectoryPerMaterial:
     is the point — and also the hazard, because those three are then
     indistinguishable as directory *trees* and only their contents say which is
     which. Getting it wrong is not cosmetic: read as a prepared cache, a
-    download would offer ``CHGCAR`` and no ``EXTCAR``, and every ``ext2chg``
+    download would offer ``CHGCAR`` and no ``EXTCAR``, and every ``ext2pseudo``
     run on it would fail for want of an input field that was never missing —
     it is *computed*, and only :class:`BulkDensitySource` knows to compute it.
     """
@@ -502,7 +502,7 @@ class TestOneSchemaForEveryOrigin:
         """
         Not directory by directory. One calculation in a tree may have written
         a TAUCAR while its neighbor did not, and the one that did should still
-        reach `chg2tau`.
+        reach `pseudo2tau`.
         """
         root = tmp_path / "runs"
         write_calculation(root / "structure_000", seed=0)
@@ -515,7 +515,7 @@ class TestOneSchemaForEveryOrigin:
         assert records["structure_000"] >= {"EXTCAR", "CHGCAR", "TAUCAR"}
         assert "TAUCAR" not in records["structure_001"]
 
-    def test_a_pooled_set_keeps_everything_for_ext2chg(self, tmp_path):
+    def test_a_pooled_set_keeps_everything_for_ext2pseudo(self, tmp_path):
         """The point of the unified schema: a download with no tau still
         trains the task it can."""
         runs = tmp_path / "runs"
@@ -631,7 +631,7 @@ class TestProvides:
         assert "EXTCAR" in source.provides(record)
 
     def test_a_calculation_without_tau_offers_the_rest(self, tmp_path):
-        """A density-only run is a first-class ext2chg dataset, not an error."""
+        """A density-only run is a first-class ext2pseudo dataset, not an error."""
         write_calculation(tmp_path / "runs" / "struct_000", tau=False)
         source = resolve_source(tmp_path / "runs")
 
@@ -1099,7 +1099,7 @@ class TestMixedFieldDataset:
     def test_serves_materials_from_every_path(self, calculations, bulk):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            data = MixedFieldDataset([calculations, bulk], task="ext2chg",
+            data = MixedFieldDataset([calculations, bulk], task="ext2pseudo",
                                      resolution=8, charges=CHARGES)
 
         assert len(data) == 5
@@ -1107,22 +1107,22 @@ class TestMixedFieldDataset:
         assert data[0]["input"].shape == (1, 8, 8, 8)
 
     def test_a_single_path_needs_no_list(self, calculations):
-        data = MixedFieldDataset(calculations, task="ext2chg", resolution=8)
+        data = MixedFieldDataset(calculations, task="ext2pseudo", resolution=8)
 
         assert len(data) == 3
 
     def test_available_tasks_is_the_union_over_sources(self, calculations, bulk):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            data = MixedFieldDataset([calculations, bulk], task="ext2chg",
+            data = MixedFieldDataset([calculations, bulk], task="ext2pseudo",
                                      resolution=8, charges=CHARGES)
 
-        assert sorted(data.available_tasks()) == ["chg2tau", "ext2chg"]
+        assert sorted(data.available_tasks()) == ["ext2pseudo", "pseudo2tau"]
 
-    def test_chg2tau_keeps_only_the_materials_that_have_tau(self, calculations,
+    def test_pseudo2tau_keeps_only_the_materials_that_have_tau(self, calculations,
                                                             bulk):
         """The bulk archive has no tau, so it contributes nothing here."""
-        data = MixedFieldDataset([calculations, bulk], task="chg2tau",
+        data = MixedFieldDataset([calculations, bulk], task="pseudo2tau",
                                  resolution=8, charges=CHARGES)
 
         assert len(data) == 3
@@ -1130,7 +1130,7 @@ class TestMixedFieldDataset:
 
     def test_a_task_nothing_supports_is_refused_up_front(self, bulk):
         with pytest.raises(ValueError, match="Available tasks here"):
-            MixedFieldDataset(bulk, task="chg2tau", resolution=8,
+            MixedFieldDataset(bulk, task="pseudo2tau", resolution=8,
                               charges=CHARGES)
 
     def test_mixing_potential_conventions_warns(self, tmp_path, bulk):
@@ -1142,7 +1142,7 @@ class TestMixedFieldDataset:
             pytest.skip("reference POTCAR not available")
 
         with pytest.warns(UserWarning, match="define the external potential"):
-            MixedFieldDataset([os.path.dirname(runs), bulk], task="ext2chg",
+            MixedFieldDataset([os.path.dirname(runs), bulk], task="ext2pseudo",
                               resolution=8, charges=CHARGES)
 
     def test_a_potcar_library_makes_the_mixture_one_quantity(
@@ -1162,7 +1162,7 @@ class TestMixedFieldDataset:
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            data = MixedFieldDataset([runs, archive], task="ext2chg",
+            data = MixedFieldDataset([runs, archive], task="ext2pseudo",
                                      resolution=8, potcar_dir=potcar_library)
 
         assert len(data) == 2
@@ -1172,19 +1172,19 @@ class TestMixedFieldDataset:
     def test_one_convention_does_not_warn(self, calculations):
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            MixedFieldDataset(calculations, task="ext2chg", resolution=8)
+            MixedFieldDataset(calculations, task="ext2pseudo", resolution=8)
 
-    def test_chg2tau_does_not_warn_about_a_potential_it_never_reads(
+    def test_pseudo2tau_does_not_warn_about_a_potential_it_never_reads(
             self, calculations, bulk):
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            MixedFieldDataset([calculations, bulk], task="chg2tau",
+            MixedFieldDataset([calculations, bulk], task="pseudo2tau",
                               resolution=8, charges=CHARGES)
 
     def test_the_split_mixes_the_archives(self, calculations, bulk):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            data = MixedFieldDataset([calculations, bulk], task="ext2chg",
+            data = MixedFieldDataset([calculations, bulk], task="ext2pseudo",
                                      resolution=8, charges=CHARGES)
 
         train, held_out = data.split(0.6, seed=0)
@@ -1197,13 +1197,13 @@ class TestMixedFieldDataset:
                                                            bulk):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            data = MixedFieldDataset([calculations, bulk], task="ext2chg",
+            data = MixedFieldDataset([calculations, bulk], task="ext2pseudo",
                                      resolution=8, charges=CHARGES)
 
         assert data.shapes() == [(8, 8, 8)] * 5
 
     def test_native_resolution_keeps_each_grid(self, calculations):
-        data = MixedFieldDataset(calculations, task="ext2chg")
+        data = MixedFieldDataset(calculations, task="ext2pseudo")
 
         assert data.shapes() == [(12, 12, 12)] * 3
 
@@ -1214,7 +1214,7 @@ class TestMixedFieldDataset:
         """
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            data = MixedFieldDataset([calculations, bulk], task="ext2chg",
+            data = MixedFieldDataset([calculations, bulk], task="ext2pseudo",
                                      format="vasp", resolution=8,
                                      charges=CHARGES)
 
@@ -1251,7 +1251,7 @@ class TestBuildFieldCache:
 
     def test_writes_every_field_a_source_offers(self, calculations, bulk,
                                                 tmp_path):
-        """Not only the current task's: a rebuild for chg2tau is then free."""
+        """Not only the current task's: a rebuild for pseudo2tau is then free."""
         cache = build_field_cache([calculations, bulk], tmp_path / "out",
                                   resolution=8, charges=CHARGES)
 
@@ -1275,7 +1275,7 @@ class TestBuildFieldCache:
 
         cache = build_field_cache([calculations, bulk], tmp_path / "out",
                                   resolution=8, charges=CHARGES)
-        data = FieldPairDataset(cache, task="ext2chg")
+        data = FieldPairDataset(cache, task="ext2pseudo")
 
         assert len(data) == 5
         assert data[0]["input"].shape == (1, 8, 8, 8)

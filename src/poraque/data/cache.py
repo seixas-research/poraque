@@ -35,8 +35,8 @@ periodicity at the cell boundary and shift the integral.
 an FFT per material per epoch otherwise.
 
 Everything a source can supply is written, not only the fields the current task
-needs. A cache built for ``ext2chg`` from an archive that also has :math:`\tau`
-serves ``chg2tau`` afterwards with no rebuild.
+needs. A cache built for ``ext2pseudo`` from an archive that also has :math:`\tau`
+serves ``pseudo2tau`` afterwards with no rebuild.
 """
 
 import contextlib
@@ -1006,7 +1006,7 @@ def build_paw_profiles(records, cache, log=None):
     if os.path.exists(path):
         profiles = _read_profiles(path)
         # A table written before the projector channels were recorded cannot
-        # lay out an occupancy record, which ext2paw needs; it is rebuilt.
+        # lay out an occupancy record, which ext2chg needs; it is rebuilt.
         if profiles and all(entry.get("projector_channels")
                             for entry in profiles.values()):
             emit(f"  PAW core profiles: cached, "

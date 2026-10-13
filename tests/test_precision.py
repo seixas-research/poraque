@@ -235,7 +235,7 @@ class TestOperatorPrecision:
     def _operator():
         from poraque.ml import FieldOperator
 
-        return FieldOperator("ext2chg", width=8, modes=4, n_layers=1,
+        return FieldOperator("ext2pseudo", width=8, modes=4, n_layers=1,
                              projection_channels=16, device="cpu", init_seed=0)
 
     def test_compute_dtype_is_read_from_the_weights(self):
@@ -640,9 +640,9 @@ class TestShippedConfigs:
     #:                    read at all, so it is written even when it is `silu`
     #: ``training.epochs`` written wherever `early_stopping` is, since a
     #:                    patience means nothing without the budget it runs in
-    #: ``model.paw``      `{enable: false}` in every field-task config: ext2paw
+    #: ``model.paw``      `{enable: false}` in every field-task config: ext2chg
     #:                    reads the same EXTCAR and targets the same CHGCAR as
-    #:                    ext2chg, so a reader of an ext2chg run should see
+    #:                    ext2pseudo, so a reader of an ext2pseudo run should see
     #:                    that the per-atom operator beside it is off rather
     #:                    than wonder whether it was considered
     DELIBERATE = {"task.type", "model.width", "model.modes",

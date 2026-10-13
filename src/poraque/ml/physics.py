@@ -434,7 +434,7 @@ def kinetic_potential(tau, density, cell, create_graph=False):
 
 def operator_kinetic_potential(operator, density, cell, create_graph=False):
     r"""
-    :math:`\delta T_s/\delta\rho` from a trained ``chg2tau``
+    :math:`\delta T_s/\delta\rho` from a trained ``pseudo2tau``
     :class:`~poraque.ml.training.FieldOperator`.
 
     Handles the normalization round trip: the operator consumes and returns
@@ -444,7 +444,7 @@ def operator_kinetic_potential(operator, density, cell, create_graph=False):
     Parameters
     ----------
     operator : FieldOperator
-        A trained ``chg2tau`` operator.
+        A trained ``pseudo2tau`` operator.
     density : torch.Tensor
         ``(B, 1, Nx, Ny, Nz)`` physical density in e/Å³.
     cell : torch.Tensor
@@ -457,9 +457,9 @@ def operator_kinetic_potential(operator, density, cell, create_graph=False):
     torch.Tensor
         :math:`\delta T_s/\delta\rho` in eV.
     """
-    if operator.task.name != "chg2tau":
+    if operator.task.name != "pseudo2tau":
         raise ValueError(
-            f"kinetic potential requires a chg2tau operator, got "
+            f"kinetic potential requires a pseudo2tau operator, got "
             f"{operator.task.name!r}."
         )
 
@@ -1037,8 +1037,8 @@ def euler_lagrange_residual(density, v_external, cell, lam=1.0 / 9.0,
           taken here by autograd (:func:`kinetic_potential`), with
           ``create_graph=True`` so the residual stays differentiable.
 
-        Passing a trained ``chg2tau`` operator's :math:`\tau` closes the loop
-        between the two models: the constraint on ``ext2chg`` is then built
+        Passing a trained ``pseudo2tau`` operator's :math:`\tau` closes the loop
+        between the two models: the constraint on ``ext2pseudo`` is then built
         from the learned functional rather than from a fixed approximation.
 
     Returns

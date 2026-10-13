@@ -10,8 +10,8 @@ We have two supervised operator-learning tasks defined on a shared 3D grid:
 
 | Task | Map | Physical meaning |
 | --- | --- | --- |
-| `ext2chg` | `EXTCAR` → `CHGCAR`, i.e. $V_{\rm ext}\mapsto\rho$ | the Hohenberg–Kohn map |
-| `chg2tau` | `CHGCAR` → `TAUCAR`, i.e. $\rho\mapsto\tau$ | the kinetic energy density functional (KEDF) |
+| `ext2pseudo` | `EXTCAR` → `CHGCAR`, i.e. $V_{\rm ext}\mapsto\rho$ | the Hohenberg–Kohn map |
+| `pseudo2tau` | `CHGCAR` → `TAUCAR`, i.e. $\rho\mapsto\tau$ | the kinetic energy density functional (KEDF) |
 
 Trained purely on data, both are curve-fits that happen to have a physical
 label. This document specifies how to turn them into a **physics-informed**
@@ -28,8 +28,8 @@ E[\rho] \;=\; \underbrace{\int \tau\,d^3r}_{\text{task 2}} \;+\; \int V_{\rm ext
 $$
 
 The stationarity condition couples $V_{\rm ext}$, $\rho$ and $\tau$ in a single
-pointwise equation. Enforcing it makes the output of `chg2tau` a constraint on
-the output of `ext2chg`, and vice versa — the two networks stop being
+pointwise equation. Enforcing it makes the output of `pseudo2tau` a constraint on
+the output of `ext2pseudo`, and vice versa — the two networks stop being
 independent and start being a *discretized DFT solver with learned components*.
 
 **Why an FNO is unusually well suited to this.** A physics-informed loss needs
@@ -91,7 +91,7 @@ have, for three reasons:
 
 ### 2.3 Exact properties of $\tau$
 
-These constrain `chg2tau` and are theorems, not heuristics:
+These constrain `pseudo2tau` and are theorems, not heuristics:
 
 | Property | Statement | Use |
 | --- | --- | --- |
@@ -198,10 +198,10 @@ on deliberately.
 | Term | Definition | Task | Notes |
 | --- | --- | --- | --- |
 | $\mathcal{L}_{\rm data}$ | relative $L^2$, optionally $H^1$ | both | see §4.1 |
-| $\mathcal{L}_{\rm EL}$ | $\lVert \text{LHS} - \overline{\text{LHS}}\rVert^2$ of the Euler–Lagrange equation | `ext2chg` | label-free |
-| $\mathcal{L}_{\rm TF}$ | penalty on $\tau-\tau_{\rm TF}$ where $\lvert\nabla\rho\rvert/\rho^{4/3}$ is small | `chg2tau` | enforces the uniform limit |
-| $\mathcal{L}_{T}$ | $(\int\tau - T_s^{\rm ref})^2$ relative | `chg2tau` | needs reference $T_s$ |
-| $\mathcal{L}_{\rm scale}$ | violation of $T_s[\rho_\lambda]=\lambda^2T_s[\rho]$ | `chg2tau` | label-free |
+| $\mathcal{L}_{\rm EL}$ | $\lVert \text{LHS} - \overline{\text{LHS}}\rVert^2$ of the Euler–Lagrange equation | `ext2pseudo` | label-free |
+| $\mathcal{L}_{\rm TF}$ | penalty on $\tau-\tau_{\rm TF}$ where $\lvert\nabla\rho\rvert/\rho^{4/3}$ is small | `pseudo2tau` | enforces the uniform limit |
+| $\mathcal{L}_{T}$ | $(\int\tau - T_s^{\rm ref})^2$ relative | `pseudo2tau` | needs reference $T_s$ |
+| $\mathcal{L}_{\rm scale}$ | violation of $T_s[\rho_\lambda]=\lambda^2T_s[\rho]$ | `pseudo2tau` | label-free |
 
 **All physics terms are evaluated on the prediction decoded to physical
 units**, never in the normalized representation — a constraint is a statement
@@ -218,7 +218,7 @@ $\tau_{\rm vW}$ depends on $\nabla\rho$, so a model with small pointwise error
 but noisy derivatives is useless downstream: the gradient noise is amplified by
 $\lvert\nabla\rho\rvert^2/8\rho$ in the low-density regions where the
 denominator is small. `losses.SobolevLoss` adds the relative gradient error,
-computed spectrally. Expect it to matter most for `chg2tau`.
+computed spectrally. Expect it to matter most for `pseudo2tau`.
 
 ### 4.2 The functional derivative comes from autograd
 
@@ -230,7 +230,7 @@ increasing order of ambition:
    `physics.euler_lagrange_residual` does today. It is an *approximation*, so
    the term supplies a correct inductive bias, not ground truth, and must carry
    a modest weight.
-2. **Learned** — take $T_s=\int\tau_\theta(\rho)\,d^3r$ from the `chg2tau`
+2. **Learned** — take $T_s=\int\tau_\theta(\rho)\,d^3r$ from the `pseudo2tau`
    network and obtain $\delta T_s/\delta\rho$ by `torch.autograd.grad` through
    it. This is the standard construction for ML-KEDFs and makes the constraint
    exact in the limit of a perfect KEDF.
@@ -294,14 +294,14 @@ gives three things a separate training cannot:
 **Beyond that:** replace the forward pass of `FNO_A` with a fixed-point solve
 of the Euler–Lagrange equation using the learned KEDF (a deep-equilibrium
 model, differentiated with the implicit function theorem). At that point the
-network *is* an OF-DFT solver, `ext2chg` becomes a solver output rather than a
+network *is* an OF-DFT solver, `ext2pseudo` becomes a solver output rather than a
 regression, and transferability is bounded by the KEDF alone.
 
 ---
 
 ## 6. Kohn–Sham constraints without orbitals
 
-`TAUCAR` from VASP is the KS kinetic energy density, so `chg2tau` learns the
+`TAUCAR` from VASP is the KS kinetic energy density, so `pseudo2tau` learns the
 *non-interacting* $T_s$ — the correct target for OF-DFT. Additional KS-derived
 constraints that avoid orbitals:
 
@@ -326,8 +326,8 @@ constraints that avoid orbitals:
 | --- | --- | --- | --- |
 | **0** | Supervised baseline, both tasks, honest held-out split by material | baseline relative $L^2$ per task | done (`poraque.ml`) |
 | **1** | Hard constraints §3.1–3.3: `Log` head, charge-normalization head, $\tau=\tau_{\rm vW}+\mathrm{softplus}$ | constraints satisfied to machine precision; accuracy ≥ baseline | 0 |
-| **2** | $H^1$ data loss; scaling-relation augmentation | improved gradient fidelity for `chg2tau` | 1 |
-| **3** | $\mathcal{L}_{\rm EL}$ with the **analytic** `TF+λvW` surrogate, warm-up schedule, gradient-norm balancing | label-free physics signal on `ext2chg` | 1 |
+| **2** | $H^1$ data loss; scaling-relation augmentation | improved gradient fidelity for `pseudo2tau` | 1 |
+| **3** | $\mathcal{L}_{\rm EL}$ with the **analytic** `TF+λvW` surrogate, warm-up schedule, gradient-norm balancing | label-free physics signal on `ext2pseudo` | 1 |
 | **4** | $\delta T_s/\delta\rho$ by autograd through `FNO_B`; joint training of both operators | coupled PI-FNO (§5) | 3 |
 | **5** | Cycle-consistency via density-to-potential inversion | KEDF-independent constraint | 4 |
 | **6** | Deep-equilibrium OF-DFT solver | learned solver, not regressor | 4 |

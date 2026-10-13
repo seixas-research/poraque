@@ -1542,7 +1542,7 @@ class FNO3d(nn.Module):
         """
         The latent field the read-out head projects: everything but the head.
 
-        Split out so a second head can read the same latent --- the ``ext2paw``
+        Split out so a second head can read the same latent --- the ``ext2chg``
         operator samples it at the atoms --- without running the Fourier stack
         twice. :meth:`forward` is ``project(encode(x))`` and nothing else.
 

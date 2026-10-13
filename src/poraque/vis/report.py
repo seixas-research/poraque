@@ -155,7 +155,7 @@ class TrainingReport:
 
     Examples
     --------
-    >>> report = TrainingReport("results/plots", prefix="chg2tau")   # doctest: +SKIP
+    >>> report = TrainingReport("results/plots", prefix="pseudo2tau")   # doctest: +SKIP
     >>> report.loss_curves(history)                                  # doctest: +SKIP
     >>> report.field_comparison(reference, prediction,
     ...                         label=r"$\\tau$", unit="eV/Ang^3")   # doctest: +SKIP
@@ -190,8 +190,8 @@ class TrainingReport:
         Sidecar path for a figure: same stem, different extension.
 
         Sharing the stem is the whole design. A file called
-        ``training_curve_ext2chg.csv`` sitting next to
-        ``ext2chg_loss_curves.png`` is one more thing to work out; sharing the
+        ``training_curve_ext2pseudo.csv`` sitting next to
+        ``ext2pseudo_loss_curves.png`` is one more thing to work out; sharing the
         name makes "the numbers behind this figure" a property of the listing
         rather than of a convention someone has to remember.
         """

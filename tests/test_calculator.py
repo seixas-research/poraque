@@ -46,7 +46,7 @@ def operators(tmp_path):
         task: FieldOperator(task, width=4, modes=2, n_layers=1,
                             projection_channels=8, device="cpu",
                             training_resolution=16)
-        for task in ("ext2chg", "chg2tau")
+        for task in ("ext2pseudo", "pseudo2tau")
     }
     return save_bundle(str(tmp_path / BUNDLE_FILENAME), built)
 
@@ -173,31 +173,31 @@ class TestGuardRails:
         plausible-looking garbage.
         """
         partial = save_bundle(str(tmp_path / BUNDLE_FILENAME), {
-            "ext2chg": FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+            "ext2pseudo": FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                                      device="cpu")})
-        with pytest.raises(KeyError, match="chg2tau"):
+        with pytest.raises(KeyError, match="pseudo2tau"):
             Poraque(partial, charges={"Pt": 11.0}, device="cpu")
 
     def test_rejects_a_single_operator_checkpoint(self, tmp_path):
         """A bare FieldOperator file is not a bundle, and says so."""
-        path = str(tmp_path / "ext2chg.poraque")
-        FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+        path = str(tmp_path / "ext2pseudo.poraque")
+        FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                       device="cpu").save(path)
         with pytest.raises(ValueError, match="not a Poraque checkpoint"):
             Poraque(path, charges={"Pt": 11.0}, device="cpu")
 
     def test_rejects_a_live_operator_for_the_wrong_task(self, operators):
-        wrong = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+        wrong = FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
                               device="cpu")
-        with pytest.raises(ValueError, match="ext2chg"):
-            Poraque(operators, ext2chg=wrong, charges={"Pt": 11.0},
+        with pytest.raises(ValueError, match="ext2pseudo"):
+            Poraque(operators, ext2pseudo=wrong, charges={"Pt": 11.0},
                     device="cpu")
 
     def test_accepts_live_operators(self, atoms):
         pair = {task: FieldOperator(task, width=4, modes=2, n_layers=1,
                                     projection_channels=8, device="cpu")
-                for task in ("ext2chg", "chg2tau")}
-        calculator = Poraque(ext2chg=pair["ext2chg"], chg2tau=pair["chg2tau"],
+                for task in ("ext2pseudo", "pseudo2tau")}
+        calculator = Poraque(ext2pseudo=pair["ext2pseudo"], pseudo2tau=pair["pseudo2tau"],
                              charges={"Pt": 11.0}, resolution=12, device="cpu")
         atoms.calc = calculator
         with pytest.warns(RuntimeWarning):

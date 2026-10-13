@@ -5,7 +5,7 @@ python experiments/paw_occupancies/occupancies.py            # extract once, the
 python experiments/paw_occupancies/occupancies.py --refresh  # re-extract
 ```
 
-The per-atom half of the `ext2paw` target: the 138 numbers `ρ(ll′LM)` VASP
+The per-atom half of the `ext2chg` target: the 138 numbers `ρ(ll′LM)` VASP
 writes after a `CHGCAR`'s grid, one set for the total density and one for the
 magnetization. Measured on the 97 platinum cells of `data/vasp/structures`
 (31 bulk, 33 slabs, 33 nanoparticles; 3720 atoms), with the records read from
@@ -136,7 +136,7 @@ above is exactly such an integral, with the kernel fixed to `gₙ(r) Y_LM(r̂)`
 rather than learned, and it already reaches 2.1 %.
 
 The architecture this points to is the geometry-informed one:
-- an FNO on the grid, as `ext2chg` already is;
+- an FNO on the grid, as `ext2pseudo` already is;
 - a GNO decoder from its latent field to the atomic positions, with radial-times-`Y_LM` kernels so each L block stays equivariant.
 
 Two measured constraints on it:
@@ -153,7 +153,7 @@ plane-wave by construction, and the Fourier basis the FNO already uses is exact
 for them.
 
 **Koopman neural operator (KNO): no.** It learns linear dynamics in a latent space,
-for time evolution. `ext2paw` is a static map, and the data has no trajectory: the
+for time evolution. `ext2chg` is a static map, and the data has no trajectory: the
 runs ship no SCF history.
 
 **One consequence for the project's own reasoning.** cuequivariance was left out
@@ -166,8 +166,8 @@ network predicting them needs L = 4 tensor products.
 *Built as `poraque.ml.paw`; `docs/source/configuration.md` (`paw`) describes the
 operator and its settings.*
 
-- **Build `ext2paw` in two stages.**
-  - The field half is `ext2chg`.
+- **Build `ext2chg` in two stages.**
+  - The field half is `ext2pseudo`.
   - The per-atom half reads the grid spectrally at each atom inside |G| ≤ G_max, adds the positions expansion, and maps each L block equivariantly.
   - Start with the linear maps measured here as the baseline. Give the L > 0 blocks a nonlinear equivariant head, since that is where 98 % of the remaining error is.
 - **Train in the invertible form of §2**, fitted on the training split and stored in the checkpoint. Weight the loss per L block.
@@ -176,12 +176,12 @@ operator and its settings.*
 **The open measurement: how far these errors grow when ρ̃ is a prediction rather
 than DFT's.** Every ρ̃ row above used the reference density. The features are
 linear in ρ̃, so the error propagates linearly, but its size depends on the
-`ext2chg` model, and every existing `.poraque` must be retrained before it can be
+`ext2pseudo` model, and every existing `.poraque` must be retrained before it can be
 measured.
 
 ## 6. The open measurement, on the trained operator
 
-Measured 2026-09-27 on an RTX 5060 Ti with `configs/train_ext2paw.yaml` at
+Measured 2026-09-27 on an RTX 5060 Ti with `configs/train_ext2chg.yaml` at
 200 epochs, the same 19 held-out structures (split seed 42), two
 initialization seeds per arm. The readout band is 6.65 Å⁻¹ (95 % of the res48
 cache's coarsest Nyquist), not the 9 Å⁻¹ of §3, so the rows are comparable in

@@ -134,7 +134,7 @@ class TestACacheOnlyRunBuildsTheCacheAndStops:
         out = capsys.readouterr().out
         assert "[CACHE SUMMARY]" in out
         assert "built; no training was run (--cache-only)" in out
-        assert "materials   : 2 cached  (ext2chg: 2, chg2tau: 2)" in out
+        assert "materials   : 2 cached  (ext2pseudo: 2, pseudo2tau: 2)" in out
         assert "grid shapes : 8x8x8" in out
         assert "on disk     :" in out
         assert "decoded     :" in out
@@ -197,7 +197,7 @@ class TestTheTrainingJobFindsTheCache:
         rows = [line for line in out.splitlines()
                 if _is_material_row(line) and "8x8x8" in line]
         assert len(rows) == 2 and all(row.endswith("cached") for row in rows)
-        assert {result["task"] for result in results} == {"ext2chg",
-                                                            "chg2tau"}
+        assert {result["task"] for result in results} == {"ext2pseudo",
+                                                            "pseudo2tau"}
         assert (tmp_path / "models" / "cache_only_smoke"
                 / "cache_only_smoke.poraque").exists()

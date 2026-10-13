@@ -43,7 +43,7 @@ to the valence electron count of its own cell, one linear equation per material
 in the per-element charges. On the Pt-Pd-Ni set this returns 11, 11 and 10 to
 within :math:`10^{-6}` — the POTCAR values, read off the densities.
 
-**There is no** :math:`\tau` **and no energy.** ``chg2tau`` cannot be trained
+**There is no** :math:`\tau` **and no energy.** ``pseudo2tau`` cannot be trained
 on this data and :func:`available_tasks` says so rather than failing later;
 ``reference_energy`` is ``None`` throughout, which
 :class:`~poraque.ml.data.FieldPairDataset` already treats as "not available"
@@ -128,12 +128,12 @@ def available_tasks():
     Returns
     -------
     list of str
-        ``["ext2chg"]``. The Hohenberg-Kohn map is trainable because the
+        ``["ext2pseudo"]``. The Hohenberg-Kohn map is trainable because the
         external potential is *computed* from the structure the density itself
-        carries. ``chg2tau`` is not, because MP publishes no kinetic energy
+        carries. ``pseudo2tau`` is not, because MP publishes no kinetic energy
         density and no amount of pipeline work invents one.
     """
-    return ["ext2chg"]
+    return ["ext2pseudo"]
 
 
 # ---------------------------------------------------------------------- #
@@ -158,7 +158,7 @@ class MPChargeDensityDataset(MixedFieldDataset):
     root : str or pathlib.Path
         The download directory, e.g. ``data/MP``.
     task : str or TaskSpec, optional
-        Only ``"ext2chg"`` is available; see :func:`available_tasks`.
+        Only ``"ext2pseudo"`` is available; see :func:`available_tasks`.
     resolution : int, optional
         Longest grid axis after spectral downsampling. ``None`` keeps the
         native MP grid, which is 48³ upwards and rarely what a first training
@@ -196,7 +196,7 @@ class MPChargeDensityDataset(MixedFieldDataset):
     (torch.Size([1, 32, 32, 32]), torch.Size([1, 32, 32, 32]))
     """
 
-    def __init__(self, root, task="ext2chg", **kwargs):
+    def __init__(self, root, task="ext2pseudo", **kwargs):
         from ..ml.tasks import resolve_task
 
         task = resolve_task(task)

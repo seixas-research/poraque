@@ -1,11 +1,9 @@
-# Recommended settings from 12-arm screening and two-seed, 100-epoch confirmation.
-# The experimental runner preserves the 303/88/41 split; the general CLI uses its own split.
+# CHON references are independent single-atom VASP calculations.
 task:
-  type: ext2paw
-  name: chon_ext2paw_best
+  type: ext2chg
+  name: chon_ext2chg
 data:
-  data_paths:
-  - ./data/CHON
+  data_paths: [./data/CHON]
   cache: ./data/cache/chon
   potcar_dir: /Users/leseixas/Simulations/vasp/POTCARs
   strict_potcar: true
@@ -28,13 +26,14 @@ model:
     width: 16
     modes: 6
     n_layers: 3
-    readout_g_max: 2.239576570351994
+    readout_g_max: auto
     occupancy_weight: 3
-    neighbor_min: 0.6
 training:
   epochs: 100
-  learning_rate: 0.003
+  learning_rate: 0.001
   eval_epoch: 5
-  early_stopping: 100
-  init_seed: 1
-  device: cpu
+  early_stopping: 30
+  init_seed: 0
+output:
+  plot_figures: false
+  write_pdf_report: false

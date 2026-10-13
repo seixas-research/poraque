@@ -204,7 +204,7 @@ class TestTheReportMatchesTheGuides:
         from poraque.vis.pdf_report import ModelReport
 
         report = self._colors(
-            ModelReport("reports", logo=None)._preamble("chg2tau", "x"))
+            ModelReport("reports", logo=None)._preamble("pseudo2tau", "x"))
         for guide in GUIDES:
             colors = self._colors(_read(f"latex/{guide}.tex"))
             for name in self.NAMES:

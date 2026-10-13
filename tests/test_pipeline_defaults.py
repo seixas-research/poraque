@@ -7,7 +7,7 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-The three defaults that decide what ``ext2chg`` is actually trained on.
+The three defaults that decide what ``ext2pseudo`` is actually trained on.
 
 Changed together on 2026-08-26, and grouped here because they are one decision
 seen from three sides: the isolated atom becomes the reference for everything
@@ -176,7 +176,7 @@ class TestDeltaDensityIsTheDefaultTarget:
 
     def test_a_config_that_says_nothing_still_gets_it(self, tmp_path):
         path = tmp_path / "train.yaml"
-        path.write_text("task: ext2chg\n")
+        path.write_text("task: ext2pseudo\n")
         assert TrainingConfig.from_yaml(path).data.delta_density is True
 
     def test_it_can_still_be_turned_off_for_the_ablation(self, tmp_path):
@@ -204,10 +204,10 @@ class TestDeltaDensityIsTheDefaultTarget:
         from poraque_train import resolve_baseline
         from poraque.ml.tasks import resolve_task
 
-        settings = {"task": "ext2chg", "data": {"atomic_reference": reference}}
+        settings = {"task": "ext2pseudo", "data": {"atomic_reference": reference}}
         config = TrainingConfig.from_dict(settings)
         with pytest.raises(ValueError) as excinfo:
-            resolve_baseline(resolve_task("ext2chg"), config, str(tmp_path),
+            resolve_baseline(resolve_task("ext2pseudo"), config, str(tmp_path),
                              lambda *_: None)
 
         message = str(excinfo.value)
@@ -215,13 +215,13 @@ class TestDeltaDensityIsTheDefaultTarget:
         assert "poraque-atoms" in message
         assert "delta_density: false" in message
 
-    def test_chg2tau_is_unaffected_whatever_the_flag_says(self, tmp_path):
+    def test_pseudo2tau_is_unaffected_whatever_the_flag_says(self, tmp_path):
         """There is no atomic superposition of a kinetic energy density."""
         from poraque_train import resolve_baseline
         from poraque.ml.tasks import resolve_task
 
         config = TrainingConfig.from_dict({"data": {"delta_density": True}})
-        assert resolve_baseline(resolve_task("chg2tau"), config,
+        assert resolve_baseline(resolve_task("pseudo2tau"), config,
                                 str(tmp_path), lambda *_: None) is None
 
     def test_an_uncovered_element_is_caught_before_training_starts(self,
@@ -248,7 +248,7 @@ class TestDeltaDensityIsTheDefaultTarget:
         config = TrainingConfig.from_dict(
             {"data": {"atomic_reference": os.path.dirname(reference)}})
         with pytest.raises(ValueError, match="Si"):
-            resolve_baseline(resolve_task("ext2chg"), config,
+            resolve_baseline(resolve_task("ext2pseudo"), config,
                              str(tmp_path / "cache"), lambda *_: None)
 
 
@@ -585,7 +585,7 @@ class TestTheGeometryComesFromTheDensityNotTheStructureFile:
     Found on the platinum set. ``structure_0042`` relaxed by 0.12 Ang rms, which
     put a 2.5 % relative L2 error into its external potential and made it the
     worst structure in the training set by a factor of 23 -- while its
-    ``chg2tau`` error, which never reads a ``POSCAR``, stayed unremarkable.
+    ``pseudo2tau`` error, which never reads a ``POSCAR``, stayed unremarkable.
     """
 
     @staticmethod

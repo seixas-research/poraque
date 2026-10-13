@@ -33,7 +33,7 @@ rather than declared. :class:`CalculationSource` is the one source class:
 * an ``EXTCAR`` already present (a cache) → read as it stands;
 * ``TAUCAR`` → read when the material has one, reported absent when it does not.
   It is optional **per material**, which is what lets one directory tree feed
-  ``ext2chg`` in full and ``chg2tau`` from the subset that carries :math:`\tau`.
+  ``ext2pseudo`` in full and ``pseudo2tau`` from the subset that carries :math:`\tau`.
 
 The density is text (``CHGCAR``, compressed or not, optionally with the
 material id appended) or a field inside an HDF5 store (``fields.h5::CHGCAR``);
@@ -776,7 +776,7 @@ class CalculationSource(MaterialSource):
 
     ``TAUCAR`` is read when the run wrote one and reported absent when it did
     not, rather than demanded. A directory with a density and no kinetic energy
-    density is a perfectly good ``ext2chg`` dataset, and refusing it would turn
+    density is a perfectly good ``ext2pseudo`` dataset, and refusing it would turn
     the commonest kind of archive into an error.
 
     Options
@@ -849,7 +849,7 @@ class CalculationSource(MaterialSource):
 
             # TAUCAR is read where the run wrote one and simply not offered
             # where it did not. A material with a density and no kinetic energy
-            # density is a perfectly good `ext2chg` sample, and demanding one
+            # density is a perfectly good `ext2pseudo` sample, and demanding one
             # would exclude every published archive.
             kinetic = reader.field_path(directory, "kinetic")
             if os.path.exists(kinetic):

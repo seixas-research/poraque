@@ -83,12 +83,12 @@ otherwise take minutes of downsampling to report.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `type` | `all` | which map to train: `ext2chg`, `chg2tau`, `all` for both in sequence, `ext2paw` — see [`paw`](#paw) — or `paw2tau` — see [`paw2tau`](#paw2tau) |
+| `type` | `all` | which map to train: `ext2pseudo`, `pseudo2tau`, `all` for both in sequence, `ext2chg` — see [`paw`](#paw) — or `chg2tau` — see [`chg2tau`](#chg2tau) |
 | `name` | `poraque_models` | stem of every file the run writes |
 
 ```yaml
 task:
-  type: ext2chg
+  type: ext2pseudo
   name: mp_ag_au_pt
 ```
 
@@ -101,7 +101,7 @@ task:
 | `results/plots/<name>/` | the figures |
 
 A `task: all` run trains two models and so writes two reports, which are then
-`<name>_ext2chg_report.pdf` and `<name>_chg2tau_report.pdf` — one name cannot
+`<name>_ext2pseudo_report.pdf` and `<name>_pseudo2tau_report.pdf` — one name cannot
 serve both. Cross-validation writes `<name>_kfold_report.pdf`, and a fine-tune
 writes its weights to `<name>_finetuned.poraque` rather than over the general
 model it specializes.
@@ -116,7 +116,7 @@ The bare string this key used to be is still accepted and means the same as
 setting `type` alone:
 
 ```yaml
-task: ext2chg          # identical to {type: ext2chg}, with the default name
+task: ext2pseudo          # identical to {type: ext2pseudo}, with the default name
 ```
 
 ## `data` — where the fields come from
@@ -218,7 +218,7 @@ DFT run to read one from, so the input channel has to be Poraquê's own
 arithmetic in both places.
 
 `TAUCAR` is **optional, per material.** A directory that has one joins the
-`chg2tau` set; one that does not still joins `ext2chg` and is simply absent
+`pseudo2tau` set; one that does not still joins `ext2pseudo` and is simply absent
 from the other. Nothing is declared for it, and a task with no target anywhere
 is skipped with a message rather than failing the run — which is what makes
 `type: all` sensible on a Materials Project download, where no $\tau$ exists.
@@ -281,7 +281,7 @@ GPU job after it must agree on.
 (target-scale)=
 ### `target_scale`
 
-The density target of `ext2chg` and `ext2paw` is trained through an asinh,
+The density target of `ext2pseudo` and `ext2chg` is trained through an asinh,
 $y = \operatorname{asinh}(x/s)$, whose scale $s$ is by default fitted to the
 median of the target — of $|\delta
 ho|$ in δ-density mode. The median is a
@@ -292,8 +292,8 @@ between atoms about as much as the bonding charge that dominates the physical
 error. `target_scale` fixes $s$ instead, in e/Å³, for every channel of a
 `CHGCAR` target (the magnetization included); 0.1 lowered the held-out
 relative $L^2$ of $
-ho$ there at equal epochs. It has no effect on `chg2tau`
-or `paw2tau`, whose target is $	au$. `null`, the default, fits the median.
+ho$ there at equal epochs. It has no effect on `pseudo2tau`
+or `chg2tau`, whose target is $	au$. `null`, the default, fits the median.
 
 (potcar-dir-and-the-gaussian-fallback)=
 ### `potcar_dir` and the Gaussian fallback
@@ -420,8 +420,8 @@ changing them cannot silently reuse a cache built with different settings.
 This is the switch for spin-polarized training, and there is no other. A
 `CHGCAR` from an `ISPIN = 2` run stores two grids, the total density $\rho$ and
 the magnetization $m = \rho_\uparrow - \rho_\downarrow$; with `spin` resolved
-on, both reach the cache, `ext2chg` predicts them as channels 0 and 1 of one
-output, and `chg2tau` reads both. How many channels there are is a property of
+on, both reach the cache, `ext2pseudo` predicts them as channels 0 and 1 of one
+output, and `pseudo2tau` reads both. How many channels there are is a property of
 the data, not of the architecture, which is why the key lives in `data` and why
 `model` has no second one: two switches could disagree, and one of them would
 then be quietly ignored. An unpolarized member of a spin set carries
@@ -454,7 +454,7 @@ without summing to anything; the log's legend states which case applies.
 included.
 
 Both parts are in the metrics JSON's `history`, as `train_loss_charge` and
-`train_loss_magnetization`, and exist only for a two-channel `ext2chg` target —
+`train_loss_magnetization`, and exist only for a two-channel `ext2pseudo` target —
 a one-channel run prints neither column. The magnetization gets its own parity
 figure, `<task>_parity_magnetization`, on linear axes because $m$ changes sign,
 and its own held-out number, `magnetization_relative_l2`; the report's
@@ -476,10 +476,10 @@ performance table stays on the density channel.
 | `mode_selection` | `fixed` | `fixed` mode index, or `physical` at constant $G_\mathrm{max}$ |
 | `g_max` | `null` | cutoff wavevector in Å⁻¹; required by `mode_selection: physical` |
 | `equivariant` | `{enable: false}` | rotation-equivariant radial kernel — one block, see below |
-| `structure_input` | `{enable: false}` | structure channels beside $V_\mathrm{ext}$ for `ext2chg` and `ext2paw` — one block, see below |
-| `paw` | `{enable: false}` | the `ext2paw` operator: pseudo-density plus PAW occupancies — one block, see below |
-| `occupancy_channels` | `8` | `paw2tau` only: field channels the input occupancies are written into — see [`paw2tau`](#paw2tau) |
-| `pauli_residual` | `false` | structural $\tau\ge\tau_\mathrm{vW}$ for `chg2tau` |
+| `structure_input` | `{enable: false}` | structure channels beside $V_\mathrm{ext}$ for `ext2pseudo` and `ext2chg` — one block, see below |
+| `paw` | `{enable: false}` | the `ext2chg` operator: pseudo-density plus PAW occupancies — one block, see below |
+| `occupancy_channels` | `8` | `chg2tau` only: field channels the input occupancies are written into — see [`chg2tau`](#chg2tau) |
+| `pauli_residual` | `false` | structural $\tau\ge\tau_\mathrm{vW}$ for `pseudo2tau` |
 | `pauli_scale` | `null` | initial Pauli scale in eV/Å³; `null` fits it from the training split |
 | `learn_pauli_scale` | `true` | optimize that scale alongside the backbone |
 
@@ -552,7 +552,7 @@ model:
     elements: auto         # one superposition per element of the data, or a list
 ```
 
-The operator of `ext2chg` is handed $V_\mathrm{ext}$ and must work out from
+The operator of `ext2pseudo` is handed $V_\mathrm{ext}$ and must work out from
 it, voxel by voxel, *which* atoms surround a point and how far away they are
 before it can say anything about the bonding charge there. The potential
 carries that information, but only implicitly, in the shape of each ion's
@@ -578,7 +578,7 @@ geometry alone: at inference they are rebuilt from the structure exactly as the
 potential is, and a caller still hands over a potential and nothing else. The
 library is therefore required — `data.atomic_reference`, with
 `data.delta_density` on — and the block applies only to the two tasks whose
-input is $V_\mathrm{ext}$, `ext2chg` and `ext2paw`. The checkpoint records
+input is $V_\mathrm{ext}$, `ext2pseudo` and `ext2chg`. The checkpoint records
 the resolved block, element list included, because an input-channel count
 alone cannot say which channels the weights expect; a structure holding an
 element outside that list is refused at inference rather than having its atoms
@@ -750,11 +750,11 @@ the kernel, not a kernel library.
 (paw)=
 ### `paw`
 
-One block, the operator of the `ext2paw` task:
+One block, the operator of the `ext2chg` task:
 
 ```yaml
 task:
-  type: all          # the chain, and ext2paw beside it
+  type: all          # the chain, and ext2chg beside it
 model:
   use_coordinates: false
   equivariant:
@@ -768,7 +768,7 @@ model:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `enable` | `false` | train `ext2paw`: required by `task.type: ext2paw`, and adds it to an `all` run |
+| `enable` | `false` | train `ext2chg`: required by `task.type: ext2chg`, and adds it to an `all` run |
 | `width` | `64` | the FNO backbone's channels, as `model.width` |
 | `modes` | `16` | its retained Fourier modes per axis, as `model.modes` |
 | `n_layers` | `4` | its Fourier layers, as `model.n_layers` |
@@ -778,8 +778,8 @@ model:
 | `magnetization_weight` | `1.0` | weight of the magnetization record set in the occupancy loss and score, against the charge set's |
 | `readout_cache_mib` | `1024` | device memory for the readout's spectral kernels; a runtime setting, not in the checkpoint |
 
-`ext2paw` maps $V_\mathrm{ext}$ to two things at once: the pseudo-density on the
-grid, as `ext2chg` does, and every atom's **augmentation occupancies**
+`ext2chg` maps $V_\mathrm{ext}$ to two things at once: the pseudo-density on the
+grid, as `ext2pseudo` does, and every atom's **augmentation occupancies**
 $\rho(\ell\ell'LM)$ — the one-center PAW terms VASP writes after the grid, which
 together with the pseudo-density are what an all-electron density is
 reconstructed from. They are not a field. There are 138 per atom for
@@ -787,10 +787,10 @@ reconstructed from. They are not a field. There are 138 per atom for
 and one set per density channel, so a spin-polarized dataset keeps the
 magnetization's set as well.
 
-`ext2paw` is not a link of the chain — `all` still means `ext2chg` followed by
-`chg2tau` — and the two switches are checked against each other rather than
-left to disagree: `task.type: ext2paw` with `enable: false` **raises**, and so
-does `enable: true` beside `ext2chg` or `chg2tau`, which would never read it.
+`ext2chg` is not a link of the chain — `all` still means `ext2pseudo` followed by
+`pseudo2tau` — and the two switches are checked against each other rather than
+left to disagree: `task.type: ext2chg` with `enable: false` **raises**, and so
+does `enable: true` beside `ext2pseudo` or `pseudo2tau`, which would never read it.
 
 #### The operator
 
@@ -830,7 +830,7 @@ never what it is, so it is not part of the checkpoint.
 
 The geometric neighbor features retain ten Gaussian channels of width 0.3 Å,
 under a 6 Å cutoff. `neighbor_min` changes their first center, preserving the
-original 2.2–5.8 Å range by default. The experiment in `experiments/chon_ext2paw`
+original 2.2–5.8 Å range by default. The experiment in `experiments/chon_ext2chg`
 tests 0.6–5.8 Å for shorter covalent bonds. Their actual centers are checkpoint
 buffers; loading an older checkpoint preserves its features.
 
@@ -868,15 +868,15 @@ structure's `occupancy_relative_rms` is written to the metrics JSON beside a
 baseline (the training-mean L = 0 record with every L > 0 block zero), and each
 split is broken down by record set and L, in the log and under `occupancies`.
 
-A bundle holding an `ext2paw` operator gives `poraque-inference --add-paw` a
+A bundle holding an `ext2chg` operator gives `poraque-inference --add-paw` a
 fourth PAW source, `model`. `auto` prefers it to the averaged table.
 
 The cache carries the records; a cache built before 16 September 2026 dropped
 them, so delete it and let it rebuild. `FieldPairDataset.site_records(i)`
 returns one structure's — occupancies, record lengths, atomic numbers and
 fractional positions, in the file's atom order — for both tasks that carry
-them: as the target of `ext2paw` and as the input of
-[`paw2tau`](#paw2tau). A dataset built for either yields, beside the usual
+them: as the target of `ext2chg` and as the input of
+[`chg2tau`](#chg2tau). A dataset built for either yields, beside the usual
 `input` and `target`:
 
 | Key | Shape | |
@@ -893,28 +893,28 @@ fitted per split, not per fold), fine-tuning (a pretrained bundle has no
 occupancy head to adapt), and an f-channel element, whose records reach L = 6.
 ```
 
-(paw2tau)=
-### `occupancy_channels` and the `paw2tau` task
+(chg2tau)=
+### `occupancy_channels` and the `chg2tau` task
 
-`paw2tau` is the second link of the chain for a PAW density: the kinetic
+`chg2tau` is the second link of the chain for a PAW density: the kinetic
 energy density from the pseudo-density **and** every atom's augmentation
 occupancies, the on-site part the grid cannot hold, entering as input.
 
 ```yaml
 task:
-  type: paw2tau
+  type: chg2tau
 model:
   occupancy_channels: 8     # field channels the occupancies are written into
 ```
 
-What `ext2paw` predicts is exactly what `paw2tau` reads, which is the route
+What `ext2chg` predicts is exactly what `chg2tau` reads, which is the route
 this project takes to a total energy:
-$V_\mathrm{ext}\to(\tilde\rho,\rho^a_{ij})\to\tau$. The data is the same as `chg2tau`'s — a material needs
+$V_\mathrm{ext}\to(\tilde\rho,\rho^a_{ij})\to\tau$. The data is the same as `pseudo2tau`'s — a material needs
 a `CHGCAR` with its records and a `TAUCAR` — and the records come from the
 input density, read by the same `site_records`.
 
 The operator is the ordinary FNO with more input channels. A
-{class}`~poraque.ml.paw.SiteWriter`, the transpose of the `ext2paw` readout,
+{class}`~poraque.ml.paw.SiteWriter`, the transpose of the `ext2chg` readout,
 writes each atom's normalized record as a field: atom-centered solid-harmonic
 Gaussians $r^L Y_{LM}(\hat r)\,e^{-r^2/2s^2}$ at three widths (0.25, 0.45 and
 0.8 Å), with coefficients from one learned map per element and L, **shared
@@ -928,21 +928,21 @@ free with the inverse FFT, and nothing depends on the grid but the band it can
 hold. The `occupancy_channels` written fields are concatenated after the
 density, and an {class}`~poraque.ml.paw.OccupancyInputModel` hands the whole
 stack to {class}`~poraque.ml.fno.FNO3d`. The records are normalized as
-`ext2paw` normalizes its target — the same `OccupancyTransform`, fitted on the
+`ext2chg` normalizes its target — the same `OccupancyTransform`, fitted on the
 training split and stored in the checkpoint — and their layouts come from the
 POTCAR, so here too a dataset without POTCARs cannot train it.
 
-`occupancy_channels` is read by `paw2tau` alone. Its operator cannot predict
+`occupancy_channels` is read by `chg2tau` alone. Its operator cannot predict
 from a density by itself: `FieldOperator.predict(field, sites=...)` needs the
 structure's records, a dataset's `site_records(i)` or occupancies, species
 and positions assembled by hand, and raises without them.
 
 ```{warning}
-`paw2tau` is refused under `--kfold` and under fine-tuning, as `ext2paw` is
+`chg2tau` is refused under `--kfold` and under fine-tuning, as `ext2chg` is
 and for the same reasons. The ASE calculator does not run it yet.
 ```
 
-`poraque-inference` chains `ext2paw` into `paw2tau`. The two operators are
+`poraque-inference` chains `ext2chg` into `chg2tau`. The two operators are
 usually trained apart --- the density on whatever archive is at hand, the
 kinetic energy density on calculations that wrote a `TAUCAR` --- so
 `--models` may be repeated, and each task is taken from the first bundle that
@@ -950,20 +950,20 @@ holds it:
 
 ```bash
 poraque-inference Pt2/ --models models/chonps_v2/chonps_v2.poraque \
-                       --models models/pt_paw2tau/pt_paw2tau.poraque
+                       --models models/pt_chg2tau/pt_chg2tau.poraque
 ```
 
-`--kinetic auto` (the default) runs `paw2tau` whenever a bundle holds it, and
-then prefers `ext2paw` for the density, so the pseudo-density and the
-occupancies `paw2tau` reads come from one model; `--kinetic chg2tau` keeps the
-density route. The occupancies are the ones the `ext2paw` operator predicts
-for the structure in front of it; with no `ext2paw` in `--models`, those of a
+`--kinetic auto` (the default) runs `chg2tau` whenever a bundle holds it, and
+then prefers `ext2chg` for the density, so the pseudo-density and the
+occupancies `chg2tau` reads come from one model; `--kinetic pseudo2tau` keeps the
+density route. The occupancies are the ones the `ext2chg` operator predicts
+for the structure in front of it; with no `ext2chg` in `--models`, those of a
 reference `CHGCAR` beside the structure; with neither, the run stops and says
 what to add.
 
 ### `pauli_residual` and its scale
 
-For `chg2tau`, the model predicts
+For `pseudo2tau`, the model predicts
 
 $$\tau = \tau_\mathrm{vW}[\rho] + s\,\mathrm{softplus}(f_\theta(\rho)),$$
 
@@ -1005,6 +1005,9 @@ the training log reports any reference points that violate it.
 | `tf32` | `true` | TensorFloat-32 matmul and convolution; CUDA, Ampere and later |
 | `loss` | `relative_l2` | `absolute_l2`, `relative_l2`, `absolute_h1` or `relative_h1` |
 | `sobolev_weight` | `0.1` | gradient-term weight for the two `h1` losses |
+| `spin_loss` | `joint` | `joint` or `per_channel`: how the two channels of a spin-polarized target enter the data term |
+| `magnetization_weight` | `1.0` | weight of the magnetization term relative to the density term's 1; read only under `per_channel` |
+| `magnetization_floor` | `0.01` | floor on the magnetization term's denominator, as a fraction of `norm(rho)`; read only under `per_channel` |
 | `physics_informed` | `{enable: auto}` | the switch and the four constraint weights — one block, see below |
 
 (strict-device)=
@@ -1339,6 +1342,50 @@ $\nabla\rho$, so gradient noise is amplified in low-density regions. Both
 halves are taken in the *same* norm, so the weight is a pure ratio between
 values and derivatives rather than also absorbing a change of scale.
 
+**`spin_loss` decides how a spin-polarized target enters the data term.** A
+`CHGCAR` written with `ISPIN = 2` carries $(\rho, m)$, and there are two ways
+to score it.
+
+`joint`, the default, is one norm over both channels: each channel's error
+divided by the whole $(\rho, m)$ target's norm and combined in quadrature,
+which is identically $\lVert\delta(\rho,m)\rVert/\lVert(\rho,m)\rVert$.
+`per_channel` divides each channel by **its own** norm and sums them,
+
+$$\mathcal{L} = \mathcal{L}[\rho] + w_m\,\mathcal{L}[m],$$
+
+with $w_m$ = `magnetization_weight`. Because $m \equiv 0$ exactly on a large
+fraction of a real set, the magnetization's denominator is floored:
+$\sqrt{\lVert m\rVert^2 + (\eta\lVert\rho\rVert)^2}$ with $\eta$ =
+`magnetization_floor`. A single-channel target is identical in both modes, bit
+for bit, and under `joint` **`magnetization_weight` does nothing** — there is
+one term for it to scale.
+
+**The default is the measured one, and the arithmetic misleads about which
+should win.** Under `joint` the magnetization's share of the objective is
+$3\times10^{-8}$ in the *median* on the 432-cell CHON set, which is the
+observation that makes `per_channel` look obviously correct. Measured head to
+head on that cache — two seeds, 60 epochs, magnetic cells scored by predicted
+over reference $\lVert m\rVert$ and by $m$'s relative $L^2$:
+
+| training set | `joint` | `per_channel` |
+|---|---|---|
+| 30 magnetic + 30 noise cells | 1.00 / 0.084 | 1.00 / 0.109 |
+| 12 magnetic + 100 noise cells (the real 11 % imbalance) | **0.96 / 0.166** | **0.001 / 1.000** |
+
+What trains the magnetization is the *mean* share, not the median: the magnetic
+cells carry real weight under `joint`, and that is enough. `per_channel`
+instead hands each of the many noise cells a floored term of order one, and a
+hundred cells saying "drive $m$ to zero" bury the dozen saying anything else —
+so it collapses the magnetization it was introduced to rescue. Reach for it
+only when magnetic cells are not a small minority, and measure rather than
+assume.
+
+The progress table's `charge` and `mag` columns are the two parts in whichever
+mode is running, and the held-out error early stopping reads carries the same
+mode — so the checkpoint is selected on the objective rather than on a third
+quantity. Not to be confused with `model.paw.magnetization_weight`, which
+weights the magnetization *record set* of the per-atom occupancy target.
+
 **The validation column follows the objective.** The progress table reports
 `val abs L2`, `val rel L2`, `val abs H1` or `val rel H1` — whichever is
 running — and the number behind it is the objective's own data term evaluated
@@ -1379,10 +1426,10 @@ training:
 | Key | Constraint it penalizes the violation of | Shipped |
 | --- | --- | --- |
 | `enable` | — whether any of the below is evaluated | `auto` |
-| `electron_count_weight` | $\int\rho\,d\mathbf{r} = N$ (`ext2chg`, `ext2paw`) | `0.1` |
+| `electron_count_weight` | $\int\rho\,d\mathbf{r} = N$ (`ext2pseudo`, `ext2chg`) | `0.1` |
 | `positivity_weight` | non-negativity of the predicted field | `0.0` |
-| `von_weizsacker_weight` | $\tau \ge \tau_\mathrm{vW}$ (`chg2tau`) | `0.0` |
-| `euler_lagrange_weight` | orbital-free stationarity residual (`ext2chg`) | `0.0` |
+| `von_weizsacker_weight` | $\tau \ge \tau_\mathrm{vW}$ (`pseudo2tau`) | `0.0` |
+| `euler_lagrange_weight` | orbital-free stationarity residual (`ext2pseudo`) | `0.0` |
 
 All four weights default to zero in the code, so the objective is the plain
 supervised baseline until one is enabled deliberately. Each term is
@@ -1436,7 +1483,7 @@ things make it the first constraint to reach for:
 own integral. That is what lets it work on an archive that publishes $\rho$ and
 nothing else.
 
-For `ext2paw`, this constrains the total charge channel of the grid density.
+For `ext2chg`, this constrains the total charge channel of the grid density.
 The [VASP CHGCAR convention](https://vasp.at/wiki/index.php/CHGCAR) defines its
 integral as `NELECT`; the PAW occupancy records are separate targets and are
 not summed into that integral. Magnetization is not constrained by this term.
@@ -1450,12 +1497,12 @@ error; the log reports `val |dN/N|` before output normalization. The JSON histor
 contains `train_electron_count_loss`, `val_electron_count_loss`, and
 `val_electron_count_error` (a relative fraction, not a percentage).
 
-`configs/train_ext2paw_chon_charge.yaml` enables this term with weight `1.0`
+`configs/train_ext2chg_chon_charge.yaml` enables this term with weight `1.0`
 using the CHON architecture selected by the earlier benchmark. This initial
 weight has not been selected by a hyperparameter sweep:
 
 ```bash
-poraque-train --config configs/train_ext2paw_chon_charge.yaml
+poraque-train --config configs/train_ext2chg_chon_charge.yaml
 ```
 
 *It fixes what the data term cannot.* A relative $L^2$ is indifferent to a
@@ -1510,7 +1557,7 @@ One row per split — `train`, `validation`, `all` — and five columns:
 | rel. $H^1$ | Values *and* gradients. A prediction can match a density pointwise and still be rough, and $\tau_\mathrm{vW}$ depends on $\nabla\rho$ — so a small $L^2$ beside a large $H^1$ is a model whose energetics will disappoint. |
 | MAE | The typical voxel, in the field's own units, where a squared error is not readable as a quantity. |
 | Max. error | The worst voxel. Means and RMS both hide a single catastrophic site, and near a nucleus is exactly where one occurs. |
-| $\lvert\Delta N\rvert$ | Conservation. For `ext2chg` this is the electron-count error in electrons, and it is the metric a pointwise loss controls worst. |
+| $\lvert\Delta N\rvert$ | Conservation. For `ext2pseudo` this is the electron-count error in electrons, and it is the metric a pointwise loss controls worst. |
 
 The `train` and `validation` rows read against each other **are** the
 generalization gap. That is the single most useful thing the table says, and it
@@ -1543,14 +1590,14 @@ The last thing `poraque-train` prints is what the run cost:
   stage                               wall time     peak RSS
   ----------------------------------------------------------
   cache                                   0.0 s    222.6 MiB
-  ext2chg: setup                          0.0 s    228.4 MiB
-  ext2chg: training                       0.4 s    319.7 MiB
-  ext2chg: evaluation and figures         1.6 s    500.5 MiB
-  ext2chg: PDF report                     0.0 s    500.5 MiB
-  chg2tau: setup                          0.0 s    501.3 MiB
-  chg2tau: training                       0.0 s    502.9 MiB
-  chg2tau: evaluation and figures         0.9 s    552.8 MiB
-  chg2tau: PDF report                     0.0 s    552.8 MiB
+  ext2pseudo: setup                          0.0 s    228.4 MiB
+  ext2pseudo: training                       0.4 s    319.7 MiB
+  ext2pseudo: evaluation and figures         1.6 s    500.5 MiB
+  ext2pseudo: PDF report                     0.0 s    500.5 MiB
+  pseudo2tau: setup                          0.0 s    501.3 MiB
+  pseudo2tau: training                       0.0 s    502.9 MiB
+  pseudo2tau: evaluation and figures         0.9 s    552.8 MiB
+  pseudo2tau: PDF report                     0.0 s    552.8 MiB
   checkpoint                              0.0 s    552.8 MiB
   ----------------------------------------------------------
   total (wall clock)                      3.1 s    552.8 MiB
@@ -1594,10 +1641,10 @@ the model to recover the numbers is the expensive way to do that, so with this
 on each figure method writes what it drew, beside what it drew:
 
 ```text
-plots/ext2chg_loss_curves.png       plots/ext2chg_loss_curves.csv
-plots/ext2chg_parity.png            plots/ext2chg_parity.csv
-                                    plots/ext2chg_parity_bin_edges.csv
-plots/ext2chg_s000_field_slice.png  plots/ext2chg_s000_field_slice.npz
+plots/ext2pseudo_loss_curves.png       plots/ext2pseudo_loss_curves.csv
+plots/ext2pseudo_parity.png            plots/ext2pseudo_parity.csv
+                                    plots/ext2pseudo_parity_bin_edges.csv
+plots/ext2pseudo_s000_field_slice.png  plots/ext2pseudo_s000_field_slice.npz
 ```
 
 The sidecar shares the **stem** of its figure, so the pairing is a property of
@@ -1659,12 +1706,12 @@ first is explicit rather than left to `auto`: a baseline that says
 to be zero, and it also skips the per-batch decode the constraints need.
 
 ```yaml
-task:     {type: ext2chg, name: agaupt_baseline}
+task:     {type: ext2pseudo, name: agaupt_baseline}
 training: {physics_informed: {enable: false}}
 ```
 
 ```yaml
-task:     {type: ext2chg, name: agaupt_charge_conserving}
+task:     {type: ext2pseudo, name: agaupt_charge_conserving}
 training: {physics_informed: {electron_count_weight: 0.1}}
 ```
 

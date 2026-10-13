@@ -17,8 +17,8 @@ differentiated, and closes the chain
 .. math::
 
     \{\mathbf R\} \;\to\; v_{\rm ext},\ \rho_{\rm sup},\ \text{structure
-    channels} \;\xrightarrow{\ \texttt{ext2paw}\ }\; n_T,\ m,\ R_a(cc';LM)
-    \;\xrightarrow{\ \texttt{paw2tau}\ }\; \tilde\tau \;\to\; E ,
+    channels} \;\xrightarrow{\ \texttt{ext2chg}\ }\; n_T,\ m,\ R_a(cc';LM)
+    \;\xrightarrow{\ \texttt{chg2tau}\ }\; \tilde\tau \;\to\; E ,
 
 every step of which is a differentiable function of the atomic positions. The
 forces are then :math:`\mathbf F_a = -\partial E/\partial\mathbf R_a` by
@@ -357,11 +357,11 @@ class PawEnergyChain:
     Parameters
     ----------
     density_operator : FieldOperator
-        An ``ext2paw`` operator: the pseudo-density (plus compensation charge),
+        An ``ext2chg`` operator: the pseudo-density (plus compensation charge),
         its magnetization and every atom's occupancies.
     kinetic_operator : FieldOperator
-        A ``paw2tau`` operator (density and occupancies to
-        :math:`\tilde\tau`), or a ``chg2tau`` one.
+        A ``chg2tau`` operator (density and occupancies to
+        :math:`\tilde\tau`), or a ``pseudo2tau`` one.
     structure : Structure
         The geometry; its cell is kept, its positions are the starting point.
     grid : FieldGrid

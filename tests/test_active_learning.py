@@ -66,7 +66,7 @@ def pool(tmp_path, grid, structure):
 
 @pytest.fixture
 def members():
-    return [FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+    return [FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                           projection_channels=8, device="cpu", init_seed=s)
             for s in (0, 1, 2)]
 
@@ -114,17 +114,17 @@ class TestDiscoverPool:
         The whole point of an unlabeled pool: the target is what the DFT run
         would produce. Requiring a complete pair would find nothing.
         """
-        found = discover_pool(pool, "ext2chg")
+        found = discover_pool(pool, "ext2pseudo")
         assert [record.identifier for record in found] == \
             ["mp-001", "mp-002", "mp-003", "mp-004"]
 
     def test_excludes_what_is_already_in_training(self, pool):
-        found = discover_pool(pool, "ext2chg", exclude={"mp-002", "mp-004"})
+        found = discover_pool(pool, "ext2pseudo", exclude={"mp-002", "mp-004"})
         assert [r.identifier for r in found] == ["mp-001", "mp-003"]
 
-    def test_a_chg2tau_pool_needs_a_density_not_a_potential(self, pool):
+    def test_a_pseudo2tau_pool_needs_a_density_not_a_potential(self, pool):
         """The task selects which field a candidate must carry."""
-        assert discover_pool(pool, "chg2tau") == []
+        assert discover_pool(pool, "pseudo2tau") == []
 
 
 # ===================================================================== #
@@ -257,8 +257,8 @@ class TestScorePool:
             name: [rng.random(shape) + 0.5 for _ in members]
             for name in ("mp-001", "mp-002", "mp-003", "mp-004")})
 
-        records = score_pool(committee, discover_pool(pool, "ext2chg"),
-                             "ext2chg", batch_size=2)
+        records = score_pool(committee, discover_pool(pool, "ext2pseudo"),
+                             "ext2pseudo", batch_size=2)
         assert len(records) == 4
         assert {r["material"] for r in records} == \
             {"mp-001", "mp-002", "mp-003", "mp-004"}
@@ -273,15 +273,15 @@ class TestScorePool:
                   for name in ("mp-001", "mp-002", "mp-003", "mp-004")}
         scripted(committee, monkeypatch, fields)
 
-        records = discover_pool(pool, "ext2chg")
-        one = score_pool(committee, records, "ext2chg", batch_size=1)
-        many = score_pool(committee, records, "ext2chg", batch_size=99)
+        records = discover_pool(pool, "ext2pseudo")
+        one = score_pool(committee, records, "ext2pseudo", batch_size=1)
+        many = score_pool(committee, records, "ext2pseudo", batch_size=99)
         assert [r["jsd"] for r in one] == pytest.approx([r["jsd"] for r in many])
 
     def test_rejects_a_chunk_size_that_would_never_advance(self, pool, members):
         with pytest.raises(ValueError, match="at least 1"):
-            score_pool(Committee(members), discover_pool(pool, "ext2chg"),
-                       "ext2chg", batch_size=0)
+            score_pool(Committee(members), discover_pool(pool, "ext2pseudo"),
+                       "ext2pseudo", batch_size=0)
 
     def test_reports_progress_per_chunk(self, pool, members, monkeypatch,
                                         tagged_load):
@@ -292,7 +292,7 @@ class TestScorePool:
             for name in ("mp-001", "mp-002", "mp-003", "mp-004")})
 
         lines = []
-        score_pool(committee, discover_pool(pool, "ext2chg"), "ext2chg",
+        score_pool(committee, discover_pool(pool, "ext2pseudo"), "ext2pseudo",
                    batch_size=2, log=lines.append)
         assert len(lines) == 2
         assert "4/4" in lines[-1]
@@ -321,7 +321,7 @@ class TestResidencyOnAnAccelerator:
         from poraque.ml.device import resolve_device
 
         device = resolve_device("auto")
-        return [FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+        return [FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                               projection_channels=8, device=device,
                               init_seed=seed) for seed in (0, 1)]
 
@@ -339,7 +339,7 @@ class TestResidencyOnAnAccelerator:
             for name in ("mp-001", "mp-002", "mp-003", "mp-004")})
 
         before = self._devices(accelerated)
-        score_pool(committee, discover_pool(pool, "ext2chg"), "ext2chg",
+        score_pool(committee, discover_pool(pool, "ext2pseudo"), "ext2pseudo",
                    batch_size=2, residency="one")
         assert self._devices(accelerated) == before
         assert before[0] == {accelerated[0].device.type}
@@ -537,25 +537,25 @@ class TestRunRound:
         return committee
 
     def test_ranks_the_pool_by_disagreement(self, committee, pool):
-        result = run_round(committee, pool, "ext2chg", n_select=2)
+        result = run_round(committee, pool, "ext2pseudo", n_select=2)
         assert [r["material"] for r in result["selection"]] == \
             ["mp-002", "mp-004"]
 
     def test_reports_the_round_metrics(self, committee, pool):
-        result = run_round(committee, pool, "ext2chg", n_select=2)
+        result = run_round(committee, pool, "ext2pseudo", n_select=2)
         stats = result["statistics"]
         assert stats["n"] == 4 and stats["n_scored"] == 4
         assert stats["min"] < stats["mean"] < stats["max"]
 
     def test_scoring_alone_never_touches_the_pool(self, committee, pool):
         """No --train, no filesystem change. The default has to be safe."""
-        run_round(committee, pool, "ext2chg", n_select=2)
+        run_round(committee, pool, "ext2pseudo", n_select=2)
         assert len(os.listdir(pool)) == 4
 
     def test_dry_run_is_the_default_even_with_a_training_root(
             self, committee, pool, tmp_path):
         train = tmp_path / "train"
-        result = run_round(committee, pool, "ext2chg", n_select=2,
+        result = run_round(committee, pool, "ext2pseudo", n_select=2,
                            train_root=str(train))
         assert not train.exists()
         assert len(os.listdir(pool)) == 4
@@ -564,14 +564,14 @@ class TestRunRound:
 
     def test_promotes_when_asked(self, committee, pool, tmp_path):
         train = tmp_path / "train"
-        run_round(committee, pool, "ext2chg", n_select=2,
+        run_round(committee, pool, "ext2pseudo", n_select=2,
                   train_root=str(train), dry_run=False)
         assert sorted(os.listdir(train)) == ["mp-002", "mp-004"]
         assert sorted(os.listdir(pool)) == ["mp-001", "mp-003"]
 
     def test_excluded_structures_never_reach_the_selection(self, committee,
                                                            pool):
-        result = run_round(committee, pool, "ext2chg", n_select=2,
+        result = run_round(committee, pool, "ext2pseudo", n_select=2,
                            exclude={"mp-002"})
         assert [r["material"] for r in result["selection"]] == \
             ["mp-004", "mp-003"]
@@ -581,7 +581,7 @@ class TestRunRound:
         empty = tmp_path / "empty"
         empty.mkdir()
         with pytest.raises(ValueError, match="no candidates"):
-            run_round(committee, str(empty), "ext2chg")
+            run_round(committee, str(empty), "ext2pseudo")
 
     def test_an_unscorable_pool_is_an_error(self, members, pool):
         """
@@ -589,10 +589,10 @@ class TestRunRound:
         spend DFT runs on an ordering that does not exist.
         """
         with pytest.raises(ValueError, match="no candidate could be scored"):
-            run_round(Committee(members), pool, "ext2chg")
+            run_round(Committee(members), pool, "ext2pseudo")
 
     def test_the_result_is_json_serializable(self, committee, pool):
-        result = run_round(committee, pool, "ext2chg", n_select=2)
+        result = run_round(committee, pool, "ext2pseudo", n_select=2)
         payload = json.dumps(round_to_dict(result), default=float)
         assert "mp-002" in payload
 

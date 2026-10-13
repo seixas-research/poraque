@@ -105,7 +105,7 @@ def potcar_text(radial=True, decoy=True):
         _table(-np.linspace(1.0, 0.0, 1000)),
     ]
     # One p projector: a record of 6 values, (p,p) at L = 0 and L = 2 --- the
-    # length `test_ext2paw` writes its synthetic records at.
+    # length `test_ext2chg` writes its synthetic records at.
     parts += [" Non local Part", "           1           1   1.50000000000000"]
     if decoy:
         parts += [" core charge-density (partial)",
@@ -337,11 +337,11 @@ class TestTheCheckpointHoldsEverythingPawPerElement:
 
         from poraque.ml import FieldOperator, read_bundle, save_bundle
 
-        operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+        operator = FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                                  device="cpu")
         profiles = {14: dict(_entry().core_profile,
                              augmentation=self._augmentation())}
-        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator},
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2pseudo": operator},
                            paw_profiles=profiles)
 
         stored = read_bundle(path)["paw_profiles"][14]
@@ -394,7 +394,7 @@ class TestATrainingRunWritesTheWholeCheckpoint:
         path = tmp_path / "models" / "paw_smoke" / "paw_smoke.poraque"
         payload = read_bundle(str(path))
         assert tuple(sorted(payload)) == tuple(sorted(CHECKPOINT_KEYS))
-        assert sorted(payload["model_state_dict"]) == ["chg2tau", "ext2chg"]
+        assert sorted(payload["model_state_dict"]) == ["ext2pseudo", "pseudo2tau"]
         assert payload["config"]["task"]["name"] == "paw_smoke"
         assert payload["config"]["training"]["epochs"] == 1
 
@@ -403,5 +403,5 @@ class TestATrainingRunWritesTheWholeCheckpoint:
         assert silicon["core_electrons"] == pytest.approx(10.0, rel=1e-4)
         np.testing.assert_allclose(silicon["core_density"],
                                    _core(np.asarray(silicon["r"])), rtol=1e-9)
-        for task in ("ext2chg", "chg2tau"):
+        for task in ("ext2pseudo", "pseudo2tau"):
             assert load_bundle(str(path), task, device="cpu").task.name == task

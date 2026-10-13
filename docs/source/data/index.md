@@ -39,7 +39,7 @@ one level down — is read as that one material.
 
 `TAUCAR` is optional **per material, not per directory**: one run in a tree may
 have written one while its neighbor did not, and the one that did still
-reaches `chg2tau` while both reach `ext2chg`. A task with no target anywhere is
+reaches `pseudo2tau` while both reach `ext2pseudo`. A task with no target anywhere is
 skipped with a message rather than failing the run.
 
 ```{note}
@@ -66,7 +66,7 @@ A cached density keeps its **PAW augmentation occupancies**, copied verbatim
 from the calculation — one set per density channel, in text and HDF5 caches
 alike. They are on-site terms with no representation on the grid, so
 downsampling neither changes them nor has anything to say about them, and they
-are the per-atom target of `ext2paw` and the per-atom input of `paw2tau` (see
+are the per-atom target of `ext2chg` and the per-atom input of `chg2tau` (see
 the configuration page's `paw` block); `FieldPairDataset.site_records(i)` serves
 them for both. Each record is read to the length its header declares: a
 spin-polarized `CHGCAR` writes a line of per-ion `MAGMOM` values after its
@@ -85,10 +85,10 @@ built the old way is rebuilt on the next run rather than reused.
 The two tasks are independent, and `task` selects them:
 
 ```yaml
-task: ext2chg      # or chg2tau, or all
+task: ext2pseudo      # or pseudo2tau, or all
 ```
 
-With `task: ext2chg` the `chg2tau` network is never constructed, never moved to
+With `task: ext2pseudo` the `pseudo2tau` network is never constructed, never moved to
 the device and never differentiated; no $\tau$ is read, and every
 kinetic-energy term of the objective is inert by construction — the physics
 losses are selected by task, so `von_weizsacker_weight` simply does not apply.
@@ -97,16 +97,16 @@ The checkpoint holds one model:
 ```python
 >>> from poraque.ml import bundle_tasks
 >>> bundle_tasks("models/poraque_models.poraque")
-['ext2chg']
+['ext2pseudo']
 ```
 
 which loads exactly as a two-task bundle does. Asking such a bundle for
-`chg2tau` — or handing it to the ASE calculator, which runs the whole chain
+`pseudo2tau` — or handing it to the ASE calculator, which runs the whole chain
 $V_\mathrm{ext}\to\rho\to\tau\to E$ — fails with a message saying so, because a
 model that never saw a kinetic energy density cannot supply one.
 
 **`TAUCAR` is optional everywhere.** A calculation directory that has a
-`CHGCAR` and no `TAUCAR` is a first-class `ext2chg` dataset: it is ingested
+`CHGCAR` and no `TAUCAR` is a first-class `ext2pseudo` dataset: it is ingested
 without error and without warning, and the per-material log says `[no TAUCAR]`
 rather than treating the absence as a fault. The check is per **material**, not
 per directory, so one archive can hold runs of both kinds.
@@ -114,12 +114,12 @@ per directory, so one archive can hold runs of both kinds.
 With `task: all` on data that carries no $\tau$ at all, the run reports
 
 ```text
-SKIPPING chg2tau: no material under data/cache/mp/res32 has both CHGCAR and TAUCAR.
+SKIPPING pseudo2tau: no material under data/cache/mp/res32 has both CHGCAR and TAUCAR.
     Valence charge density -> kinetic energy density cannot be trained on data
     that does not carry TAUCAR.
 ```
 
-and trains `ext2chg` normally. A task the data cannot supply is a fact about
+and trains `ext2pseudo` normally. A task the data cannot supply is a fact about
 the data, not a failure of the run.
 
 ## Why this matters: foundation models from public densities
@@ -128,7 +128,7 @@ The Materials Project publishes converged charge densities for a large fraction
 of its ~150 000 materials. It publishes no kinetic energy densities, no
 `OUTCAR`s alongside them, and no external potentials. Under a pipeline that
 required all three, that archive is unusable. Under this one it is the largest
-`ext2chg` training set available, because the two things it is missing are both
+`ext2pseudo` training set available, because the two things it is missing are both
 recoverable or unnecessary:
 
 * the **structure** is inside the `CHGCAR` — a density file carries its own
@@ -141,7 +141,7 @@ recoverable or unnecessary:
   On the Ag–Pt–Pt set this returns 11, 11 and 10 — the `POTCAR` values, read
   off the data, from three small files.
 
-So the recipe for a broad `ext2chg` model is:
+So the recipe for a broad `ext2pseudo` model is:
 
 ```bash
 poraque-mp --elements Pt Pd Ni --estimate                    # size it first

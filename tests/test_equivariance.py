@@ -548,7 +548,7 @@ class TestAnEquivariantCheckpointReloadsAsOne:
 
         torch.manual_seed(3)
         operator = FieldOperator(
-            "ext2chg", device="cpu", width=8, modes=4, n_layers=2,
+            "ext2pseudo", device="cpu", width=8, modes=4, n_layers=2,
             projection_channels=16, use_coordinates=False, equivariant=True,
             n_radial=12, g_basis=6.0)
         field, cell = torch.randn(1, 1, 16, 16, 16), CUBIC
@@ -949,7 +949,7 @@ class TestGMaxDoesNotSizeTheBasisUnderFixedModeSelection:
         # `g_basis=6.0` is what the defect resolved `g_max: 6` to under
         # `fixed`; stating it is how a model trained through it is reproduced.
         operator = FieldOperator(
-            "ext2chg", device="cpu", width=8, modes=4, n_layers=2,
+            "ext2pseudo", device="cpu", width=8, modes=4, n_layers=2,
             projection_channels=16, use_coordinates=False, equivariant=True,
             mode_selection="fixed", g_max=6.0, g_basis=6.0)
         state = operator.state()

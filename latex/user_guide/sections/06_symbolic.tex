@@ -18,7 +18,7 @@ and a second language runtime inside an MPI job.
 
 \begin{lstlisting}
 pip install -e ".[symbolic]"
-poraque-train --config configs/train.yaml --task chg2tau --symbolic
+poraque-train --config configs/train.yaml --task pseudo2tau --symbolic
 \end{lstlisting}
 
 Without the extra, a run with distillation enabled reports the missing
@@ -36,7 +36,7 @@ on how much of the learned map is not semi-local. A near-perfect fit would say
 the operator found nothing a GGA-level functional could not have.
 
 \begin{pnote}
-Only \opt{chg2tau} is attempted. \opt{ext2chg} is the Hohenberg--Kohn map,
+Only \opt{pseudo2tau} is attempted. \opt{ext2pseudo} is the Hohenberg--Kohn map,
 whose whole content is non-local --- a semi-local expression for it would be
 meaningless rather than merely inaccurate.
 \end{pnote}

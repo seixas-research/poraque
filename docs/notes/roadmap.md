@@ -14,7 +14,7 @@
 | Code-agnostic ingestion | VASP done; QE/GPAW scaffolded | contract is four methods |
 | Spectral resampling | done | integral preserved to $5.6\times10^{-17}$ |
 | FNO, ragged grids | done | one model, 3 grid shapes, CPU/MPS agree to $10^{-6}$ |
-| Universal training | done | `models/{ext2chg,chg2tau}.poraque` |
+| Universal training | done | `models/{ext2pseudo,pseudo2tau}.poraque` |
 | K-fold cross-validation | done | 0.0295 ± 0.0025 / 0.0525 ± 0.0031 |
 | Pauli-residual head | done | −18.3 % error, trains 17.8 % faster |
 | Exact spectral $\nabla$, $\nabla^2$, $v_H$ | done | Poisson residual $10^{-12}$ |
@@ -98,7 +98,7 @@ usable energy".
 
 1. **Measure the learned kinetic potential against a reference.** For each
    validation structure, compare $\delta T_s/\delta\rho$ from the trained
-   `chg2tau` model against the analytic TF+vW potential and against the
+   `pseudo2tau` model against the analytic TF+vW potential and against the
    derivative implied by the reference $\tau$. Report the error in the
    *derivative*, not in $\tau$.
 2. **Add $\delta T_s/\delta\rho$ error to the reported metrics.** If it is much
@@ -129,8 +129,8 @@ kinetic=tau_fn)`, which is now wired.
 
 *The research contribution. Depends on Phases 1–2.*
 
-Train `ext2chg` with the Euler–Lagrange residual built from the learned
-`chg2tau` functional. Two configurations:
+Train `ext2pseudo` with the Euler–Lagrange residual built from the learned
+`pseudo2tau` functional. Two configurations:
 
 - **Frozen Model 2** — a fixed physics oracle. Simple, stable; do this first.
 - **Joint** — mutual regularization, and Model 2 finally sees the densities

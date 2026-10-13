@@ -124,7 +124,7 @@ def discover_pool(root, task, exclude=()):
     root : str or pathlib.Path
         Directory holding one subdirectory per candidate.
     task : str or TaskSpec
-        ``"ext2chg"`` or ``"chg2tau"``; selects which field must be present.
+        ``"ext2pseudo"`` or ``"pseudo2tau"``; selects which field must be present.
     exclude : container of str, optional
         Identifiers to skip — normally the structures already in the training
         set, so a candidate cannot be selected twice.

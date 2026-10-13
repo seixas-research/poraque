@@ -1566,7 +1566,7 @@ def distill_dataset(dataset, config, operator=None, log=None, engine=None,
     Parameters
     ----------
     dataset : FieldPairDataset
-        Supplies :math:`(\rho, \tau)` pairs; only ``chg2tau`` is meaningful,
+        Supplies :math:`(\rho, \tau)` pairs; only ``pseudo2tau`` is meaningful,
         since a functional of the density is what is being sought.
     config : SymbolicConfig
         Search settings, including which target to fit.

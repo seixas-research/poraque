@@ -7,11 +7,11 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-The ``ext2paw`` operator: the pseudo-density and every atom's PAW occupancies.
+The ``ext2chg`` operator: the pseudo-density and every atom's PAW occupancies.
 
 A ``CHGCAR`` is a grid plus, per atom, the one-center occupancies
 :math:`\rho(\ell\ell'LM)` VASP writes after it. The grid half is a field and an
-FNO predicts it, as ``ext2chg`` does. The per-atom half is not a field. It is a
+FNO predicts it, as ``ext2pseudo`` does. The per-atom half is not a field. It is a
 set of spherical tensors, up to L = 4 for a d-element, that no grid model sees,
 and ``experiments/paw_occupancies`` measured what predicts it:
 
@@ -543,7 +543,7 @@ class PAWOperatorModel(nn.Module):
         self.layouts = {int(z): tuple(int(degree) for degree in channels)
                         for z, channels in layouts.items()}
         if not self.layouts:
-            raise ValueError("an ext2paw operator needs the projector channels "
+            raise ValueError("an ext2chg operator needs the projector channels "
                              "of at least one element.")
         self.g_max = float(g_max)
         self.sets = int(backbone.out_channels)
@@ -627,7 +627,7 @@ class PAWOperatorModel(nn.Module):
 
 
 # ---------------------------------------------------------------------- #
-# Occupancies as input: the paw2tau operator
+# Occupancies as input: the chg2tau operator
 # ---------------------------------------------------------------------- #
 #: Widths s_n in Å of the Gaussians the occupancies are written with.
 WRITER_WIDTHS = (0.25, 0.45, 0.8)

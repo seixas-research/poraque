@@ -291,8 +291,8 @@ class TestTheWriterOnASyntheticFile:
 # ===================================================================== #
 class TestDeltaDensityMode:
     def test_the_target_is_the_residual(self, cache, library):
-        absolute = FieldPairDataset(cache, task="ext2chg")
-        delta = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        absolute = FieldPairDataset(cache, task="ext2pseudo")
+        delta = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
 
         baseline = delta.baseline_for(0)
         assert baseline is not None
@@ -302,8 +302,8 @@ class TestDeltaDensityMode:
     def test_the_residual_is_much_smaller_than_the_density(self, cache,
                                                            library):
         """The claim the whole mode rests on, on this fixture's own numbers."""
-        absolute = FieldPairDataset(cache, task="ext2chg")
-        delta = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        absolute = FieldPairDataset(cache, task="ext2pseudo")
+        delta = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         ratio = (np.linalg.norm(delta.target_values(0))
                  / np.linalg.norm(absolute.target_values(0)))
         assert ratio < 0.5
@@ -314,28 +314,28 @@ class TestDeltaDensityMode:
         only checked the magnitude would miss the constraint that actually
         moved.
         """
-        delta = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        delta = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         values = delta.target_values(0)
         assert values.min() < 0.0 < values.max()
 
     def test_every_sample_carries_its_baseline(self, cache, library):
-        delta = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        delta = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         sample = delta[0]
         assert "baseline" in sample
         assert sample["baseline"].shape == sample["target_physical"].shape
 
     def test_absolute_mode_carries_none(self, cache):
-        assert "baseline" not in FieldPairDataset(cache, task="ext2chg")[0]
+        assert "baseline" not in FieldPairDataset(cache, task="ext2pseudo")[0]
 
     def test_the_batch_carries_it_too(self, cache, library):
-        delta = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        delta = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         batch = next(iter(make_dataloader(delta, batch_size=2, shuffle=False)))
         assert batch["baseline"].shape == batch["target_physical"].shape
 
     def test_adding_the_baseline_back_recovers_the_density(self, cache,
                                                            library):
-        absolute = FieldPairDataset(cache, task="ext2chg")
-        delta = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        absolute = FieldPairDataset(cache, task="ext2pseudo")
+        delta = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         recovered = delta.target_values(0) + delta.baseline_for(0)
         assert np.allclose(recovered, absolute.target_values(0), atol=1e-12)
 
@@ -344,7 +344,7 @@ class TestDeltaDensityMode:
         A validation half in absolute mode would score the model against a
         different field entirely, and the number would look plausible.
         """
-        delta = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        delta = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         left, right = delta.split(fraction=0.5)
         assert left.baseline is delta.baseline
         assert right.baseline is delta.baseline
@@ -354,14 +354,14 @@ class TestDeltaDensityMode:
         Fitting an Asinh scale to rho and then feeding it delta_rho would be a
         silent scale error of the size of the baseline itself.
         """
-        absolute = FieldPairDataset(cache, task="ext2chg")
-        delta = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        absolute = FieldPairDataset(cache, task="ext2pseudo")
+        delta = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         _, absolute_target = absolute.fit_transforms()
         _, delta_target = delta.fit_transforms()
         assert (absolute_target.state_dict()
                 != delta_target.state_dict())
 
-    def test_chg2tau_ignores_a_baseline_it_cannot_use(self, cache, library,
+    def test_pseudo2tau_ignores_a_baseline_it_cannot_use(self, cache, library,
                                                       tmp_path):
         """There is no atomic superposition of a kinetic energy density."""
         from poraque.fields import KineticEnergyDensity
@@ -375,7 +375,7 @@ class TestDeltaDensityMode:
                                  rho.structure).write(
                 os.path.join(directory, "TAUCAR"))
 
-        dataset = FieldPairDataset(cache, task="chg2tau", baseline=library)
+        dataset = FieldPairDataset(cache, task="pseudo2tau", baseline=library)
         assert dataset.baseline_for(0) is None
         assert "baseline" not in dataset[0]
 
@@ -394,14 +394,14 @@ class TestDeltaDensityTrainingSmoke:
     def _operator(train_set, library):
         torch.manual_seed(0)
         return FieldOperator(
-            "ext2chg",
+            "ext2pseudo",
             input_transform=train_set.input_transform,
             target_transform=train_set.target_transform,
             width=4, modes=4, n_layers=1, projection_channels=8,
             device="cpu", baseline=library)
 
     def test_it_trains_and_predicts_an_absolute_density(self, cache, library):
-        train_set = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        train_set = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         train_set.fit_transforms()
         operator = self._operator(train_set, library)
         train(operator, train_set, epochs=3, batch_size=2, verbose=False)
@@ -420,7 +420,7 @@ class TestDeltaDensityTrainingSmoke:
         assert prediction.integrate() > 0.3 * reference.integrate()
 
     def test_the_same_run_without_a_baseline_predicts_no_delta(self, cache):
-        train_set = FieldPairDataset(cache, task="ext2chg")
+        train_set = FieldPairDataset(cache, task="ext2pseudo")
         train_set.fit_transforms()
         operator = self._operator(train_set, None)
         train(operator, train_set, epochs=2, batch_size=2, verbose=False)
@@ -436,7 +436,7 @@ class TestDeltaDensityTrainingSmoke:
         particular superposition they were fitted to. A baseline referenced
         from beside the checkpoint could change; one stored inside it cannot.
         """
-        train_set = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        train_set = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         train_set.fit_transforms()
         operator = self._operator(train_set, library)
 
@@ -448,7 +448,7 @@ class TestDeltaDensityTrainingSmoke:
 
     def test_a_restored_model_predicts_the_same_field(self, cache, library,
                                                       tmp_path):
-        train_set = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        train_set = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         train_set.fit_transforms()
         operator = self._operator(train_set, library)
 
@@ -462,7 +462,7 @@ class TestDeltaDensityTrainingSmoke:
                            atol=1e-6)
 
     def test_an_absolute_checkpoint_records_no_baseline(self, cache, tmp_path):
-        train_set = FieldPairDataset(cache, task="ext2chg")
+        train_set = FieldPairDataset(cache, task="ext2pseudo")
         train_set.fit_transforms()
         operator = self._operator(train_set, None)
         assert operator.state()["baseline"] is None
@@ -484,7 +484,7 @@ class TestTheOrderOfOperationsAtInference:
 
     def test_clipping_the_residual_would_delete_the_bonding_charge(self, cache,
                                                                   library):
-        delta = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        delta = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         residual = delta.target_values(0)
         negative = residual[residual < 0]
         assert negative.size > 0
@@ -496,9 +496,9 @@ class TestTheOrderOfOperationsAtInference:
         Which is why it cannot be rescaled to an electron count: the factor
         would be a finite number divided by ~0.
         """
-        delta = FieldPairDataset(cache, task="ext2chg", baseline=library)
+        delta = FieldPairDataset(cache, task="ext2pseudo", baseline=library)
         grid = FieldGrid.from_file(os.path.join(cache, "mat_0", "CHGCAR"))
-        absolute = FieldPairDataset(cache, task="ext2chg")
+        absolute = FieldPairDataset(cache, task="ext2pseudo")
         assert abs(grid.integrate(delta.target_values(0))) < \
             0.05 * abs(grid.integrate(absolute.target_values(0)))
 

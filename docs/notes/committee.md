@@ -21,7 +21,7 @@ for s in 0 1 2 3 4; do
       --checkpoint-dir models/committee_$s
 done
 
-poraque-committee --models "models/committee_*" --task ext2chg
+poraque-committee --models "models/committee_*" --task ext2pseudo
 ```
 
 `init_seed` is deliberately **separate from `seed`**. `FieldOperator` saves and
@@ -83,7 +83,7 @@ not a defect of the measure; it is the cancellation problem restated.
 
 ### The chain compounds
 
-`ext2chg → chg2tau` means an uncertain $\rho$ feeds an operator that is itself
+`ext2pseudo → pseudo2tau` means an uncertain $\rho$ feeds an operator that is itself
 uncertain. Two options, and they answer different questions:
 
 - **Per-stage committees** — feed each member the *same reference* $\rho$.
@@ -111,7 +111,7 @@ We already measured something the committee should be able to rediscover: in
 the 12-structure cross-validation, the two **32-atom** cells are 2.2–2.5×
 harder than the ten 27-atom ones.
 
-| Subset | `ext2chg` | `chg2tau` |
+| Subset | `ext2pseudo` | `pseudo2tau` |
 | --- | --- | --- |
 | 27-atom (10 structures) | 0.0205 ± 0.0064 | 0.0355 ± 0.0069 |
 | 32-atom (2 structures) | 0.0445 ± 0.0182 | 0.0894 ± 0.0420 |
@@ -123,7 +123,7 @@ calculation. If no, it is measuring optimization noise and nothing else.
 
 ### Result: it failed (2026-08-04)
 
-Four members, `--init-seed 0..3`, `--valid-fraction 0`, `ext2chg` at
+Four members, `--init-seed 0..3`, `--valid-fraction 0`, `ext2pseudo` at
 resolution 32, scored against the cross-validated errors in
 `logs/kfold12b.json`:
 
@@ -152,7 +152,7 @@ test was unfair".
 
 The honest form is a **per-fold committee**: for each CV fold, train K members
 that all exclude that fold, and measure disagreement on structures none of them
-saw. Cost is K× a K-fold run — about 2.5 hours for `ext2chg`.
+saw. Cost is K× a K-fold run — about 2.5 hours for `ext2pseudo`.
 
 Two readings survive, and both are testable:
 

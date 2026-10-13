@@ -18,7 +18,7 @@
 
 **Poraquê** is a software framework for machine learning operators between the real-space fields of density functional theory. Given only a crystal geometry, it predicts the charge density and the kinetic energy density — no wavefunctions, no self-consistency cycle.
 
-Two **Fourier Neural Operators** are learned: the first maps the external potential to the charge density (`ext2chg`), the second maps the charge density to the kinetic energy density (`chg2tau`). They are not two unrelated regressions — the first is the Hohenberg–Kohn map, whose existence is a theorem, and the second is the kinetic energy density functional, the missing ingredient of orbital-free DFT.
+Two **Fourier Neural Operators** are learned: the first maps the external potential to the charge density (`ext2pseudo`), the second maps the charge density to the kinetic energy density (`pseudo2tau`). They are not two unrelated regressions — the first is the Hohenberg–Kohn map, whose existence is a theorem, and the second is the kinetic energy density functional, the missing ingredient of orbital-free DFT.
 
 ## Install
 
@@ -135,7 +135,7 @@ float32 rounding, and `PORAQUE_C_BACKEND=0` turns it off. See the User Guide
 ## Use
 
 ```bash
-# 1. train one ext2chg and one chg2tau model on all structures
+# 1. train one ext2pseudo and one pseudo2tau model on all structures
 poraque-train --config configs/train.yaml
 
 # 2. measure generalization
@@ -150,12 +150,12 @@ poraque-inference new_structure/ --output predictions/new_structure \
 #    LABELED data first -- it costs nothing and says whether step 5 means
 #    anything. Read the Spearman coefficient. --cache is the tagged
 #    directory step 1 built (the tag encodes resolution and potentials).
-poraque-committee --models "models/committee_*" --task ext2chg \
+poraque-committee --models "models/committee_*" --task ext2pseudo \
     --cache data/cache/res32_potcar --against models/<name>/log/<name>.json
 
 # 5. select: which UNLABELED structures to compute next. This one spends
 #    the DFT budget, so it is the one that needs step 4 to have passed.
-poraque-active-learning --models "models/committee_*" --task ext2chg \
+poraque-active-learning --models "models/committee_*" --task ext2pseudo \
     --pool data/pool --select 5
 ```
 
@@ -367,7 +367,7 @@ download goes in it exactly as a run tree does — every entry is a directory of
 per-material subdirectories, and nothing says which is which:
 
 ```yaml
-task: ext2chg              # MP publishes no tau, so chg2tau is not trainable
+task: ext2pseudo              # MP publishes no tau, so pseudo2tau is not trainable
 data:
   data_paths:
     - data/MP              # mp-124/, mp-81/, ...
@@ -376,8 +376,8 @@ data:
   resolution: 32
 ```
 
-`TAUCAR` is optional per material, so `type: all` on a mixture trains `ext2chg`
-on everything and `chg2tau` on whichever materials have a τ.
+`TAUCAR` is optional per material, so `type: all` on a mixture trains `ext2pseudo`
+on everything and `pseudo2tau` on whichever materials have a τ.
 
 ```bash
 poraque-train --config configs/train_materialsproject.yaml
@@ -426,7 +426,7 @@ in its first lines.
 - **Grids may differ between materials.** One model serves all of them: the
   operator's weights live in Fourier-mode space, and batches are bucketed by
   grid shape.
-- **Constraints are structural where possible.** For `chg2tau`,
+- **Constraints are structural where possible.** For `pseudo2tau`,
   τ = τ_vW[ρ] + softplus(·) makes the Hoffmann-Ostenhof bound hold by
   construction rather than by penalty.
 - **Resampling is spectral.** Fourier truncation is the exact band-limited
@@ -480,7 +480,7 @@ in its first lines.
 
 ## Status
 
-The [CHON `ext2paw` experiment](experiments/chon_ext2paw/README.md) documents the
+The [CHON `ext2chg` experiment](experiments/chon_ext2chg/README.md) documents the
 432-material data audit, isolated-atom references, hyperparameter benchmark,
 PAW integration corrections, and limits of the charge and magnetic predictions.
 Its configurations, split, metrics and plots are available with the report.
@@ -494,16 +494,16 @@ with early stopping, whole structures held out (`seed=42`):
 
 | Model | held out | training fit |
 | --- | --- | --- |
-| `ext2chg` | 0.0379 ± 0.0027 | 0.0209 |
-| `chg2tau` | 0.0511 ± 0.0031 | 0.0140 |
+| `ext2pseudo` | 0.0379 ± 0.0027 | 0.0209 |
+| `pseudo2tau` | 0.0511 ± 0.0031 | 0.0140 |
 
-R² on the held-out structures is 0.9976 (`ext2chg`) and 0.9953 (`chg2tau`). The
+R² on the held-out structures is 0.9976 (`ext2pseudo`) and 0.9953 (`pseudo2tau`). The
 `±` is the spread across the three validation structures, not a
 cross-validation error bar — see the caveat below.
 
 The learned kinetic functional beats the analytic orbital-free functionals by a
 wide margin on this system — on the same held-out fields Thomas-Fermi scores
-1.347 and von Weizsäcker 0.738, so `chg2tau` is **26×** and **14×** better
+1.347 and von Weizsäcker 0.738, so `pseudo2tau` is **26×** and **14×** better
 respectively.
 
 > **What this split can and cannot tell you.** With `valid_fraction = 0.2` and

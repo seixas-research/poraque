@@ -67,8 +67,8 @@ def dataset_root(tmp_path):
 
 
 @pytest.fixture
-def chg2tau(dataset_root):
-    dataset = FieldPairDataset(dataset_root, task="chg2tau")
+def pseudo2tau(dataset_root):
+    dataset = FieldPairDataset(dataset_root, task="pseudo2tau")
     dataset.fit_transforms()
     return dataset
 
@@ -95,17 +95,17 @@ def as_batch(dataset, index):
 # The invariant
 # --------------------------------------------------------------------- #
 class TestHardConstraint:
-    def test_holds_at_random_initialization(self, chg2tau):
+    def test_holds_at_random_initialization(self, pseudo2tau):
         """No training required: the bound is algebra, not a learned property."""
         torch.manual_seed(0)
-        head = build_head(chg2tau, scale=2.0)
-        for index in range(len(chg2tau)):
-            batch = as_batch(chg2tau, index)
+        head = build_head(pseudo2tau, scale=2.0)
+        for index in range(len(pseudo2tau)):
+            batch = as_batch(pseudo2tau, index)
             tau = physical(head, batch)
             bound = head.von_weizsacker_term(batch["input"], batch["cell"])
             assert (tau - bound).min() > 0.0
 
-    def test_saturates_to_the_single_orbital_limit(self, chg2tau):
+    def test_saturates_to_the_single_orbital_limit(self, pseudo2tau):
         """Driving the backbone to -inf gives tau == tau_vW exactly.
 
         This is the correct physical floor, not a degenerate failure: a
@@ -113,14 +113,14 @@ class TestHardConstraint:
         represent that limit exactly rather than only approaching it.
         """
         torch.manual_seed(0)
-        head = build_head(chg2tau, scale=1.0)
+        head = build_head(pseudo2tau, scale=1.0)
         with torch.no_grad():
             for parameter in head.backbone.parameters():
                 parameter.zero_()
             # Bias the final projection hard negative so softplus underflows.
             head.backbone.project[-1].bias.fill_(-100.0)
 
-        batch = as_batch(chg2tau, 0)
+        batch = as_batch(pseudo2tau, 0)
         pauli = head.pauli_term(batch["input"], batch["cell"])
         # softplus(-100) underflows to a float32 subnormal (~4e-44): zero to
         # every precision that matters, and never negative.
@@ -132,7 +132,7 @@ class TestHardConstraint:
         assert torch.allclose(tau, bound, rtol=1e-5, atol=1e-5)
 
     @pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
-    def test_holds_for_arbitrary_weights(self, chg2tau, seed):
+    def test_holds_for_arbitrary_weights(self, pseudo2tau, seed):
         """Randomized weights of large magnitude must not break it.
 
         The exact invariant lives on the Pauli term: ``softplus`` is
@@ -146,11 +146,11 @@ class TestHardConstraint:
         has only ~1e-3 absolute resolution.
         """
         torch.manual_seed(seed)
-        head = build_head(chg2tau, scale=1.0)
+        head = build_head(pseudo2tau, scale=1.0)
         with torch.no_grad():
             for parameter in head.backbone.parameters():
                 parameter.mul_(50.0)          # blow the backbone up
-        batch = as_batch(chg2tau, 0)
+        batch = as_batch(pseudo2tau, 0)
 
         # Exact, no round trip through the transform.
         assert float(head.pauli_term(batch["input"], batch["cell"]).min().detach()) >= 0.0
@@ -159,51 +159,51 @@ class TestHardConstraint:
         margin = tau - head.von_weizsacker_term(batch["input"], batch["cell"])
         assert float(margin.min().detach()) > -1e-6 * float(tau.abs().max().detach())
 
-    def test_survives_destructive_optimizer_steps(self, chg2tau):
+    def test_survives_destructive_optimizer_steps(self, pseudo2tau):
         """An absurd learning rate may ruin accuracy but cannot break the bound."""
         torch.manual_seed(0)
-        operator = FieldOperator("chg2tau", width=8, modes=4, n_layers=2,
+        operator = FieldOperator("pseudo2tau", width=8, modes=4, n_layers=2,
                                  projection_channels=16,
-                                 input_transform=chg2tau.input_transform,
-                                 target_transform=chg2tau.target_transform,
+                                 input_transform=pseudo2tau.input_transform,
+                                 target_transform=pseudo2tau.target_transform,
                                  device="cpu", pauli_residual=True,
-                                 pauli_scale=fit_pauli_scale(chg2tau))
-        train(operator, chg2tau, epochs=15, batch_size=1, learning_rate=0.5,
+                                 pauli_scale=fit_pauli_scale(pseudo2tau))
+        train(operator, pseudo2tau, epochs=15, batch_size=1, learning_rate=0.5,
               verbose=False)
 
-        for index in range(len(chg2tau)):
-            density, _ = chg2tau.load_fields(index)
+        for index in range(len(pseudo2tau)):
+            density, _ = pseudo2tau.load_fields(index)
             prediction = operator.predict(density)
             bound = vw_numpy(density.data, density.grid)
             assert (prediction.data - bound).min() > -1e-6
 
-    def test_baseline_backbone_can_violate_the_bound(self, chg2tau):
+    def test_baseline_backbone_can_violate_the_bound(self, pseudo2tau):
         """Control: without the head the bound is not guaranteed.
 
         If an untrained bare model never violated the bound, the head would be
         solving a non-problem and these tests would prove nothing.
         """
         torch.manual_seed(0)
-        operator = FieldOperator("chg2tau", width=8, modes=4, n_layers=2,
+        operator = FieldOperator("pseudo2tau", width=8, modes=4, n_layers=2,
                                  projection_channels=16,
-                                 input_transform=chg2tau.input_transform,
-                                 target_transform=chg2tau.target_transform,
+                                 input_transform=pseudo2tau.input_transform,
+                                 target_transform=pseudo2tau.target_transform,
                                  device="cpu")
         worst = min(
-            float((operator.predict(chg2tau.load_fields(i)[0]).data
-                   - vw_numpy(chg2tau.load_fields(i)[0].data,
-                              chg2tau.load_fields(i)[0].grid)).min())
-            for i in range(len(chg2tau))
+            float((operator.predict(pseudo2tau.load_fields(i)[0]).data
+                   - vw_numpy(pseudo2tau.load_fields(i)[0].data,
+                              pseudo2tau.load_fields(i)[0].grid)).min())
+            for i in range(len(pseudo2tau))
         )
         assert worst < 0.0
 
-    def test_soft_penalty_is_exactly_zero_with_the_head(self, chg2tau):
+    def test_soft_penalty_is_exactly_zero_with_the_head(self, pseudo2tau):
         """The head makes von_weizsacker_bound_loss redundant, by construction."""
         from poraque.ml.physics import von_weizsacker_bound_loss
 
         torch.manual_seed(0)
-        head = build_head(chg2tau, scale=2.0)
-        batch = as_batch(chg2tau, 0)
+        head = build_head(pseudo2tau, scale=2.0)
+        batch = as_batch(pseudo2tau, 0)
         density = head.decode_density(batch["input"])
         loss = von_weizsacker_bound_loss(physical(head, batch), density,
                                          batch["cell"])
@@ -214,62 +214,62 @@ class TestHardConstraint:
 # Decomposition
 # --------------------------------------------------------------------- #
 class TestDecomposition:
-    def test_tau_equals_vw_plus_pauli(self, chg2tau):
+    def test_tau_equals_vw_plus_pauli(self, pseudo2tau):
         torch.manual_seed(0)
-        head = build_head(chg2tau, scale=3.0)
-        batch = as_batch(chg2tau, 0)
+        head = build_head(pseudo2tau, scale=3.0)
+        batch = as_batch(pseudo2tau, 0)
         total = physical(head, batch)
         parts = (head.von_weizsacker_term(batch["input"], batch["cell"])
                  + head.pauli_term(batch["input"], batch["cell"]))
         assert torch.allclose(total, parts, atol=1e-4)
 
-    def test_pauli_term_is_non_negative(self, chg2tau):
+    def test_pauli_term_is_non_negative(self, pseudo2tau):
         torch.manual_seed(3)
-        head = build_head(chg2tau, scale=1.0)
-        batch = as_batch(chg2tau, 0)
+        head = build_head(pseudo2tau, scale=1.0)
+        batch = as_batch(pseudo2tau, 0)
         assert float(head.pauli_term(batch["input"], batch["cell"]).min().detach()) >= 0.0
 
-    def test_von_weizsacker_term_matches_the_numpy_reference(self, chg2tau):
+    def test_von_weizsacker_term_matches_the_numpy_reference(self, pseudo2tau):
         """The analytic part must be the same function the physics module uses."""
-        head = build_head(chg2tau, scale=1.0)
-        density, _ = chg2tau.load_fields(0)
-        batch = as_batch(chg2tau, 0)
+        head = build_head(pseudo2tau, scale=1.0)
+        density, _ = pseudo2tau.load_fields(0)
+        batch = as_batch(pseudo2tau, 0)
 
         computed = head.von_weizsacker_term(batch["input"],
                                             batch["cell"]).numpy()[0, 0]
         reference = vw_numpy(density.data, density.grid)
         assert np.abs(computed - reference).max() < 1e-3 * reference.max()
 
-    def test_decoded_density_round_trips(self, chg2tau):
-        head = build_head(chg2tau, scale=1.0)
-        density, _ = chg2tau.load_fields(0)
-        decoded = head.decode_density(as_batch(chg2tau, 0)["input"]).numpy()[0, 0]
+    def test_decoded_density_round_trips(self, pseudo2tau):
+        head = build_head(pseudo2tau, scale=1.0)
+        density, _ = pseudo2tau.load_fields(0)
+        decoded = head.decode_density(as_batch(pseudo2tau, 0)["input"]).numpy()[0, 0]
         assert np.abs(decoded - density.data).max() < 1e-4
 
-    def test_scale_is_positive_and_learnable(self, chg2tau):
-        head = build_head(chg2tau, scale=4.0, learn_scale=True)
+    def test_scale_is_positive_and_learnable(self, pseudo2tau):
+        head = build_head(pseudo2tau, scale=4.0, learn_scale=True)
         assert float(head.scale.detach()) == pytest.approx(4.0)
         assert any(p is head.log_scale for p in head.parameters())
 
-        fixed = build_head(chg2tau, scale=4.0, learn_scale=False)
+        fixed = build_head(pseudo2tau, scale=4.0, learn_scale=False)
         assert all(p is not fixed.log_scale for p in fixed.parameters())
 
-    def test_rejects_a_non_positive_scale(self, chg2tau):
+    def test_rejects_a_non_positive_scale(self, pseudo2tau):
         with pytest.raises(ValueError, match="must be positive"):
-            build_head(chg2tau, scale=0.0)
+            build_head(pseudo2tau, scale=0.0)
 
-    def test_requires_a_cell(self, chg2tau):
-        head = build_head(chg2tau, scale=1.0)
+    def test_requires_a_cell(self, pseudo2tau):
+        head = build_head(pseudo2tau, scale=1.0)
         with pytest.raises(ValueError, match="requires `cell`"):
-            head(as_batch(chg2tau, 0)["input"], None)
+            head(as_batch(pseudo2tau, 0)["input"], None)
 
-    def test_handles_ragged_grid_shapes(self, chg2tau):
+    def test_handles_ragged_grid_shapes(self, pseudo2tau):
         """One head, several materials, several grid shapes."""
         torch.manual_seed(0)
-        head = build_head(chg2tau, scale=2.0)
+        head = build_head(pseudo2tau, scale=2.0)
         shapes = set()
-        for index in range(len(chg2tau)):
-            batch = as_batch(chg2tau, index)
+        for index in range(len(pseudo2tau)):
+            batch = as_batch(pseudo2tau, index)
             output = head(batch["input"], batch["cell"])
             assert output.shape == batch["input"].shape
             shapes.add(tuple(output.shape[-3:]))
@@ -280,15 +280,15 @@ class TestDecomposition:
 # Fitting helpers and diagnostics
 # --------------------------------------------------------------------- #
 class TestFitAndDiagnostics:
-    def test_fit_pauli_scale_is_positive_and_sane(self, chg2tau):
-        scale = fit_pauli_scale(chg2tau)
+    def test_fit_pauli_scale_is_positive_and_sane(self, pseudo2tau):
+        scale = fit_pauli_scale(pseudo2tau)
         assert scale > 0.0
-        density, tau = chg2tau.load_fields(0)
+        density, tau = pseudo2tau.load_fields(0)
         pauli = tau.data - vw_numpy(density.data, density.grid)
         assert scale <= pauli.max()
 
-    def test_bound_violation_reports_a_clean_dataset(self, chg2tau):
-        for entry in pauli_bound_violation(chg2tau):
+    def test_bound_violation_reports_a_clean_dataset(self, pseudo2tau):
+        for entry in pauli_bound_violation(pseudo2tau):
             assert entry["violations"] == 0
             assert entry["worst_deficit"] >= 0.0
             assert 0.0 < entry["vw_fraction"] < 1.0
@@ -303,7 +303,7 @@ class TestFitAndDiagnostics:
         KineticEnergyDensity(broken, grid, density.structure).write(
             os.path.join(dataset_root, directory, "TAUCAR"))
 
-        dataset = FieldPairDataset(dataset_root, task="chg2tau")
+        dataset = FieldPairDataset(dataset_root, task="pseudo2tau")
         entry = next(e for e in pauli_bound_violation(dataset)
                      if e["material"] == directory)
         assert entry["violations"] > 0
@@ -314,37 +314,37 @@ class TestFitAndDiagnostics:
 # Integration with FieldOperator
 # --------------------------------------------------------------------- #
 class TestFieldOperatorIntegration:
-    def test_operator_builds_and_trains_with_the_head(self, chg2tau):
+    def test_operator_builds_and_trains_with_the_head(self, pseudo2tau):
         torch.manual_seed(0)
-        operator = FieldOperator("chg2tau", width=8, modes=4, n_layers=2,
+        operator = FieldOperator("pseudo2tau", width=8, modes=4, n_layers=2,
                                  projection_channels=16,
-                                 input_transform=chg2tau.input_transform,
-                                 target_transform=chg2tau.target_transform,
+                                 input_transform=pseudo2tau.input_transform,
+                                 target_transform=pseudo2tau.target_transform,
                                  device="cpu", pauli_residual=True,
-                                 pauli_scale=fit_pauli_scale(chg2tau))
+                                 pauli_scale=fit_pauli_scale(pseudo2tau))
         assert isinstance(operator.model, PauliResidualOperator)
-        history = train(operator, chg2tau, epochs=8, batch_size=1,
+        history = train(operator, pseudo2tau, epochs=8, batch_size=1,
                         learning_rate=3e-3, verbose=False)
         assert np.isfinite(history["train_loss"]).all()
         assert history["train_loss"][-1] < history["train_loss"][0]
 
-    def test_head_is_rejected_for_ext2chg(self, dataset_root):
-        """tau_vW is a functional of the density; ext2chg's input is not one."""
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+    def test_head_is_rejected_for_ext2pseudo(self, dataset_root):
+        """tau_vW is a functional of the density; ext2pseudo's input is not one."""
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         dataset.fit_transforms()
-        with pytest.raises(ValueError, match="only defined for the chg2tau"):
-            FieldOperator("ext2chg", width=8, modes=4, n_layers=1,
+        with pytest.raises(ValueError, match="only defined for the pseudo2tau"):
+            FieldOperator("ext2pseudo", width=8, modes=4, n_layers=1,
                           projection_channels=16, device="cpu",
                           pauli_residual=True)
 
-    def test_checkpoint_restores_the_head_without_being_told(self, chg2tau, tmp_path):
+    def test_checkpoint_restores_the_head_without_being_told(self, pseudo2tau, tmp_path):
         torch.manual_seed(0)
         kwargs = dict(width=8, modes=4, n_layers=2, projection_channels=16)
-        operator = FieldOperator("chg2tau", input_transform=chg2tau.input_transform,
-                                 target_transform=chg2tau.target_transform,
+        operator = FieldOperator("pseudo2tau", input_transform=pseudo2tau.input_transform,
+                                 target_transform=pseudo2tau.target_transform,
                                  device="cpu", pauli_residual=True,
                                  pauli_scale=2.5, **kwargs)
-        density, _ = chg2tau.load_fields(0)
+        density, _ = pseudo2tau.load_fields(0)
         expected = operator.predict(density).data
 
         path = tmp_path / "pauli.poraque"
@@ -356,10 +356,10 @@ class TestFieldOperatorIntegration:
         assert restored.pauli_scale == pytest.approx(2.5)
         assert np.abs(restored.predict(density).data - expected).max() < 1e-6
 
-    def test_plain_checkpoint_still_loads_without_a_head(self, chg2tau, tmp_path):
+    def test_plain_checkpoint_still_loads_without_a_head(self, pseudo2tau, tmp_path):
         kwargs = dict(width=8, modes=4, n_layers=1, projection_channels=16)
-        operator = FieldOperator("chg2tau", input_transform=chg2tau.input_transform,
-                                 target_transform=chg2tau.target_transform,
+        operator = FieldOperator("pseudo2tau", input_transform=pseudo2tau.input_transform,
+                                 target_transform=pseudo2tau.target_transform,
                                  device="cpu", **kwargs)
         path = tmp_path / "plain.poraque"
         operator.save(path)
@@ -367,15 +367,15 @@ class TestFieldOperatorIntegration:
         assert restored.pauli_residual is False
         assert not isinstance(restored.model, PauliResidualOperator)
 
-    def test_prediction_is_a_writable_taucar(self, chg2tau, tmp_path):
+    def test_prediction_is_a_writable_taucar(self, pseudo2tau, tmp_path):
         torch.manual_seed(0)
-        operator = FieldOperator("chg2tau", width=8, modes=4, n_layers=1,
+        operator = FieldOperator("pseudo2tau", width=8, modes=4, n_layers=1,
                                  projection_channels=16,
-                                 input_transform=chg2tau.input_transform,
-                                 target_transform=chg2tau.target_transform,
+                                 input_transform=pseudo2tau.input_transform,
+                                 target_transform=pseudo2tau.target_transform,
                                  device="cpu", pauli_residual=True,
                                  pauli_scale=2.0)
-        density, _ = chg2tau.load_fields(0)
+        density, _ = pseudo2tau.load_fields(0)
         prediction = operator.predict(density)
         assert isinstance(prediction, KineticEnergyDensity)
 

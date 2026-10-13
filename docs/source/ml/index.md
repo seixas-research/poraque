@@ -4,10 +4,10 @@
 
 | Task | Map | Meaning |
 | --- | --- | --- |
-| `ext2chg` | $V_\mathrm{ext}\mapsto\rho$ | the Hohenberg–Kohn map |
-| `chg2tau` | $\rho\mapsto\tau$ | the kinetic energy density functional |
-| `ext2paw` | $V_\mathrm{ext}\mapsto(\tilde\rho,\rho^a_{ij})$ | the pseudo-density **and** every atom's PAW augmentation occupancies |
-| `paw2tau` | $(\tilde\rho,\rho^a_{ij})\mapsto\tau$ | the kinetic energy density from both |
+| `ext2pseudo` | $V_\mathrm{ext}\mapsto\rho$ | the Hohenberg–Kohn map |
+| `pseudo2tau` | $\rho\mapsto\tau$ | the kinetic energy density functional |
+| `ext2chg` | $V_\mathrm{ext}\mapsto(\tilde\rho,\rho^a_{ij})$ | the pseudo-density **and** every atom's PAW augmentation occupancies |
+| `chg2tau` | $(\tilde\rho,\rho^a_{ij})\mapsto\tau$ | the kinetic energy density from both |
 
 The first learns an object guaranteed to exist by theorem. The second learns
 the only term of the DFT total energy with no accurate explicit density
@@ -18,15 +18,15 @@ The other two sit beside that chain rather than in it, and exist because a
 `CHGCAR` is not only a grid. The one-center PAW terms inside the augmentation
 spheres have no representation on the plane-wave mesh, and together with the
 pseudo-density they are what an all-electron density is reconstructed from.
-`ext2paw` predicts them — an FNO for the grid, a readout at each atom over one
-band of $|\mathbf G|$, and an equivariant head per element — and `paw2tau`
+`ext2chg` predicts them — an FNO for the grid, a readout at each atom over one
+band of $|\mathbf G|$, and an equivariant head per element — and `chg2tau`
 reads them, written into extra input channels by an equivariant
 {class}`~poraque.ml.paw.SiteWriter` beside the density. What the one predicts is
 exactly what the other reads, which is the route this project takes to the
 total energy; `task: all` still means the chain alone. The
 {ref}`configuration reference <paw>` describes both operators and their keys.
 
-`ext2chg` and `ext2paw` can also be handed the structure explicitly, as
+`ext2pseudo` and `ext2chg` can also be handed the structure explicitly, as
 superpositions of isolated atoms beside $V_\mathrm{ext}$
 ({ref}`model.structure_input <structure-input>`): scalar fields, so the
 operator stays equivariant, and functions of the geometry alone, so inference
@@ -94,7 +94,7 @@ A fifth of the structures is held back for validation (`valid_fraction`), so
 the reported score is genuinely held out. The run writes a single unified
 checkpoint in Poraquê's own **`.poraque`** format —
 `models/poraque_models.poraque` — holding both operators under the
-keys `ext2chg` and `chg2tau`. A [fine-tuned](../fine_tuning/index.md) model is
+keys `ext2pseudo` and `pseudo2tau`. A [fine-tuned](../fine_tuning/index.md) model is
 written beside it as `poraque_finetuned.poraque`, never over the top of it.
 
 K-fold cross-validation is the only variation on this:
@@ -116,7 +116,7 @@ A soft penalty trades accuracy against constraint satisfaction and achieves
 neither. Where a constraint can be built into the parameterization it should
 be — it then holds for every weight configuration, with nothing to tune.
 
-For `chg2tau`, the exact decomposition $\tau=\tau_\mathrm{vW}+\tau_\mathrm{P}$
+For `pseudo2tau`, the exact decomposition $\tau=\tau_\mathrm{vW}+\tau_\mathrm{P}$
 with $\tau_\mathrm{P}\ge 0$ (Hoffmann-Ostenhof) gives
 
 $$

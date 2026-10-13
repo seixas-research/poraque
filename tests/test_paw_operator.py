@@ -7,7 +7,7 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-The ``ext2paw`` operator: FNO backbone, grid-to-atom readout, equivariant head.
+The ``ext2chg`` operator: FNO backbone, grid-to-atom readout, equivariant head.
 
 What each part promises, pinned one at a time:
 
@@ -69,7 +69,7 @@ def test_hydrogen_only_batch_in_a_multielement_operator(device):
         layouts, 1, {z: np.zeros((1, n)) for z, n in lengths.items()},
         {z: np.ones((1, n)) for z, n in lengths.items()})
     operator = FieldOperator(
-        "ext2paw", device=device, width=4, modes=2, n_layers=1,
+        "ext2chg", device=device, width=4, modes=2, n_layers=1,
         use_coordinates=False, site_layouts=layouts, readout_g_max=2,
         site_transform=transform)
     batch = {"input": torch.randn(1, 1, 8, 8, 8),
@@ -498,7 +498,7 @@ class TestTheTargetTransform:
 # ===================================================================== #
 def _synthetic_runs(root, count=4):
     from test_data_sources import write_calculation
-    from test_ext2paw import _with_records
+    from test_ext2chg import _with_records
     from test_paw_profiles import potcar_text
 
     potcar = os.path.join(root, "Si.POTCAR")
@@ -525,7 +525,7 @@ class TestTheOperatorTrainsInTheOneLoop:
             build_field_cache([runs], str(tmp_path / "cache"), resolution=16,
                               spin=True, charges={"Si": 4.0},
                               log=lambda *_: None)
-        return FieldPairDataset(str(tmp_path / "cache"), "ext2paw")
+        return FieldPairDataset(str(tmp_path / "cache"), "ext2chg")
 
     @staticmethod
     def _operator(dataset):
@@ -533,7 +533,7 @@ class TestTheOperatorTrainsInTheOneLoop:
 
         layouts = {14: (1,)}
         return FieldOperator(
-            "ext2paw", width=6, modes=4, n_layers=1, projection_channels=8,
+            "ext2chg", width=6, modes=4, n_layers=1, projection_channels=8,
             device="cpu", in_channels=1, out_channels=2,
             site_layouts=layouts, readout_g_max=3.0,
             site_transform=OccupancyTransform.fit(dataset, layouts, sets=2),
@@ -583,7 +583,7 @@ class TestTheOperatorTrainsInTheOneLoop:
         from test_pipeline_defaults import synthetic_library
 
         residuals = FieldPairDataset(
-            dataset.root, "ext2paw",
+            dataset.root, "ext2chg",
             baseline=synthetic_library(element="Si", n_electrons=4.))
         source, target = residuals.fit_transforms()
         operator = self._operator(residuals)
@@ -602,7 +602,7 @@ class TestTheOperatorTrainsInTheOneLoop:
         history = train(operator, residuals, epochs=2, batch_size=2,
                         validation=residuals, eval_every=1, early_stopping=2,
                         occupancy_weight=2.5, learning_rate=3e-3, verbose=False,
-                        loss=RecordingLoss(task="ext2paw", electron_count_weight=1.5))
+                        loss=RecordingLoss(task="ext2chg", electron_count_weight=1.5))
         np.testing.assert_allclose(sorted(seen_counts), sorted(reference_counts * 2),
                                    rtol=2e-6)
         assert np.isfinite(history["train_electron_count_loss"]).all()
@@ -649,13 +649,13 @@ class TestTheOperatorTrainsInTheOneLoop:
             centers = operator.model.neighbors.centers
             centers.copy_(torch.linspace(neighbor_min, float(centers[-1]), len(centers),
                                          dtype=centers.dtype, device=centers.device))
-        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2paw": operator})
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator})
         if legacy_metadata:
             from poraque.ml import read_bundle
             state = read_bundle(path)
-            state["model_state_dict"]["ext2paw"]["site"].pop("neighbor_min")
+            state["model_state_dict"]["ext2chg"]["site"].pop("neighbor_min")
             torch.save(state, path)
-        back = load_bundle(path, "ext2paw", device="cpu")
+        back = load_bundle(path, "ext2chg", device="cpu")
         potential = ExternalPotential.read(
             os.path.join(dataset.root, "structure_0000", "EXTCAR"))
         a = operator.predict_occupancies(potential)
@@ -669,14 +669,14 @@ class TestTheOperatorTrainsInTheOneLoop:
         from poraque.ml import FieldOperator
 
         with pytest.raises(ValueError, match="site_layouts"):
-            FieldOperator("ext2paw", width=4, modes=2, n_layers=1,
+            FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
                           device="cpu")
 
     def test_a_field_operator_has_no_occupancies_to_give(self, dataset):
         from poraque.fields import ExternalPotential
         from poraque.ml import FieldOperator
 
-        operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+        operator = FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                                  device="cpu")
         potential = ExternalPotential.read(
             os.path.join(dataset.root, "structure_0000", "EXTCAR"))
@@ -721,8 +721,8 @@ class TestTheScriptsDriveIt:
 
         tmp_path, _ = trained
         bundle = tmp_path / "models" / "paw_run" / "paw_run.poraque"
-        assert bundle_tasks(str(bundle)) == ["chg2tau", "ext2chg", "ext2paw"]
-        site = read_bundle(str(bundle))["model_state_dict"]["ext2paw"]["site"]
+        assert bundle_tasks(str(bundle)) == ["ext2chg", "ext2pseudo", "pseudo2tau"]
+        site = read_bundle(str(bundle))["model_state_dict"]["ext2chg"]["site"]
         assert site["layouts"] == {"14": [1]}
         assert site["readout_g_max"] > 0 and site["transform"]
         assert site["neighbor_min"] == pytest.approx(0.6)
@@ -782,7 +782,7 @@ class TestTheScriptsDriveIt:
         tmp_path, runs = trained
         original = tmp_path / "models" / "paw_run" / "paw_run.poraque"
         state = read_bundle(str(original))
-        state["model_state_dict"] = {"ext2paw": state["model_state_dict"]["ext2paw"]}
+        state["model_state_dict"] = {"ext2chg": state["model_state_dict"]["ext2chg"]}
         bundle = tmp_path / "paw_only.poraque"
         torch.save(state, bundle)
         new = tmp_path / "new_paw_only"
@@ -835,7 +835,7 @@ class TestTheScriptsDriveIt:
 
         _, blocks = read_augmentation_blocks(str(out / "CHGCAR"))
         written, _ = occupancy_arrays(blocks)
-        operator = load_bundle(bundle, "ext2paw", device="cpu")
+        operator = load_bundle(bundle, "ext2chg", device="cpu")
         predicted = operator.predict_occupancies(
             ExternalPotential.read(str(out / "EXTCAR")))
         np.testing.assert_allclose(written[:, 0, :], np.stack(predicted[0]),
@@ -852,13 +852,13 @@ class TestTheScriptsDriveIt:
         base, runs = trained
         bundle = str(base / "models" / "paw_run" / "paw_run.poraque")
         chain = {task: load_bundle(bundle, task, device="cpu")
-                 for task in ("ext2chg", "chg2tau")}
+                 for task in ("ext2pseudo", "pseudo2tau")}
         without = save_bundle(str(tmp_path / "chain.poraque"), chain)
         new = tmp_path / "bare"
         new.mkdir()
         for name in ("POSCAR", "POTCAR", "INCAR"):
             shutil.copy(os.path.join(runs, "structure_0000", name), new / name)
-        with pytest.raises(SystemExit, match="holds no ext2paw"):
+        with pytest.raises(SystemExit, match="holds no ext2chg"):
             poraque_inference.predict([
                 str(new), "--models", without, "--output",
                 str(tmp_path / "o"), "--grid", "16", "16", "16", "--add-paw",
@@ -901,7 +901,7 @@ class TestItEvaluatesOnWhateverAcceleratorIsHere:
             build_field_cache([runs], str(tmp_path / "cache"), resolution=16,
                               spin=True, charges={"Si": 4.0},
                               log=lambda *_: None)
-        return FieldPairDataset(str(tmp_path / "cache"), "ext2paw")
+        return FieldPairDataset(str(tmp_path / "cache"), "ext2chg")
 
     def test_training_with_validation_survives_its_first_evaluation(self,
                                                                     dataset):
@@ -909,7 +909,7 @@ class TestItEvaluatesOnWhateverAcceleratorIsHere:
 
         layouts = {14: (1,)}
         operator = FieldOperator(
-            "ext2paw", width=6, modes=4, n_layers=1, projection_channels=8,
+            "ext2chg", width=6, modes=4, n_layers=1, projection_channels=8,
             device=str(accelerator()), in_channels=1, out_channels=2,
             site_layouts=layouts, readout_g_max=3.0,
             site_transform=OccupancyTransform.fit(dataset, layouts, sets=2),
@@ -931,7 +931,7 @@ class TestItEvaluatesOnWhateverAcceleratorIsHere:
 
         layouts = {14: (1,)}
         operator = FieldOperator(
-            "ext2paw", width=6, modes=4, n_layers=1, projection_channels=8,
+            "ext2chg", width=6, modes=4, n_layers=1, projection_channels=8,
             device=str(accelerator()), in_channels=1, out_channels=2,
             site_layouts=layouts, readout_g_max=3.0,
             site_transform=OccupancyTransform.fit(dataset, layouts, sets=2),

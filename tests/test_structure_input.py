@@ -8,7 +8,7 @@
 
 r"""
 Structure channels beside the potential, memoized samples, and the two loss
-weightings added for the CHONPS ``ext2paw`` study (2026-10-06).
+weightings added for the CHONPS ``ext2chg`` study (2026-10-06).
 
 ``model.structure_input`` hands the operator :math:`\rho_{\rm sup}` and one
 superposition per element next to :math:`v_{\rm ext}`. On 785 CHONPS cells the
@@ -114,7 +114,7 @@ class TestTheDatasetAppendsTheChannelsAndMemoizesItsSamples:
 
     def test_the_input_carries_the_structure_channels(self, dataset_root,
                                                       library):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=True,
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo", cache=True,
                                    baseline=library, structure_input=SPEC)
         assert dataset.channels == (4, 1)
         dataset.fit_transforms()
@@ -126,7 +126,7 @@ class TestTheDatasetAppendsTheChannelsAndMemoizesItsSamples:
             self, dataset_root, library):
         from poraque.ml.transforms import Standardize
 
-        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=True,
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo", cache=True,
                                    baseline=library)
         dataset.fit_transforms()
         first = dataset[0]["input"].clone()
@@ -138,7 +138,7 @@ class TestTheDatasetAppendsTheChannelsAndMemoizesItsSamples:
 
     def test_without_a_library_the_request_is_refused(self, dataset_root):
         with pytest.raises(ValueError, match="isolated-atom library"):
-            FieldPairDataset(dataset_root, task="ext2chg", baseline=None,
+            FieldPairDataset(dataset_root, task="ext2pseudo", baseline=None,
                              structure_input=SPEC)
 
 
@@ -147,12 +147,12 @@ class TestTheOperatorRebuildsItsChannelsFromTheStructure:
 
     def test_predict_matches_the_training_path_after_a_round_trip(
             self, dataset_root, library):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=True,
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo", cache=True,
                                    baseline=library, structure_input=SPEC,
                                    dtype=torch.float64)
         source_transform, target_transform = dataset.fit_transforms()
         operator = FieldOperator(
-            "ext2chg", input_transform=source_transform,
+            "ext2pseudo", input_transform=source_transform,
             target_transform=target_transform, device="cpu", width=8,
             modes=4, n_layers=1, use_coordinates=False, in_channels=4,
             out_channels=1, baseline=library, structure_input=SPEC,
@@ -178,13 +178,13 @@ class TestAccumulationWeighsEveryStructureAlike:
 
     def test_one_step_over_the_whole_set_is_the_full_batch_gradient(
             self, dataset_root, library):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=True,
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo", cache=True,
                                    baseline=library, dtype=torch.float64)
         dataset.fit_transforms()
 
         def trained(**kwargs):
             operator = FieldOperator(
-                "ext2chg", input_transform=dataset.input_transform,
+                "ext2pseudo", input_transform=dataset.input_transform,
                 target_transform=dataset.target_transform, device="cpu",
                 width=4, modes=3, n_layers=1, use_coordinates=False,
                 init_seed=0, baseline=library)

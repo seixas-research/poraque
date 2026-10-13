@@ -15,7 +15,7 @@ The second gives a universal functional $F[\rho]$ such that
 $E[\rho]=F[\rho]+\int V_\mathrm{ext}\rho\,\mathrm d^3r$ is minimized by the
 ground-state density.
 
-This is the formal footing of the `ext2chg` model: its target is not a fitted
+This is the formal footing of the `ext2pseudo` model: its target is not a fitted
 correlation but a single-valued function whose existence and uniqueness is a
 theorem.
 

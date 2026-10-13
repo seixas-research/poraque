@@ -24,7 +24,7 @@ of the package never depends on it::
 
     from poraque.vis import TrainingReport
 
-    report = TrainingReport("results/plots", prefix="chg2tau")
+    report = TrainingReport("results/plots", prefix="pseudo2tau")
     report.loss_curves(history)
     report.parity(tau_dft, tau_fno, label=r"$\tau$", unit="eV/Ang^3")
 """

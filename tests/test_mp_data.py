@@ -333,12 +333,12 @@ class TestMPChargeDensityDataset:
         assert data[0]["reference_energy"] is None
         assert data.reference_energy(0) is None
 
-    def test_chg2tau_is_refused_with_a_reason(self, mp_download):
+    def test_pseudo2tau_is_refused_with_a_reason(self, mp_download):
         with pytest.raises(ValueError, match="kinetic energy density"):
-            MPChargeDensityDataset(mp_download, task="chg2tau")
+            MPChargeDensityDataset(mp_download, task="pseudo2tau")
 
     def test_available_tasks_names_only_what_is_trainable(self):
-        assert available_tasks() == ["ext2chg"]
+        assert available_tasks() == ["ext2pseudo"]
 
     def test_split_carries_the_settings_to_both_halves(self, mp_download):
         data = MPChargeDensityDataset(mp_download, resolution=4,
@@ -392,7 +392,7 @@ class TestBuildMPCache:
         from poraque.ml.data import FieldPairDataset
 
         cache = build_mp_cache(mp_download, tmp_path / "cache", resolution=4)
-        data = FieldPairDataset(cache, task="ext2chg")
+        data = FieldPairDataset(cache, task="ext2pseudo")
 
         assert len(data) == 5
         assert data[0]["input"].shape == (1, 4, 4, 4)
@@ -449,7 +449,7 @@ class TestOperatorOnMPData:
         from poraque.ml import FieldOperator
 
         data = MPChargeDensityDataset(mp_download, resolution=4)
-        operator = FieldOperator("ext2chg", width=8, modes=2, n_layers=1,
+        operator = FieldOperator("ext2pseudo", width=8, modes=2, n_layers=1,
                                  projection_channels=8, device="cpu")
         potential, _ = data.load_fields(0)
 

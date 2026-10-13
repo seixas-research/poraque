@@ -426,9 +426,9 @@ class TestEveryCommandReportsInBlocks:
         built = {task: FieldOperator(task, width=4, modes=2, n_layers=1,
                                      projection_channels=8, device="cpu",
                                      training_resolution=8)
-                 for task in ("ext2chg", "chg2tau")}
+                 for task in ("ext2pseudo", "pseudo2tau")}
         with torch.no_grad():
-            built["ext2chg"].model.project[-1].bias.fill_(4.0)
+            built["ext2pseudo"].model.project[-1].bias.fill_(4.0)
         bundle = save_bundle(str(tmp_path / BUNDLE_FILENAME), built)
 
         output = tmp_path / "predictions"

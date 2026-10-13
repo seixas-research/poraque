@@ -292,7 +292,7 @@ class TestEarlyStopping:
 
         monkeypatch.setattr("poraque.ml.training.evaluate", fake_evaluate)
 
-        operator = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+        operator = FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
                                  projection_channels=8, device="cpu")
         history = train(operator, toy, epochs=30, batch_size=1,
                         learning_rate=1e-2, eval_every=1, validation=toy,
@@ -361,7 +361,7 @@ class TestTheObjectiveIsReportedAsOneNumber:
     def _physics(self, **weights):
         from poraque.ml.losses import PhysicsInformedLoss
 
-        return PhysicsInformedLoss(task="chg2tau", **weights)
+        return PhysicsInformedLoss(task="pseudo2tau", **weights)
 
     def test_history_carries_only_the_total(self, toy):
         history = _train_toy(toy, epochs=2, eval_every=1, verbose=False,
@@ -412,7 +412,7 @@ class TestTheValidationColumnNamesItsOwnNorm:
     def _objective(self, name="relative_h1", weight=0.1):
         from poraque.ml.losses import PhysicsInformedLoss
 
-        return PhysicsInformedLoss(task="chg2tau", loss=name,
+        return PhysicsInformedLoss(task="pseudo2tau", loss=name,
                                    sobolev_weight=weight)
 
     def test_a_plain_run_still_says_rel_l2(self, toy):
@@ -758,7 +758,7 @@ def toy(tmp_path):
         ChargeDensity(density, grid, structure).write(directory / "CHGCAR")
         KineticEnergyDensity(density * 50.0, grid,
                              structure).write(directory / "TAUCAR")
-    return FieldPairDataset(str(tmp_path), task="chg2tau")
+    return FieldPairDataset(str(tmp_path), task="pseudo2tau")
 
 
 def _rows(lines):
@@ -771,7 +771,7 @@ def _train_toy(dataset, epochs, eval_every, log=None, validate=False,
                verbose=True, early_stopping=0, loss=None):
     """Run a tiny training loop and return its history."""
     torch.manual_seed(0)
-    operator = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+    operator = FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
                              projection_channels=8, device="cpu")
     return train(operator, dataset, epochs=epochs, batch_size=1,
                  learning_rate=1e-3, eval_every=eval_every,
@@ -794,7 +794,7 @@ class TestFineTuning:
     """
 
     def _model(self):
-        return FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+        return FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
                              projection_channels=8, device="cpu").model
 
     def test_freezing_touches_only_the_lifting_path(self):
@@ -847,7 +847,7 @@ class TestFineTuning:
         from poraque.ml.training import freeze_lifting_layers
 
         torch.manual_seed(0)
-        operator = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+        operator = FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
                                  projection_channels=8, device="cpu")
         freeze_lifting_layers(operator.model)
         before = operator.model.lift.weight.detach().clone()
@@ -857,7 +857,7 @@ class TestFineTuning:
 
     def test_unfrozen_weights_do_move(self, toy):
         torch.manual_seed(0)
-        operator = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+        operator = FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
                                  projection_channels=8, device="cpu")
         before = operator.model.lift.weight.detach().clone()
         train(operator, toy, epochs=2, batch_size=1, learning_rate=1e-2,
@@ -1025,11 +1025,11 @@ class TestFineTuningValidation:
         assert config.report_dir() == os.path.join(run, "report")
         assert config.log_path() == \
             os.path.join(run, "log", "ag_au_pt_v2.log")
-        assert poraque_train.report_filename(config, "ext2chg") == \
+        assert poraque_train.report_filename(config, "ext2pseudo") == \
             "ag_au_pt_v2_report.pdf"
         # Two tasks cannot share one report name.
-        assert poraque_train.report_filename(config, "ext2chg", 2) == \
-            "ag_au_pt_v2_ext2chg_report.pdf"
+        assert poraque_train.report_filename(config, "ext2pseudo", 2) == \
+            "ag_au_pt_v2_ext2pseudo_report.pdf"
         # A fine-tune never lands on the general model it specializes.
         config.fine_tuning.enable = True
         assert poraque_train.bundle_path(config) != \
@@ -1136,9 +1136,9 @@ class TestStandardOutputTables:
         a generalization estimate.
         """
         lines = []
-        poraque_train.format_aggregate("ext2chg: training", [self.METRICS],
+        poraque_train.format_aggregate("ext2pseudo: training", [self.METRICS],
                                        lines.append)
-        poraque_train.format_aggregate("ext2chg: VALIDATION", [self.METRICS],
+        poraque_train.format_aggregate("ext2pseudo: VALIDATION", [self.METRICS],
                                        lines.append)
         text = "\n".join(lines)
         assert "training" in text and "VALIDATION" in text
@@ -1146,7 +1146,7 @@ class TestStandardOutputTables:
 
     def test_an_empty_aggregate_prints_nothing(self):
         lines = []
-        poraque_train.format_aggregate("ext2chg: VALIDATION", [], lines.append)
+        poraque_train.format_aggregate("ext2pseudo: VALIDATION", [], lines.append)
         assert lines == []
 
     def test_the_aggregate_rule_matches_its_heading(self):

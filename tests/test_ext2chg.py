@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# file: test_ext2paw.py
+# file: test_ext2chg.py
 
 # This code is part of Poraquê.
 # MIT License
@@ -7,9 +7,9 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-The data path of ``ext2paw``: PAW augmentation occupancies as per-atom targets.
+The data path of ``ext2chg``: PAW augmentation occupancies as per-atom targets.
 
-``ext2paw`` maps :math:`V_{\rm ext}` to the pseudo-density *and* each atom's
+``ext2chg`` maps :math:`V_{\rm ext}` to the pseudo-density *and* each atom's
 augmentation occupancies :math:`\rho(\ell\ell'LM)` --- the one-center terms a
 ``CHGCAR`` carries after its grid. Everything between the file and a batch is
 here: reading the records, carrying them through the cache, yielding them as
@@ -340,7 +340,7 @@ class TestTheDatasetYieldsPerAtomTargets:
     def test_a_sample_carries_the_records_of_its_own_file(self, tmp_path):
         from poraque.ml.data import FieldPairDataset
 
-        dataset = FieldPairDataset(self._cache(tmp_path), "ext2paw")
+        dataset = FieldPairDataset(self._cache(tmp_path), "ext2chg")
         sample = dataset[0]
         assert tuple(sample["paw"].shape) == (2, 2, 6)
         assert sample["paw_lengths"].tolist() == [6, 6]
@@ -353,7 +353,7 @@ class TestTheDatasetYieldsPerAtomTargets:
     def test_the_field_tasks_carry_no_site_records(self, tmp_path):
         from poraque.ml.data import FieldPairDataset
 
-        sample = FieldPairDataset(self._cache(tmp_path), "ext2chg")[0]
+        sample = FieldPairDataset(self._cache(tmp_path), "ext2pseudo")[0]
         assert "paw" not in sample
 
     def test_a_cache_without_records_says_to_rebuild(self, tmp_path):
@@ -365,7 +365,7 @@ class TestTheDatasetYieldsPerAtomTargets:
         cache = tmp_path / "cache"
         build_field_cache([str(root)], str(cache), resolution=8,
                           charges={"Si": 4.0})
-        dataset = FieldPairDataset(str(cache), "ext2paw")
+        dataset = FieldPairDataset(str(cache), "ext2chg")
         with pytest.raises(ValueError, match="rebuild"):
             dataset[0]
 
@@ -399,7 +399,7 @@ class TestTheDatasetYieldsPerAtomTargets:
 # ===================================================================== #
 class TestTheTaskAndItsBlockAgree:
     """
-    ``task.type: ext2paw`` and ``model.paw.enable`` are checked against each
+    ``task.type: ext2chg`` and ``model.paw.enable`` are checked against each
     other, and ``all`` still means the chain.
     """
 
@@ -413,17 +413,17 @@ class TestTheTaskAndItsBlockAgree:
         from poraque.ml.tasks import CHAIN, TASKS
 
         assert self._config().task_names() == list(CHAIN)
-        assert "ext2paw" in TASKS and "ext2paw" not in CHAIN
+        assert "ext2chg" in TASKS and "ext2chg" not in CHAIN
 
-    def test_the_block_adds_ext2paw_to_an_all_run(self):
+    def test_the_block_adds_ext2chg_to_an_all_run(self):
         names = self._config(model={"paw": {"enable": True}}).task_names()
-        assert names == ["ext2chg", "chg2tau", "ext2paw"]
+        assert names == ["ext2pseudo", "pseudo2tau", "ext2chg"]
 
     def test_the_two_switches_cannot_disagree(self):
         with pytest.raises(ValueError, match="model.paw.enable is false"):
-            self._config(task={"type": "ext2paw"}).task_names()
+            self._config(task={"type": "ext2chg"}).task_names()
         with pytest.raises(ValueError, match="never reads it"):
-            self._config(task={"type": "chg2tau"},
+            self._config(task={"type": "pseudo2tau"},
                          model={"paw": {"enable": True}}).task_names()
 
     def test_the_settings_default_and_are_checked(self):
@@ -460,18 +460,18 @@ class TestTheTaskAndItsBlockAgree:
         kwargs = self._config(model={"paw": {"enable": True}}).model_kwargs()
         assert "paw" not in kwargs
 
-    def test_a_dataset_is_not_said_to_serve_ext2paw_by_file_names(self,
+    def test_a_dataset_is_not_said_to_serve_ext2chg_by_file_names(self,
                                                                   tmp_path):
         from poraque.data import MixedFieldDataset
 
         write_calculation(tmp_path / "runs" / "structure_0000")
         data = MixedFieldDataset([str(tmp_path / "runs")])
-        assert "ext2paw" not in data.available_tasks()
+        assert "ext2chg" not in data.available_tasks()
 
 
 class TestTheCacheOnlyPathAndThePreFlight:
     """
-    ``--cache-only`` prepares ``ext2paw`` data; the paths the operator does not
+    ``--cache-only`` prepares ``ext2chg`` data; the paths the operator does not
     support yet are refused before the cache.
     """
 
@@ -484,7 +484,7 @@ class TestTheCacheOnlyPathAndThePreFlight:
                                         shape=(8, 8, 8)), spin=False)
         path = tmp_path / "train.yaml"
         path.write_text(yaml.safe_dump({
-            "task": {"type": "ext2paw", "name": "paw_smoke"},
+            "task": {"type": "ext2chg", "name": "paw_smoke"},
             "data": {"data_paths": [str(runs)], "cache": str(tmp_path / "c"),
                      "resolution": 8, "delta_density": False, "spin": False,
                      "paw_source": "material"},
@@ -524,11 +524,11 @@ class TestTheCacheOnlyPathAndThePreFlight:
         values, _ = occupancy_arrays(blocks)
         assert values.shape == (2, 1, 6)
 
-    def test_the_shipped_ext2paw_config_loads_and_passes_the_pre_flight(self):
+    def test_the_shipped_ext2chg_config_loads_and_passes_the_pre_flight(self):
         import poraque_train
         from poraque.ml.config import TrainingConfig
 
         config = TrainingConfig.from_yaml(
-            os.path.join(_ROOT, "configs", "train_ext2paw.yaml"))
-        assert config.task_names() == ["ext2paw"]
+            os.path.join(_ROOT, "configs", "train_ext2chg.yaml"))
+        assert config.task_names() == ["ext2chg"]
         poraque_train.validate_paw_settings(config)

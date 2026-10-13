@@ -454,7 +454,7 @@ class TestReportStyle:
     def preamble(self):
         from poraque.vis.pdf_report import ModelReport
 
-        return ModelReport("reports", logo=None)._preamble("chg2tau", "subtitle")
+        return ModelReport("reports", logo=None)._preamble("pseudo2tau", "subtitle")
 
     def test_uses_the_four_color_brand_palette(self, preamble):
         """
@@ -520,7 +520,7 @@ class TestReportStyle:
                             "logo_light.png")
         if not os.path.exists(logo):
             pytest.skip("logo assets not present")
-        source = ModelReport("reports", logo=logo)._preamble("chg2tau", "sub")
+        source = ModelReport("reports", logo=logo)._preamble("pseudo2tau", "sub")
         assert "logo_dark.png" in source
 
     def test_the_dark_logo_reaches_the_compile_directory(self, tmp_path):
@@ -550,7 +550,7 @@ class TestReportStyle:
 
         shutil.copy = spy
         try:
-            report.build(task="chg2tau", per_material={}, unit="eV")
+            report.build(task="pseudo2tau", per_material={}, unit="eV")
         finally:
             shutil.copy = original
         assert "logo_dark.png" in seen
@@ -587,7 +587,7 @@ class TestReportStyle:
             return target
 
         report._compile = fake_compile
-        report.build(task="chg2tau", per_material={}, unit="eV",
+        report.build(task="pseudo2tau", per_material={}, unit="eV",
                      caveats=["one element only"])
         assert r"\begin{pwarn}" in captured["source"]
         assert "one element only" in captured["source"]
@@ -616,7 +616,7 @@ class TestSymbolicParityPlot:
                 return target
 
             report._compile = fake_compile
-            report.build(task="chg2tau", per_material={}, unit="eV",
+            report.build(task="pseudo2tau", per_material={}, unit="eV",
                          symbolic=symbolic)
             return captured
 
@@ -624,7 +624,7 @@ class TestSymbolicParityPlot:
 
     @pytest.fixture
     def parity_file(self, tmp_path):
-        path = tmp_path / "chg2tau_symbolic_parity.png"
+        path = tmp_path / "pseudo2tau_symbolic_parity.png"
         plt.figure()
         plt.plot([0, 1], [0, 1])
         plt.savefig(path)
@@ -875,7 +875,7 @@ class TestThePerformanceTableIsBoundedBySplits:
 
         per_material = self._per_material(140)
         pdf = ModelReport(str(tmp_path), logo=None).build(
-            task="chg2tau", per_material=per_material, unit="eV")
+            task="pseudo2tau", per_material=per_material, unit="eV")
         assert pdf.endswith(".pdf"), "the LaTeX fallback path was taken"
 
         text = subprocess.run(["pdftotext", "-layout", pdf, "-"],
@@ -930,7 +930,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
     """
 
     def _report(self, tmp_path, save_data=True):
-        return TrainingReport(str(tmp_path), prefix="ext2chg",
+        return TrainingReport(str(tmp_path), prefix="ext2pseudo",
                               save_data=save_data)
 
     def _history(self):
@@ -965,7 +965,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         """
         self._report(tmp_path).loss_curves(self._history())
         rows = list(csv.DictReader(
-            open(tmp_path / "ext2chg_loss_curves.csv", encoding="utf-8")))
+            open(tmp_path / "ext2pseudo_loss_curves.csv", encoding="utf-8")))
 
         assert [row["epoch"] for row in rows] == ["1", "2", "3", "4"]
         assert [row["train_loss"] for row in rows] == ["0.9", "0.5", "0.3",
@@ -977,7 +977,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         "validation loss" would make the file unreadable a month later."""
         history = dict(self._history(), val_metric="rel H1")
         self._report(tmp_path).loss_curves(history)
-        header = open(tmp_path / "ext2chg_loss_curves.csv",
+        header = open(tmp_path / "ext2pseudo_loss_curves.csv",
                       encoding="utf-8").readline().strip()
 
         assert header == "epoch,train_loss,val_rel_h1"
@@ -985,7 +985,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
     def test_a_run_without_validation_writes_one_column(self, tmp_path):
         self._report(tmp_path).loss_curves({"train_loss": [1.0, 0.5]})
         rows = list(csv.reader(
-            open(tmp_path / "ext2chg_loss_curves.csv", encoding="utf-8")))
+            open(tmp_path / "ext2pseudo_loss_curves.csv", encoding="utf-8")))
 
         assert rows[0] == ["epoch", "train_loss"]
         assert len(rows) == 3
@@ -998,7 +998,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         `physics_loss` column here would be an invented number.
         """
         self._report(tmp_path).loss_curves(self._history())
-        header = open(tmp_path / "ext2chg_loss_curves.csv",
+        header = open(tmp_path / "ext2pseudo_loss_curves.csv",
                       encoding="utf-8").readline()
 
         assert "physics" not in header
@@ -1013,7 +1013,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         reference, prediction = fields
         self._report(tmp_path).parity(reference, prediction, bins=16)
         rows = list(csv.DictReader(
-            open(tmp_path / "ext2chg_parity.csv", encoding="utf-8")))
+            open(tmp_path / "ext2pseudo_parity.csv", encoding="utf-8")))
 
         assert sum(int(row["count"]) for row in rows) == reference.size
         assert sum(float(row["density"]) for row in rows) == pytest.approx(1.0)
@@ -1028,7 +1028,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         self._report(tmp_path).parity(reference, prediction,
                                       validation=held_out, bins=16)
         rows = list(csv.DictReader(
-            open(tmp_path / "ext2chg_parity.csv", encoding="utf-8")))
+            open(tmp_path / "ext2pseudo_parity.csv", encoding="utf-8")))
 
         for split, expected in (("training", reference.size),
                                 ("validation", held_out[0].size)):
@@ -1046,9 +1046,9 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         """
         self._report(tmp_path).parity(*fields, bins=32)
         rows = list(csv.DictReader(
-            open(tmp_path / "ext2chg_parity.csv", encoding="utf-8")))
+            open(tmp_path / "ext2pseudo_parity.csv", encoding="utf-8")))
         edges = list(csv.DictReader(
-            open(tmp_path / "ext2chg_parity_bin_edges.csv", encoding="utf-8")))
+            open(tmp_path / "ext2pseudo_parity_bin_edges.csv", encoding="utf-8")))
 
         assert 0 < len(rows) < 32 * 32
         assert len(edges) == 33
@@ -1058,7 +1058,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         """With `scatter` there are no bins; the points are the data."""
         self._report(tmp_path).parity(*fields, scatter=True, bins=16)
         rows = list(csv.DictReader(
-            open(tmp_path / "ext2chg_parity.csv", encoding="utf-8")))
+            open(tmp_path / "ext2pseudo_parity.csv", encoding="utf-8")))
 
         assert len(rows) == fields[0].size
         assert set(rows[0]) == {"split", "reference", "prediction"}
@@ -1067,7 +1067,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
     def test_the_three_panels_are_stored_as_arrays(self, tmp_path, fields):
         self._report(tmp_path).field_comparison(*fields, label="rho",
                                                 unit="e/Ang^3")
-        stored = np.load(tmp_path / "ext2chg_field_slice.npz")
+        stored = np.load(tmp_path / "ext2pseudo_field_slice.npz")
 
         assert stored["reference"].shape == (12, 12)
         assert stored["prediction"].shape == (12, 12)
@@ -1080,7 +1080,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         file is inconsistent, instead of trusting their own subtraction.
         """
         self._report(tmp_path).field_comparison(*fields)
-        stored = np.load(tmp_path / "ext2chg_field_slice.npz")
+        stored = np.load(tmp_path / "ext2pseudo_field_slice.npz")
 
         assert np.allclose(stored["error"],
                            stored["prediction"] - stored["reference"])
@@ -1089,7 +1089,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         reference, prediction = fields
         self._report(tmp_path).field_comparison(reference, prediction,
                                                 axis=0, index=3)
-        stored = np.load(tmp_path / "ext2chg_field_slice.npz")
+        stored = np.load(tmp_path / "ext2pseudo_field_slice.npz")
 
         assert np.array_equal(stored["reference"], reference[3])
         assert int(stored["axis"]) == 0 and int(stored["index"]) == 3
@@ -1098,7 +1098,7 @@ class TestRawPlotDataIsWrittenBesideTheFigure:
         """Color limits included: they were chosen from a quantile of the
         error, so a redraw that recomputed them would not match the figure."""
         self._report(tmp_path).field_comparison(*fields, unit="eV")
-        stored = np.load(tmp_path / "ext2chg_field_slice.npz")
+        stored = np.load(tmp_path / "ext2pseudo_field_slice.npz")
 
         assert set(stored.files) >= {"reference", "prediction", "error",
                                      "axis", "index", "color_limits",
@@ -1173,7 +1173,7 @@ class TestSymbolicFiguresReachTheReport:
         captured = {}
         report._compile = lambda source, figures, target: (
             captured.update(source=source, figures=list(figures)), target)[1]
-        report.build(task="chg2tau", per_material={}, unit="eV",
+        report.build(task="pseudo2tau", per_material={}, unit="eV",
                      symbolic={"latex": "1", "full_latex": "F = 1",
                                "complexity": 3, "r2": 0.9, "relative_l2": 0.1,
                                "n_samples": 10, "scheme": "reduced",

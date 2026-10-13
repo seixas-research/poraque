@@ -1,4 +1,4 @@
-# PAW data in the checkpoint, the `ext2paw` operator, and run diagnostics
+# PAW data in the checkpoint, the `ext2chg` operator, and run diagnostics
 
 **Scope:** work of 16–17 September 2026, released as `v26.9.12`, `v26.9.13`
 and `v26.9.14` · **Companions:** `experiments/paw_occupancies/README.md`,
@@ -16,7 +16,7 @@ structure, and split a spin-polarized loss into its two channels.
 | release | what it holds | tests after |
 | --- | --- | --- |
 | `v26.9.12` | `--from-incar` implies `--to-vasp --add-paw`; checkpoint = `{model_state_dict, config, paw_profiles}` with POTCAR core densities | 2144 passed, 81 skipped |
-| `v26.9.13` | augmentation records through cache and batch; `ext2paw` task and `model.paw` block; the occupancy experiment; the `ext2paw` operator | 2215 passed |
+| `v26.9.13` | augmentation records through cache and batch; `ext2chg` task and `model.paw` block; the occupancy experiment; the `ext2chg` operator | 2215 passed |
 | `v26.9.14` | resource profile; parity over every structure; charge and magnetization parts of the loss | 2234 passed, 83 skipped |
 
 Every count is with `PORAQUE_TEST_POTCAR_DIR` set and `-m "not gpu"`.
@@ -145,22 +145,22 @@ because VASP misreads a spin-polarized `CHGCAR` written with only the first.
 
 ### The task and its switch
 
-`ext2paw` is a `task.type` (`TASKS` in `ml/tasks.py`, with
+`ext2chg` is a `task.type` (`TASKS` in `ml/tasks.py`, with
 `site_target = "augmentation"`), but not a link of the chain: `CHAIN` is still
-`("ext2chg", "chg2tau")` and `all` still means those two. The configuration
+`("ext2pseudo", "pseudo2tau")` and `all` still means those two. The configuration
 block is `model.paw: {enable, width, modes, n_layers, readout_g_max,
 occupancy_weight}`, defaults 64 / 16 / 4 / `auto` / 1.0, using the schema's
 existing key names rather than the request's `hidden_channels`, list-valued
 `modes` and `layers`. The two switches are cross-checked in
-`TrainingConfig.task_names()`: `ext2paw` with the block off raises, the block
-on beside `ext2chg` or `chg2tau` raises, and `all` with the block on adds
-`ext2paw`. Every other committed template states `paw: {enable: false}` (a deliberate
+`TrainingConfig.task_names()`: `ext2chg` with the block off raises, the block
+on beside `ext2pseudo` or `pseudo2tau` raises, and `all` with the block on adds
+`ext2chg`. Every other committed template states `paw: {enable: false}` (a deliberate
 exception to the no-restated-defaults rule in `tests/test_precision.py`), and
-the new `configs/train_ext2paw.yaml` turns it on.
+the new `configs/train_ext2chg.yaml` turns it on.
 
 **Files:** `src/poraque/fields/vasp/augmentation.py`, `src/poraque/data/cache.py`,
 `src/poraque/fields/atomic.py`, `src/poraque/ml/data.py`, `src/poraque/ml/tasks.py`,
-`src/poraque/ml/config.py`, the configs; tests in `tests/test_ext2paw.py` (31).
+`src/poraque/ml/config.py`, the configs; tests in `tests/test_ext2chg.py` (31).
 
 ---
 
@@ -234,7 +234,7 @@ gitignored `data/cache/paw_occupancies/`.
 
 ---
 
-## 4. The `ext2paw` operator (`v26.9.13`, part 2)
+## 4. The `ext2chg` operator (`v26.9.13`, part 2)
 
 Built as the experiment recommended, in `src/poraque/ml/paw.py`:
 
@@ -244,7 +244,7 @@ V_ext grid ──► FNO3d.encode ──► latent ──► 1×1 conv ──►
                      └──► FNO3d.project ──► pseudo-density ρ̃ ─────────────┘   (per atom)    │
                                                │                                            ├─► EquivariantHead ──► ρ(ll′LM)
 atom positions + cell ─────────────────────────┼──────────────────► NeighborExpansion ─────┘   (one per element)
-                                               └──► density loss, as in ext2chg
+                                               └──► density loss, as in ext2pseudo
 ```
 
 1. **Backbone.** The ordinary `FNO3d`, sized by `model.paw`, with every other
@@ -342,7 +342,7 @@ The checkpoint stayed in the session scratchpad, not under `models/`.
 **Files:** `src/poraque/ml/paw.py` (new), `src/poraque/ml/fno.py`,
 `src/poraque/ml/training.py`, `src/poraque/fields/vasp/potcar.py`,
 `scripts/poraque_train.py`, `scripts/poraque_inference.py`,
-`configs/train_ext2paw.yaml`; tests in `tests/test_paw_operator.py` (26).
+`configs/train_ext2chg.yaml`; tests in `tests/test_paw_operator.py` (26).
 
 ---
 
@@ -358,9 +358,9 @@ RESOURCE PROFILING SUMMARY
   stage                               wall time     peak RSS
   ----------------------------------------------------------
   cache                                   0.0 s    222.6 MiB
-  ext2chg: setup                          0.0 s    228.4 MiB
-  ext2chg: training                       0.4 s    319.7 MiB
-  ext2chg: evaluation and figures         1.6 s    500.5 MiB
+  ext2pseudo: setup                          0.0 s    228.4 MiB
+  ext2pseudo: training                       0.4 s    319.7 MiB
+  ext2pseudo: evaluation and figures         1.6 s    500.5 MiB
   ...
   checkpoint                              0.0 s    552.8 MiB
   ----------------------------------------------------------
@@ -424,7 +424,7 @@ the figure cannot draw, which for an undertrained model can be many.
 ### Charge and magnetization in the training log
 
 The request asked for a parser of the second `CHGCAR` block, a
-`model.spin_polarized.enable` switch and a two-channel `ext2chg`. The first and
+`model.spin_polarized.enable` switch and a two-channel `ext2pseudo`. The first and
 third already existed: `SpinDensity` reads the magnetization block, and
 `data.spin: auto|true|false` settles the channel count dataset-wide, from which
 the operator's `out_channels` follows. A second switch under `model` could only
@@ -475,17 +475,17 @@ the parity sidecar; `ml/index.md`: reporting; `data/index.md`,
 - **The core density is carried but unused.** All-electron reconstruction also
   needs the POTCAR partial waves (`ae wavefunction`, `pseudo wavefunction`),
   which are not parsed.
-- **`ext2paw` at inference** predicts the records, but the written `CHGCAR`
-  still takes its grid from `ext2chg`; the `ext2paw` density head trains and is
+- **`ext2chg` at inference** predicts the records, but the written `CHGCAR`
+  still takes its grid from `ext2pseudo`; the `ext2chg` density head trains and is
   not used.
 - **The 5.2 % is one seed of an unconverged run.** Needed: a second seed, a
   learning rate that does not spike the field loss, early stopping on, and a
   resolution-64 run to compare with the experiment's 2.1 %.
 - **Predicted versus reference density.** How much the occupancy error grows
-  when ρ̃ comes from a trained `ext2chg` rather than DFT is unmeasured.
+  when ρ̃ comes from a trained `ext2pseudo` rather than DFT is unmeasured.
 - **The head is limited for L > 0.** It has no products between different-L
   features, so an L > 0 output is linear in L > 0 inputs scaled by invariant
   gates; body-order > 2 equivariant layers are the next step if L > 0 stays
   short. Inversion equivariance holds by construction but is untested.
-- **`ext2paw` refusals** to lift: `--kfold`, fine-tuning, f-channel elements.
+- **`ext2chg` refusals** to lift: `--kfold`, fine-tuning, f-channel elements.
 - **A job killed by `SIGTERM`** leaves no profiling summary.

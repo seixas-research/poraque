@@ -62,11 +62,11 @@ step between two rounds is a training run:
 .. code-block:: bash
 
     # round 1 -- rank only, and look at the spread before spending anything
-    poraque-active-learning --models "models/committee_*" --task ext2chg \
+    poraque-active-learning --models "models/committee_*" --task ext2pseudo \
         --pool data/pool --select 5
 
     # commit to it (--train is the tagged cache a training run built)
-    poraque-active-learning --models "models/committee_*" --task ext2chg \
+    poraque-active-learning --models "models/committee_*" --task ext2pseudo \
         --pool data/pool --select 5 --train data/cache/res32_potcar \
         --promote move --json logs/active_round1.json
 
@@ -196,8 +196,8 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--models", default="models/committee_*",
                         help="glob matching one directory or bundle per member")
-    parser.add_argument("--task", default="ext2chg",
-                        choices=["ext2chg", "chg2tau"])
+    parser.add_argument("--task", default="ext2pseudo",
+                        choices=["ext2pseudo", "pseudo2tau"])
     parser.add_argument("--pool", default="data/pool",
                         help="directory of unlabeled candidates; each needs "
                              "only the task's input field")

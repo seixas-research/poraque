@@ -1,8 +1,8 @@
 # =====================================================================
-# Poraque - ext2paw on the platinum set: V_ext -> pseudo-density AND the
+# Poraque - ext2chg on the platinum set: V_ext -> pseudo-density AND the
 # PAW augmentation occupancies of every atom.
 #
-#   poraque-train --config configs/train_ext2paw.yaml
+#   poraque-train --config configs/train_ext2chg.yaml
 #
 # An FNO for the grid, a readout at each atom over one band of |G|, and an
 # equivariant head per element. The field settings mirror configs/train.yaml,
@@ -13,8 +13,8 @@
 # =====================================================================
 
 task:
-  type: ext2paw                     # requires model.paw.enable: true
-  name: platinum_ext2paw_w64_m8_L4_r16_occ3   # names models/<name>/ and everything inside it
+  type: ext2chg                     # requires model.paw.enable: true
+  name: platinum_ext2chg_w64_m8_L4_r16_occ3   # names models/<name>/ and everything inside it
 
 data:
   data_paths:                                            # one entry per dataset root; each holds
@@ -24,7 +24,7 @@ data:
   # spin stays at its default, auto: both record sets, since the nanoparticles
   #   carry 17 % of their records in the magnetization's
   paw_source: atomic                                     # the free atom's own record, per element and transferable
-  delta_density: true                                    # the grid target is rho - rho_sup, as for ext2chg
+  delta_density: true                                    # the grid target is rho - rho_sup, as for ext2pseudo
   resolution: 48                                         # longest grid axis; the records do not depend on it
   cache_in_memory: true         # the whole set decodes to 235 MiB, so this is cheap
                                 #   and saves re-parsing 78 text CHGCARs every epoch

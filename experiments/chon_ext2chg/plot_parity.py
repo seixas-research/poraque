@@ -46,9 +46,9 @@ def generate(checkpoint, split_path, cache, output, device="cpu", threads=2):
     split = json.loads(Path(split_path).read_text())
     names = [name for members in split.values() for name in members]
     assert len(names) == len(set(names)), "overlapping splits"
-    operator = load_bundle(str(checkpoint), "ext2paw", device=device)
+    operator = load_bundle(str(checkpoint), "ext2chg", device=device)
     operator.model.eval()
-    raw = FieldPairDataset(str(cache), "ext2paw", cache=False)
+    raw = FieldPairDataset(str(cache), "ext2chg", cache=False)
     assert set(names) == {r.identifier for r in raw.materials}
     fields = {key: {part: ParityAccumulator(seed=42) for part in split}
               for key in ("charge", "magnetization", "paw_charge", "paw_magnetization")}
@@ -56,7 +56,7 @@ def generate(checkpoint, split_path, cache, output, device="cpu", threads=2):
               for z in ELEMENTS for L in range(3)}
     for part, identifiers in split.items():
         selected = set(identifiers)
-        dataset = FieldPairDataset(str(cache), "ext2paw",
+        dataset = FieldPairDataset(str(cache), "ext2chg",
             materials=[r for r in raw.materials if r.identifier in selected],
             baseline=operator.baseline, cache=True,
             input_transform=operator.input_transform,
@@ -105,7 +105,7 @@ def generate(checkpoint, split_path, cache, output, device="cpu", threads=2):
     }
     artifacts = []
     for fmt in ("png", "pdf"):
-        report = TrainingReport(output, prefix="ext2paw", fmt=fmt,
+        report = TrainingReport(output, prefix="ext2chg", fmt=fmt,
                                 save_data=(fmt == "png"))
         for key, (name, label, unit, log) in options.items():
             if not fields[key]["train"].count:
@@ -148,7 +148,7 @@ def generate(checkpoint, split_path, cache, output, device="cpu", threads=2):
                     report._write_parity_histogram(f"parity_paw_{ELEMENTS[z]}_L{L}_test",
                         ["test set"], [int(counts.sum())], edges, [shares])
         figure.suptitle("PAW charge parity on the test set — native coefficients by element and L")
-        path = output / f"ext2paw_parity_paw_blocks_test.{fmt}"
+        path = output / f"ext2chg_parity_paw_blocks_test.{fmt}"
         figure.savefig(path, dpi=160)
         plt.close(figure)
         artifacts.append(str(path))
@@ -173,10 +173,10 @@ def generate(checkpoint, split_path, cache, output, device="cpu", threads=2):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--checkpoint", type=Path, default=ROOT / "experiments/chon_ext2paw/results/final/best.poraque")
-    parser.add_argument("--split", type=Path, default=ROOT / "experiments/chon_ext2paw/results/final/split.json")
+    parser.add_argument("--checkpoint", type=Path, default=ROOT / "experiments/chon_ext2chg/results/final/best.poraque")
+    parser.add_argument("--split", type=Path, default=ROOT / "experiments/chon_ext2chg/results/final/split.json")
     parser.add_argument("--cache", type=Path, default=ROOT / "data/cache/chon/res24_potcar_spin")
-    parser.add_argument("--output", type=Path, default=ROOT / "experiments/chon_ext2paw/results/final/plots")
+    parser.add_argument("--output", type=Path, default=ROOT / "experiments/chon_ext2chg/results/final/plots")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--threads", type=int, default=2)
     args = parser.parse_args()

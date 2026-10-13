@@ -9,7 +9,7 @@
 r"""
 What can predict a Pt atom's PAW augmentation occupancies, and in what form?
 
-The target of ``ext2paw`` beside the pseudo-density: per atom, the 138 numbers
+The target of ``ext2chg`` beside the pseudo-density: per atom, the 138 numbers
 :math:`\rho(\ell\ell'LM)` VASP writes after the grid, one set for the total and
 one for the magnetization. Two conventions are pinned from the data before
 anything is fitted, because every model below depends on them:

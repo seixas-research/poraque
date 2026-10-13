@@ -259,7 +259,7 @@ exit status 0 and a summary:
   status      : built; no training was run (--cache-only)
   cache       : data/cache/res48_potcar
   storage     : files (one CHGCAR-format text file per field)
-  materials   : 97 cached  (ext2chg: 97, chg2tau: 97)
+  materials   : 97 cached  (ext2pseudo: 97, pseudo2tau: 97)
   grid shapes : 24x24x48        11 structures
                 40x28x48        10 structures
                 40x40x48         9 structures

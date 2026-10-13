@@ -86,7 +86,7 @@ Set it wherever the energy is computed:
 
 ```python
 EnergyCalculator.from_potential(vext, functional="lda")
-Poraque("ext2chg.poraque", "chg2tau.poraque", potcar_dir=..., functional="lda")
+Poraque("ext2pseudo.poraque", "pseudo2tau.poraque", potcar_dir=..., functional="lda")
 ```
 ```bash
 poraque-inference run/ --functional lda
@@ -159,7 +159,7 @@ with `rho.write("CHGCAR")`.
 
 | Argument | Meaning |
 | --- | --- |
-| `ext2chg`, `chg2tau` | checkpoint paths, or already-loaded `FieldOperator`s |
+| `ext2pseudo`, `pseudo2tau` | checkpoint paths, or already-loaded `FieldOperator`s |
 | `potcar` | a single `POTCAR` covering the species present |
 | `potcar_dir` | a `POTCAR` *library*, searched per composition |
 | `charges` | `{element: Z_val}`, used only when no `POTCAR` is available |
@@ -402,8 +402,8 @@ assumed.
 ## The PAW total energy and forces
 
 The energy above is an orbital-free estimate on the total density. The PAW
-chain --- `ext2paw` for the pseudo-density, its magnetization and every atom's
-augmentation occupancies, then `paw2tau` for the pseudo kinetic energy density
+chain --- `ext2chg` for the pseudo-density, its magnetization and every atom's
+augmentation occupancies, then `chg2tau` for the pseudo kinetic energy density
 --- predicts every field VASP's own total energy is a function of, and
 {mod}`poraque.physics.paw` evaluates that function. Evaluated on a VASP
 calculation's own files it reproduces `TOTEN`:
@@ -463,7 +463,7 @@ element with d channels, occupancies to L = 4 (`LMAXMIX = 4`).
 the external potential, the atomic superposition and the per-element
 structure channels are rebuilt on the fixed grid as per-species spectra times
 structure factors (checked at construction against the direct construction),
-fed to `ext2paw`, its output to `paw2tau`, and both to the differentiable
+fed to `ext2chg`, its output to `chg2tau`, and both to the differentiable
 energy ({class}`~poraque.ml.energy.GridEnergyTorch`,
 {class}`~poraque.ml.energy.OneCenterTorch`, equal to the NumPy evaluation to
 1e-11 eV). The forces are $-\partial E/\partial\mathbf R$ by automatic
@@ -473,7 +473,7 @@ and checked against central differences of the same energy.
 ```python
 from poraque.calculator import PoraquePAW
 
-atoms.calc = PoraquePAW(["pt_ext2paw.poraque", "pt_paw2tau.poraque"],
+atoms.calc = PoraquePAW(["pt_ext2chg.poraque", "pt_chg2tau.poraque"],
                         potcar_dir="POTCARs", lasph=False, encut=400)
 atoms.get_potential_energy(), atoms.get_forces()
 ```

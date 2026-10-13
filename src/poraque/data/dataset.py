@@ -17,7 +17,7 @@ field pairs across all of them::
 
     data = MixedFieldDataset(
         ["data/vasp/structures", "data/MP"],   # VASP runs and a download
-        task="ext2chg",
+        task="ext2pseudo",
         resolution=32,
     )
 
@@ -124,12 +124,12 @@ class MixedFieldDataset(FieldPairDataset):
     Examples
     --------
     >>> data = MixedFieldDataset(["data/vasp/structures", "data/MP"],  # doctest: +SKIP
-    ...                          task="ext2chg", resolution=32)
+    ...                          task="ext2pseudo", resolution=32)
     >>> data.available_tasks()                                     # doctest: +SKIP
-    ['ext2chg']
+    ['ext2pseudo']
     """
 
-    def __init__(self, paths, task="ext2chg", resolution=None, format="auto",
+    def __init__(self, paths, task="ext2pseudo", resolution=None, format="auto",
                  spin=False, charges=None, potcar_dir=None, sigma=None,
                  gaussian_blur=None, blur_method="spectral", pattern=None,
                  cache=False, materials=None, log=None,
@@ -174,8 +174,8 @@ class MixedFieldDataset(FieldPairDataset):
         Enumerate every material this task can be trained on.
 
         Only materials supplying *both* of the task's fields are kept: a
-        calculation directory with no ``TAUCAR`` belongs in an ``ext2chg``
-        dataset and not in a ``chg2tau`` one, and that is a per-material
+        calculation directory with no ``TAUCAR`` belongs in an ``ext2pseudo``
+        dataset and not in a ``pseudo2tau`` one, and that is a per-material
         question, not a per-directory one.
         """
         records = discover_records(self.sources, required=task.required_files,
@@ -198,7 +198,7 @@ class MixedFieldDataset(FieldPairDataset):
         latter lacks — are one quantity and warrant no warning; two archives of
         the same layout that disagree do.
 
-        Only when the potential is actually used, too: a ``chg2tau`` dataset
+        Only when the potential is actually used, too: a ``pseudo2tau`` dataset
         never touches it, and warning there would be noise.
         """
         if task.input_field != "EXTCAR" and task.target_field != "EXTCAR":
@@ -237,7 +237,7 @@ class MixedFieldDataset(FieldPairDataset):
         -------
         list of str
             In the registry's order. A dataset of lone densities returns
-            ``["ext2chg"]``; a complete VASP archive returns both.
+            ``["ext2pseudo"]``; a complete VASP archive returns both.
         """
         from ..ml.tasks import CHAIN, TASKS
 
@@ -245,7 +245,7 @@ class MixedFieldDataset(FieldPairDataset):
         for source in self.sources:
             for record in source.discover():
                 fields.update(source.provides(record))
-        # The chain only: `ext2paw` needs the records inside a CHGCAR, which
+        # The chain only: `ext2chg` needs the records inside a CHGCAR, which
         # no file listing can see, and naming it for every density would
         # promise a target the data may not carry.
         return [name for name in CHAIN

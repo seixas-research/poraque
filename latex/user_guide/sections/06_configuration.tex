@@ -109,7 +109,7 @@ File & Purpose \\
 \file{train.yaml} & The clean starting point. Copy this one. \\
 \file{train\_complete\_and\_commented.yaml} & The same run, with every choice
 explained at length --- the reference to read, not to copy. \\
-\file{train\_ext2paw.yaml} & The \opt{ext2paw} task on the same data: the
+\file{train\_ext2chg.yaml} & The \opt{ext2chg} task on the same data: the
 pseudo-density and every atom's PAW occupancies. \\
 \file{kan/compare\_kan\_*.yaml} & One per learnable activation, base-carrying
 and pure, identical in everything else --- so a difference between two of them
@@ -132,8 +132,8 @@ the ones at the top working, because those were the ones anyone loaded.
 \toprule
 Key & Default & Meaning \\
 \midrule
-\opt{task} & \opt{all} & Which map to train: \opt{ext2chg}, \opt{chg2tau},
-\opt{all} for both in sequence, or \opt{ext2paw} (\S\ref{sec:paw}). \\
+\opt{task} & \opt{all} & Which map to train: \opt{ext2pseudo}, \opt{pseudo2tau},
+\opt{all} for both in sequence, or \opt{ext2chg} (\S\ref{sec:paw}). \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -248,7 +248,7 @@ no DFT run to read one from, so the input channel has to be Poraqu\^e's own
 arithmetic in both places.
 
 \file{TAUCAR} is \textbf{optional, per material}. A directory that has one joins
-the \opt{chg2tau} set; one that does not still joins \opt{ext2chg} and is simply
+the \opt{pseudo2tau} set; one that does not still joins \opt{ext2pseudo} and is simply
 absent from the other. Nothing is declared for it, and a task with no target
 anywhere is skipped with a message rather than failing the run --- which is what
 makes \opt{type: all} sensible on a Materials Project download, where no $\tau$
@@ -342,8 +342,8 @@ written. \\
 This is the switch for spin-polarized training, and there is no other. A
 \file{CHGCAR} from an \mbox{\opt{ISPIN = 2}} run stores two grids, the total density
 $\rho$ and the magnetization $m = \rho_\uparrow - \rho_\downarrow$; with
-\opt{spin} resolved on, both reach the cache, \opt{ext2chg} predicts them as
-channels 0 and 1 of one output, and \opt{chg2tau} reads both. How many channels
+\opt{spin} resolved on, both reach the cache, \opt{ext2pseudo} predicts them as
+channels 0 and 1 of one output, and \opt{pseudo2tau} reads both. How many channels
 there are is a property of the data, not of the architecture, which is why the
 key lives in \opt{data} and why \opt{model} has no second one: two switches
 could disagree, and one of them would then be quietly ignored. An unpolarized
@@ -379,7 +379,7 @@ included.
 \begin{pnote}
 Both parts are in the metrics JSON's \opt{history}, as
 \opt{train\_loss\_charge} and \opt{train\_loss\_magnetization}, and exist only
-for a two-channel \opt{ext2chg} target --- a one-channel run prints neither
+for a two-channel \opt{ext2pseudo} target --- a one-channel run prints neither
 column. The magnetization gets its own parity figure,
 \file{<task>\_parity\_magnetization}, on linear axes because $m$ changes sign,
 and its own held-out number, \opt{magnetization\_relative\_l2}; the report's
@@ -415,10 +415,10 @@ descriptors (FiLM). \\
 \opt{mode\_selection: physical}. \\
 \opt{equivariant} & \opt{\{enable: false\}} & Rotation-equivariant radial
 kernel --- one block, see below. \\
-\opt{paw} & \opt{\{enable: false\}} & The \opt{ext2paw} operator ---
+\opt{paw} & \opt{\{enable: false\}} & The \opt{ext2chg} operator ---
 one block, see below. \\
 \opt{pauli\_residual} & \opt{false} & Structural $\tau\ge\tauvW$ for
-\opt{chg2tau}. \\
+\opt{pseudo2tau}. \\
 \opt{pauli\_scale} & \opt{null} & Initial Pauli scale in eV/\AA$^{3}$;
 \opt{null} fits it from the training split. \\
 \opt{learn\_pauli\_scale} & \opt{true} & Optimize that scale alongside the
@@ -569,7 +569,7 @@ parameters and FLOPs move in opposite directions by construction.
 
 \begin{lstlisting}
 task:
-  type: all          # the chain, and ext2paw beside it
+  type: all          # the chain, and ext2chg beside it
 model:
   use_coordinates: false
   equivariant:
@@ -581,8 +581,8 @@ model:
     n_layers: 4
 \end{lstlisting}
 
-\opt{ext2paw} maps $\vext$ to two things at once: the pseudo-density on the
-grid, as \opt{ext2chg} does, and every atom's \textbf{augmentation occupancies}
+\opt{ext2chg} maps $\vext$ to two things at once: the pseudo-density on the
+grid, as \opt{ext2pseudo} does, and every atom's \textbf{augmentation occupancies}
 $\rho(\ell\ell'LM)$ --- the one-center PAW terms VASP writes after the grid,
 which with the pseudo-density are what an all-electron density is rebuilt from.
 They are not a field. There are 138 per atom for \opt{PAW\_PBE Pt}, whose
@@ -594,8 +594,8 @@ density channel, so a spin-polarized dataset keeps the magnetization's set too.
 \toprule
 Key & Default & Meaning \\
 \midrule
-\opt{enable} & \opt{false} & Train \opt{ext2paw}: required by
-\opt{task.type: ext2paw}, and adds it to an \opt{all} run. \\
+\opt{enable} & \opt{false} & Train \opt{ext2chg}: required by
+\opt{task.type: ext2chg}, and adds it to an \opt{all} run. \\
 \opt{width} & \opt{64} & The FNO backbone's channels. \\
 \opt{modes} & \opt{16} & Its retained Fourier modes per axis. \\
 \opt{n\_layers} & \opt{4} & Its Fourier layers. \\
@@ -607,10 +607,10 @@ objective, and in the validation score. \\
 \end{tabular}
 \end{center}
 
-\opt{ext2paw} is not a link of the chain --- \opt{all} still means
-\opt{ext2chg} then \opt{chg2tau} --- and the two switches are checked against
-each other: \opt{task.type: ext2paw} with \opt{enable: false} raises, and so
-does \opt{enable: true} beside \opt{ext2chg} or \opt{chg2tau}.
+\opt{ext2chg} is not a link of the chain --- \opt{all} still means
+\opt{ext2pseudo} then \opt{pseudo2tau} --- and the two switches are checked against
+each other: \opt{task.type: ext2chg} with \opt{enable: false} raises, and so
+does \opt{enable: true} beside \opt{ext2pseudo} or \opt{pseudo2tau}.
 
 The operator is built as \file{experiments/paw\_occupancies} measured it should
 be. \textbf{An FNO for the grid}, sized by the block; every other \opt{model}
@@ -702,7 +702,7 @@ spans the retained band by construction.
 
 \subsection{\opt{pauli\_residual} and its scale}
 
-For \opt{chg2tau}, the model predicts
+For \opt{pseudo2tau}, the model predicts
 \[
   \tau = \tauvW[\rho] + s\,\mathrm{softplus}\bigl(f_\theta(\rho)\bigr),
 \]
@@ -796,6 +796,12 @@ and later. \\
 \opt{absolute\_h1} or \opt{relative\_h1}. \\
 \opt{sobolev\_weight} & \opt{0.1} & Gradient-term weight for the two
 \opt{h1} losses. \\
+\opt{spin\_loss} & \opt{joint} & \opt{joint} or \opt{per\_channel}: how the
+two channels of a spin-polarized target enter the data term. \\
+\opt{magnetization\_weight} & \opt{1.0} & Weight of the magnetization term
+relative to the density term's 1; read only under \opt{per\_channel}. \\
+\opt{magnetization\_floor} & \opt{0.01} & Floor on the magnetization term's
+denominator, as a fraction of $\lVert\rho\rVert$; \opt{per\_channel} only. \\
 \opt{physics\_informed} & \opt{\{enable: auto\}} & The switch and the four
 constraint weights, in one block; see below. \\
 \bottomrule
@@ -1100,6 +1106,44 @@ $\nabla\rho$, so gradient noise is amplified in low-density regions. Both
 halves are taken in the \emph{same} norm, so the weight is a pure ratio between
 values and derivatives rather than also absorbing a change of scale.
 
+\textbf{\opt{spin\_loss} decides how a spin-polarized target enters the data
+term.} A \file{CHGCAR} written with \opt{ISPIN = 2} carries $(\rho, m)$, and
+there are two ways to score it. \opt{joint}, the default, is one norm over both
+channels: each channel's error divided by the whole $(\rho, m)$ target's norm
+and combined in quadrature, identically
+$\lVert\delta(\rho,m)\rVert/\lVert(\rho,m)\rVert$. \opt{per\_channel} divides
+each channel by \emph{its own} norm and sums them,
+%
+\begin{equation}
+  \mathcal{L} = \mathcal{L}[\rho] + w_m\,\mathcal{L}[m],
+\end{equation}
+%
+with $w_m$ = \opt{magnetization\_weight}. Because $m \equiv 0$ exactly on a
+large fraction of a real set, the magnetization's denominator is floored at
+$\sqrt{\lVert m\rVert^2 + (\eta\lVert\rho\rVert)^2}$, with $\eta$ =
+\opt{magnetization\_floor}. A single-channel target is identical in both modes,
+bit for bit, and under \opt{joint} the weight does nothing --- there is one
+term for it to scale.
+
+\textbf{The default is the measured one, and the arithmetic misleads about
+which should win.} Under \opt{joint} the magnetization's share of the objective
+is $3\times10^{-8}$ in the \emph{median} on the 432-cell CHON set, which is the
+observation that makes \opt{per\_channel} look obviously correct. Measured head
+to head on that cache --- two seeds, 60 epochs, magnetic cells scored by
+predicted over reference $\lVert m\rVert$ and by $m$'s relative $L^2$ --- on 30
+magnetic plus 30 noise cells both work (\opt{joint} 1.00 / 0.084,
+\opt{per\_channel} 1.00 / 0.109); on 12 magnetic plus 100 noise, the real
+11\,\% imbalance, \opt{joint} gives 0.96 / 0.166 and \opt{per\_channel}
+0.001 / 1.000.
+
+What trains the magnetization is the \emph{mean} share, not the median: the
+magnetic cells carry real weight under \opt{joint}, and that is enough.
+\opt{per\_channel} instead hands each of the many noise cells a floored term of
+order one, and a hundred cells saying ``drive $m$ to zero'' bury the dozen
+saying anything else --- so it collapses the magnetization it was introduced to
+rescue. Reach for it only when magnetic cells are not a small minority, and
+measure rather than assume.
+
 \textbf{The validation column follows the objective.} The progress table
 reports \opt{val abs L2}, \opt{val rel L2}, \opt{val abs H1} or
 \opt{val rel H1} --- whichever is running --- and the number behind it is the
@@ -1145,11 +1189,11 @@ Key & Constraint it penalizes the violation of \\
 \midrule
 \opt{enable} & --- decides whether any of the below is evaluated \\
 \opt{electron\_count\_weight} & $\int\rho\,\mathrm{d}\rr = N$
-(\opt{ext2chg}) \\
+(\opt{ext2pseudo}) \\
 \opt{positivity\_weight} & Non-negativity of the predicted field \\
-\opt{von\_weizsacker\_weight} & $\tau \ge \tauvW$ (\opt{chg2tau}) \\
+\opt{von\_weizsacker\_weight} & $\tau \ge \tauvW$ (\opt{pseudo2tau}) \\
 \opt{euler\_lagrange\_weight} & Orbital-free stationarity residual
-(\opt{ext2chg}) \\
+(\opt{ext2pseudo}) \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1223,14 +1267,14 @@ RESOURCE PROFILING SUMMARY
   stage                               wall time     peak RSS
   ----------------------------------------------------------
   cache                                   0.0 s    222.6 MiB
-  ext2chg: setup                          0.0 s    228.4 MiB
-  ext2chg: training                       0.4 s    319.7 MiB
-  ext2chg: evaluation and figures         1.6 s    500.5 MiB
-  ext2chg: PDF report                     0.0 s    500.5 MiB
-  chg2tau: setup                          0.0 s    501.3 MiB
-  chg2tau: training                       0.0 s    502.9 MiB
-  chg2tau: evaluation and figures         0.9 s    552.8 MiB
-  chg2tau: PDF report                     0.0 s    552.8 MiB
+  ext2pseudo: setup                          0.0 s    228.4 MiB
+  ext2pseudo: training                       0.4 s    319.7 MiB
+  ext2pseudo: evaluation and figures         1.6 s    500.5 MiB
+  ext2pseudo: PDF report                     0.0 s    500.5 MiB
+  pseudo2tau: setup                          0.0 s    501.3 MiB
+  pseudo2tau: training                       0.0 s    502.9 MiB
+  pseudo2tau: evaluation and figures         0.9 s    552.8 MiB
+  pseudo2tau: PDF report                     0.0 s    552.8 MiB
   checkpoint                              0.0 s    552.8 MiB
   ----------------------------------------------------------
   total (wall clock)                      3.1 s    552.8 MiB
@@ -1280,10 +1324,10 @@ the model to get the numbers back is the expensive way to do that, so with this
 on each figure method writes what it drew, beside what it drew:
 
 \begin{lstlisting}
-plots/ext2chg_loss_curves.png       plots/ext2chg_loss_curves.csv
-plots/ext2chg_parity.png            plots/ext2chg_parity.csv
-                                    plots/ext2chg_parity_bin_edges.csv
-plots/ext2chg_s000_field_slice.png  plots/ext2chg_s000_field_slice.npz
+plots/ext2pseudo_loss_curves.png       plots/ext2pseudo_loss_curves.csv
+plots/ext2pseudo_parity.png            plots/ext2pseudo_parity.csv
+                                    plots/ext2pseudo_parity_bin_edges.csv
+plots/ext2pseudo_s000_field_slice.png  plots/ext2pseudo_s000_field_slice.npz
 \end{lstlisting}
 
 The sidecar shares the \textbf{stem} of its figure, so the pairing is a

@@ -275,24 +275,24 @@ class TestAnAdaptedOperatorSavesAndReloads:
             ChargeDensity(values, grid, structure).write(directory / "CHGCAR")
             KineticEnergyDensity(values * 40.0, grid,
                                  structure).write(directory / "TAUCAR")
-        return FieldPairDataset(str(tmp_path), task="chg2tau")
+        return FieldPairDataset(str(tmp_path), task="pseudo2tau")
 
     @pytest.fixture
     def base_bundle(self, tmp_path):
         from poraque.ml.training import FieldOperator, save_bundle, train
 
         data = self._dataset(tmp_path / "data")
-        operator = FieldOperator("chg2tau", width=8, modes=4, n_layers=2,
+        operator = FieldOperator("pseudo2tau", width=8, modes=4, n_layers=2,
                                  projection_channels=16, device="cpu")
         train(operator, data, epochs=2, batch_size=1, verbose=False, seed=0)
         path = str(tmp_path / "base.poraque")
-        save_bundle(path, {"chg2tau": operator})
+        save_bundle(path, {"pseudo2tau": operator})
         return path, data
 
     def _adapt(self, path, rank=4):
         from poraque.ml.training import load_bundle
 
-        operator = load_bundle(path, "chg2tau", device="cpu")
+        operator = load_bundle(path, "pseudo2tau", device="cpu")
         apply_lora(operator.model, rank=rank, alpha=16.0)
         operator.lora = {"rank": rank, "alpha": 16.0, "dropout": 0.0,
                          "base_checkpoint": os.path.abspath(path)}
@@ -309,7 +309,7 @@ class TestAnAdaptedOperatorSavesAndReloads:
         assert operator.state()["lora"]["base_checkpoint"] == os.path.abspath(path)
 
         fine_tuned = str(tmp_path / "lora.poraque")
-        save_bundle(fine_tuned, {"chg2tau": operator})
+        save_bundle(fine_tuned, {"pseudo2tau": operator})
 
         assert os.path.getsize(fine_tuned) < os.path.getsize(path) / 10
 
@@ -322,8 +322,8 @@ class TestAnAdaptedOperatorSavesAndReloads:
               verbose=False, seed=0)
 
         fine_tuned = str(tmp_path / "lora.poraque")
-        save_bundle(fine_tuned, {"chg2tau": operator})
-        reloaded = load_bundle(fine_tuned, "chg2tau", device="cpu")
+        save_bundle(fine_tuned, {"pseudo2tau": operator})
+        reloaded = load_bundle(fine_tuned, "pseudo2tau", device="cpu")
 
         sample = data[0]
         x = sample["input"].unsqueeze(0)
@@ -344,8 +344,8 @@ class TestAnAdaptedOperatorSavesAndReloads:
         path, _ = base_bundle
         operator = self._adapt(path)
         fine_tuned = str(tmp_path / "lora.poraque")
-        save_bundle(fine_tuned, {"chg2tau": operator})
+        save_bundle(fine_tuned, {"pseudo2tau": operator})
         os.rename(path, path + ".moved")
 
         with pytest.raises(FileNotFoundError, match="LoRA checkpoint"):
-            load_bundle(fine_tuned, "chg2tau", device="cpu")
+            load_bundle(fine_tuned, "pseudo2tau", device="cpu")

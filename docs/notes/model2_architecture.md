@@ -1,4 +1,4 @@
-# Why Model 2 exists: `chg2tau` as a learned kinetic energy functional
+# Why Model 2 exists: `pseudo2tau` as a learned kinetic energy functional
 
 **Scope:** architectural rationale for `poraque.ml` · **Companions:** `docs/notes/pi_fno.md` (roadmap), `docs/notes/fno_physics.md` (physics mapping)
 
@@ -11,7 +11,7 @@ answers to it are the ones most often given:
 
 > You already have Model 1, which predicts ρ from the geometry. If you have a
 > converged DFT calculation you have τ for free, and if you don't have one, you
-> have no ρ to feed Model 2 either. So what is `chg2tau` *for*?
+> have no ρ to feed Model 2 either. So what is `pseudo2tau` *for*?
 
 Three answers are available. Two are weak. The third is the reason the model
 exists.

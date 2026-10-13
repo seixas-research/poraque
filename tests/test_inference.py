@@ -80,17 +80,17 @@ def _bundle(tmp_path, channels, name=BUNDLE_FILENAME):
     """
     A two-task bundle whose density channel count is ``channels``.
 
-    ``ext2chg`` maps one channel (the external potential) to ``channels``;
-    ``chg2tau`` takes those back to the single channel a kinetic energy density
+    ``ext2pseudo`` maps one channel (the external potential) to ``channels``;
+    ``pseudo2tau`` takes those back to the single channel a kinetic energy density
     always has. That is exactly the shape ``data.spin`` resolves to — 1 -> 2
     and 2 -> 1 — so a bundle built this way exercises the real path.
     """
     built = {
-        "ext2chg": FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+        "ext2pseudo": FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                                  projection_channels=8, device="cpu",
                                  in_channels=1, out_channels=channels,
                                  training_resolution=8),
-        "chg2tau": FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+        "pseudo2tau": FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
                                  projection_channels=8, device="cpu",
                                  in_channels=channels, out_channels=1,
                                  training_resolution=8),
@@ -102,7 +102,7 @@ def _bundle(tmp_path, channels, name=BUNDLE_FILENAME):
     # positive. It is not physics; it is the smallest thing that puts the code
     # path under test without training a model to get there.
     with torch.no_grad():
-        built["ext2chg"].model.project[-1].bias.fill_(4.0)
+        built["ext2pseudo"].model.project[-1].bias.fill_(4.0)
     return save_bundle(str(tmp_path / name), built)
 
 
@@ -185,7 +185,7 @@ class TestInferenceRunsOnASpinPolarizedModel:
             electrons = density.integrate()
         AttributeError: 'SpinDensity' object has no attribute 'integrate'
 
-    after ``ext2chg`` had already predicted successfully — so the model and the
+    after ``ext2pseudo`` had already predicted successfully — so the model and the
     bundle were fine and only the reporting around them was not. Fixing that
     one line moved the crash forty-four lines down to the identical call on the
     ``--normalize`` branch, which is why there are two tests here and not one.
@@ -549,7 +549,7 @@ class TestAnIncarImpliesAVaspReadyOutput:
 
 
 # ===================================================================== #
-# The chain for a PAW density: ext2paw -> paw2tau
+# The chain for a PAW density: ext2chg -> chg2tau
 # ===================================================================== #
 #: PAW_PBE Pt projector channels, in POTCAR order: d d s s p p.
 PT_LAYOUT = {78: (2, 2, 0, 0, 1, 1)}
@@ -566,7 +566,7 @@ def _occupancy_transform(sets=1):
 
 def _paw_bundles(tmp_path):
     """
-    Two bundles from two "runs": an ext2paw operator and a paw2tau one.
+    Two bundles from two "runs": an ext2chg operator and a chg2tau one.
 
     Untrained, as :func:`_bundle`'s are; the read-out bias makes the density
     positive so the renormalization branch is entered as in a real run.
@@ -575,20 +575,20 @@ def _paw_bundles(tmp_path):
                   device="cpu", in_channels=1, out_channels=1,
                   training_resolution=8, site_layouts=PT_LAYOUT,
                   site_transform=_occupancy_transform())
-    density = FieldOperator("ext2paw", readout_g_max=3.0, **common)
+    density = FieldOperator("ext2chg", readout_g_max=3.0, **common)
     with torch.no_grad():
         density.model.backbone.project[-1].bias.fill_(4.0)
-    kinetic = FieldOperator("paw2tau", occupancy_channels=2, **common)
+    kinetic = FieldOperator("chg2tau", occupancy_channels=2, **common)
     return (save_bundle(str(tmp_path / "density.poraque"),
-                        {"ext2paw": density}),
+                        {"ext2chg": density}),
             save_bundle(str(tmp_path / "kinetic.poraque"),
-                        {"paw2tau": kinetic}))
+                        {"chg2tau": kinetic}))
 
 
-class TestTheExt2pawChainFeedsPaw2tau:
+class TestTheExt2chgChainFeedsChg2tau:
     """
     ``--models`` takes the density operator and the kinetic one from two
-    bundles, and paw2tau reads the occupancies ext2paw predicts for the very
+    bundles, and chg2tau reads the occupancies ext2chg predicts for the very
     structure in front of it --- the chain proper, from a POSCAR alone.
     """
 
@@ -599,12 +599,12 @@ class TestTheExt2pawChainFeedsPaw2tau:
             structure_directory, "--models", density, "--models", kinetic,
             "--output", str(tmp_path / "predictions"), "--grid", "8", "8", "8",
             "--zval", "Pt=10", "--functional", "skip", "--device", "cpu"])
-        assert results["kinetic_task"] == "paw2tau"
-        assert results["paw2tau_occupancies"].startswith("ext2paw")
+        assert results["kinetic_task"] == "chg2tau"
+        assert results["chg2tau_occupancies"].startswith("ext2chg")
         assert os.path.exists(results["outputs"]["TAUCAR"])
         log = (tmp_path / "predictions" / "inference.log").read_text()
         assert "[KINETIC ENERGY DENSITY]" in log
-        assert "[paw2tau]" in log and "[ext2paw]" in log
+        assert "[chg2tau]" in log and "[ext2chg]" in log
 
     def test_the_occupancies_are_laid_out_as_in_training(self):
         """One record set, two Pt atoms, padded to the longest record."""
@@ -618,17 +618,17 @@ class TestTheExt2pawChainFeedsPaw2tau:
             self, structure_directory, tmp_path):
         _, kinetic = _paw_bundles(tmp_path)
         density = _bundle(tmp_path, 1)
-        with pytest.raises(SystemExit, match="ext2paw operator to --models"):
+        with pytest.raises(SystemExit, match="ext2chg operator to --models"):
             poraque_inference.predict([
                 structure_directory, "--models", density, "--models", kinetic,
                 "--output", str(tmp_path / "predictions"),
                 "--grid", "8", "8", "8", "--zval", "Pt=10",
                 "--functional", "skip", "--device", "cpu"])
 
-    def test_kinetic_chg2tau_still_takes_the_density_route(
+    def test_kinetic_pseudo2tau_still_takes_the_density_route(
             self, structure_directory, tmp_path):
         _, kinetic = _paw_bundles(tmp_path)
         results = _run(structure_directory, _bundle(tmp_path, 1), tmp_path,
-                       "--kinetic", "chg2tau")
-        assert results["kinetic_task"] == "chg2tau"
-        assert "paw2tau_occupancies" not in results
+                       "--kinetic", "pseudo2tau")
+        assert results["kinetic_task"] == "pseudo2tau"
+        assert "chg2tau_occupancies" not in results

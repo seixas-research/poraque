@@ -199,7 +199,7 @@ distinct shapes flowing through one set of weights.
 
 The run writes a single unified checkpoint,
 \file{models/poraque\_models.poraque}, holding both operators under the keys
-\opt{ext2chg} and \opt{chg2tau}.
+\opt{ext2pseudo} and \opt{pseudo2tau}.
 
 \begin{pwarn}
 With \opt{valid\_fraction: 0} every structure is in training, so the reported
@@ -208,7 +208,7 @@ they are not a generalization estimate. Raise \opt{valid\_fraction}, or use the
 cross-validation of Section~\ref{sec:kfold}, for that.
 
 Measured on seventeen platinum structures: the all-structure training fit gives
-relative $L^2$ of $0.0209$ (\opt{ext2chg}) and $0.0140$ (\opt{chg2tau}),
+relative $L^2$ of $0.0209$ (\opt{ext2pseudo}) and $0.0140$ (\opt{pseudo2tau}),
 against held-out values of $0.0379$ and $0.0511$ --- roughly two to four times
 larger. That gap is the memorization margin, and quoting the training-fit
 number as a result would be a serious overstatement.

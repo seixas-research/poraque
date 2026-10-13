@@ -9,28 +9,20 @@
 r"""
 The regression tasks the neural operator is trained on.
 
-Two maps are in scope, and they are the two links of the orbital-free DFT
-chain rather than an arbitrary pair:
+Four tasks, which are two readings of the same two-link chain. What separates
+them is not the architecture but *what a density is taken to be*.
 
-``ext2chg`` — :math:`V_{\rm ext} \mapsto \rho`
-    The Hohenberg-Kohn map. Its existence and uniqueness is a *theorem*: for a
-    given electron count the ground-state density is a functional of the
-    external potential alone. Learning it is therefore learning a well-posed
-    object, not fitting a correlation.
+A VASP ``CHGCAR`` is not a grid. It is a grid **and** a per-atom set of PAW
+augmentation occupancies, and the all-electron density is reconstructed from
+the two together. The grid alone is the pseudo-density: smooth, representable
+in a plane-wave basis, and wrong near a nucleus by construction. The task
+names follow the files for that reason. The pair named for ``CHGCAR`` carries
+everything the file carries; the pair named ``pseudo`` keeps the grid and
+drops the rest.
 
-``chg2tau`` — :math:`\rho \mapsto \tau`
-    The kinetic energy density functional, the missing ingredient of practical
-    OF-DFT. Unlike the first map this one is *semi-local in character* — the
-    exact :math:`\tau` is bounded below by the von Weizsäcker form and
-    approaches Thomas-Fermi in the slowly-varying limit — which gives the
-    physics losses of :mod:`poraque.ml.physics` firm anchors.
+**The complete pair**, and the route this project takes to a total energy:
 
-The two share one architecture and one dataset layout; only the endpoints of
-the map differ.
-
-Two more tasks sit beside the chain rather than in it:
-
-``ext2paw`` — :math:`V_{\rm ext} \mapsto (\tilde\rho, \rho^a_{ij})`
+``ext2chg`` --- :math:`V_{\rm ext} \mapsto (\tilde\rho, \rho^a_{ij})`
     The pseudo-density *and* the PAW augmentation occupancies of every atom,
     which together are what an all-electron density is reconstructed from.
     The occupancies are on-site quantities with no representation on the
@@ -40,14 +32,39 @@ Two more tasks sit beside the chain rather than in it:
     grid, and a readout at each atom over one band of :math:`|\mathbf G|`
     feeding an equivariant head per element --- :mod:`poraque.ml.paw`.
 
-``paw2tau`` --- :math:`(\tilde\rho, \rho^a_{ij}) \mapsto \tau`
+``chg2tau`` --- :math:`(\tilde\rho, \rho^a_{ij}) \mapsto \tau`
     The kinetic energy density from the pseudo-density **and** the
-    augmentation occupancies: the second link of the chain for a PAW density,
-    where the on-site part the grid cannot hold enters as input. The
-    occupancies are written into extra input channels by an equivariant
-    :class:`~poraque.ml.paw.SiteWriter`; the field operator is the ordinary
-    FNO. What ``ext2paw`` predicts is exactly what ``paw2tau`` reads, which is
-    the route this project takes to the total energy.
+    augmentation occupancies, where the on-site part the grid cannot hold
+    enters as input. The occupancies are written into extra input channels by
+    an equivariant :class:`~poraque.ml.paw.SiteWriter`; the field operator is
+    the ordinary FNO. What ``ext2chg`` predicts is exactly what ``chg2tau``
+    reads, which is what makes the two a chain and not a pair of unrelated
+    fits.
+
+**The grid-only pair**, the same chain in its pure field-to-field form:
+
+``ext2pseudo`` --- :math:`V_{\rm ext} \mapsto \tilde\rho`
+    The Hohenberg-Kohn map, restricted to what lives on the grid. Its
+    existence and uniqueness is a *theorem*: for a given electron count the
+    ground-state density is a functional of the external potential alone.
+    Learning it is therefore learning a well-posed object, not fitting a
+    correlation --- with the caveat the name now makes explicit, that the
+    object on the grid is the pseudo-density and not the density itself.
+
+``pseudo2tau`` --- :math:`\tilde\rho \mapsto \tau`
+    The kinetic energy density functional, the missing ingredient of practical
+    OF-DFT. Unlike the first map this one is *semi-local in character* --- the
+    exact :math:`\tau` is bounded below by the von Weizsäcker form and
+    approaches Thomas-Fermi in the slowly-varying limit --- which gives the
+    physics losses of :mod:`poraque.ml.physics` firm anchors.
+
+:data:`CHAIN` is the grid-only pair, and it is what ``task.type: all`` trains.
+That is a statement about what a dataset can be asked for without extra
+labels, not about which pair matters: the two grid-only links share one
+architecture and one dataset layout and need nothing a density file does not
+already hold, whereas the complete pair needs the occupancy records and the
+projector layouts the pseudopotentials declare. The complete pair joins a run
+when ``model.paw.enable`` asks for it.
 """
 
 from dataclasses import dataclass
@@ -104,41 +121,43 @@ class TaskSpec:
         return f"{self.name}: {self.input_field} -> {self.target_field}"
 
 
-#: External potential to charge density (the Hohenberg-Kohn map).
-EXT_TO_CHG = TaskSpec(
-    name="ext2chg",
+#: External potential to the pseudo-density grid (the Hohenberg-Kohn map,
+#: restricted to what the grid holds).
+EXT_TO_PSEUDO = TaskSpec(
+    name="ext2pseudo",
     input_field="EXTCAR",
     target_field="CHGCAR",
-    description="Local external potential -> valence charge density.",
+    description="Local external potential -> pseudo-density grid.",
     input_unit="eV",
     target_unit="e/Ang^3",
 )
 
-#: Charge density to kinetic energy density (the KEDF).
-CHG_TO_TAU = TaskSpec(
-    name="chg2tau",
+#: Pseudo-density to kinetic energy density (the KEDF, grid only).
+PSEUDO_TO_TAU = TaskSpec(
+    name="pseudo2tau",
     input_field="CHGCAR",
     target_field="TAUCAR",
-    description="Valence charge density -> kinetic energy density.",
+    description="Pseudo-density grid -> kinetic energy density.",
     input_unit="e/Ang^3",
     target_unit="eV/Ang^3",
 )
 
-#: External potential to pseudo-density plus PAW augmentation occupancies.
-EXT_TO_PAW = TaskSpec(
-    name="ext2paw",
+#: External potential to a whole CHGCAR: pseudo-density grid plus every
+#: atom's PAW augmentation occupancies.
+EXT_TO_CHG = TaskSpec(
+    name="ext2chg",
     input_field="EXTCAR",
     target_field="CHGCAR",
-    description="Local external potential -> pseudo-density and PAW "
-                "augmentation occupancies.",
+    description="Local external potential -> pseudo-density grid and "
+                "PAW augmentation occupancies.",
     input_unit="eV",
     target_unit="e/Ang^3",
     site_target="augmentation",
 )
 
-#: Pseudo-density plus PAW occupancies to kinetic energy density.
-PAW_TO_TAU = TaskSpec(
-    name="paw2tau",
+#: A whole CHGCAR --- grid plus PAW occupancies --- to kinetic energy density.
+CHG_TO_TAU = TaskSpec(
+    name="chg2tau",
     input_field="CHGCAR",
     target_field="TAUCAR",
     description="Pseudo-density and PAW augmentation occupancies -> kinetic "
@@ -150,14 +169,27 @@ PAW_TO_TAU = TaskSpec(
 
 #: Registry of every task a name can resolve to.
 TASKS = {task.name: task
-         for task in (EXT_TO_CHG, CHG_TO_TAU, EXT_TO_PAW, PAW_TO_TAU)}
+         for task in (EXT_TO_PSEUDO, PSEUDO_TO_TAU, EXT_TO_CHG, CHG_TO_TAU)}
 
-#: The orbital-free chain, in order: what ``task.type: all`` trains, what a
-#: bundle must hold to reach a total energy, and what a dataset is asked it can
-#: serve. ``ext2paw`` is not a link of it --- it replaces the first link's
-#: target rather than feeding the second --- so it joins an ``all`` run only
-#: when ``model.paw.enable`` asks.
-CHAIN = ("ext2chg", "chg2tau")
+#: The grid-only chain, in order: what ``task.type: all`` trains, what a
+#: bundle must hold to reach a total energy from fields alone, and what a
+#: dataset is asked whether it can serve. The complete pair --- ``ext2chg``
+#: and ``chg2tau`` --- is not in it: each of those replaces a link's endpoint
+#: with a whole CHGCAR rather than feeding the next one, and each needs the
+#: per-atom records, so ``ext2chg`` joins an ``all`` run only when
+#: ``model.paw.enable`` asks and ``chg2tau`` is always trained alone.
+CHAIN = ("ext2pseudo", "pseudo2tau")
+
+
+#: What each pre-rename task name became, for the error messages and for the
+#: checkpoint translation in :func:`~poraque.ml.training.read_bundle`. The two
+#: names absent from it --- ``ext2chg`` and ``chg2tau`` --- are the swap: they
+#: still resolve, to a *different* task than they used to name, which is why
+#: nothing can be decided from an old name alone.
+RENAMED_TASKS = {
+    "ext2paw": "ext2chg",
+    "paw2tau": "chg2tau",
+}
 
 
 def resolve_task(task):
@@ -167,8 +199,7 @@ def resolve_task(task):
     Parameters
     ----------
     task : str or TaskSpec
-        Task name (``"ext2chg"``, ``"chg2tau"``, ``"ext2paw"``) or an explicit
-        spec.
+        Task name --- one of :data:`TASKS` --- or an explicit spec.
 
     Returns
     -------
@@ -181,9 +212,18 @@ def resolve_task(task):
     """
     if isinstance(task, TaskSpec):
         return task
+    name = str(task)
     try:
-        return TASKS[str(task)]
+        return TASKS[name]
     except KeyError:
+        hint = RENAMED_TASKS.get(name, "")
+        if hint:
+            hint = (f" The tasks were renamed so that a name says whether the "
+                    f"per-atom PAW records travel with the grid: {name!r} is "
+                    f"now {hint!r}. Mind that the two CHGCAR names were "
+                    f"*swapped* rather than retired --- a configuration or a "
+                    f"checkpoint written before the rename means by "
+                    f"'ext2chg' what is now called 'ext2pseudo'.")
         raise KeyError(
-            f"Unknown task {task!r}; available: {sorted(TASKS)}."
+            f"Unknown task {name!r}; available: {sorted(TASKS)}.{hint}"
         ) from None

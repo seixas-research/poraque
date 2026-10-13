@@ -48,10 +48,10 @@ def plot(payload, directory):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sample", type=int, default=12)
-    parser.add_argument("--results", type=Path, default=ROOT / "experiments/chon_ext2paw/results")
+    parser.add_argument("--results", type=Path, default=ROOT / "experiments/chon_ext2chg/results")
     args = parser.parse_args()
     split = json.loads((args.results / "screen/split.json").read_text())
-    data = FieldPairDataset(str(ROOT / "data/cache/chon/res24_potcar_spin"), "ext2paw", cache=False)
+    data = FieldPairDataset(str(ROOT / "data/cache/chon/res24_potcar_spin"), "ext2chg", cache=False)
     candidates = sorted([(len(data.site_records(i)["species"]), r.identifier)
                          for i, r in enumerate(data.materials) if r.identifier in split["validation"]])
     # Cover atom-count quantiles; this sample is descriptive, not random.

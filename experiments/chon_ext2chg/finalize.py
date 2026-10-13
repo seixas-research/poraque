@@ -25,7 +25,7 @@ from poraque.ml import FieldPairDataset, load_bundle
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directories", nargs="+", type=Path)
-    parser.add_argument("--output", type=Path, default=ROOT / "experiments/chon_ext2paw/results/final")
+    parser.add_argument("--output", type=Path, default=ROOT / "experiments/chon_ext2chg/results/final")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1])
@@ -71,13 +71,13 @@ def main():
     write_json(args.output / "selection.json", summary)
     write_json(args.output / "split.json", split)
     cache = str(ROOT / "data/cache/chon/res24_potcar_spin")
-    raw = FieldPairDataset(cache, "ext2paw", cache=False)
+    raw = FieldPairDataset(cache, "ext2chg", cache=False)
     records = [r for r in raw.materials if r.identifier in split["test"]]
     assert len(records) == len(split["test"])
     test_rows = []
     for row in groups[winner]:
-        operator = load_bundle(row["checkpoint"], "ext2paw", device=args.device)
-        dataset = FieldPairDataset(cache, "ext2paw", materials=records,
+        operator = load_bundle(row["checkpoint"], "ext2chg", device=args.device)
+        dataset = FieldPairDataset(cache, "ext2chg", materials=records,
             baseline=operator.baseline, cache=True,
             input_transform=operator.input_transform, target_transform=operator.target_transform)
         assert len(dataset) == len(split["test"])

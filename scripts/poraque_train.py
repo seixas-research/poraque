@@ -17,12 +17,12 @@ next to the results, recording exactly what ran.
 
 Tasks
 -----
-``ext2chg``
+``ext2pseudo``
     ``EXTCAR`` -> ``CHGCAR``, the Hohenberg-Kohn map.
-``chg2tau``
+``pseudo2tau``
     ``CHGCAR`` -> ``TAUCAR``, the kinetic energy density functional.
 
-The two are **independent**. ``task: ext2chg`` builds one network, trains one
+The two are **independent**. ``task: ext2pseudo`` builds one network, trains one
 objective and writes one model; nothing about :math:`\tau` is instantiated,
 loaded or differentiated. That is what makes the vast public archives of
 charge densities usable: they publish no kinetic energy density, and needing
@@ -193,7 +193,7 @@ def report_filename(config, task_name, n_tasks=1, kind="report"):
 
     The report is per task, so a ``task: all`` run produces two of them and one
     name cannot serve both. Qualifying only in that case keeps the common
-    single-task run -- every ``ext2chg`` run on a density archive -- at the
+    single-task run -- every ``ext2pseudo`` run on a density archive -- at the
     plain name.
 
     Parameters
@@ -321,8 +321,8 @@ def build_cache(config, log):
     a given material came from.
 
     Every field a source can supply is written, not only the ones the current
-    task needs: a cache built for ``ext2chg`` from an archive that also holds
-    :math:`\\tau` serves ``chg2tau`` afterwards with no rebuild.
+    task needs: a cache built for ``ext2pseudo`` from an archive that also holds
+    :math:`\\tau` serves ``pseudo2tau`` afterwards with no rebuild.
 
     Returns
     -------
@@ -496,7 +496,7 @@ def trainable_tasks(names, cache, log):
 
     A dataset does not always carry every field. A Materials Project download
     is the clear case — it publishes the charge density and nothing else, so
-    ``chg2tau`` has no :math:`\\tau` to regress onto and no amount of pipeline
+    ``pseudo2tau`` has no :math:`\\tau` to regress onto and no amount of pipeline
     work invents one — but a partial local dataset behaves the same way.
 
     Failing here, before a model is built, is the whole point: the alternative
@@ -618,7 +618,7 @@ def metrics(prediction, target, grid=None):
         ``relative_h1``
             The relative :math:`H^1` error, values and gradients together.
         ``integral_error``
-            :math:`|\int\hat f - \int f|`, which for ``ext2chg`` is the
+            :math:`|\int\hat f - \int f|`, which for ``ext2pseudo`` is the
             electron-count error in electrons.
         ``jsd``
             The Jensen-Shannon divergence, when both fields are non-negative
@@ -728,7 +728,7 @@ def integral_error(prediction, target, grid):
     r"""
     :math:`|\int \hat f\,d^3r - \int f\,d^3r|` over the cell.
 
-    For ``ext2chg`` this is the **electron-count error in electrons**, and it is
+    For ``ext2pseudo`` this is the **electron-count error in electrons**, and it is
     the one metric here that a pointwise loss controls worst: a per-voxel MSE is
     nearly indifferent to a uniform 2 % error in :math:`\rho`, while the
     electrostatic terms built from that density are of order :math:`10^4` eV,
@@ -943,6 +943,9 @@ def build_loss(config, task_name):
         task=task_name,
         loss=config.training.loss,
         sobolev_weight=config.training.sobolev_weight,
+        magnetization_weight=config.training.magnetization_weight,
+        spin_loss=config.training.spin_loss,
+        magnetization_floor=config.training.magnetization_floor,
         **physics,
         physics_informed=enable,
     )
@@ -955,7 +958,7 @@ def resolve_baseline(task, config, cache, log):
     """
     The isolated-atom baseline for delta-density mode, or ``None``.
 
-    Returns ``None`` for ``chg2tau`` whatever the config says: there is no
+    Returns ``None`` for ``pseudo2tau`` whatever the config says: there is no
     atomic superposition of a kinetic energy density, and silently ignoring the
     flag there is better than refusing a config that sets it once for a run
     training both tasks.
@@ -1082,7 +1085,7 @@ def build_operator(task, train_set, config, log, validation=None):
     target_transform = train_set.target_transform
 
     head = {}
-    if config.model.pauli_residual and task.name == "chg2tau":
+    if config.model.pauli_residual and task.name == "pseudo2tau":
         from poraque.ml import fit_pauli_scale, pauli_bound_violation
 
         scale = (config.model.pauli_scale if config.model.pauli_scale
@@ -1147,7 +1150,7 @@ def build_operator(task, train_set, config, log, validation=None):
         mib = config.model.paw_settings()["readout_cache_mib"]
         readout.cache_bytes = int(float(mib) * 1024 ** 2)
         log(f"      readout kernel cache: {float(mib):g} MiB")
-    # Off the built backbone, not the config: an ext2paw operator's size is
+    # Off the built backbone, not the config: an ext2chg operator's size is
     # model.paw's, and the log must describe what was built.
     backbone = getattr(operator.model, "backbone", operator.model)
     log(f"      model: {type(operator.model).__name__} width={backbone.width} "
@@ -1301,8 +1304,8 @@ def resolve_site_layouts(train_set, log):
     """
     Each element's PAW record layout, from the POTCAR projector channels.
 
-    Shared by the two tasks that carry the occupancies, ``ext2paw`` (as a
-    target) and ``paw2tau`` (as an input): the cache records the channels in
+    Shared by the two tasks that carry the occupancies, ``ext2chg`` (as a
+    target) and ``chg2tau`` (as an input): the cache records the channels in
     ``paw_profiles.json``, read from the POTCAR the potential was built with.
 
     Returns
@@ -1333,7 +1336,7 @@ def resolve_site_layouts(train_set, log):
 
 def resolve_occupancy_input(train_set, config, log, sets):
     """
-    What the ``paw2tau`` operator needs to read every atom's occupancies.
+    What the ``chg2tau`` operator needs to read every atom's occupancies.
 
     The record layouts, the occupancy transform that normalizes the input
     records (fitted on the training split, stored in the checkpoint) and the
@@ -1358,7 +1361,7 @@ def resolve_occupancy_input(train_set, config, log, sets):
 
 def resolve_occupancy_head(train_set, config, log, sets, validation=None):
     r"""
-    Everything the ``ext2paw`` occupancy head needs, resolved from the data.
+    Everything the ``ext2chg`` occupancy head needs, resolved from the data.
 
     * **The backbone's size** from ``model.paw`` (``width``, ``modes``,
       ``n_layers``); every other ``model`` setting applies as it stands.
@@ -2231,18 +2234,25 @@ def validate_precision_settings(config):
 
 def validate_loss_settings(config):
     """
-    Check ``training.loss`` before the cache is built, not an hour in.
+    Check ``training.loss`` and ``training.spin_loss`` before the cache.
 
     A typo in an objective is a run that trains on the wrong thing or, with the
     old ``"sobolev"`` spelling, on the right thing under a name that no longer
     says which norm. Either way the place to find out is in the first second.
+    ``spin_loss`` joins it because it decides how a spin-polarized target
+    enters the data term, and a misspelling there would otherwise surface only
+    when the first batch is scored.
     """
-    from poraque.ml.losses import resolve_data_loss
+    from poraque.ml.losses import resolve_data_loss, resolve_spin_loss
 
     try:
         resolve_data_loss(config.training.loss)
     except ValueError as error:
         raise SystemExit(f"training.{error}") from None
+    try:
+        resolve_spin_loss(config.training.spin_loss)
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
 
 
 def validate_activation_settings(config):
@@ -2298,7 +2308,7 @@ def validate_paw_settings(config, training=True):
     except ValueError as error:
         raise SystemExit(str(error))
 
-    sited = [name for name in ("ext2paw", "paw2tau") if name in names]
+    sited = [name for name in ("ext2chg", "chg2tau") if name in names]
     if not training or not sited:
         return
     if config.training.enable_kfold:
@@ -2325,7 +2335,7 @@ def validate_physics_settings(config):
 
     try:
         PhysicsInformedLoss(
-            task="ext2chg",
+            task="ext2pseudo",
             **config.training.physics_weights(),
             physics_informed=config.training.physics_informed_enabled,
         )
@@ -2404,7 +2414,7 @@ def progress_checkpoint_path(config, task):
     nothing ever passed one, so the best weights lived only in memory until the
     run finished and anything that killed the process -- an out-of-memory kill,
     a Slurm time limit, a closed laptop -- took the whole fit with it. A
-    3-hour ``ext2paw`` run died at epoch 240 that way, with a better model than
+    3-hour ``ext2chg`` run died at epoch 240 that way, with a better model than
     its predecessor's already measured and nothing on disk to show for it.
 
     The file is a single operator's state, not a bundle
@@ -2470,15 +2480,15 @@ def run_symbolic_distillation(task, dataset, operator, config, log,
     r"""
     Search for a closed-form expression reproducing the trained operator.
 
-    Only ``chg2tau`` is attempted. Distillation looks for a *functional of the
-    density*, and ``ext2chg`` maps a potential to a density — the Hohenberg-Kohn
+    Only ``pseudo2tau`` is attempted. Distillation looks for a *functional of the
+    density*, and ``ext2pseudo`` maps a potential to a density — the Hohenberg-Kohn
     map, whose whole content is non-local, so a semi-local expression for it
     would be meaningless rather than merely inaccurate.
 
     Returns
     -------
     SymbolicResult or None
-        ``None`` when the feature is off, the task is not ``chg2tau``, or the
+        ``None`` when the feature is off, the task is not ``pseudo2tau``, or the
         search failed. A failure is reported and swallowed: it arrives after
         the model is already trained, and losing a finished fit to an optional
         analysis would be the worse outcome.
@@ -2486,9 +2496,9 @@ def run_symbolic_distillation(task, dataset, operator, config, log,
     settings = config.symbolic
     if not settings.enable:
         return None
-    if task.name != "chg2tau":
+    if task.name != "pseudo2tau":
         log(f"\n  symbolic distillation: skipped for {task.name} "
-            f"(a density functional is only meaningful for chg2tau).")
+            f"(a density functional is only meaningful for pseudo2tau).")
         return None
 
     from poraque.ml.symbolic import distill_dataset
@@ -2954,7 +2964,7 @@ def run_task(task_name, cache, config, log, n_tasks=1, distributed=None,
         "validation": sorted(validation_names),
         "grid_shapes": [list(s) for s in shapes],
         "per_material": per_material,
-        # ext2paw: the records' error pooled per split, whole and per (set, L)
+        # ext2chg: the records' error pooled per split, whole and per (set, L)
         # block; None for a field-only task.
         "occupancies": occupancies,
         "checkpoint": checkpoint,
@@ -3279,8 +3289,8 @@ def build_parser():
                         help="YAML configuration file (defaults are used if omitted)")
 
     parser.add_argument("--task", dest="task.type", default=None,
-                        choices=["all", "ext2chg", "chg2tau", "ext2paw",
-                                 "paw2tau"])
+                        choices=["all", "ext2pseudo", "pseudo2tau", "ext2chg",
+                                 "chg2tau"])
     parser.add_argument("--name", dest="task.name", default=None,
                         metavar="NAME",
                         help="name this run's outputs: models/NAME.poraque, "
@@ -3329,7 +3339,7 @@ def build_parser():
                        type=int, default=None)
     group.add_argument("--pauli-head", dest="model.pauli_residual",
                        action="store_const", const=True, default=None,
-                       help="tau = tau_vW[rho] + s*softplus(f) for chg2tau")
+                       help="tau = tau_vW[rho] + s*softplus(f) for pseudo2tau")
     group.add_argument("--no-pauli-head", dest="model.pauli_residual",
                        action="store_const", const=False, default=None)
 
@@ -3430,7 +3440,7 @@ def build_parser():
                        dest="symbolic.enable",
                        action="store_const", const=True, default=None,
                        help="after training, search for a closed-form "
-                            "expression reproducing the chg2tau operator")
+                            "expression reproducing the pseudo2tau operator")
     group.add_argument("--symbolic-target", dest="symbolic.target",
                        choices=["model", "reference"], default=None,
                        help="fit the operator's predictions (model) or the "

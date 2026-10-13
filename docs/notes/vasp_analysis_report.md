@@ -253,7 +253,7 @@ for training and is documented rather than chased.
 1. **Done — use `model="auto"`/`"potcar"`.** The Gaussian model remains useful
    for structures with no `POTCAR` (pure-geometry inference) but should not be
    used when a reference `EXTCAR` is expected to match.
-2. **Retrain `ext2chg` on the corrected `EXTCAR`.** Models trained on the
+2. **Retrain `ext2pseudo` on the corrected `EXTCAR`.** Models trained on the
    Gaussian potential learned the Hohenberg-Kohn map *for that model
    potential*. With the exact input the map becomes the physical one, and the
    inference pipeline no longer has a 13 % systematic input error before the

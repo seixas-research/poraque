@@ -140,7 +140,7 @@ class ModelReport:
     Examples
     --------
     >>> report = ModelReport("reports")                       # doctest: +SKIP
-    >>> report.build(task="chg2tau", metrics=..., figures=[...])  # doctest: +SKIP
+    >>> report.build(task="pseudo2tau", metrics=..., figures=[...])  # doctest: +SKIP
     """
 
     def __init__(self, output_dir="reports", logo="assets/logo/logo_light.png",
@@ -311,7 +311,7 @@ class ModelReport:
     #:     the worst voxel. Means and RMS both hide a single catastrophic site,
     #:     and near a nucleus is exactly where one occurs.
     #: ``integral_error``
-    #:     conservation. For ``ext2chg`` this is the electron-count error in
+    #:     conservation. For ``ext2pseudo`` this is the electron-count error in
     #:     electrons, and it is the metric a pointwise loss controls worst: a
     #:     per-voxel MSE is nearly indifferent to a uniform 2 % error in rho,
     #:     while the electrostatics built from that density are of order 1e4 eV.

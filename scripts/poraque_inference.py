@@ -19,26 +19,26 @@ complete orbital-free DFT calculation:
               |
               |  ExternalPotential  (analytic, no network)
               v
-           EXTCAR   ---- Model 1 (ext2chg) ---->  CHGCAR / CHG
+           EXTCAR   ---- Model 1 (ext2pseudo) ---->  CHGCAR / CHG
                                                        |
-                                                       |  Model 2 (chg2tau)
+                                                       |  Model 2 (pseudo2tau)
                                                        v
                                                     TAUCAR
 
 or, for a PAW density, with the one-center occupancies carried through:
 
-           EXTCAR   ---- Model 1 (ext2paw) ---->  CHGCAR grid + every atom's
+           EXTCAR   ---- Model 1 (ext2chg) ---->  CHGCAR grid + every atom's
                                                   augmentation occupancies
                                                        |
-                                                       |  Model 2 (paw2tau)
+                                                       |  Model 2 (chg2tau)
                                                        v
                                                     TAUCAR
 
 ``--models`` takes one bundle, and may be repeated for several: each task is
 read from the first bundle that holds it, so the density operator and the kinetic one may come
-from different training runs (an ``ext2paw`` trained on one archive, a
-``paw2tau`` on data that carries a ``TAUCAR``). ``--kinetic`` chooses the second
-link; ``auto`` takes ``paw2tau`` whenever a bundle holds it.
+from different training runs (an ``ext2chg`` trained on one archive, a
+``chg2tau`` on data that carries a ``TAUCAR``). ``--kinetic`` chooses the second
+link; ``auto`` takes ``chg2tau`` whenever a bundle holds it.
 
 Only the geometry and the pseudopotentials are required: no wavefunctions, no
 SCF cycle, no prior DFT run on this structure. The first step is *analytic* —
@@ -182,7 +182,7 @@ def load_operator(bundle, task, device):
     bundle : str
         Path to ``poraque_models.poraque``.
     task : str
-        ``"ext2chg"`` or ``"chg2tau"``.
+        ``"ext2pseudo"`` or ``"pseudo2tau"``.
     device : torch.device or str
         Target device.
 
@@ -239,7 +239,7 @@ def bundle_for(models, task):
 
 def occupancy_sites(records, structure):
     """
-    Per-set, per-atom record arrays as the ``sites`` a ``paw2tau`` reads.
+    Per-set, per-atom record arrays as the ``sites`` a ``chg2tau`` reads.
 
     Parameters
     ----------
@@ -279,9 +279,9 @@ def occupancy_sites(records, structure):
 def occupancies_for_kinetic(models, potential, structure, directory, sets,
                             device, log):
     """
-    Every atom's PAW occupancies, as the ``paw2tau`` operator's input.
+    Every atom's PAW occupancies, as the ``chg2tau`` operator's input.
 
-    In order: the ones an ``ext2paw`` operator predicts from this structure's
+    In order: the ones an ``ext2chg`` operator predicts from this structure's
     potential --- the chain proper, with the occupancies that belong to the
     predicted pseudo-density --- and otherwise the exact ones of a reference
     calculation beside the structure. There is no third source: the free
@@ -293,22 +293,22 @@ def occupancies_for_kinetic(models, potential, structure, directory, sets,
     tuple of (dict, str)
         :func:`occupancy_sites` output and a description of its source.
     """
-    bundle = bundle_for(models, "ext2paw")
+    bundle = bundle_for(models, "ext2chg")
     if bundle is not None:
-        operator, _ = load_operator(bundle, "ext2paw", device)
+        operator, _ = load_operator(bundle, "ext2chg", device)
         try:
             records = operator.predict_occupancies(potential)
         except ValueError as error:
-            raise SystemExit(f"paw2tau needs the occupancies the ext2paw "
+            raise SystemExit(f"chg2tau needs the occupancies the ext2chg "
                              f"operator predicts, and it cannot read this "
                              f"grid: {error}") from error
         if len(records) < sets:
             raise SystemExit(
-                f"the paw2tau operator reads {sets} record set(s) per atom "
-                f"and the ext2paw operator predicts {len(records)}: the two "
+                f"the chg2tau operator reads {sets} record set(s) per atom "
+                f"and the ext2chg operator predicts {len(records)}: the two "
                 f"were trained with different data.spin.")
         return (occupancy_sites(records[:sets], structure),
-                f"ext2paw ({os.path.basename(bundle)})")
+                f"ext2chg ({os.path.basename(bundle)})")
 
     from poraque.fields.vasp.augmentation import occupancy_arrays
     from poraque.fields.vasp.volumetric import read_augmentation_blocks
@@ -328,11 +328,11 @@ def occupancies_for_kinetic(models, potential, structure, directory, sets,
                     for atom in range(len(lengths))] for index in range(sets)]
         return occupancy_sites(records, structure), f"reference {path}"
     raise SystemExit(
-        "paw2tau reads every atom's PAW occupancies beside the density, and "
-        "there is no source for them: add a bundle holding an ext2paw "
-        "operator to --models (the chain ext2paw -> paw2tau), or put a "
+        "chg2tau reads every atom's PAW occupancies beside the density, and "
+        "there is no source for them: add a bundle holding an ext2chg "
+        "operator to --models (the chain ext2chg -> chg2tau), or put a "
         "reference CHGCAR with augmentation records beside the structure. "
-        "Or pass --kinetic chg2tau.")
+        "Or pass --kinetic pseudo2tau.")
 
 
 # ===================================================================== #
@@ -496,7 +496,7 @@ def augmentation_from_atoms(reference, structure, log):
 def augmentation_from_model(bundle, potential, channels, device, log,
                             required=False):
     r"""
-    The occupancies an ``ext2paw`` operator in the bundle predicts.
+    The occupancies an ``ext2chg`` operator in the bundle predicts.
 
     Every atom's own records, from the structure in front of it, rather than an
     average over other structures. Measured on the platinum data, a linear
@@ -508,27 +508,27 @@ def augmentation_from_model(bundle, potential, channels, device, log,
     -------
     list of list of str or None
         One block per record set, as many as the density written has channels;
-        ``None`` when the bundle has no ``ext2paw`` operator, or when the grid
+        ``None`` when the bundle has no ``ext2chg`` operator, or when the grid
         cannot supply the band its readout was trained on --- which raises
         instead when this source was asked for by name.
     """
     from poraque.fields.vasp.augmentation import format_augmentation
 
-    if "ext2paw" not in bundle_tasks(bundle):
+    if "ext2chg" not in bundle_tasks(bundle):
         if required:
-            raise SystemExit(f"--paw-source model: {bundle} holds no ext2paw "
+            raise SystemExit(f"--paw-source model: {bundle} holds no ext2chg "
                              f"operator.")
         return None
-    operator, _ = load_operator(bundle, "ext2paw", device)
+    operator, _ = load_operator(bundle, "ext2chg", device)
     try:
         records = operator.predict_occupancies(potential)
     except ValueError as error:
         if required:
             raise SystemExit(f"--paw-source model: {error}") from error
-        log(f"  ext2paw operator not used: {error}")
+        log(f"  ext2chg operator not used: {error}")
         return None
     blocks = [format_augmentation(per_set) for per_set in records[:channels]]
-    log(f"  using the ext2paw operator's predicted occupancies: "
+    log(f"  using the ext2chg operator's predicted occupancies: "
         f"{len(records[0])} atoms, {len(blocks)} record set(s)")
     return blocks if len(blocks) > 1 else blocks[0]
 
@@ -545,7 +545,7 @@ def resolve_augmentation(directory, bundle, structure, shape, log,
 
     1. **A reference calculation beside the structure.** Exact: these are that
        system's own records.
-    2. **An ext2paw operator in the bundle.** This structure's records,
+    2. **An ext2chg operator in the bundle.** This structure's records,
        predicted from its own potential; 2.1 % relative RMS for a linear
        readout of the DFT pseudo-density.
     3. **The bundle's per-element average**, over the training calculations.
@@ -599,7 +599,7 @@ def resolve_augmentation(directory, bundle, structure, shape, log,
         f"The records are the one-center part of the density, inside the PAW "
         f"spheres; they are not representable on the plane-wave grid, so no "
         f"field model predicts them. Either run VASP once on this geometry "
-        f"(LCHARG=.TRUE.) and point at that directory, or train an ext2paw "
+        f"(LCHARG=.TRUE.) and point at that directory, or train an ext2chg "
         f"operator into the bundle (model.paw.enable: true beside task.type: "
         f"all), or retrain so the bundle carries a reference, or build an "
         f"isolated-atom database with "
@@ -956,16 +956,16 @@ def run(args, log):
     available = available_tasks(args.models)
     kinetic = getattr(args, "kinetic", "auto")
     if kinetic == "auto":
-        kinetic = "paw2tau" if "paw2tau" in available else "chg2tau"
-    # The density operator: ext2paw first when the kinetic link reads its
+        kinetic = "chg2tau" if "chg2tau" in available else "pseudo2tau"
+    # The density operator: ext2chg first when the kinetic link reads its
     # occupancies, so the pseudo-density and the records come from one model.
-    preference = (("ext2paw", "ext2chg") if kinetic == "paw2tau"
-                  else ("ext2chg", "ext2paw"))
+    preference = (("ext2chg", "ext2pseudo") if kinetic == "chg2tau"
+                  else ("ext2pseudo", "ext2chg"))
     density_task = next((task for task in preference if task in available),
                         None)
     if density_task is None:
         raise SystemExit(f"none of {args.models} holds a density operator "
-                         f"(ext2chg or ext2paw).")
+                         f"(ext2pseudo or ext2chg).")
     density_bundle = bundle_for(args.models, density_task)
     operator, info = load_operator(density_bundle, density_task, device)
     _section(log, "density")
@@ -985,7 +985,7 @@ def run(args, log):
     # statements about rho, and evaluating them on the stack silently folds in
     # a magnetization that is legitimately signed and in different units.
     # `density` itself stays whatever `predict` returned, because that is what
-    # gets written and what chg2tau consumes.
+    # gets written and what pseudo2tau consumes.
     charge = charge_channel(density)
     electrons = field_integral(density)
     expected = sum(
@@ -1124,14 +1124,14 @@ def run(args, log):
         source = (density if operator2.in_channels > 1
                   or charge is density else charge)
         sites = None
-        if kinetic == "paw2tau":
+        if kinetic == "chg2tau":
             sites, origin = occupancies_for_kinetic(
                 args.models, potential, structure, args.directory,
                 operator2.in_channels, device, log)
             log(f"  occupancies: {len(sites['species'])} atoms, "
                 f"{sites['occupancies'].shape[1]} record set(s), from "
                 f"{origin}")
-            results["paw2tau_occupancies"] = origin
+            results["chg2tau_occupancies"] = origin
 
         start = time.time()
         tau = operator2.predict(source, sites=sites)
@@ -1321,17 +1321,17 @@ def build_parser():
                         default=None, metavar="BUNDLE",
                         help=f"a checkpoint; repeat it for several, and each "
                              f"task is read from the first that holds it, so "
-                             f"ext2paw and paw2tau may come from different "
+                             f"ext2chg and chg2tau may come from different "
                              f"runs (default: models/poraque_models/"
                              f"{BUNDLE_FILENAME}, where an unnamed "
                              f"poraque-train run writes it)")
-    parser.add_argument("--kinetic", choices=["auto", "chg2tau", "paw2tau"],
+    parser.add_argument("--kinetic", choices=["auto", "pseudo2tau", "chg2tau"],
                         default="auto",
-                        help="the operator that predicts tau: chg2tau reads "
-                             "the density, paw2tau the density and every "
-                             "atom's PAW occupancies (from an ext2paw "
+                        help="the operator that predicts tau: pseudo2tau reads "
+                             "the density, chg2tau the density and every "
+                             "atom's PAW occupancies (from an ext2chg "
                              "operator, else a reference CHGCAR beside the "
-                             "structure); auto takes paw2tau when a bundle "
+                             "structure); auto takes chg2tau when a bundle "
                              "holds it")
     parser.add_argument("--output", "-o", default=".",
                         help="directory for the predicted volumetric files "
@@ -1383,7 +1383,7 @@ def build_parser():
                         help="where --add-paw takes the one-center terms "
                              "from. 'auto' prefers a reference calculation "
                              "beside the structure, then the occupancies an "
-                             "ext2paw operator in the bundle predicts, then "
+                             "ext2chg operator in the bundle predicts, then "
                              "the bundle's per-element average. 'atomic' uses "
                              "the "
                              "isolated-atom database, which is a much rougher "

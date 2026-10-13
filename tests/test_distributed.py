@@ -573,7 +573,7 @@ def toy(tmp_path):
         ChargeDensity(density, grid, structure).write(directory / "CHGCAR")
         KineticEnergyDensity(density * 50.0, grid,
                              structure).write(directory / "TAUCAR")
-    return FieldPairDataset(str(root), task="chg2tau")
+    return FieldPairDataset(str(root), task="pseudo2tau")
 
 
 class TestTheTrainingLoopSilencesEveryRankButTheFirst:
@@ -594,7 +594,7 @@ class TestTheTrainingLoopSilencesEveryRankButTheFirst:
         from poraque.ml import FieldOperator
 
         torch.manual_seed(0)
-        return FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+        return FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
                              projection_channels=8, device="cpu")
 
     def test_a_non_main_rank_writes_no_checkpoint(self, toy, tmp_path):

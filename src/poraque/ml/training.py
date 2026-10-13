@@ -29,7 +29,7 @@ from .data import make_dataloader
 from .device import describe_device, resolve_device, synchronize
 from .distributed import DistributedContext, all_reduce_mean, barrier
 from .fno import FNO3d
-from .losses import PhysicsInformedLoss, data_error
+from .losses import PhysicsInformedLoss, channel_errors, data_error
 from .tasks import resolve_task
 from .transforms import FieldTransform, Identity
 
@@ -112,7 +112,7 @@ class FieldOperator:
     Parameters
     ----------
     task : str or TaskSpec
-        ``"ext2chg"`` or ``"chg2tau"``.
+        ``"ext2pseudo"`` or ``"pseudo2tau"``.
     model : torch.nn.Module, optional
         Network; defaults to a :class:`~poraque.ml.fno.FNO3d` built from
         ``**model_kwargs``.
@@ -135,7 +135,7 @@ class FieldOperator:
         :class:`~poraque.ml.heads.PauliResidualOperator`, so the model
         predicts :math:`\tau = \tau_{\rm vW}[\rho] + s\,
         \mathrm{softplus}(f_\theta)` and the Hoffmann-Ostenhof bound holds by
-        construction. Only meaningful for ``chg2tau``; requested for any other
+        construction. Only meaningful for ``pseudo2tau``; requested for any other
         task it raises, since :math:`\tau_{\rm vW}` is a functional of the
         density and the density is not the input elsewhere.
     pauli_scale : float, optional
@@ -176,7 +176,7 @@ class FieldOperator:
         impossible to get wrong.
     site_layouts : dict, optional
         ``{atomic number: projector channels}``, for a task with a per-atom
-        target (``ext2paw``): the backbone is then wrapped in a
+        target (``ext2chg``): the backbone is then wrapped in a
         :class:`~poraque.ml.paw.PAWOperatorModel` with one occupancy head per
         element. Required for such a task, ignored otherwise.
     readout_g_max : float, optional
@@ -189,7 +189,7 @@ class FieldOperator:
         The occupancies' training form, fitted on the training split. Stored
         in the checkpoint, and what :meth:`predict_occupancies` inverts.
     occupancy_channels : int, optional
-        For a task with a per-atom **input** (``paw2tau``): the field channels
+        For a task with a per-atom **input** (``chg2tau``): the field channels
         the occupancies are written into by
         :class:`~poraque.ml.paw.SiteWriter`, beside the input field. The model
         is then a :class:`~poraque.ml.paw.OccupancyInputModel`, ``site_layouts``
@@ -296,9 +296,9 @@ class FieldOperator:
         self.site_transform = site_transform
 
         if self.pauli_residual:
-            if self.task.name != "chg2tau":
+            if self.task.name != "pseudo2tau":
                 raise ValueError(
-                    f"pauli_residual is only defined for the chg2tau task "
+                    f"pauli_residual is only defined for the pseudo2tau task "
                     f"(tau = tau_vW[rho] + ...), not {self.task.name!r}."
                 )
             from .heads import PauliResidualOperator
@@ -448,7 +448,7 @@ class FieldOperator:
             is defined on exactly the same mesh as the input.
         sites : dict, optional
             Every atom's PAW records, required by an operator with a per-atom
-            input (``paw2tau``); see :meth:`site_inputs`.
+            input (``chg2tau``); see :meth:`site_inputs`.
 
         Returns
         -------
@@ -543,7 +543,7 @@ class FieldOperator:
         """
         The PAW augmentation occupancies of every atom, in physical units.
 
-        Only for an operator with an occupancy head (``ext2paw``). The input is
+        Only for an operator with an occupancy head (``ext2chg``). The input is
         the same field :meth:`predict` takes; its structure supplies the atoms,
         in file order, which is the order VASP writes the records in.
 
@@ -565,7 +565,7 @@ class FieldOperator:
                                                       "occupancies"):
             raise ValueError(
                 f"this {self.task.name} operator has no occupancy head; "
-                f"occupancies come from an ext2paw operator.")
+                f"occupancies come from an ext2chg operator.")
         from ..fields import element_of
         from ..fields.vasp.augmentation import record_layout
         from ..fields.vasp.poscar import symbol_to_z
@@ -1075,7 +1075,7 @@ def save_bundle(path, operators, config=None, paw_profiles=None):
     Examples
     --------
     >>> save_bundle("models/run/run.poraque",
-    ...             {"ext2chg": first, "chg2tau": second},
+    ...             {"ext2pseudo": first, "pseudo2tau": second},
     ...             config=config, paw_profiles=profiles)   # doctest: +SKIP
     """
     if config is not None and hasattr(config, "to_dict"):
@@ -1093,6 +1093,58 @@ def save_bundle(path, operators, config=None, paw_profiles=None):
         os.makedirs(directory, exist_ok=True)
     torch.save(checkpoint, path)
     return str(path)
+
+
+def bundle_task_renames(states):
+    r"""
+    ``{stored key: current task name}`` for a checkpoint's ``model_state_dict``.
+
+    The four task names were reorganized so that a name says whether the
+    per-atom PAW records travel with the grid, and two of them were
+    **swapped**: what a checkpoint written earlier calls ``ext2chg`` is what is
+    now called ``ext2pseudo``, while the name ``ext2chg`` now belongs to the
+    task that was ``ext2paw``. A stored key is therefore not evidence of
+    which task it holds, and translating by a table of names alone would
+    quietly load a grid-only operator as a PAW one.
+
+    What *is* evidence is the record itself. ``FieldOperator.state()`` writes
+    ``site`` as ``None`` unless the network carries per-element occupancy
+    layouts, so a truthy ``site`` means the operator has an on-site part ---
+    which is the one distinction the rename was about. Whether that part is
+    predicted or consumed follows from the direction the old and the new names
+    agree on (``ext2…`` predicts, ``…2tau`` consumes). Together those fix the
+    task uniquely for every name either side of the rename, and resolve to the
+    identity for a checkpoint written since.
+
+    ``site`` is read rather than ``role``, which it also holds: ``role`` was
+    added after the earliest sited checkpoints and is absent from them.
+    ``model_class`` corroborates, for a record older still.
+
+    Parameters
+    ----------
+    states : dict
+        ``model_state_dict``: ``{stored key: state record}``.
+
+    Returns
+    -------
+    dict
+        Only the keys whose name changed, so an empty dict means a current
+        checkpoint.
+    """
+    renames = {}
+    for key, record in states.items():
+        record = record or {}
+        sited = bool(record.get("site")) or record.get("model_class") in (
+            "PAWOperatorModel", "OccupancyInputModel")
+        if str(key).startswith("ext2"):
+            current = "ext2chg" if sited else "ext2pseudo"
+        elif str(key).endswith("2tau"):
+            current = "chg2tau" if sited else "pseudo2tau"
+        else:
+            continue
+        if current != key:
+            renames[key] = current
+    return renames
 
 
 def read_bundle(path):
@@ -1115,9 +1167,36 @@ def read_bundle(path):
         explicitly: a single-operator file, and a checkpoint written in the
         ``poraque-bundle-1`` layout this one replaced, which is not read ---
         retrain it.
+
+    Notes
+    -----
+    Task names stored before the rename are translated on the way out by
+    :func:`bundle_task_renames`, which reads each operator's own ``site``
+    record rather than trusting the stored key --- two of the names were
+    swapped, so the key alone cannot say which task it holds.
     """
     payload = torch.load(path, map_location="cpu", weights_only=False)
     if isinstance(payload, dict) and set(CHECKPOINT_KEYS) <= set(payload):
+        states = payload.get("model_state_dict") or {}
+        renames = bundle_task_renames(states)
+        if renames:
+            translated = {}
+            for key, record in states.items():
+                current = renames.get(key, key)
+                # The record names its own task, and `FieldOperator
+                # .from_state` builds from that rather than from the key, so
+                # re-keying alone would leave the operator asking for a task
+                # that no longer exists.
+                if current != key and isinstance(record, dict):
+                    record = {**record, "task": current}
+                translated[current] = record
+            payload["model_state_dict"] = translated
+            # The stored config names the task too, and `TrainingConfig
+            # .from_dict` would reject a retired name -- or, worse, accept a
+            # swapped one and mean the other task by it.
+            task = payload.get("config", {}).get("task")
+            if isinstance(task, dict) and task.get("type") in renames:
+                task["type"] = renames[task["type"]]
         return payload
 
     detail = ""
@@ -1150,7 +1229,7 @@ def load_bundle(path, task, model=None, device=None, **model_kwargs):
     path : str
         Bundle file.
     task : str
-        ``"ext2chg"`` or ``"chg2tau"``.
+        ``"ext2pseudo"`` or ``"pseudo2tau"``.
     model : torch.nn.Module, optional
     device : str or torch.device, optional
     **model_kwargs
@@ -1430,7 +1509,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         context are the same thing, so a caller passes it unconditionally and
         the single-device path is what runs when there is no group.
     occupancy_weight : float, optional
-        For an operator with an occupancy head (``ext2paw``): the weight of the
+        For an operator with an occupancy head (``ext2chg``): the weight of the
         per-atom term, the equally-weighted L blocks of the normalized records,
         against the field objective. The validation score the best epoch is
         chosen on is the same sum on the held-out split, so selection and
@@ -1551,12 +1630,12 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     if sites_task:
         if operator.site_transform is None:
             raise ValueError(
-                "an ext2paw operator needs its site_transform, fitted on the "
+                "an ext2chg operator needs its site_transform, fitted on the "
                 "training split (OccupancyTransform.fit), before training.")
         history["val_occupancy_error"] = []
         history["val_occupancy_loss"] = []
         history["val_field_error"] = []
-    # A per-atom *input* (paw2tau): the records are normalized by the same
+    # A per-atom *input* (chg2tau): the records are normalized by the same
     # transform form and handed to the model beside the field.
     input_sites = operator.task.site_input is not None
     if input_sites and operator.site_transform is None:
@@ -1596,6 +1675,11 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     # objective it describes.
     data_loss_name = str(getattr(criterion, "loss", "relative_l2"))
     sobolev_weight = float(getattr(criterion, "sobolev_weight", 0.0) or 0.0)
+    magnetization_weight = float(
+        getattr(criterion, "magnetization_weight", 1.0))
+    magnetization_floor = float(
+        getattr(criterion, "magnetization_floor", 1e-2))
+    spin_loss = str(getattr(criterion, "spin_loss", "joint"))
     # Read off the criterion, never re-derived from a config this function does
     # not see -- the same discipline `sobolev_weight` above is read with, and
     # for the same reason: a loop that decided this for itself could decide it
@@ -1611,7 +1695,7 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
     physics_informed = bool(getattr(criterion, "physics_informed", True))
     electron_count_weight = (float(getattr(criterion, "electron_count_weight", 0.0))
                              if physics_informed and operator.task.name in
-                             ("ext2chg", "ext2paw") else 0.0)
+                             ("ext2pseudo", "ext2chg") else 0.0)
     if electron_count_weight > 0.0:
         history["train_electron_count_loss"] = []
         history["val_electron_count_error"] = []
@@ -1660,12 +1744,19 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
         else:
             legend += "   |   no validation split: this is a TRAINING FIT"
         if channel_parts:
-            quadrature = ("; for this L2 objective data = sqrt(charge^2 + "
-                          "mag^2) per sample" if sobolev_weight <= 0.0 else "")
-            legend += (f"\n    charge, mag: the data term's error in the "
-                       f"density and magnetization channels, same norm and "
-                       f"denominator as the objective{quadrature}; train "
-                       f"loss is the total, with any physics terms")
+            if spin_loss == "per_channel":
+                legend += (f"\n    charge, mag: each channel's error over "
+                           f"ITS OWN norm (mag's floored at "
+                           f"{magnetization_floor:g} x norm(rho) where m = "
+                           f"0); data = charge + {magnetization_weight:g} x "
+                           f"mag per sample")
+            else:
+                legend += ("\n    charge, mag: the density and magnetization "
+                           "channels' error, same norm and denominator as "
+                           "the objective (the whole target's, which stays "
+                           "finite where m = 0); for an L2 objective "
+                           "data = sqrt(charge^2 + mag^2) per sample")
+            legend += ("; train loss is the total, with any physics terms")
         if electron_count_weight > 0.0:
             legend += (f"\n    train N loss: mean squared relative electron-count "
                        f"error, on decoded absolute charge density; weight "
@@ -1737,9 +1828,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             physical = {}
             if physics_informed:
                 # The reference in physical units serves two terms: it is rho
-                # for the von Weizsacker bound on chg2tau -- where the *input*
+                # for the von Weizsacker bound on pseudo2tau -- where the *input*
                 # is the density -- and its integral is the electron count the
-                # charge-conservation term on ext2chg/ext2paw is measured against.
+                # charge-conservation term on ext2pseudo/ext2chg is measured against.
                 physical_target = batch["target_physical"].to(
                     operator.device, non_blocking=pin_memory)
                 physical_prediction = operator.target_transform.inverse(
@@ -1768,16 +1859,28 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             total = terms["total"]
             if channel_parts:
                 with torch.no_grad():
-                    for channel in range(2):
-                        # The objective's own error, with the prediction put
-                        # into this one channel and the reference kept in the
-                        # other: what the data term would be if only this
-                        # channel were wrong.
-                        alone = targets.clone()
-                        alone[:, channel] = prediction[:, channel]
-                        running_channels[channel] += data_error(
-                            alone, targets, cell=cell, loss=data_loss_name,
-                            sobolev_weight=sobolev_weight).mean()
+                    # The two terms the data loss is the weighted sum of --
+                    # read off it rather than reconstructed, so the columns
+                    # and the number the optimizer stepped on are the same
+                    # arithmetic. This also drops a clone of the whole target
+                    # and two extra error evaluations per batch, which is what
+                    # the substitution diagnostic cost.
+                    # `channel_errors` off the criterion when it has one,
+                    # so the columns are the objective's own terms. A
+                    # caller-supplied criterion need not provide it, and
+                    # before this block read the terms off the objective the
+                    # diagnostic was a module-level call that worked for any
+                    # of them -- so fall back rather than requiring it.
+                    split = getattr(criterion, "channel_errors", None)
+                    if split is None:
+                        parts_now = channel_errors(
+                            prediction, targets, cell, loss=data_loss_name,
+                            sobolev_weight=sobolev_weight,
+                            spin_loss=spin_loss,
+                            magnetization_floor=magnetization_floor)
+                    else:
+                        parts_now = split(prediction, targets, cell)
+                    running_channels += parts_now.mean(dim=0)
             if sites_task:
                 transform = operator.site_transform
                 wanted = transform.normalize(
@@ -1860,6 +1963,9 @@ def train(operator, dataset, epochs=100, batch_size=1, learning_rate=1e-3,
             error = evaluate(operator, validation_loader,
                              loss=data_loss_name,
                              sobolev_weight=sobolev_weight,
+                             magnetization_weight=magnetization_weight,
+                             spin_loss=spin_loss,
+                             magnetization_floor=magnetization_floor,
                              return_metrics=electron_count_weight > 0.0)
             count_metrics = error if electron_count_weight > 0.0 else None
             if count_metrics is not None:
@@ -1951,7 +2057,7 @@ def input_site_batch(operator, batch, non_blocking=False):
     """
     A collated batch's PAW records as the model's ``sites``, normalized.
 
-    For an operator with a per-atom input (``paw2tau``). The records are moved
+    For an operator with a per-atom input (``chg2tau``). The records are moved
     to the device and passed through the operator's ``site_transform``; the
     collated padding (zeros past a record's length, absent atoms masked) stays
     zero.
@@ -2058,7 +2164,8 @@ def validate_occupancies(operator, loader):
 
 @torch.no_grad()
 def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0,
-             return_metrics=False):
+             magnetization_weight=1.0, spin_loss="joint",
+             magnetization_floor=1e-2, return_metrics=False):
     r"""
     Mean held-out error over a loader, in *physical* units.
 
@@ -2075,6 +2182,13 @@ def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0,
         checkpoint and early stopping are decided on it.
     sobolev_weight : float, optional
         Gradient weight, for the two :math:`H^1` forms.
+    magnetization_weight : float, optional
+        Weight of the magnetization term for a spin-polarized target, relative
+        to the density term's 1. The run's own, for the same reason as
+        ``loss``: this number selects the checkpoint.
+    magnetization_floor : float, optional
+        Floor on the magnetization term's denominator, as a fraction of
+        ``norm(rho)``. The run's own, for the same reason.
     return_metrics : bool, optional
         Return the field error and the mean absolute and mean squared relative
         electron-count errors in a dict. Counts use the total charge channel
@@ -2116,7 +2230,10 @@ def evaluate(operator, loader, loss="relative_l2", sobolev_weight=0.0,
         # batch, for a number that is only read once the loader is exhausted.
         errors.append(data_error(prediction, physical_target, cell,
                                  loss=loss,
-                                 sobolev_weight=sobolev_weight))
+                                 sobolev_weight=sobolev_weight,
+                                 magnetization_weight=magnetization_weight,
+                                 spin_loss=spin_loss,
+                                 magnetization_floor=magnetization_floor))
         if return_metrics:
             from .physics import integrate
 

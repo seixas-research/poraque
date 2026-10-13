@@ -101,7 +101,7 @@ Set it wherever the energy is computed:
 
 \begin{lstlisting}
 EnergyCalculator.from_potential(vext, functional="lda")
-Poraque("ext2chg.poraque", "chg2tau.poraque", potcar_dir=..., functional="lda")
+Poraque("ext2pseudo.poraque", "pseudo2tau.poraque", potcar_dir=..., functional="lda")
 \end{lstlisting}
 \begin{lstlisting}
 poraque-inference run/ \
@@ -177,7 +177,7 @@ calculator afterwards, so a prediction can be written out with
 \toprule
 Argument & Meaning \\
 \midrule
-\opt{ext2chg}, \opt{chg2tau} & Checkpoint paths, or loaded
+\opt{ext2pseudo}, \opt{pseudo2tau} & Checkpoint paths, or loaded
 \pyclass{FieldOperator}s. \\
 \opt{potcar} & A single \file{POTCAR} covering the species present. \\
 \opt{potcar\_dir} & A \file{POTCAR} \emph{library}, searched per
@@ -430,7 +430,7 @@ native $128^{3}$ mesh, and $\Ts$ and the electron count are preserved exactly
 \end{pnote}
 
 \paragraph{Charge normalization helps, and is on by default.} The shipped
-\opt{ext2chg} operator predicts densities whose electron count drifts by up to
+\opt{ext2pseudo} operator predicts densities whose electron count drifts by up to
 $1.7\,\%$ --- nearly five electrons out of $297$. Every electrostatic term is
 at least linear in $\rho$ and $E_{\rm H}$ is quadratic, so that drift alone
 moved totals by tens of eV, differently for each structure, and therefore did

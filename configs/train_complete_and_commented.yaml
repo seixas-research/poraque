@@ -13,10 +13,10 @@
 # =====================================================================
 
 task:
-  type: all                     # all | ext2chg | chg2tau | ext2paw | paw2tau; only `all` reaches a total energy
-  # `ext2paw` predicts the pseudo-density AND every atom's PAW augmentation
+  type: all                     # all | ext2pseudo | pseudo2tau | ext2chg | chg2tau; only `all` reaches a total energy
+  # `ext2chg` predicts the pseudo-density AND every atom's PAW augmentation
   # occupancies, from V_ext. It is not a link of the chain -- `all` means
-  # ext2chg + chg2tau -- and `all` adds it only when model.paw.enable is true.
+  # ext2pseudo + pseudo2tau -- and `all` adds it only when model.paw.enable is true.
   name: pt_w16_m8_l3            # names models/<name>/ and everything inside it
 
 data:
@@ -48,7 +48,7 @@ data:
   # input channel has to be Poraque's own arithmetic in both places.
   #
   # TAUCAR is optional per material and needs no declaring. A material that has
-  # one joins the chg2tau set; one that does not still joins ext2chg and is
+  # one joins the pseudo2tau set; one that does not still joins ext2pseudo and is
   # simply absent from the other. A whole task with no target anywhere is
   # skipped with a message rather than failing the run -- which is what makes
   # `type: all` sensible on a Materials Project download, where no tau exists.
@@ -88,7 +88,7 @@ data:
   spin: auto                    # auto reads the sources; true demands ISPIN=2, false discards it
   precision: float64            # how the fields are held in memory (not what the model computes in)
   xc: auto                      # pbe | lda | pw91 | auto; read by the EL analysis, not by training
-  delta_density: true           # ext2chg learns rho - rho_sup; predict() still returns the full rho
+  delta_density: true           # ext2pseudo learns rho - rho_sup; predict() still returns the full rho
   atomic_reference: data/vasp/isolated_atoms   # atomic_reference.json, or a dir of one-atom runs
   paw_source: atomic            # atomic (free atom, transferable) | material (training-set average)
   storage: files                # files (a CHGCAR-format text file per field) | hdf5 (one fields.h5)
@@ -238,7 +238,7 @@ model:
   precision: float32            # float32 | float64; what the operator computes in
 
   # ONE BLOCK: input channels describing the structure, appended after V_ext
-  # (ext2chg, ext2paw). Built from data.atomic_reference, rebuilt from the
+  # (ext2pseudo, ext2chg). Built from data.atomic_reference, rebuilt from the
   # structure at inference, recorded in the checkpoint; scalar fields, so the
   # equivariance is untouched. On 785 CHONPS cells, with the same backbone, it
   # took the held-out rel L2 of rho from 4.4 % to 3.7 % at epoch 10.
@@ -247,16 +247,16 @@ model:
     # superposition: true       # rho_sup, the delta-density baseline, as a channel
     # elements: auto            # one superposition per element; auto = every element in the data, or a list
 
-  occupancy_channels: 8         # paw2tau: field channels the PAW occupancies are written into (SiteWriter)
+  occupancy_channels: 8         # chg2tau: field channels the PAW occupancies are written into (SiteWriter)
 
-  pauli_residual: false         # chg2tau: predict tau = tau_vW + s*softplus(f), bound by construction
+  pauli_residual: false         # pseudo2tau: predict tau = tau_vW + s*softplus(f), bound by construction
   pauli_scale: null             # initial Pauli scale in eV/Ang^3; null fits it from the training split
   learn_pauli_scale: true       # optimize that scale alongside the backbone
 
-  # ONE BLOCK, the convention equivariant follows: the operator of the ext2paw
+  # ONE BLOCK, the convention equivariant follows: the operator of the ext2chg
   # task, with the switch inside it.
   paw:
-    enable: false               # true for task.type: ext2paw, or beside `all` to add ext2paw
+    enable: false               # true for task.type: ext2chg, or beside `all` to add ext2chg
     # width: 64                 # the FNO backbone's channels, as model.width
     # modes: 16                 # its retained Fourier modes per axis, as model.modes
     # n_layers: 4               # its Fourier layers, as model.n_layers
@@ -266,11 +266,11 @@ model:
     # magnetization_weight: 1.0 # weight of the magnetization record set in the occupancy loss (and score)
     # readout_cache_mib: 1024   # device memory for the readout's spectral kernels (one per cell+grid); runtime only
   #
-  # task.type: ext2paw with enable false RAISES, and so does enable true beside
-  # ext2chg or chg2tau: two switches for one decision are checked against each
+  # task.type: ext2chg with enable false RAISES, and so does enable true beside
+  # ext2pseudo or pseudo2tau: two switches for one decision are checked against each
   # other rather than left to disagree.
   #
-  # The target is two things. The pseudo-density on the grid, as for ext2chg,
+  # The target is two things. The pseudo-density on the grid, as for ext2pseudo,
   # and each atom's augmentation occupancies rho(ll'LM) -- the one-center PAW
   # terms inside the augmentation spheres, which VASP writes after the grid and
   # no grid model can see. 138 numbers per atom for PAW_PBE Pt (projector
@@ -299,7 +299,7 @@ model:
   # --kfold or fine-tuning, both refused before the cache; an f-channel element
   # (L = 6) is refused too.
   #
-  # With an ext2paw operator in the bundle, poraque-inference --add-paw writes
+  # With an ext2chg operator in the bundle, poraque-inference --add-paw writes
   # its predicted records (--paw-source model), ahead of the averaged table.
 
 training:
@@ -322,6 +322,49 @@ training:
                                 #   The progress table names whichever one is running, and
                                 #     early stopping is decided on it.
   sobolev_weight: 0.1           # w_Sob; read only by the two h1 losses
+  spin_loss: joint              # joint | per_channel -- how the two channels of a
+                                #   spin-polarized target (data.spin) enter the data term.
+                                #   A one-channel run is identical either way, bit for bit.
+                                #   joint: ONE norm over both channels -- each channel's error
+                                #     over the whole (rho, m) target's norm, added in
+                                #     quadrature, i.e. exactly ||d(rho,m)|| / ||(rho,m)||.
+                                #   per_channel: each channel over ITS OWN norm, summed as
+                                #     charge + magnetization_weight * mag.
+                                #   THE DEFAULT IS THE MEASURED ONE, and the arithmetic is
+                                #     misleading about which should win. Under joint the
+                                #     magnetization's share of the objective is 3e-8 in the
+                                #     MEDIAN on the 432-cell CHON set, which makes per_channel
+                                #     look obviously right. Measured head to head on that
+                                #     cache (2 seeds, 60 epochs, magnetic cells scored by
+                                #     predicted/reference ||m||):
+                                #       30 magnetic + 30 noise   joint 1.00 / relL2 0.084
+                                #                                per_channel 1.00 / relL2 0.109
+                                #       12 magnetic + 100 noise  joint 0.96 / relL2 0.166
+                                #       (the real 11% imbalance) per_channel 0.001 / relL2 1.00
+                                #     What trains m is the MEAN share, not the median: the
+                                #     magnetic cells carry real weight under joint. per_channel
+                                #     gives each of the many noise cells a floored term of
+                                #     order one, and 100 cells saying "drive m to zero" bury 12
+                                #     saying otherwise -- so it collapses the magnetization it
+                                #     was meant to rescue. Use it only when magnetic cells are
+                                #     not a small minority, and measure.
+  magnetization_weight: 1.0     # w_m, the weight of the MAGNETIZATION term relative to the
+                                #   density term's 1. Read only under spin_loss: per_channel.
+                                #   0.0 trains the density alone and says so.
+                                #   Distinct from model.paw.magnetization_weight, which weights
+                                #     the magnetization RECORD SET of the per-atom occupancy
+                                #     target; a bare --set magnetization_weight reaches this one.
+  magnetization_floor: 0.01     # eta: floor on the magnetization term's denominator, as a
+                                #   fraction of ||rho||. Read only under per_channel. The term
+                                #   is ||dm|| / sqrt(||m||^2 + (eta*||rho||)^2), so above the
+                                #   floor it is m's honest relative error and below it the term
+                                #   measures a spurious predicted moment against a fixed
+                                #   fraction of the density. Needed because m is EXACTLY zero
+                                #   on 126 of the 432 CHON cells (239 more sit in the noise at
+                                #   ||m||/||rho|| <= 1e-4), so an unfloored per-channel relative
+                                #   error divides by zero on a quarter of them. Raising eta is
+                                #   what stops the noise cells dominating, at the cost of
+                                #   weakening the term where it was wanted.
   valid_fraction: 0.2           # held out at the STRUCTURE level; 0 trains on everything
   eval_epoch: 10                # evaluate and log every this many epochs
   early_stopping: 300           # epochs without improvement before stopping; 0 disables
@@ -408,10 +451,10 @@ training:
   #          later reads as evidence that it applied.
   physics_informed:
     enable: auto                # auto | true | false, as above
-    electron_count_weight: 0.0  # ext2chg/ext2paw: penalize relative error in int(rho) = N
+    electron_count_weight: 0.0  # ext2pseudo/ext2chg: penalize relative error in int(rho) = N
     positivity_weight: 0.0      # rho, tau >= 0 (a Log head is the better fix)
-    von_weizsacker_weight: 0.0  # chg2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
-    euler_lagrange_weight: 0.0  # ext2chg: dTs/drho + v_ext + v_H + v_xc = const, on a surrogate Ts
+    von_weizsacker_weight: 0.0  # pseudo2tau: tau >= |grad rho|^2 / (8 rho), a theorem, one-sided
+    euler_lagrange_weight: 0.0  # ext2pseudo: dTs/drho + v_ext + v_H + v_xc = const, on a surrogate Ts
 
 output:
   root: models                  # parent of every run folder; null writes NOTHING at all
@@ -426,7 +469,7 @@ output:
   save_raw_plot_data: false     # write the numbers behind every figure beside it,
                                 #   so a plot can be redrawn for publication without
                                 #   re-running the model. Each sidecar takes the STEM
-                                #   of its figure (ext2chg_parity.png -> .csv), so the
+                                #   of its figure (ext2pseudo_parity.png -> .csv), so the
                                 #   pairing is a property of the listing. Loss curve ->
                                 #   CSV, one row per epoch, with the unmeasured epochs
                                 #   left EMPTY rather than interpolated; parity -> CSV,

@@ -481,7 +481,7 @@ class TestCalculatorCharges:
             {task: FieldOperator(task, width=4, modes=2, n_layers=1,
                                  projection_channels=8, device="cpu",
                                  training_resolution=16)
-             for task in ("ext2chg", "chg2tau")})
+             for task in ("ext2pseudo", "pseudo2tau")})
         return Poraque(bundle, charges={"Pt": 11.0}, device="cpu")
 
     @pytest.fixture

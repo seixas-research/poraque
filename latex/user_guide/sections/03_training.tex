@@ -7,7 +7,7 @@
 poraque-train --config configs/train.yaml
 \end{lstlisting}
 
-This trains \textbf{one} \opt{ext2chg} model and \textbf{one} \opt{chg2tau}
+This trains \textbf{one} \opt{ext2pseudo} model and \textbf{one} \opt{pseudo2tau}
 model on the combined data of every structure, and writes:
 
 Everything it writes lands in \emph{one directory named after the run}, so a
@@ -45,7 +45,7 @@ MAE & The typical voxel, in the field's own units, where a squared error is not
 readable as a quantity. \\
 Max.\ error & The worst voxel. Means and RMS both hide a single catastrophic
 site, and near a nucleus is exactly where one occurs. \\
-$|\Delta N|$ & Conservation. For \opt{ext2chg} this is the electron-count error
+$|\Delta N|$ & Conservation. For \opt{ext2pseudo} this is the electron-count error
 in electrons, and it is the metric a pointwise loss controls worst. \\
 \bottomrule
 \end{tabular}
@@ -175,7 +175,7 @@ integral error & how well the electron count or $T_s$ is reproduced \\
 \end{tabular}
 \end{center}
 
-For \opt{chg2tau} the log also prints the classical orbital-free functionals
+For \opt{pseudo2tau} the log also prints the classical orbital-free functionals
 (Thomas--Fermi, von Weizsäcker) evaluated on the same input. Beating those is
 the bar --- a learned functional that does not is not adding anything.
 
@@ -190,8 +190,8 @@ Seventeen platinum supercells --- ten 27-atom and seven 32-atom, four grid shape
 \toprule
 Model & held out (3 structures) & all structures (training fit) \\
 \midrule
-\opt{ext2chg} & $0.0379 \pm 0.0027$ & $0.0209$ \\
-\opt{chg2tau} & $0.0511 \pm 0.0031$ & $0.0140$ \\
+\opt{ext2pseudo} & $0.0379 \pm 0.0027$ & $0.0209$ \\
+\opt{pseudo2tau} & $0.0511 \pm 0.0031$ & $0.0140$ \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -208,7 +208,7 @@ them, and the $\pm$ is the spread over three structures rather than a
 cross-validation error bar.
 
 Cross-validation on the earlier 12-structure dataset measured the cell-size
-effect directly: $0.0189 \pm 0.0047$ (\opt{ext2chg}) on 27-atom cells against
+effect directly: $0.0189 \pm 0.0047$ (\opt{ext2pseudo}) on 27-atom cells against
 $0.0441 \pm 0.0180$ on 32-atom ones, so a held-out 32-atom cell was about
 $2.4\times$ harder. The current single-split figure for that harder subset,
 $0.0379$, is better than the $0.0441$ it scored then --- which is what having
@@ -222,7 +222,7 @@ every structure rather than whichever three the seed selected.
 \section{Options worth knowing}
 
 \begin{description}
-  \item[\opt{--pauli-head}] For \opt{chg2tau}, predicts
+  \item[\opt{--pauli-head}] For \opt{pseudo2tau}, predicts
     $\tau = \tau_{\rm vW}[\rho] + s\,\mathrm{softplus}(f)$ so the exact bound
     $\tau \ge \tau_{\rm vW}$ holds by construction. Improves accuracy and
     trains slightly faster; recommended.

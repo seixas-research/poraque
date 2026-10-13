@@ -52,7 +52,7 @@ CONFIGS = sorted(glob.glob(
 
 
 def label(path):
-    """``configs/kan/compare_kan_rbf_ext2chg.yaml``, for a readable test id."""
+    """``configs/kan/compare_kan_rbf_ext2pseudo.yaml``, for a readable test id."""
     return os.path.relpath(path, os.path.join(os.path.dirname(__file__), ".."))
 
 

@@ -54,16 +54,16 @@ An abridged `poraque-train` run:
   ...
 
 ==============================================================================
-  TASK ext2chg: EXTCAR -> CHGCAR
+  TASK ext2pseudo: EXTCAR -> CHGCAR
 ==============================================================================
   Local external potential -> valence charge density.
 
-[EXT2CHG DATASET]
+[EXT2PSEUDO DATASET]
   field cache         : in RAM, ~36.0 KiB (data.cache_in_memory: auto)
   training structures : 2
   ...
 
-[EXT2CHG TRAINING]
+[EXT2PSEUDO TRAINING]
           epoch     train loss     val rel L2
     -----------------------------------------
             1/2        1.34859        1.87486  *
@@ -87,7 +87,7 @@ from poraque.utils.logging import split_blocks
 
 blocks = dict(split_blocks(open("models/smoke/log/smoke.log").read()))
 blocks["OVERALL"][0]      # 'task          rel L2 (mean)    R2 (mean) ...'
-blocks["EXT2CHG TRAINING"][-1]
+blocks["EXT2PSEUDO TRAINING"][-1]
                           # 'trained 2/2 epochs in 2.4 s   loss 1.3486 -> 1.3073'
 ```
 
@@ -100,7 +100,7 @@ metrics JSON; the log is what to grep while the run is still going.
 
 | Command | Blocks, in order of appearance |
 | --- | --- |
-| `poraque-train` | `RUN`, `CONFIGURATION`, `CACHE`, then per task `<TASK> DATASET`, `<TASK> MODEL`, `<TASK> TRAINING`, `<TASK> RESULTS`, `<TASK> AGGREGATE OVER TRAINING` / `VALIDATION`, `OCCUPANCIES` (`ext2paw`), `SYMBOLIC DISTILLATION <TASK>`, `<TASK> FILES`; then `CHECKPOINT`, `OVERALL`, `OUTPUT`, `RESOURCES` |
+| `poraque-train` | `RUN`, `CONFIGURATION`, `CACHE`, then per task `<TASK> DATASET`, `<TASK> MODEL`, `<TASK> TRAINING`, `<TASK> RESULTS`, `<TASK> AGGREGATE OVER TRAINING` / `VALIDATION`, `OCCUPANCIES` (`ext2chg`), `SYMBOLIC DISTILLATION <TASK>`, `<TASK> FILES`; then `CHECKPOINT`, `OVERALL`, `OUTPUT`, `RESOURCES` |
 | `poraque-train --kfold` | per task `<TASK> FOLDS`, `<TASK> FOLD i/K`, `<TASK> K-FOLD SUMMARY` in place of the single fit's |
 | `poraque-train --cache-only` | `RUN`, `CONFIGURATION`, `CACHE`, `CACHE SUMMARY`, `RESOURCES` |
 | `poraque-inference` | `RUNTIME`, `INPUT`, `GRID`, `POTENTIAL`, `DENSITY`, `PAW RECORDS`, `KINETIC ENERGY DENSITY`, `HARTREE POTENTIAL`, `COMPARISON`, `ENERGY`, `FIGURES`, `OUTPUT FILES` — those the run produces |
@@ -112,7 +112,7 @@ metrics JSON; the log is what to grep while the run is still going.
 | `python -m poraque.ml.backend` | `CONFIGURATION`, `BUILD`, `STATUS`, `BENCHMARK`, `NEXT STEPS` |
 
 `<TASK>` is the task's name in upper case, so an `all` run has an
-`EXT2CHG TRAINING` and a `CHG2TAU TRAINING`.
+`EXT2PSEUDO TRAINING` and a `PSEUDO2TAU TRAINING`.
 
 ## Two blocks worth reading closely
 

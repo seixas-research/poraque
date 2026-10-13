@@ -34,7 +34,7 @@ field. That is more informative than a number, and this module keeps both:
     comparable.
 ``integral_spread``
     Standard deviation of :math:`\int f\,d^3r` across members: the electron
-    count for ``ext2chg``, the kinetic energy for ``chg2tau``. These are the
+    count for ``ext2pseudo``, the kinetic energy for ``pseudo2tau``. These are the
     quantities the energy is built from, so their spread is the one that
     propagates into a predicted energy.
 
@@ -119,7 +119,7 @@ def committee_integrals(predictions, grid):
     r"""
     Spread of :math:`\int f\,d^3r` across the committee.
 
-    For ``ext2chg`` this is the electron count and for ``chg2tau`` the kinetic
+    For ``ext2pseudo`` this is the electron count and for ``pseudo2tau`` the kinetic
     energy — the integrated quantities the total energy is assembled from. A
     committee can agree closely pointwise and still disagree on the integral,
     or the reverse, so this is not implied by :func:`committee_spread`.
@@ -422,13 +422,13 @@ class Committee:
     ------
     ValueError
         With fewer than two members, or when they disagree about the task —
-        a "committee" mixing ``ext2chg`` and ``chg2tau`` would produce a
+        a "committee" mixing ``ext2pseudo`` and ``pseudo2tau`` would produce a
         number with no meaning at all.
 
     Examples
     --------
     >>> committee = Committee.from_bundles(                    # doctest: +SKIP
-    ...     sorted(glob("models/committee_*/poraque_models.poraque")), "ext2chg")
+    ...     sorted(glob("models/committee_*/poraque_models.poraque")), "ext2pseudo")
     >>> committee.disagreement(potential)["jsd"]               # doctest: +SKIP
     """
 
@@ -468,7 +468,7 @@ class Committee:
         paths : sequence of str
             One ``poraque_models.poraque`` per member.
         task : str
-            ``"ext2chg"`` or ``"chg2tau"``.
+            ``"ext2pseudo"`` or ``"pseudo2tau"``.
         device : str or torch.device, optional
         """
         from .training import load_bundle

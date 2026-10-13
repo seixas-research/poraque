@@ -426,7 +426,7 @@ class TestBackwardCompatibility:
         the kan_* keys: strip them out and confirm the model still rebuilds,
         falling back to the (harmless, since neither silu nor gelu consumes
         them) constructor defaults for the missing keys."""
-        operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+        operator = FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                                  projection_channels=8, device="cpu")
         state = operator.state()
         for key in ("kan_grid_size", "kan_spline_order", "kan_grid_range",
@@ -445,10 +445,10 @@ class TestBackwardCompatibility:
             assert torch.equal(a, b)
 
     def test_default_bundle_round_trip_is_unaffected(self, tmp_path):
-        operator = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+        operator = FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
                                  projection_channels=8, device="cpu")
-        path = save_bundle(str(tmp_path / "m.poraque"), {"chg2tau": operator})
-        restored = load_bundle(path, "chg2tau", device="cpu")
+        path = save_bundle(str(tmp_path / "m.poraque"), {"pseudo2tau": operator})
+        restored = load_bundle(path, "pseudo2tau", device="cpu")
         assert restored.model.activation == "silu"
         for a, b in zip(operator.model.state_dict().values(),
                         restored.model.state_dict().values()):
@@ -458,11 +458,11 @@ class TestBackwardCompatibility:
         """The same round trip, but for a checkpoint that explicitly asked
         for the no-longer-default `gelu` -- its own recorded architecture
         must win over the current default on load."""
-        operator = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+        operator = FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
                                  projection_channels=8, activation="gelu",
                                  device="cpu")
-        path = save_bundle(str(tmp_path / "m.poraque"), {"chg2tau": operator})
-        restored = load_bundle(path, "chg2tau", device="cpu")
+        path = save_bundle(str(tmp_path / "m.poraque"), {"pseudo2tau": operator})
+        restored = load_bundle(path, "pseudo2tau", device="cpu")
         assert restored.model.activation == "gelu"
         for a, b in zip(operator.model.state_dict().values(),
                         restored.model.state_dict().values()):
@@ -493,12 +493,12 @@ class TestFNOWithKANActivations:
 
     def test_kan_bspline_checkpoint_round_trip_preserves_hyperparameters(self, tmp_path):
         operator = FieldOperator(
-            "ext2chg", width=4, modes=2, n_layers=1, projection_channels=8,
+            "ext2pseudo", width=4, modes=2, n_layers=1, projection_channels=8,
             activation="kan_bspline", kan_grid_size=5, kan_spline_order=2,
             kan_grid_range=(-3.0, 3.0), device="cpu",
         )
-        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator})
-        restored = load_bundle(path, "ext2chg", device="cpu")
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2pseudo": operator})
+        restored = load_bundle(path, "ext2pseudo", device="cpu")
 
         assert restored.model.activation == "kan_bspline"
         assert restored.model.kan_grid_size == 5
@@ -510,11 +510,11 @@ class TestFNOWithKANActivations:
 
     def test_kan_chebyshev_checkpoint_round_trip_preserves_hyperparameters(self, tmp_path):
         operator = FieldOperator(
-            "chg2tau", width=4, modes=2, n_layers=1, projection_channels=8,
+            "pseudo2tau", width=4, modes=2, n_layers=1, projection_channels=8,
             activation="kan_chebyshev", kan_degree=9, device="cpu",
         )
-        path = save_bundle(str(tmp_path / "m.poraque"), {"chg2tau": operator})
-        restored = load_bundle(path, "chg2tau", device="cpu")
+        path = save_bundle(str(tmp_path / "m.poraque"), {"pseudo2tau": operator})
+        restored = load_bundle(path, "pseudo2tau", device="cpu")
 
         assert restored.model.activation == "kan_chebyshev"
         assert restored.model.kan_degree == 9
@@ -524,12 +524,12 @@ class TestFNOWithKANActivations:
 
     def test_rbf_checkpoint_round_trip_preserves_hyperparameters(self, tmp_path):
         operator = FieldOperator(
-            "ext2chg", width=4, modes=2, n_layers=1, projection_channels=8,
+            "ext2pseudo", width=4, modes=2, n_layers=1, projection_channels=8,
             activation="kan_rbf", kan_grid_size=5, kan_grid_range=(-3.0, 3.0),
             device="cpu",
         )
-        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator})
-        restored = load_bundle(path, "ext2chg", device="cpu")
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2pseudo": operator})
+        restored = load_bundle(path, "ext2pseudo", device="cpu")
 
         assert restored.model.activation == "kan_rbf"
         assert restored.model.kan_grid_size == 5
@@ -540,12 +540,12 @@ class TestFNOWithKANActivations:
 
     def test_rational_checkpoint_round_trip_preserves_hyperparameters(self, tmp_path):
         operator = FieldOperator(
-            "chg2tau", width=4, modes=2, n_layers=1, projection_channels=8,
+            "pseudo2tau", width=4, modes=2, n_layers=1, projection_channels=8,
             activation="kan_rational", kan_rational_num_degree=3,
             kan_rational_den_degree=2, device="cpu",
         )
-        path = save_bundle(str(tmp_path / "m.poraque"), {"chg2tau": operator})
-        restored = load_bundle(path, "chg2tau", device="cpu")
+        path = save_bundle(str(tmp_path / "m.poraque"), {"pseudo2tau": operator})
+        restored = load_bundle(path, "pseudo2tau", device="cpu")
 
         assert restored.model.activation == "kan_rational"
         assert restored.model.kan_rational_num_degree == 3
@@ -559,7 +559,7 @@ class TestFNOWithKANActivations:
         with degree=6 (the constructor default) instead of the 9 it was
         trained with -- a shape-mismatched state_dict, caught at load time,
         rather than a silently wrong model."""
-        operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+        operator = FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                                  projection_channels=8, activation="kan_chebyshev",
                                  kan_degree=9, device="cpu")
         state = operator.state()
@@ -572,7 +572,7 @@ class TestFNOWithKANActivations:
 # Integration smoke test: both tasks, every activation
 # --------------------------------------------------------------------- #
 class TestIntegrationBothTasks:
-    @pytest.mark.parametrize("task", ["ext2chg", "chg2tau"])
+    @pytest.mark.parametrize("task", ["ext2pseudo", "pseudo2tau"])
     @pytest.mark.parametrize("activation", sorted(ACTIVATIONS))
     def test_forward_backward_on_tiny_dummy_data(self, task, activation):
         operator = FieldOperator(task, width=4, modes=2, n_layers=1,
@@ -658,15 +658,15 @@ class TestSymbolicExpression:
         """The realistic path: pull the activation module straight off a
         loaded FieldOperator's Fourier blocks, exactly as
         operator.model.blocks[layer].activation would be used in practice."""
-        operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=2,
+        operator = FieldOperator("ext2pseudo", width=4, modes=2, n_layers=2,
                                  projection_channels=8, activation="kan_chebyshev",
                                  kan_degree=3, device="cpu")
         activation = operator.model.blocks[0].activation
         expr = symbolic_expression(activation, channel=0)
         assert isinstance(expr, sympy.Expr)
         # round-trips through a checkpoint just like every other tensor
-        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator})
-        restored = load_bundle(path, "ext2chg", device="cpu")
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2pseudo": operator})
+        restored = load_bundle(path, "ext2pseudo", device="cpu")
         restored_expr = symbolic_expression(
             restored.model.blocks[0].activation, channel=0)
         forward_out = _forward_at(activation, 0, self.POINTS)
@@ -768,14 +768,14 @@ class TestPureKANMode:
 
     def test_pure_kan_checkpoint_round_trip_preserves_use_base(self, tmp_path):
         operator = FieldOperator(
-            "ext2chg", width=4, modes=2, n_layers=1, projection_channels=8,
+            "ext2pseudo", width=4, modes=2, n_layers=1, projection_channels=8,
             activation="kan_chebyshev", kan_degree=3, kan_use_base=False,
             device="cpu",
         )
         assert operator.model.blocks[0].activation.base_weight is None
 
-        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator})
-        restored = load_bundle(path, "ext2chg", device="cpu")
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2pseudo": operator})
+        restored = load_bundle(path, "ext2pseudo", device="cpu")
 
         assert restored.model.kan_use_base is False
         assert restored.model.blocks[0].activation.base_weight is None
@@ -941,13 +941,13 @@ class TestTheReadOutFollowsTheConfiguredActivation:
                   projection_activation="softplus")
 
     def test_a_checkpoint_records_it(self, tmp_path):
-        operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+        operator = FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                                  projection_channels=8, activation="silu",
                                  device="cpu")
         assert operator.state()["architecture"]["projection_activation"] == "silu"
 
-        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2chg": operator})
-        restored = load_bundle(path, "ext2chg", device="cpu")
+        path = save_bundle(str(tmp_path / "m.poraque"), {"ext2pseudo": operator})
+        restored = load_bundle(path, "ext2pseudo", device="cpu")
         assert restored.model.projection_activation == "silu"
 
     def test_a_checkpoint_without_the_record_reloads_as_gelu(self):
@@ -957,7 +957,7 @@ class TestTheReadOutFollowsTheConfiguredActivation:
         load the right weights into the wrong architecture and quietly return
         different numbers.
         """
-        operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+        operator = FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                                  projection_channels=8, activation="silu",
                                  device="cpu")
         state = operator.state()

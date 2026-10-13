@@ -1,4 +1,4 @@
-# CHON: review and benchmark of `ext2paw`
+# CHON: review and benchmark of `ext2chg`
 
 The experiment uses the **432 materials** in `data/CHON`, without including the
 isolated atoms in the training set. The C, H, N and O references in
@@ -43,7 +43,7 @@ the winning configuration. The 41 test structures gave:
 
 The exported bundle is [results/final/best.poraque](results/final/best.poraque),
 from seed 1, epoch 65; the other initialization restored epoch 45. The
-[recommended configuration](../../configs/train_ext2paw_chon_best.yaml) stores
+[recommended configuration](../../configs/train_ext2chg_chon_best.yaml) stores
 the hyperparameters and the explicit common band. The general CLI uses its own
 split; to reproduce the held-out test, use the runner and the commands below.
 The [selection record](results/final/selection.json), the
@@ -76,11 +76,11 @@ passed.
 
 The plots for the final checkpoint are in **`results/final/plots/`**:
 
-- [Density: training and validation](results/final/plots/ext2paw_parity.png).
-- [Density: held-out test](results/final/plots/ext2paw_parity_test.png).
-- [PAW occupancies: training and validation](results/final/plots/ext2paw_parity_paw.png).
-- [PAW occupancies: test, by element and L](results/final/plots/ext2paw_parity_paw_blocks_test.png).
-- [Magnetization: test](results/final/plots/ext2paw_parity_magnetization_test.png).
+- [Density: training and validation](results/final/plots/ext2chg_parity.png).
+- [Density: held-out test](results/final/plots/ext2chg_parity_test.png).
+- [PAW occupancies: training and validation](results/final/plots/ext2chg_parity_paw.png).
+- [PAW occupancies: test, by element and L](results/final/plots/ext2chg_parity_paw_blocks_test.png).
+- [Magnetization: test](results/final/plots/ext2chg_parity_magnetization_test.png).
 
 Each figure also has a PDF version; the histograms and bin limits are stored in
 CSV. The comparison uses the DFT targets on the working mesh and the physical
@@ -97,7 +97,7 @@ CLI defaults for figure and report generation.
 To regenerate only the plots of the existing checkpoint:
 
 ```bash
-python experiments/chon_ext2paw/plot_parity.py
+python experiments/chon_ext2chg/plot_parity.py
 ```
 
 The density parity samples up to 10,000 voxels per structure with seed 42. The
@@ -106,7 +106,7 @@ from the mean of the per-structure errors used in the benchmark tables. On the
 test set for the exported checkpoint, they are 7.144% in the parity plot and
 8.273% in the per-structure mean.
 The logarithmic figures show only positive pairs. The versions
-`ext2paw_parity_charge_linear_validation` and `ext2paw_parity_charge_linear_test`
+`ext2chg_parity_charge_linear_validation` and `ext2chg_parity_charge_linear_test`
 include the negative values, without clipping. Counts, positive fractions,
 metrics and the SHA-256 of the checkpoint are in
 [parity_metadata.json](results/final/plots/parity_metadata.json).
@@ -141,10 +141,10 @@ still has a pooled relative error of 99.46% in the combined arm.
 From the repository root:
 
 ```bash
-python experiments/chon_ext2paw/prepare.py
-python experiments/chon_ext2paw/benchmark.py --epochs 30 --seeds 0 --threads 2 \
+python experiments/chon_ext2chg/prepare.py
+python experiments/chon_ext2chg/benchmark.py --epochs 30 --seeds 0 --threads 2 \
   --arms baseline lr_low lr_high width32 width64 layers5 modes10 radial16 occ1 absolute \
-  --output experiments/chon_ext2paw/results/screen
+  --output experiments/chon_ext2chg/results/screen
 ```
 
 `--pilot` uses the first 48 available structures, serves only to measure cost
@@ -153,20 +153,20 @@ initializations per configuration, including the control for a comparison with
 the same budget:
 
 ```bash
-python experiments/chon_ext2paw/benchmark.py --epochs 100 --seeds 0 1 --threads 2 \
-  --arms baseline --output experiments/chon_ext2paw/results/confirmation
-python experiments/chon_ext2paw/benchmark.py --epochs 100 --seeds 0 1 --threads 1 \
-  --arms lr_high --output experiments/chon_ext2paw/results/confirmation_lr_high
-python experiments/chon_ext2paw/benchmark.py --epochs 100 --seeds 0 --threads 1 \
-  --arms short_neighbors_lr_high --output experiments/chon_ext2paw/results/confirmation_geometry
-python experiments/chon_ext2paw/benchmark.py --epochs 100 --seeds 1 --threads 1 \
-  --arms short_neighbors_lr_high --output experiments/chon_ext2paw/results/confirmation_geometry_seed1
+python experiments/chon_ext2chg/benchmark.py --epochs 100 --seeds 0 1 --threads 2 \
+  --arms baseline --output experiments/chon_ext2chg/results/confirmation
+python experiments/chon_ext2chg/benchmark.py --epochs 100 --seeds 0 1 --threads 1 \
+  --arms lr_high --output experiments/chon_ext2chg/results/confirmation_lr_high
+python experiments/chon_ext2chg/benchmark.py --epochs 100 --seeds 0 --threads 1 \
+  --arms short_neighbors_lr_high --output experiments/chon_ext2chg/results/confirmation_geometry
+python experiments/chon_ext2chg/benchmark.py --epochs 100 --seeds 1 --threads 1 \
+  --arms short_neighbors_lr_high --output experiments/chon_ext2chg/results/confirmation_geometry_seed1
 # Run only when all the confirmations are complete.
-python experiments/chon_ext2paw/finalize.py \
-  experiments/chon_ext2paw/results/confirmation \
-  experiments/chon_ext2paw/results/confirmation_lr_high \
-  experiments/chon_ext2paw/results/confirmation_geometry \
-  experiments/chon_ext2paw/results/confirmation_geometry_seed1
+python experiments/chon_ext2chg/finalize.py \
+  experiments/chon_ext2chg/results/confirmation \
+  experiments/chon_ext2chg/results/confirmation_lr_high \
+  experiments/chon_ext2chg/results/confirmation_geometry \
+  experiments/chon_ext2chg/results/confirmation_geometry_seed1
 ```
 
 The test set does not take part in the ranking. `finalize.py` refuses a second
@@ -183,10 +183,10 @@ buffers; a round-trip test confirms identical PAW predictions after loading.
 The overrides and effective centers are also stored in `metrics.json`.
 
 ```bash
-python experiments/chon_ext2paw/benchmark.py --epochs 30 --seeds 0 --threads 1 \
-  --arms short_neighbors --output experiments/chon_ext2paw/results/geometry
-python experiments/chon_ext2paw/benchmark.py --epochs 30 --seeds 0 --threads 1 \
-  --arms short_neighbors_lr_high --output experiments/chon_ext2paw/results/geometry_joint
+python experiments/chon_ext2chg/benchmark.py --epochs 30 --seeds 0 --threads 1 \
+  --arms short_neighbors --output experiments/chon_ext2chg/results/geometry
+python experiments/chon_ext2chg/benchmark.py --epochs 30 --seeds 0 --threads 1 \
+  --arms short_neighbors_lr_high --output experiments/chon_ext2chg/results/geometry_joint
 ```
 
 The setting is also available in the main CLI as `model.paw.neighbor_min`.
@@ -311,7 +311,7 @@ An additional audit of **12 validation structures**, covering quantiles of the
 number of atoms, measures the effect of the truncation against the native
 CHGCARs. It is a descriptive sample, without using the held-out test set, and is
 not a high-resolution training. To repeat it:
-`python experiments/chon_ext2paw/resolution_audit.py`.
+`python experiments/chon_ext2chg/resolution_audit.py`.
 
 | Maximum resolution | Native charge projection: mean error | Residual-only projection, restoring the native atomic reference |
 | --- | ---: | ---: |
@@ -361,7 +361,7 @@ flowchart LR
 | `ml/fno.py` | Periodic scalar operator, physical truncation, radial filters and conditioning by the cell. Modes, radial basis, width and depth have different effects on capacity and cost. |
 | `ml/paw.py` | Reading of the field and of the latent around each atom, neighbor expansion and per-element head with angular-momentum blocks. The scale is shared across M components to preserve the tensor transformation. |
 | `ml/training.py` | Joint optimization, physical metrics and restoration of the best model. The PAW loss gives similar weight to each L block; the raw RMS, alone, can hide multipolar and magnetic errors. |
-| `scripts/poraque_train.py` | Assembly of the task and resolution of the architecture. `model.paw` determines the `ext2paw` backbone, including the modes used to resolve the radial basis. |
+| `scripts/poraque_train.py` | Assembly of the task and resolution of the architecture. `model.paw` determines the `ext2chg` backbone, including the modes used to resolve the radial basis. |
 | `scripts/poraque_inference.py` | Uses the bundle's PAW operator to generate records when requested. The heads are per element, and coverage of elements that were not trained should not be assumed. |
 | `physics`, `calculator.py` | Energy and forces are consumers of the predictions; this benchmark does not validate their accuracy or a VASP SCF/restart run. |
 
@@ -379,11 +379,11 @@ The observable problems that were fixed include:
 4. Elongated cells could produce `2×2×24` grids, impossible for the truncation
    that discards Nyquist. The reduced size keeps at least four points per axis,
    without enlarging an axis that was originally smaller.
-5. The inference CLI required `ext2chg` and `chg2tau`, even for a bundle
-   containing only `ext2paw`. It now uses the density output of the PAW operator
+5. The inference CLI required `ext2pseudo` and `pseudo2tau`, even for a bundle
+   containing only `ext2chg`. It now uses the density output of the PAW operator
    and writes its records, omitting TAUCAR and energy when there is no kinetic
    operator. Comparison and figures also handle this absence. The training CLI
-   accepts `--task ext2paw` directly.
+   accepts `--task ext2chg` directly.
 6. The quadrature of the PAW kernels was insufficient at low bands, introducing
    position and multipole errors in constant fields. The spectral path corrects
    this integral without altering the quadrature already used at high bands.
@@ -394,7 +394,7 @@ values differ. This is relevant for the band comparison.
 
 ## Limitations found
 
-`ext2paw` does not yet accept the `--kfold` path or the CLI's fine-tuning. The
+`ext2chg` does not yet accept the `--kfold` path or the CLI's fine-tuning. The
 confirmation by seeds in this experiment does not replace these capabilities.
 The aggregates also give different weights to structures and atoms; for this
 reason the report keeps both metrics.

@@ -7,11 +7,11 @@ guides in `latex/`.
 | Note | Question it answers |
 | --- | --- |
 | [`roadmap.md`](roadmap.md) | What is done, what blocks progress, what to do next |
-| [`model2_architecture.md`](model2_architecture.md) | Why train `chg2tau` at all, and how it couples to `ext2chg` |
+| [`model2_architecture.md`](model2_architecture.md) | Why train `pseudo2tau` at all, and how it couples to `ext2pseudo` |
 | [`pi_fno.md`](pi_fno.md) | How KS-DFT and OF-DFT enter as constraints; the staged plan |
 | [`fno_physics.md`](fno_physics.md) | What each model corresponds to in DFT terms |
 | [`vasp_analysis_report.md`](vasp_analysis_report.md) | How VASP writes `EXTCAR` and `TAUCAR`, from the Fortran source |
 | [`committee.md`](committee.md) | Query by committee: `init_seed`, disagreement on 3D fields, and how to validate it |
-| [`implementation_2026-09-16.md`](implementation_2026-09-16.md) | What `v26.9.12`–`v26.9.14` built: PAW data in the checkpoint, the `ext2paw` operator and what predicts the occupancies, the resource profile, parity over every structure, the charge/magnetization loss parts |
+| [`implementation_2026-09-16.md`](implementation_2026-09-16.md) | What `v26.9.12`–`v26.9.14` built: PAW data in the checkpoint, the `ext2chg` operator and what predicts the occupancies, the resource profile, parity over every structure, the charge/magnetization loss parts |
 
 Start with `roadmap.md`.

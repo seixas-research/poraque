@@ -2,8 +2,8 @@
 # electron_count_weight=1 is an initial setting, not a benchmark-selected optimum.
 # The experiment runner preserves the 303/88/41 split; the general CLI uses its own split.
 task:
-  type: ext2paw
-  name: chon_ext2paw_charge
+  type: ext2chg
+  name: chon_ext2chg_charge
 data:
   data_paths:
   - ./data/CHON

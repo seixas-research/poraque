@@ -217,17 +217,17 @@ class TestChannelwiseTransform:
 # ===================================================================== #
 class TestSpinDataset:
     def test_detects_spin_from_the_data(self, spin_dataset):
-        dataset = FieldPairDataset(spin_dataset, task="ext2chg")
+        dataset = FieldPairDataset(spin_dataset, task="ext2pseudo")
         assert dataset.spin is True
         assert dataset.channels == (1, 2)
 
-    def test_chg2tau_is_two_in_one_out(self, spin_dataset):
+    def test_pseudo2tau_is_two_in_one_out(self, spin_dataset):
         r""":math:`\tau` stays a single block even under ``ISPIN = 2``."""
-        dataset = FieldPairDataset(spin_dataset, task="chg2tau")
+        dataset = FieldPairDataset(spin_dataset, task="pseudo2tau")
         assert dataset.channels == (2, 1)
 
     def test_samples_carry_the_channel_axis(self, spin_dataset):
-        dataset = FieldPairDataset(spin_dataset, task="ext2chg")
+        dataset = FieldPairDataset(spin_dataset, task="ext2pseudo")
         sample = dataset[0]
         assert sample["input"].shape[0] == 1
         assert sample["target"].shape[0] == 2
@@ -239,7 +239,7 @@ class TestSpinDataset:
         One scale across both channels would be set by whichever dominates the
         sample and would normalize neither.
         """
-        dataset = FieldPairDataset(spin_dataset, task="ext2chg")
+        dataset = FieldPairDataset(spin_dataset, task="ext2pseudo")
         _, target_transform = dataset.fit_transforms()
         assert isinstance(target_transform, Channelwise)
         assert len(target_transform.transforms) == 2
@@ -253,7 +253,7 @@ class TestTheMagnetizationSharesTheChargeScale:
     cells with m = 0 to round-off and 33 nanoparticles whose boxes are mostly
     vacuum, and the median |m| came out at 1.6e-6. The inverse then has a gain
     of asinh(1/s) = 14, so a 0.2 overshoot of the network's output multiplied a
-    nanoparticle's moment sixteenfold. The held-out ext2paw error jumped from
+    nanoparticle's moment sixteenfold. The held-out ext2chg error jumped from
     0.03 to 3.4 and 10.6 between evaluations, with the training loss smooth,
     and early stopping kept an epoch 33 % worse at occupancies than the run
     reached.
@@ -282,7 +282,7 @@ class TestTheMagnetizationSharesTheChargeScale:
 
     def test_the_target_magnetization_is_not_fitted_to_its_noise(
             self, mostly_unpolarized):
-        dataset = FieldPairDataset(mostly_unpolarized, task="ext2chg")
+        dataset = FieldPairDataset(mostly_unpolarized, task="ext2pseudo")
         _, target = dataset.fit_transforms()
         charge, magnetization = target.transforms
         assert magnetization.scale == charge.scale
@@ -295,7 +295,7 @@ class TestTheMagnetizationSharesTheChargeScale:
         unit of network output in the logarithmic regime. The old rule, the
         channel's own median, is fitted alongside to show what it would be.
         """
-        dataset = FieldPairDataset(mostly_unpolarized, task="ext2chg")
+        dataset = FieldPairDataset(mostly_unpolarized, task="ext2pseudo")
         _, target = dataset.fit_transforms()
         magnetization = np.concatenate([
             np.asarray(dataset.target_values(index))[1].ravel()
@@ -308,9 +308,9 @@ class TestTheMagnetizationSharesTheChargeScale:
         assert gain(target.transforms[1]) == gain(target.transforms[0])
         assert gain(own_median) > 2 * gain(target.transforms[0])
 
-    def test_the_chg2tau_input_follows_the_same_rule(self,
+    def test_the_pseudo2tau_input_follows_the_same_rule(self,
                                                      mostly_unpolarized):
-        dataset = FieldPairDataset(mostly_unpolarized, task="chg2tau")
+        dataset = FieldPairDataset(mostly_unpolarized, task="pseudo2tau")
         source, _ = dataset.fit_transforms()
         assert source.transforms[1].scale == source.transforms[0].scale
 
@@ -328,7 +328,7 @@ class TestTheMagnetizationSharesTheChargeScale:
             KineticEnergyDensity(rng.random(grid.shape), grid,
                                  poscar).write(str(directory / "TAUCAR"))
 
-        dataset = FieldPairDataset(str(tmp_path), task="ext2chg")
+        dataset = FieldPairDataset(str(tmp_path), task="ext2pseudo")
         assert dataset.spin is False
         assert dataset.channels == (1, 1)
         assert dataset[0]["target"].shape[0] == 1
@@ -338,7 +338,7 @@ class TestTheMagnetizationSharesTheChargeScale:
     def test_requesting_the_wrong_spin_is_an_error(self, spin_dataset):
         """A flag must not be able to contradict the data."""
         with pytest.raises(ValueError, match="spin-polarized"):
-            FieldPairDataset(spin_dataset, task="ext2chg", spin=False)
+            FieldPairDataset(spin_dataset, task="ext2pseudo", spin=False)
 
 
 # ===================================================================== #
@@ -346,7 +346,7 @@ class TestTheMagnetizationSharesTheChargeScale:
 # ===================================================================== #
 class TestSpinOperator:
     def test_predicts_a_spin_density(self, spin_dataset, grid):
-        operator = FieldOperator("ext2chg", in_channels=1, out_channels=2,
+        operator = FieldOperator("ext2pseudo", in_channels=1, out_channels=2,
                                  width=6, modes=3, n_layers=1,
                                  projection_channels=8, device="cpu")
         import os
@@ -358,10 +358,10 @@ class TestSpinOperator:
         assert prediction.data.shape == (2,) + tuple(grid.shape)
 
     def test_consumes_a_spin_density(self, spin_dataset, grid):
-        """``chg2tau`` takes two channels in and gives one out."""
+        """``pseudo2tau`` takes two channels in and gives one out."""
         import os
 
-        operator = FieldOperator("chg2tau", in_channels=2, out_channels=1,
+        operator = FieldOperator("pseudo2tau", in_channels=2, out_channels=1,
                                  width=6, modes=3, n_layers=1,
                                  projection_channels=8, device="cpu")
         density = SpinDensity.read(
@@ -373,9 +373,9 @@ class TestSpinOperator:
     def test_trains(self, spin_dataset):
         from poraque.ml import train
 
-        dataset = FieldPairDataset(spin_dataset, task="ext2chg")
+        dataset = FieldPairDataset(spin_dataset, task="ext2pseudo")
         source_transform, target_transform = dataset.fit_transforms()
-        operator = FieldOperator("ext2chg", in_channels=1, out_channels=2,
+        operator = FieldOperator("ext2pseudo", in_channels=1, out_channels=2,
                                  width=6, modes=3, n_layers=1,
                                  projection_channels=8, device="cpu",
                                  input_transform=source_transform,
@@ -399,25 +399,25 @@ class TestSpinOperator:
 
         from poraque.ml import BUNDLE_FILENAME, load_bundle, save_bundle
 
-        operator = FieldOperator("ext2chg", in_channels=1, out_channels=2,
+        operator = FieldOperator("ext2pseudo", in_channels=1, out_channels=2,
                                  width=6, modes=3, n_layers=1,
                                  projection_channels=8, device="cpu")
-        partner = FieldOperator("chg2tau", in_channels=2, out_channels=1,
+        partner = FieldOperator("pseudo2tau", in_channels=2, out_channels=1,
                                 width=6, modes=3, n_layers=1,
                                 projection_channels=8, device="cpu")
         path = str(tmp_path / BUNDLE_FILENAME)
-        save_bundle(path, {"ext2chg": operator, "chg2tau": partner})
+        save_bundle(path, {"ext2pseudo": operator, "pseudo2tau": partner})
 
         potential = ExternalPotential.read(
             os.path.join(spin_dataset, "structure_000", "EXTCAR"))
         expected = operator.predict(potential)
 
-        reloaded = load_bundle(path, "ext2chg", device="cpu")
+        reloaded = load_bundle(path, "ext2pseudo", device="cpu")
         assert (reloaded.in_channels, reloaded.out_channels) == (1, 2)
         assert np.allclose(reloaded.predict(potential).data, expected.data,
                            atol=1e-5)
 
-        other = load_bundle(path, "chg2tau", device="cpu")
+        other = load_bundle(path, "pseudo2tau", device="cpu")
         assert (other.in_channels, other.out_channels) == (2, 1)
 
 
@@ -760,3 +760,130 @@ class TestTheSpinChannelReachesThePhysicsHelpers:
 
         assert float(loss(target.clone(), target, cell)) == pytest.approx(0.0, abs=1e-6)
         assert float(loss(spoiled, target, cell)) > 1e-3
+
+
+class TestTheMagnetizationWeightReachesTheObjective:
+    """
+    ``training.magnetization_weight`` is read, not merely accepted.
+
+    A weight that validates and then never reaches the loss is the failure
+    this pins: the objective is assembled per task in ``build_loss``, far from
+    the config, and the training loop reads the weight back off the criterion
+    rather than off a config it does not see --- so there are two joints where
+    a number can be dropped, and a run would look entirely normal with the
+    magnetization term at whatever the default was.
+    """
+
+    def test_the_weight_is_inert_under_the_joint_default(self):
+        """
+        Under `joint` there is one term, so the weight has nothing to scale.
+
+        Worth pinning rather than leaving implicit: someone raising
+        `magnetization_weight` to chase a bad magnetization and seeing no
+        change at all should find that documented, not mysterious. The knob
+        needs `spin_loss: per_channel` to do anything.
+        """
+        import torch
+
+        from poraque.ml.losses import PhysicsInformedLoss
+
+        target = torch.randn(2, 2, 6, 6, 6,
+                             generator=torch.Generator().manual_seed(7))
+        prediction = target + 0.1
+
+        values = set()
+        for weight in (0.0, 1.0, 9.0):
+            criterion = PhysicsInformedLoss(task="ext2pseudo",
+                                            magnetization_weight=weight)
+            assert criterion.spin_loss == "joint"
+            values.add(round(float(criterion(prediction, target)["total"]), 9))
+        assert len(values) == 1
+
+    def test_build_loss_carries_it_from_the_config(self):
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        from poraque_train import build_loss
+        from poraque.ml.config import TrainingConfig
+
+        config = TrainingConfig.from_dict(
+            {"training": {"magnetization_weight": 2.5}})
+        criterion = build_loss(config, "ext2pseudo")
+        assert criterion.magnetization_weight == 2.5
+        assert criterion.data_loss.magnetization_weight == 2.5
+        assert criterion.spin_loss == "joint"          # the default
+
+    def test_the_default_is_an_equal_weighting(self):
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        from poraque_train import build_loss
+        from poraque.ml.config import TrainingConfig
+
+        criterion = build_loss(TrainingConfig.from_dict({}), "ext2pseudo")
+        assert criterion.magnetization_weight == 1.0
+        assert criterion.magnetization_floor == 1e-2
+        assert criterion.spin_loss == "joint"
+
+    def test_zero_removes_the_magnetization_from_the_gradient(self):
+        """
+        ``0.0`` is a deliberate opt-out, and it has to be exactly inert.
+
+        Not merely small: the density term must be the whole objective, so the
+        number is comparable with a single-channel run's.
+        """
+        import torch
+
+        from poraque.ml.losses import PhysicsInformedLoss
+
+        target = torch.randn(2, 2, 6, 6, 6,
+                             generator=torch.Generator().manual_seed(3))
+        prediction = target.clone()
+        prediction[:, 1] += 5.0            # a large magnetization error
+        criterion = PhysicsInformedLoss(task="ext2pseudo",
+                                        spin_loss="per_channel",
+                                        magnetization_weight=0.0)
+        charge_only = target.clone()
+        charge_only[:, 1] = target[:, 1]
+        assert float(criterion(prediction, target)["total"]) == pytest.approx(
+            0.0, abs=1e-12)
+
+        # And with the density wrong instead, the term is the density's error
+        # over the DENSITY's own norm -- not the joint one, which is the
+        # change -- and unaffected by the magnetization weight.
+        prediction = target.clone()
+        prediction[:, 0] += 0.1
+        value = float(criterion(prediction, target)["total"])
+        difference = (prediction[:, 0] - target[:, 0]).flatten(1).norm(dim=1)
+        expected = float((difference
+                          / target[:, 0].flatten(1).norm(dim=1)).mean())
+        assert value == pytest.approx(expected, rel=1e-6)
+
+    def test_the_weight_changes_what_a_spin_run_optimizes(self, spin_dataset):
+        """End to end: two weights, two different training losses."""
+        from poraque.ml import FieldOperator, train
+        from poraque.ml.losses import PhysicsInformedLoss
+
+        dataset = FieldPairDataset(spin_dataset, task="ext2pseudo")
+        source_transform, target_transform = dataset.fit_transforms()
+        losses = {}
+        for weight in (0.0, 5.0):
+            operator = FieldOperator("ext2pseudo", in_channels=1,
+                                     out_channels=2, width=6, modes=3,
+                                     n_layers=1, projection_channels=8,
+                                     device="cpu", init_seed=0,
+                                     input_transform=source_transform,
+                                     target_transform=target_transform)
+            history = train(operator, dataset, epochs=1, batch_size=1,
+                            verbose=False, log=lambda *_: None,
+                            loss=PhysicsInformedLoss(
+                                task="ext2pseudo",
+                                spin_loss="per_channel",
+                                magnetization_weight=weight))
+            losses[weight] = history["train_loss"][-1]
+        assert losses[0.0] != losses[5.0]
+        # The magnetization term is additive and non-negative, so weighting it
+        # up can only raise the objective.
+        assert losses[5.0] > losses[0.0]

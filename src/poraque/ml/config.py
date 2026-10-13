@@ -62,8 +62,8 @@ class TaskConfig:
     Attributes
     ----------
     type : str
-        ``"ext2chg"``, ``"chg2tau"``, ``"ext2paw"``, ``"paw2tau"`` or
-        ``"all"`` (the chain, ``ext2chg`` then ``chg2tau``).
+        ``"ext2pseudo"``, ``"pseudo2tau"``, ``"ext2chg"``, ``"chg2tau"`` or
+        ``"all"`` (the chain, ``ext2pseudo`` then ``pseudo2tau``).
     name : str
         Identifier for **this run**, and the only thing that separates it from
         another. Everything the run writes goes in one directory named after
@@ -85,7 +85,7 @@ class TaskConfig:
     -----
     ``task`` also accepts the bare string it used to be::
 
-        task: ext2chg                       # same as {type: ext2chg}
+        task: ext2pseudo                       # same as {type: ext2pseudo}
 
     which is read as ``type`` with the default ``name``.
     """
@@ -229,8 +229,8 @@ class DataConfig:
         =====================  ==========================================
 
         ``TAUCAR`` is **optional in every case and per material**. A directory
-        that has one contributes to ``chg2tau``; one that does not still
-        contributes to ``ext2chg``, and is simply absent from the other task's
+        that has one contributes to ``pseudo2tau``; one that does not still
+        contributes to ``ext2pseudo``, and is simply absent from the other task's
         set. Nothing has to be declared, and no run is refused for a
         :math:`\tau` that was never going to exist — the Materials Project
         publishes none at all.
@@ -334,8 +334,8 @@ class DataConfig:
         Longest grid axis after spectral downsampling. The reduction is a
         Fourier truncation, exact for band-limited plane-wave fields.
     target_scale : float or None
-        Fixed ``Asinh`` scale, e/Å³, for the density target of ``ext2chg``
-        and ``ext2paw`` (every channel), instead of the fitted median of
+        Fixed ``Asinh`` scale, e/Å³, for the density target of ``ext2pseudo``
+        and ``ext2chg`` (every channel), instead of the fitted median of
         :math:`|\delta\rho|`. ``null`` (default) fits it.
     max_spacing : float or None
         Largest grid spacing in Å after downsampling. ``resolution`` caps the
@@ -460,7 +460,7 @@ class DataConfig:
         Requires ``atomic_reference`` covering every element in the dataset;
         a run that cannot resolve one **fails loudly** rather than quietly
         training the old target. Set ``false`` for the absolute-density
-        ablation. Ignored by ``chg2tau``: there is no atomic superposition of a
+        ablation. Ignored by ``pseudo2tau``: there is no atomic superposition of a
         kinetic energy density.
     atomic_reference : str or None
         Where the isolated atoms come from. Three spellings are accepted,
@@ -672,7 +672,7 @@ EQUIVARIANT_SETUP_KEYS = {
     "spherical_cutoff": "spherical_cutoff",
 }
 
-#: ``model.paw`` settings --- the operator of the ``ext2paw`` task --- and their
+#: ``model.paw`` settings --- the operator of the ``ext2chg`` task --- and their
 #: defaults. ``width``, ``modes`` and ``n_layers`` are the field operator's own
 #: names for the same three decisions, so they mean one thing everywhere in this
 #: schema; the other two belong to the occupancy head alone.
@@ -1153,7 +1153,7 @@ class ModelConfig:
     g_max : float or None
         Cutoff wavevector in Å⁻¹, required by ``mode_selection: physical``.
     pauli_residual : bool
-        For ``chg2tau``, predict ``tau = tau_vW[rho] + s*softplus(f)`` so the
+        For ``pseudo2tau``, predict ``tau = tau_vW[rho] + s*softplus(f)`` so the
         Hoffmann-Ostenhof bound holds by construction.
     pauli_scale : float or None
         Initial Pauli-term scale in eV/Å³; ``null`` fits it from the training
@@ -1221,13 +1221,13 @@ class ModelConfig:
         without that **raises**. The three fractional coordinates are not three
         scalar fields --- under a rotation they turn into each other.
     paw : dict
-        The operator of the ``ext2paw`` task, which predicts the pseudo-density
+        The operator of the ``ext2chg`` task, which predicts the pseudo-density
         *and* each atom's PAW augmentation occupancies. One block:
 
         .. code-block:: yaml
 
            task:
-             type: ext2paw
+             type: ext2chg
            model:
              paw:
                enable: true
@@ -1236,9 +1236,9 @@ class ModelConfig:
                n_layers: 4
 
         ``enable``
-            Off by default. ``task.type: ext2paw`` requires it, and
-            ``task.type: all`` trains ``ext2paw`` beside the chain when it is
-            on; beside ``ext2chg`` or ``chg2tau`` it **raises**, since nothing
+            Off by default. ``task.type: ext2chg`` requires it, and
+            ``task.type: all`` trains ``ext2chg`` beside the chain when it is
+            on; beside ``ext2pseudo`` or ``pseudo2tau`` it **raises**, since nothing
             would read it.
         ``width``, ``modes``, ``n_layers``
             The FNO backbone's size, as for the field operator, and defaulting
@@ -1279,14 +1279,14 @@ class ModelConfig:
         ``experiments/paw_occupancies`` for the measurements it was designed
         from.
     occupancy_channels : int
-        ``paw2tau`` only: the field channels every atom's PAW occupancies are
+        ``chg2tau`` only: the field channels every atom's PAW occupancies are
         written into, beside the input density, by an equivariant
         :class:`~poraque.ml.paw.SiteWriter` (atom-centered solid-harmonic
         Gaussians, one learned map per element and L, shared across M).
         8 by default; ignored by every other task.
     structure_input : dict
         Input channels that describe the structure, appended after
-        :math:`v_{\rm ext}` for ``ext2chg`` and ``ext2paw``:
+        :math:`v_{\rm ext}` for ``ext2pseudo`` and ``ext2chg``:
 
         .. code-block:: yaml
 
@@ -1413,13 +1413,13 @@ class ModelConfig:
 
     @property
     def paw_enabled(self):
-        """Whether the ``ext2paw`` operator is switched on --- ``model.paw.enable``."""
+        """Whether the ``ext2chg`` operator is switched on --- ``model.paw.enable``."""
         enable, _ = split_enable_block(self.paw, "model.paw", PAW_SETUP_KEYS)
         return bool(enable)
 
     def paw_settings(self):
         """
-        The ``ext2paw`` operator's settings, defaults filled in.
+        The ``ext2chg`` operator's settings, defaults filled in.
 
         Returns
         -------
@@ -1838,6 +1838,85 @@ class TrainingConfig_:
         norm -- so at zero the objective and the column are both a plain
         :math:`L^2`, and the log says so rather than claiming an :math:`H^1`
         the run is not measuring.
+    spin_loss : str
+        How the two channels of a spin-polarized target enter the data term:
+        ``joint`` or ``per_channel``. Read only when the target carries a
+        magnetization; a one-channel run is identical either way.
+
+        ``joint`` (the default) is one norm over both channels at once ---
+        each channel's error over the whole :math:`(\rho, m)` target's norm,
+        combined in quadrature, which is identically
+        :math:`\lVert\delta(\rho, m)\rVert/\lVert(\rho, m)\rVert`.
+        ``per_channel`` divides each channel by **its own** norm (floored, see
+        ``magnetization_floor``) and sums them with
+        ``magnetization_weight``.
+
+        **The default is the measured one, and the arithmetic is misleading
+        about which should win.** Under ``joint`` the magnetization's share of
+        the objective is its share of the joint norm, which on the 432-cell
+        CHON set is :math:`3\times10^{-8}` in the *median* --- the number that
+        makes ``per_channel`` look obviously right. It is not: measured
+        head-to-head on that cache (two seeds, 60 epochs, held-out magnetic
+        cells scored by predicted/reference :math:`\lVert m\rVert`),
+
+        .. code-block:: text
+
+            30 magnetic + 30 noise cells   joint 1.00 / rel L2 0.084
+                                           per_channel 1.00 / rel L2 0.109
+            12 magnetic + 100 noise cells  joint 0.96 / rel L2 0.166
+            (the real 11% imbalance)       per_channel 0.001 / rel L2 1.000
+
+        What trains the magnetization is the *mean* share, not the median: the
+        magnetic cells carry real weight under ``joint`` and that is enough.
+        ``per_channel`` instead gives each of the many noise cells a floored
+        term of order one, and 100 cells saying "drive m to zero" overwhelm 12
+        saying anything else --- so it collapses the magnetization it was
+        meant to rescue. Switch to it only with a set whose magnetic cells are
+        not a small minority, and measure.
+    magnetization_weight : float
+        Weight of the **magnetization** term of the data loss, relative to the
+        density term's 1, on a spin-polarized target (``data.spin``). The
+        objective is ``charge + magnetization_weight * mag``, the two terms
+        the log's ``charge`` and ``mag`` columns print, each in the run's norm
+        and over the same denominator --- the whole :math:`(\rho, m)`
+        target's, which stays finite on a cell where :math:`m \equiv 0`.
+
+        A sum rather than a single norm over both channels, because a norm
+        scales each term's gradient by its share of the total: :math:`m` is a
+        few parts in :math:`10^6` of the norm on this project's platinum set,
+        and the magnetization was unlearnable for that reason alone. ``0.0``
+        trains the density alone and says so in the log; ignored outright by a
+        single-channel target, where the objective is unchanged to the last
+        bit.
+
+        Not to be confused with ``model.paw.magnetization_weight``, which
+        weights the magnetization *record set* of the per-atom occupancy
+        target. The two are the same idea at the two ends of the same
+        operator, and a bare ``--set magnetization_weight`` reaches this one.
+    magnetization_floor : float
+        :math:`\eta`: a floor on the magnetization term's denominator, as a
+        fraction of :math:`\lVert\rho\rVert`. The term is
+
+        .. math::
+
+            \lVert\delta m\rVert /
+            \sqrt{\lVert m\rVert^2 + (\eta\lVert\rho\rVert)^2},
+
+        Read only under ``spin_loss: per_channel``. Above the floor the term
+        is the honest relative error of :math:`m` and
+        below it the term measures a spurious predicted moment against a fixed
+        fraction of the density. The floor is needed because :math:`m` is
+        *exactly* zero on a large fraction of a real set --- 126 of the 432
+        CHON cells, with 239 more in the numerical noise at
+        :math:`\lVert m\rVert/\lVert\rho\rVert \le 10^{-4}` --- and an
+        unfloored per-channel relative error would divide by zero on a quarter
+        of them.
+
+        The default :math:`10^{-2}` sits above that noise band and below the
+        46 CHON cells that are genuinely magnetic, so those get a true
+        relative error while the dead ones get a bounded penalty for inventing
+        a moment. Lower it to chase weaker polarization, raise it if the
+        magnetization term dominates the early epochs.
     physics_informed : dict
         The physics-informed objective: the switch and the four constraint
         weights, in one block.
@@ -1920,7 +1999,7 @@ class TrainingConfig_:
 
         .. code-block:: text
 
-            weight                   ext2chg  ext2paw  chg2tau  paw2tau  needs
+            weight                   ext2pseudo  ext2chg  pseudo2tau  chg2tau  needs
             positivity_weight           x        -        x        x     nothing
             electron_count_weight       x        x        -        -     N, or a reference rho
             euler_lagrange_weight       x        -        -        -     v_ext (the input)
@@ -1941,7 +2020,7 @@ class TrainingConfig_:
         a constraint that cannot be violated beats one that is merely
         expensive to violate.
 
-        ``electron_count_weight`` — *``ext2chg`` and ``ext2paw``.*
+        ``electron_count_weight`` — *``ext2pseudo`` and ``ext2chg``.*
 
         .. math::
 
@@ -1968,7 +2047,7 @@ class TrainingConfig_:
         validation score includes the weighted squared count error, and the
         history records the mean absolute relative count error separately.
 
-        ``von_weizsacker_weight`` — *``chg2tau`` only.*
+        ``von_weizsacker_weight`` — *``pseudo2tau`` only.*
 
         .. math::
 
@@ -1987,7 +2066,7 @@ class TrainingConfig_:
         :math:`F = (\tau - \tau_{\rm vW})/\tau_{\rm TF}` the symbolic search
         fits: the bound is exactly the statement :math:`F \ge 0`.
 
-        ``euler_lagrange_weight`` — *``ext2chg`` only, and the deepest of the
+        ``euler_lagrange_weight`` — *``ext2pseudo`` only, and the deepest of the
         four.* At the ground state the orbital-free variational condition holds
         pointwise,
 
@@ -2011,7 +2090,7 @@ class TrainingConfig_:
         :math:`v_{xc}` is optional; omitting it weakens the constraint but does
         not bias it, since what is enforced is the *constancy* of the sum.
 
-        Passing a trained ``chg2tau`` operator's :math:`\tau` as ``kinetic=``
+        Passing a trained ``pseudo2tau`` operator's :math:`\tau` as ``kinetic=``
         to :func:`~poraque.ml.physics.euler_lagrange_residual` replaces the
         surrogate with the **learned** functional, closing the loop between the
         two models. Available from the library; the training script does not
@@ -2055,6 +2134,9 @@ class TrainingConfig_:
     tf32: bool = True
     loss: str = "relative_l2"
     sobolev_weight: float = 0.1
+    spin_loss: str = "joint"
+    magnetization_weight: float = 1.0
+    magnetization_floor: float = 1e-2
     physics_informed: dict = field(default_factory=lambda: {
         "enable": "auto",
         "electron_count_weight": 0.0,
@@ -2163,10 +2245,10 @@ class OutputConfig:
         Each file takes the **stem of the figure it belongs to**, so the
         pairing is visible in a directory listing::
 
-            plots/ext2chg_loss_curves.png     plots/ext2chg_loss_curves.csv
-            plots/ext2chg_parity.png          plots/ext2chg_parity.csv
-            plots/ext2chg_s000_field_slice.png
-            plots/ext2chg_s000_field_slice.npz
+            plots/ext2pseudo_loss_curves.png     plots/ext2pseudo_loss_curves.csv
+            plots/ext2pseudo_parity.png          plots/ext2pseudo_parity.csv
+            plots/ext2pseudo_s000_field_slice.png
+            plots/ext2pseudo_s000_field_slice.npz
 
         Tabular figures get a CSV; the slice figure gets a compressed ``.npz``,
         because what it draws are three 2D arrays and a CSV of a 108x108 grid
@@ -2565,7 +2647,7 @@ class TrainingConfig:
 
         It began as a bare string and became a section when the run gained a
         ``name``. Both are accepted permanently rather than transitionally:
-        ``task: ext2chg`` is the shorter and clearer form when the defaults for
+        ``task: ext2pseudo`` is the shorter and clearer form when the defaults for
         everything else will do, and every config written before the section
         existed keeps working unchanged.
         """
@@ -2651,9 +2733,9 @@ class TrainingConfig:
         The tasks this run trains, with ``model.paw`` taken into account.
 
         ``task.type`` alone answers for the chain; ``model.paw.enable`` is the
-        switch for ``ext2paw``, and the two are checked against each other
+        switch for ``ext2chg``, and the two are checked against each other
         here rather than left to drift. ``all`` with the block on trains the
-        chain and ``ext2paw``.
+        chain and ``ext2chg``.
 
         Returns
         -------
@@ -2662,23 +2744,23 @@ class TrainingConfig:
         Raises
         ------
         ValueError
-            On ``task.type: ext2paw`` with the block off, or on the block on
+            On ``task.type: ext2chg`` with the block off, or on the block on
             beside a single chain task that would never read it.
         """
         names = self.task.names()
         enabled = self.model.paw_enabled
         kind = str(self.task.type)
-        if kind == "ext2paw" and not enabled:
+        if kind == "ext2chg" and not enabled:
             raise ValueError(
-                "task.type: ext2paw trains the operator model.paw describes, "
+                "task.type: ext2chg trains the operator model.paw describes, "
                 "and model.paw.enable is false. Set model.paw.enable: true.")
-        if enabled and kind not in ("ext2paw", "all"):
+        if enabled and kind not in ("ext2chg", "all"):
             raise ValueError(
                 f"model.paw.enable is true beside task.type: {kind}, which "
-                f"never reads it. Use task.type: ext2paw, or all to train it "
+                f"never reads it. Use task.type: ext2chg, or all to train it "
                 f"beside the chain, or set enable: false.")
         if enabled and kind == "all":
-            names.append("ext2paw")
+            names.append("ext2chg")
         return names
 
     def validate_blocks(self):
@@ -2811,7 +2893,7 @@ class TrainingConfig:
                     raise ValueError(f"Unknown override {key!r}.")
                 setattr(section, attribute, value)
             elif key == "task":
-                # `--task ext2chg`, and any caller still passing the bare
+                # `--task ext2pseudo`, and any caller still passing the bare
                 # string the key used to hold.
                 self.task.type = value
             else:

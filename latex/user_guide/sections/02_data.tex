@@ -56,7 +56,7 @@ around the core peaks, which is an artifact of the truncation rather than a
 fault in the data.
 
 A missing \file{TAUCAR} is \emph{not} an error. It simply means the material
-cannot serve \opt{chg2tau}; it remains a perfectly good \opt{ext2chg} training
+cannot serve \opt{pseudo2tau}; it remains a perfectly good \opt{ext2pseudo} training
 example, the cache logs \opt{[no TAUCAR]} beside it, and a run asking for
 \opt{task: all} trains the task the data can support and reports the other as
 skipped.
@@ -269,8 +269,8 @@ Three consequences, and Poraqu\^e handles the first two for you:
     returns $11$, $11$ and $10$ --- the \file{POTCAR} values, read off the
     data, from three small files.
   \item[$\tau$ is not.] No public archive publishes a kinetic energy density,
-    so \opt{chg2tau} cannot be trained on MP data at all. Use
-    \opt{task: ext2chg}.
+    so \opt{pseudo2tau} cannot be trained on MP data at all. Use
+    \opt{task: ext2pseudo}.
 \end{description}
 
 \section{The external potential without a POTCAR}
@@ -388,7 +388,7 @@ Everything found is pooled into one training set, and identifiers that collide
 between directories are prefixed with their own so no material is silently
 dropped. \file{TAUCAR} is optional \textbf{per material}: one run may have
 written one while its neighbor did not, and the one that did still reaches
-\opt{chg2tau} while both reach \opt{ext2chg}.
+\opt{pseudo2tau} while both reach \opt{ext2pseudo}.
 
 \begin{pwarn}
 Without \opt{potcar\_dir}, mixing materials that carry their own

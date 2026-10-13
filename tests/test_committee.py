@@ -31,7 +31,7 @@ def _weights(operator):
 
 
 def _build(init_seed=None, **kwargs):
-    return FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+    return FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                          projection_channels=8, device="cpu",
                          init_seed=init_seed, **kwargs)
 
@@ -274,7 +274,7 @@ class TestCommitteeClass:
 
     @pytest.fixture
     def members(self):
-        return [FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+        return [FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                               projection_channels=8, device="cpu",
                               init_seed=s) for s in (0, 1, 2)]
 
@@ -334,7 +334,7 @@ class TestCommitteeClass:
         """Same predictions -> zero divergence, exactly."""
         from poraque.ml import Committee
 
-        twins = [FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+        twins = [FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                                projection_channels=8, device="cpu",
                                init_seed=42) for _ in range(2)]
         values = np.full(potential.grid.shape, 0.4)
@@ -359,7 +359,7 @@ class TestCommitteeClass:
         """A number averaged over two different maps means nothing."""
         from poraque.ml import Committee
 
-        other = FieldOperator("chg2tau", width=4, modes=2, n_layers=1,
+        other = FieldOperator("pseudo2tau", width=4, modes=2, n_layers=1,
                               device="cpu", init_seed=9)
         with pytest.raises(ValueError, match="share a task"):
             Committee([members[0], other])
@@ -385,9 +385,9 @@ class TestCommitteeClass:
     def test_loads_from_bundles(self, members, tmp_path, potential):
         from poraque.ml import Committee, save_bundle
 
-        paths = [save_bundle(str(tmp_path / f"m{i}.poraque"), {"ext2chg": m})
+        paths = [save_bundle(str(tmp_path / f"m{i}.poraque"), {"ext2pseudo": m})
                  for i, m in enumerate(members)]
-        committee = Committee.from_bundles(paths, "ext2chg", device="cpu")
+        committee = Committee.from_bundles(paths, "ext2pseudo", device="cpu")
         assert len(committee) == 3
         assert committee.init_seeds == [0, 1, 2]
         assert committee.disagreement(potential)["relative"] >= 0.0
@@ -404,14 +404,14 @@ class TestRankingSurvivesAnUndefinedJSD:
 
     def test_the_script_exposes_a_task_aware_requirement(self):
         """
-        An ext2chg dataset has no TAUCAR, by definition. Requiring the default
+        An ext2pseudo dataset has no TAUCAR, by definition. Requiring the default
         triple reported it as "no materials" -- so the very data the committee
         was trained on could not be ranked.
         """
         from poraque.ml.tasks import resolve_task
 
-        assert resolve_task("ext2chg").required_files == ("EXTCAR", "CHGCAR")
-        assert "TAUCAR" not in resolve_task("ext2chg").required_files
+        assert resolve_task("ext2pseudo").required_files == ("EXTCAR", "CHGCAR")
+        assert "TAUCAR" not in resolve_task("ext2pseudo").required_files
 
     def test_format_ranking_drops_unscored_rows_rather_than_raising(self):
         from poraque.ml.active_learning import format_ranking

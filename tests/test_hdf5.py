@@ -673,7 +673,7 @@ class TestTheCacheCanWriteEitherLayout:
             build_field_cache(raw_runs, cache, resolution=0,
                               fields=("EXTCAR", "CHGCAR"), storage=storage,
                               compression=codec)
-            dataset = FieldPairDataset(cache, "ext2chg")
+            dataset = FieldPairDataset(cache, "ext2pseudo")
             samples[(storage, codec)] = dataset[0]
 
         reference = samples[("files", None)]
@@ -726,7 +726,7 @@ class TestTheCacheCanWriteEitherLayout:
             build_field_cache(raw_runs, cache, resolution=0,
                               fields=("EXTCAR", "CHGCAR"), storage="hdf5",
                               compression="gzip")
-        assert len(FieldPairDataset(cache, "ext2chg")) == 3
+        assert len(FieldPairDataset(cache, "ext2pseudo")) == 3
 
     def test_a_half_written_store_is_not_taken_for_complete(self, tmp_path,
                                                             raw_runs):
@@ -784,7 +784,7 @@ class TestTheLoadersFindBothLayouts:
 
         shutil.copytree(os.path.join(text, "mat_0"), mixed / "mat_0")
         shutil.copytree(os.path.join(binary, "mat_1"), mixed / "mat_1")
-        dataset = FieldPairDataset(str(mixed), "ext2chg")
+        dataset = FieldPairDataset(str(mixed), "ext2pseudo")
         assert len(dataset) == 2
         assert {tuple(dataset[i]["shape"]) for i in range(2)} == {
             (12, 12, 12), (16, 16, 16)}
@@ -813,18 +813,18 @@ class TestRaggedGridsAcrossMaterials:
         return path
 
     def test_three_shapes_are_carried_as_they_are(self, cache):
-        dataset = FieldPairDataset(cache, "ext2chg")
+        dataset = FieldPairDataset(cache, "ext2pseudo")
         assert dataset.shapes() == [(12, 12, 12), (16, 16, 16), (20, 20, 20)]
 
     def test_no_batch_mixes_two_shapes(self, cache):
-        dataset = FieldPairDataset(cache, "ext2chg")
+        dataset = FieldPairDataset(cache, "ext2pseudo")
         sampler = ShapeBucketSampler(dataset, batch_size=3, shuffle=False)
         shapes = dataset.shapes()
         for batch in sampler:
             assert len({shapes[index] for index in batch}) == 1
 
     def test_a_dataloader_yields_every_material(self, cache):
-        dataset = FieldPairDataset(cache, "ext2chg")
+        dataset = FieldPairDataset(cache, "ext2pseudo")
         loader = make_dataloader(dataset, batch_size=2, shuffle=False)
         seen = [name for batch in loader for name in batch["material"]]
         assert sorted(seen) == ["mat_0", "mat_1", "mat_2"]
@@ -834,7 +834,7 @@ class TestRaggedGridsAcrossMaterials:
         Bucketing must not require decoding the fields. HDF5 keeps the shape in
         the object header, so this stays as cheap as the text peek it replaces.
         """
-        dataset = FieldPairDataset(cache, "ext2chg")
+        dataset = FieldPairDataset(cache, "ext2pseudo")
         for record in dataset.materials:
             record.shape = None
         assert dataset.shapes() == [(12, 12, 12), (16, 16, 16), (20, 20, 20)]

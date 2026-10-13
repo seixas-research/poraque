@@ -45,7 +45,7 @@ The result is written in `CHGCAR` format.
 poraque-train --config configs/train.yaml
 ```
 
-This trains **one** `ext2chg` model and **one** `chg2tau` model on the combined
+This trains **one** `ext2pseudo` model and **one** `pseudo2tau` model on the combined
 data of every structure, then writes, under `models/<task.name>/`:
 
 | Output | Contents |
@@ -61,8 +61,8 @@ and results, the resource profile last. {doc}`../output` describes the layout
 and how to read it from a script.
 
 `task.type` also names the two tasks that carry the PAW augmentation
-occupancies beside the chain: `ext2paw` predicts them with the pseudo-density,
-and `paw2tau` reads them with it to predict $\tau$. See
+occupancies beside the chain: `ext2chg` predicts them with the pseudo-density,
+and `chg2tau` reads them with it to predict $\tau$. See
 {ref}`the configuration reference <paw>`.
 
 ## 4. Predict a new structure
@@ -72,7 +72,7 @@ poraque-inference new_structure/ --output predictions/new_structure
 ```
 
 The input directory and `--output` both default to the current directory.
-With `POSCAR`, `INCAR` and `POTCAR` beside you, an `ext2paw` bundle can therefore
+With `POSCAR`, `INCAR` and `POTCAR` beside you, an `ext2chg` bundle can therefore
 write `CHGCAR` here with:
 
 ```bash
@@ -80,8 +80,8 @@ poraque-inference --model ../../../best.poraque --from-incar ./INCAR --paw-sourc
 ```
 
 `--model`, `--models` and `-m` select the same checkpoint, and may be
-repeated to take each task from the first bundle holding it (an `ext2paw`
-from one run, a `paw2tau` from another). An explicit input directory or
+repeated to take each task from the first bundle holding it (an `ext2chg`
+from one run, a `chg2tau` from another). An explicit input directory or
 `--output` overrides its respective default.
 
 Both operators come from the single `.poraque` bundle written by
@@ -228,12 +228,12 @@ on-site density — and it covers only the elements the model was trained on.
 A real calculation beside the structure always wins over the table: its records
 are *that* system's, where the table is an average over others.
 
-**With an `ext2paw` operator in the bundle** — trained with `model.paw.enable`
+**With an `ext2chg` operator in the bundle** — trained with `model.paw.enable`
 beside `task.type: all` — the records are predicted for *this* structure from
 its own potential, and `--paw-source auto` takes them ahead of the table:
 
 ```text
-        using the ext2paw operator's predicted occupancies: 32 atoms, 2 record set(s)
+        using the ext2chg operator's predicted occupancies: 32 atoms, 2 record set(s)
 ```
 
 The ranking is: a reference beside the structure, then `model`, then `bundle`,

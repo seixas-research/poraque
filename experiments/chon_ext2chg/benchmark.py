@@ -1,4 +1,4 @@
-"""Reproducible structure-level CHON ext2paw sweep; test only the winner.
+"""Reproducible structure-level CHON ext2chg sweep; test only the winner.
 
 Run prepare.py first. Every trial uses the same split and independently fitted
 training transforms. Arm checkpoints select on their training objective; arms
@@ -85,7 +85,7 @@ def datasets(cache, config, split, records, baseline):
     for key in ("train", "validation", "test"):
         names = set(split[key])
         subsets[key] = FieldPairDataset(
-            cache, "ext2paw", materials=[r for r in records if r.identifier in names],
+            cache, "ext2chg", materials=[r for r in records if r.identifier in names],
             baseline=baseline, cache=True, spin="auto")
     source, target = subsets["train"].fit_transforms(seed=config.training.seed)
     for key in ("validation", "test"):
@@ -207,8 +207,8 @@ def configure(base, arm, seed, epochs, device):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="configs/train_ext2paw_chon.yaml")
-    parser.add_argument("--output", default="experiments/chon_ext2paw/results")
+    parser.add_argument("--config", default="configs/train_ext2chg_chon.yaml")
+    parser.add_argument("--output", default="experiments/chon_ext2chg/results")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--seeds", type=int, nargs="+", default=[0])
     parser.add_argument("--arms", nargs="+", choices=list(ARMS), default=list(ARMS))
@@ -228,7 +228,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     (output / "working_tree.patch").write_text(subprocess.check_output(
         ["git", "diff", "--", "src", "scripts"], text=True))
-    raw = FieldPairDataset(cache, "ext2paw", cache=True)
+    raw = FieldPairDataset(cache, "ext2chg", cache=True)
     if args.pilot:
         raw.materials = raw.materials[:48]
     else:
@@ -280,7 +280,7 @@ def main():
                     print(message, flush=True)
                     handle.write(message + "\n")
                     handle.flush()
-                operator = build_operator(resolve_task("ext2paw"), subsets["train"], config, log)
+                operator = build_operator(resolve_task("ext2chg"), subsets["train"], config, log)
                 if "neighbor_min" in ARMS[arm]:
                     centers = operator.model.neighbors.centers
                     log(f"      neighbor centers: {centers.tolist()} Ang")
@@ -291,7 +291,7 @@ def main():
                                 learning_rate=config.training.learning_rate,
                                 weight_decay=config.training.weight_decay,
                                 optimizer=config.training.optimizer, scheduler=config.training.scheduler,
-                                loss=build_loss(config, "ext2paw"),
+                                loss=build_loss(config, "ext2chg"),
                                 occupancy_weight=config.model.paw_settings()["occupancy_weight"],
                                 eval_every=config.training.eval_epoch,
                                 early_stopping=max(args.epochs, config.training.early_stopping),
@@ -299,7 +299,7 @@ def main():
                 seconds = time.perf_counter() - start
                 score = measure(operator, subsets["validation"])
                 checkpoint = directory / "model.poraque"
-                save_bundle(str(checkpoint), {"ext2paw": operator}, config=config, paw_profiles=profiles)
+                save_bundle(str(checkpoint), {"ext2chg": operator}, config=config, paw_profiles=profiles)
                 row = {"arm": arm, "seed": seed, "epochs": args.epochs,
                        "parameters": operator.model.n_parameters(), "seconds": seconds,
                        "device": str(operator.device), "threads": args.threads,
@@ -339,7 +339,7 @@ def main():
         winner = ranking[0]
         test_rows = []
         for row in grouped[winner]:
-            operator = load_bundle(row["checkpoint"], "ext2paw", device=args.device)
+            operator = load_bundle(row["checkpoint"], "ext2chg", device=args.device)
             test_rows.append({"arm": winner, "seed": row["seed"], "metrics": measure(
                 operator, variants[row["baseline"]]["test"])})
         write_json(output / "test_winner.json", test_rows)

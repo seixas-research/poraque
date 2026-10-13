@@ -48,7 +48,7 @@ from poraque.ml.losses import PhysicsInformedLoss
 ACTIVE = {"positivity_weight": 0.1}
 
 
-class TestExt2pawChargeConservation:
+class TestExt2chgChargeConservation:
     @pytest.mark.parametrize("device", ["cpu", pytest.param(
         "mps", marks=pytest.mark.skipif(not torch.backends.mps.is_available(),
                                        reason="MPS is unavailable"))])
@@ -67,7 +67,7 @@ class TestExt2pawChargeConservation:
         residual[:, 1] = -3.0  # The moment has no particle-number constraint.
         transform = Asinh(scale=.02)
         prediction = transform(residual).detach().requires_grad_(True)
-        criterion = PhysicsInformedLoss(task="ext2paw", electron_count_weight=2.)
+        criterion = PhysicsInformedLoss(task="ext2chg", electron_count_weight=2.)
         terms = criterion(prediction, prediction.detach(), cell=cell,
                           physical_prediction=transform.inverse(prediction) + baseline,
                           physical_target=baseline)
@@ -82,7 +82,7 @@ class TestExt2pawChargeConservation:
     def test_explicit_count_overrides_reference_for_charged_systems(self):
         density = torch.ones(1, 2, 4, 4, 4)
         cell = torch.eye(3).unsqueeze(0) * 2.
-        criterion = PhysicsInformedLoss(task="ext2paw", electron_count_weight=1.)
+        criterion = PhysicsInformedLoss(task="ext2chg", electron_count_weight=1.)
         terms = criterion(density, density, cell=cell,
                           physical_prediction=density,
                           physical_target=density * 2., n_electrons=torch.tensor([8.]))
@@ -93,7 +93,7 @@ class TestExt2pawChargeConservation:
 
         config = TrainingConfig.from_dict({"training": {"physics_informed": {
             "enable": True, "electron_count_weight": 1.}}})
-        criterion = build_loss(config, "ext2paw")
+        criterion = build_loss(config, "ext2chg")
         prediction = torch.ones(1, 1, 4, 4, 4)
         terms = criterion(prediction, prediction, cell=torch.eye(3).unsqueeze(0),
                           physical_prediction=prediction,
@@ -111,10 +111,10 @@ class TestAutoAnswersFromTheWeights:
     """
 
     def test_no_weight_means_not_physics_informed(self):
-        assert PhysicsInformedLoss(task="ext2chg").physics_informed is False
+        assert PhysicsInformedLoss(task="ext2pseudo").physics_informed is False
 
     def test_one_weight_is_enough(self):
-        loss = PhysicsInformedLoss(task="ext2chg", **ACTIVE)
+        loss = PhysicsInformedLoss(task="ext2pseudo", **ACTIVE)
         assert loss.physics_informed is True
 
     def test_the_shipped_config_lets_its_own_weights_decide(self):
@@ -137,7 +137,7 @@ class TestAutoAnswersFromTheWeights:
 
         weights = config.training.physics_weights()
         live = sum(weights.values()) > 0.0
-        loss = PhysicsInformedLoss(task="ext2chg", **weights)
+        loss = PhysicsInformedLoss(task="ext2pseudo", **weights)
         assert loss.physics_informed is live
 
 
@@ -152,17 +152,17 @@ class TestTrueRefusesToBeAnEmptyClaim:
 
     def test_it_raises_when_every_weight_is_zero(self):
         with pytest.raises(ValueError, match="every constraint weight is zero"):
-            PhysicsInformedLoss(task="ext2chg", physics_informed=True)
+            PhysicsInformedLoss(task="ext2pseudo", physics_informed=True)
 
     def test_the_error_names_both_ways_out(self):
         with pytest.raises(ValueError) as raised:
-            PhysicsInformedLoss(task="ext2chg", physics_informed=True)
+            PhysicsInformedLoss(task="ext2pseudo", physics_informed=True)
         message = str(raised.value)
         assert "training.physics_informed" in message
         assert "physics_informed.enable: false" in message
 
     def test_it_is_content_when_a_weight_is_set(self):
-        loss = PhysicsInformedLoss(task="ext2chg", physics_informed=True,
+        loss = PhysicsInformedLoss(task="ext2pseudo", physics_informed=True,
                                    **ACTIVE)
         assert loss.physics_informed is True
 
@@ -177,7 +177,7 @@ class TestFalseMakesTheWeightsInertAndSaysSo:
     """
 
     def test_the_weights_are_zeroed_not_merely_bypassed(self):
-        loss = PhysicsInformedLoss(task="ext2chg", physics_informed=False,
+        loss = PhysicsInformedLoss(task="ext2pseudo", physics_informed=False,
                                    positivity_weight=0.1,
                                    electron_count_weight=1.0)
         assert loss.physics_informed is False
@@ -189,9 +189,9 @@ class TestFalseMakesTheWeightsInertAndSaysSo:
         target = torch.randn(2, 1, 8, 8, 8)
         cell = (torch.eye(3) * 5.0).unsqueeze(0).repeat(2, 1, 1)
 
-        off = PhysicsInformedLoss(task="ext2chg", physics_informed=False,
+        off = PhysicsInformedLoss(task="ext2pseudo", physics_informed=False,
                                   positivity_weight=1.0)
-        on = PhysicsInformedLoss(task="ext2chg", positivity_weight=1.0)
+        on = PhysicsInformedLoss(task="ext2pseudo", positivity_weight=1.0)
         arguments = dict(cell=cell, physical_prediction=prediction,
                          physical_target=target)
 
@@ -211,7 +211,7 @@ class TestFalseMakesTheWeightsInertAndSaysSo:
         config = TrainingConfig.from_dict({"training": {
             "physics_informed": {"enable": False, "positivity_weight": 0.5}}})
         with pytest.warns(RuntimeWarning, match="inert"):
-            train_script.build_loss(config, "ext2chg")
+            train_script.build_loss(config, "ext2pseudo")
 
     def test_it_does_not_warn_about_weights_that_are_zero_anyway(self):
         import scripts.poraque_train as train_script
@@ -220,7 +220,7 @@ class TestFalseMakesTheWeightsInertAndSaysSo:
             {"training": {"physics_informed": {"enable": False}}})
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            loss = train_script.build_loss(config, "ext2chg")
+            loss = train_script.build_loss(config, "ext2pseudo")
         assert loss.physics_informed is False
 
 
@@ -233,12 +233,12 @@ class TestOnlyThreeSpellingsAreUnderstood:
     @pytest.mark.parametrize("value", ["off", "on", "yes", 1, 0.0])
     def test_anything_else_raises(self, value):
         with pytest.raises(ValueError, match="physics_informed"):
-            PhysicsInformedLoss(task="ext2chg", physics_informed=value,
+            PhysicsInformedLoss(task="ext2pseudo", physics_informed=value,
                                 **ACTIVE)
 
     @pytest.mark.parametrize("value", ["auto", None, True, False])
     def test_the_three_that_are(self, value):
-        loss = PhysicsInformedLoss(task="ext2chg", physics_informed=value,
+        loss = PhysicsInformedLoss(task="ext2pseudo", physics_informed=value,
                                    **ACTIVE)
         assert isinstance(loss.physics_informed, bool)
 
@@ -298,7 +298,7 @@ class TestTheLoopSkipsTheDecodeRatherThanComputingIt:
                 calls.append(1)
                 return values
 
-        criterion = PhysicsInformedLoss(task="ext2chg")
+        criterion = PhysicsInformedLoss(task="ext2pseudo")
         assert criterion.physics_informed is False
 
         transform = CountingTransform()

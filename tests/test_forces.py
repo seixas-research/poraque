@@ -332,7 +332,7 @@ class TestCalculatorForces:
                 {task: FieldOperator(task, width=4, modes=2, n_layers=1,
                                      projection_channels=8, device="cpu",
                                      training_resolution=16)
-                 for task in ("ext2chg", "chg2tau")})
+                 for task in ("ext2pseudo", "pseudo2tau")})
             calculator = Poraque(bundle, charges={"Pt": 11.0}, device="cpu")
             atoms = Atoms("Pt2", cell=np.eye(3) * 4.08, pbc=True,
                           scaled_positions=[[0, 0, 0], [0.5, 0.5, 0.5]])

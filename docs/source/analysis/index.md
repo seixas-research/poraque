@@ -40,7 +40,7 @@ total energy by roughly 10 eV — far more than any energy difference worth
 computing.
 
 :::{warning}
-The shipped `ext2chg` operator predicts densities whose electron count drifts
+The shipped `ext2pseudo` operator predicts densities whose electron count drifts
 by up to **1.7 %** — nearly five electrons out of 297. Left uncorrected this
 moves totals by tens of eV, differently for each structure, so it does not
 cancel in a difference.
@@ -205,6 +205,6 @@ method, and the caveat above are typeset into the PDF:
 ```python
 from poraque.vis import ModelReport
 
-ModelReport("reports").build(task="ext2chg", per_material=metrics,
+ModelReport("reports").build(task="ext2pseudo", per_material=metrics,
                              charges=analysis)
 ```

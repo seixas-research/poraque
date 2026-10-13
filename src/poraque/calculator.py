@@ -28,8 +28,8 @@ Each call runs
 
     Atoms -> Structure -> FieldGrid
           -> V_ext   (analytic, from the POTCAR tables)
-          -> rho     (ext2chg operator)
-          -> tau     (chg2tau operator)
+          -> rho     (ext2pseudo operator)
+          -> tau     (pseudo2tau operator)
           -> E       (poraque.physics.EnergyCalculator)
 
 and the three intermediate fields stay on the calculator afterwards
@@ -90,7 +90,7 @@ class Poraque(Calculator):
     models : str, optional
         The unified checkpoint written by ``poraque-train``, holding both
         operators. Defaults to ``models/poraque_models.poraque``.
-    ext2chg, chg2tau : FieldOperator, optional
+    ext2pseudo, pseudo2tau : FieldOperator, optional
         Already-loaded operators, overriding the corresponding entry of
         ``models``. Useful for evaluating a model that is still in memory.
     potcar : str, optional
@@ -111,7 +111,7 @@ class Poraque(Calculator):
         Selects the Gaussian pseudo-ion model — see the warning below.
     resolution : int, optional
         Longest grid axis. Defaults to the resolution recorded in the
-        ``ext2chg`` checkpoint, else :data:`DEFAULT_RESOLUTION`.
+        ``ext2pseudo`` checkpoint, else :data:`DEFAULT_RESOLUTION`.
     functional : str, optional
         Exchange-correlation approximation, one of
         :data:`~poraque.physics.energy.XC_FUNCTIONALS`: ``"pbe"`` (default),
@@ -193,7 +193,7 @@ class Poraque(Calculator):
     #: 1e-3 already corresponds to a ~10 eV shift in the total.
     _DRIFT_WARNING = 1e-3
 
-    def __init__(self, models=None, ext2chg=None, chg2tau=None, potcar=None,
+    def __init__(self, models=None, ext2pseudo=None, pseudo2tau=None, potcar=None,
                  potcar_dir=None, charges=None, resolution=None,
                  functional="pbe", device="auto", normalize_density=True,
                  references=None, **kwargs):
@@ -223,15 +223,15 @@ class Poraque(Calculator):
         self._warned_gaussian = False
         self._potcar_cache = {}
 
-        if models is None and (ext2chg is None or chg2tau is None):
+        if models is None and (ext2pseudo is None or pseudo2tau is None):
             models = resolve_bundle_path(
                 os.path.join("models", BUNDLE_FILENAME))
         self.models = str(models) if models is not None else None
 
-        self.ext2chg = self._resolve_operator(
-            ext2chg if ext2chg is not None else self.models, "ext2chg")
-        self.chg2tau = self._resolve_operator(
-            chg2tau if chg2tau is not None else self.models, "chg2tau")
+        self.ext2pseudo = self._resolve_operator(
+            ext2pseudo if ext2pseudo is not None else self.models, "ext2pseudo")
+        self.pseudo2tau = self._resolve_operator(
+            pseudo2tau if pseudo2tau is not None else self.models, "pseudo2tau")
 
         self.potcar = self._read_potcar(potcar) if potcar else None
 
@@ -249,7 +249,7 @@ class Poraque(Calculator):
 
         self.resolution = int(
             resolution if resolution is not None
-            else (self.ext2chg.training_resolution or DEFAULT_RESOLUTION)
+            else (self.ext2pseudo.training_resolution or DEFAULT_RESOLUTION)
         )
 
     # ------------------------------------------------------------------ #
@@ -272,7 +272,7 @@ class Poraque(Calculator):
             return load_bundle(source, task, device=self.device)
         except KeyError:
             # A single-task bundle is a normal artifact now: the vast public
-            # archives of charge densities train `ext2chg` and nothing else,
+            # archives of charge densities train `ext2pseudo` and nothing else,
             # because no archive publishes a kinetic energy density. Say what
             # such a model *can* do rather than only that a key is missing --
             # the calculator needs both halves of the chain and this is where
@@ -281,10 +281,10 @@ class Poraque(Calculator):
             raise KeyError(
                 f"{source} holds no {task!r} model; it contains {held}. The "
                 f"ASE calculator runs the whole chain V_ext -> rho -> tau -> E, "
-                f"so it needs both. A bundle with only 'ext2chg' predicts "
+                f"so it needs both. A bundle with only 'ext2pseudo' predicts "
                 f"charge densities -- use FieldOperator.predict, or "
-                f"poraque.ml.load_bundle(path, 'ext2chg') -- but cannot give a "
-                f"total energy, which is an integral over tau. Train chg2tau "
+                f"poraque.ml.load_bundle(path, 'ext2pseudo') -- but cannot give a "
+                f"total energy, which is an integral over tau. Train pseudo2tau "
                 f"on data that carries a TAUCAR and save both into one bundle."
             ) from None
 
@@ -475,7 +475,7 @@ class Poraque(Calculator):
             field; the raw one is kept under ``"density_raw"``.
         """
         potential = self.build_external_potential(atoms)
-        raw = self.ext2chg.predict(potential)
+        raw = self.ext2pseudo.predict(potential)
 
         density = raw
         nominal = self.valence_electrons(potential.structure)
@@ -496,7 +496,7 @@ class Poraque(Calculator):
                     RuntimeWarning, stacklevel=3,
                 )
 
-        tau = self.chg2tau.predict(density)
+        tau = self.pseudo2tau.predict(density)
         return {"external": potential, "density": density, "tau": tau,
                 "density_raw": raw}
 
@@ -506,7 +506,7 @@ class Poraque(Calculator):
 
         Also records :attr:`raw_electron_drift`, the relative electron-count
         error of the density *before* normalization. That is the honest
-        measure of how well the ``ext2chg`` operator did on this structure;
+        measure of how well the ``ext2pseudo`` operator did on this structure;
         after normalization the count is exact by construction and no longer
         tells you anything.
 
@@ -665,7 +665,7 @@ class Poraque(Calculator):
         return self._field(atoms, "density")
 
     def get_raw_charge_density(self, atoms=None):
-        """The ``ext2chg`` output before charge normalization."""
+        """The ``ext2pseudo`` output before charge normalization."""
         return self._field(atoms, "density_raw")
 
     def get_kinetic_energy_density(self, atoms=None):
@@ -961,7 +961,7 @@ class Poraque(Calculator):
             source = "gaussian"
         return (f"Poraque(resolution={self.resolution}, v_ext={source}, "
                 f"functional={self.functional!r}, "
-                f"device={self.ext2chg.device_description})")
+                f"device={self.ext2pseudo.device_description})")
 
 
 # ===================================================================== #
@@ -1008,7 +1008,7 @@ def _grid_shape(cell, resolution):
 
 class PoraquePAW(Calculator):
     r"""
-    Total energy and forces through the PAW chain ``ext2paw -> paw2tau``.
+    Total energy and forces through the PAW chain ``ext2chg -> chg2tau``.
 
     The energy is VASP's PAW total energy (:mod:`poraque.physics.paw`),
     evaluated on the fields the operators predict: the pseudo-density with its
@@ -1028,7 +1028,7 @@ class PoraquePAW(Calculator):
     ----------
     models : str or sequence of str, optional
         Bundles; each task is taken from the first that holds it. One must
-        hold ``ext2paw`` and one ``paw2tau`` (or ``chg2tau``), unless the
+        hold ``ext2chg`` and one ``chg2tau`` (or ``pseudo2tau``), unless the
         operators are passed directly.
     potcar_dir : str
         The POTCAR library the operators were trained with.
@@ -1070,19 +1070,19 @@ class PoraquePAW(Calculator):
         device = None if device == "auto" else device
         data = {}
         if density_operator is None:
-            density_bundle = first("ext2paw")
+            density_bundle = first("ext2chg")
             if density_bundle is None:
-                raise ValueError(f"{bundles} hold no ext2paw operator; pass "
+                raise ValueError(f"{bundles} hold no ext2chg operator; pass "
                                  f"one, or density_operator=.")
-            density_operator = load_bundle(density_bundle, "ext2paw",
+            density_operator = load_bundle(density_bundle, "ext2chg",
                                            device=device)
             data = (read_bundle(density_bundle).get("config")
                     or {}).get("data", {})
         if kinetic_operator is None:
-            kinetic_task = "paw2tau" if first("paw2tau") else "chg2tau"
+            kinetic_task = "chg2tau" if first("chg2tau") else "pseudo2tau"
             kinetic_bundle = first(kinetic_task)
             if kinetic_bundle is None:
-                raise ValueError(f"{bundles} hold no paw2tau or chg2tau "
+                raise ValueError(f"{bundles} hold no chg2tau or pseudo2tau "
                                  f"operator; pass one, or kinetic_operator=.")
             kinetic_operator = load_bundle(kinetic_bundle, kinetic_task,
                                            device=device)

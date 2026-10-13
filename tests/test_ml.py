@@ -282,13 +282,13 @@ class TestTransforms:
 # --------------------------------------------------------------------- #
 class TestDataset:
     def test_discovery_and_shapes(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         assert len(dataset) == 6
         assert dataset.shapes() == [(16, 16, 16), (16, 16, 16), (20, 20, 20),
                                     (20, 20, 20), (12, 18, 24), (24, 24, 24)]
 
     def test_sample_layout(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         sample = dataset[0]
         assert sample["input"].shape == (1, 16, 16, 16)
         assert sample["target"].shape == (1, 16, 16, 16)
@@ -296,7 +296,7 @@ class TestDataset:
         assert sample["material"] == "mat_00"
 
     def test_shape_buckets_never_mix_shapes(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         loader = make_dataloader(dataset, batch_size=3)
         seen = 0
         for batch in loader:
@@ -305,25 +305,25 @@ class TestDataset:
         assert seen == len(dataset)
 
     def test_mixed_shape_collate_is_rejected(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         with pytest.raises(ValueError, match="Cannot batch mixed grid shapes"):
             collate_fields([dataset[0], dataset[2]])
 
     def test_fit_transforms_picks_sensible_types(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         source, target = dataset.fit_transforms()
         assert isinstance(source, Standardize)   # signed potential
         assert isinstance(target, Asinh)         # positive, many decades
 
     def test_split_is_by_material(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         first, second = dataset.split(0.7, seed=1)
         assert len(first) + len(second) == len(dataset)
         names = {m.identifier for m in first.materials}
         assert names.isdisjoint({m.identifier for m in second.materials})
 
-    def test_chg2tau_task(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="chg2tau")
+    def test_pseudo2tau_task(self, dataset_root):
+        dataset = FieldPairDataset(dataset_root, task="pseudo2tau")
         assert dataset.task.input_field == "CHGCAR"
         assert dataset.task.target_field == "TAUCAR"
         assert dataset[0]["input"].shape == (1, 16, 16, 16)
@@ -334,7 +334,7 @@ class TestDataset:
 
     def test_empty_root(self, tmp_path):
         with pytest.raises(ValueError, match="No material directories"):
-            FieldPairDataset(tmp_path, task="ext2chg")
+            FieldPairDataset(tmp_path, task="ext2pseudo")
 
 
 # --------------------------------------------------------------------- #
@@ -372,7 +372,7 @@ class TestTheFieldCacheReadsEachFileOnce:
 
     def test_a_cached_dataset_reads_nothing_on_the_second_pass(
             self, dataset_root, monkeypatch):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=True)
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo", cache=True)
         first, second = self._passes(dataset, monkeypatch)
         assert first >= len(dataset)
         assert second == 0
@@ -380,20 +380,20 @@ class TestTheFieldCacheReadsEachFileOnce:
     def test_an_uncached_dataset_reads_them_all_again(self, dataset_root,
                                                      monkeypatch):
         """The counterfactual: without it the test above proves nothing."""
-        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=False)
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo", cache=False)
         first, second = self._passes(dataset, monkeypatch)
         assert second == first > 0
 
     def test_the_values_are_the_same_either_way(self, dataset_root):
         """A cache that changed a number would be a bug wearing a speedup."""
-        cached = FieldPairDataset(dataset_root, task="ext2chg", cache=True)
-        plain = FieldPairDataset(dataset_root, task="ext2chg", cache=False)
+        cached = FieldPairDataset(dataset_root, task="ext2pseudo", cache=True)
+        plain = FieldPairDataset(dataset_root, task="ext2pseudo", cache=False)
         for index in range(len(plain)):
             for key in ("input", "target", "target_physical", "cell"):
                 torch.testing.assert_close(cached[index][key], plain[index][key])
 
     def test_auto_enables_it_for_a_dataset_that_fits(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         assert dataset.cache is True
         assert 0 < dataset.cache_bytes < 4 * 1024 ** 3
 
@@ -403,7 +403,7 @@ class TestTheFieldCacheReadsEachFileOnce:
         from poraque.ml import data as data_module
 
         monkeypatch.setattr(data_module, "CACHE_MEMORY_BUDGET", 1)
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         assert dataset.cache is False
         # Reported either way: "caching was declined" is only actionable
         # beside the number that declined it.
@@ -414,15 +414,15 @@ class TestTheFieldCacheReadsEachFileOnce:
         from poraque.ml import data as data_module
 
         monkeypatch.setattr(data_module, "CACHE_MEMORY_BUDGET", 1)
-        assert FieldPairDataset(dataset_root, task="ext2chg", cache=True).cache
+        assert FieldPairDataset(dataset_root, task="ext2pseudo", cache=True).cache
 
     def test_an_unrecognized_setting_raises(self, dataset_root):
         """Reading a typo as False would be a silent 10x slowdown."""
         with pytest.raises(ValueError, match="not a recognized setting"):
-            FieldPairDataset(dataset_root, task="ext2chg", cache="sometimes")
+            FieldPairDataset(dataset_root, task="ext2pseudo", cache="sometimes")
 
     def test_a_split_inherits_the_resolved_decision(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=False)
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo", cache=False)
         first, second = dataset.split(0.5, seed=0)
         assert first.cache is False and second.cache is False
 
@@ -433,7 +433,7 @@ class TestTheFieldCacheReadsEachFileOnce:
         tensors would go stale with no error -- the values would still be
         finite and plausible, at the wrong scale.
         """
-        dataset = FieldPairDataset(dataset_root, task="ext2chg", cache=True)
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo", cache=True)
         before = dataset[0]["input"].clone()
         dataset.fit_transforms()
         after = dataset[0]["input"]
@@ -449,7 +449,7 @@ class TestTheDataLoaderOptionsReachTheDataLoader:
     """
 
     def test_workers_and_pinning_are_forwarded(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         loader = make_dataloader(dataset, batch_size=2, num_workers=2,
                                  pin_memory=True)
         assert loader.num_workers == 2
@@ -458,7 +458,7 @@ class TestTheDataLoaderOptionsReachTheDataLoader:
 
     def test_persistent_workers_is_not_set_without_workers(self, dataset_root):
         """Asking for it at `num_workers=0` is an error in torch, not a no-op."""
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         loader = make_dataloader(dataset, batch_size=2)
         assert loader.num_workers == 0
         assert loader.persistent_workers is False
@@ -470,11 +470,11 @@ class TestTheDataLoaderOptionsReachTheDataLoader:
 # --------------------------------------------------------------------- #
 class TestTraining:
     def test_loss_decreases_and_predicts_on_an_unseen_shape(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         source, target = dataset.fit_transforms()
         train_set, val_set = dataset.split(0.7, seed=1)
 
-        operator = FieldOperator("ext2chg", width=12, modes=6, n_layers=2,
+        operator = FieldOperator("ext2pseudo", width=12, modes=6, n_layers=2,
                                  projection_channels=24, input_transform=source,
                                  target_transform=target, device="cpu")
         history = train(operator, train_set, validation=val_set, epochs=6,
@@ -495,9 +495,9 @@ class TestTraining:
         assert np.isfinite(prediction.data).all()
 
     def test_prediction_is_a_writable_chgcar(self, dataset_root, tmp_path):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         source, target = dataset.fit_transforms()
-        operator = FieldOperator("ext2chg", width=8, modes=4, n_layers=1,
+        operator = FieldOperator("ext2pseudo", width=8, modes=4, n_layers=1,
                                  projection_channels=16, input_transform=source,
                                  target_transform=target, device="cpu")
         potential = ExternalPotential.read(
@@ -507,10 +507,10 @@ class TestTraining:
         assert ChargeDensity.read(path).shape == potential.shape
 
     def test_checkpoint_round_trip(self, dataset_root, tmp_path):
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         source, target = dataset.fit_transforms()
         kwargs = dict(width=8, modes=4, n_layers=1, projection_channels=16)
-        operator = FieldOperator("ext2chg", input_transform=source,
+        operator = FieldOperator("ext2pseudo", input_transform=source,
                                  target_transform=target, device="cpu", **kwargs)
 
         potential = ExternalPotential.read(
@@ -523,11 +523,11 @@ class TestTraining:
         assert np.abs(restored.predict(potential).data - expected).max() < 1e-6
 
     def test_physics_informed_loss_trains(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="chg2tau")
+        dataset = FieldPairDataset(dataset_root, task="pseudo2tau")
         source, target = dataset.fit_transforms()
-        loss = PhysicsInformedLoss(task="chg2tau", von_weizsacker_weight=1.0,
+        loss = PhysicsInformedLoss(task="pseudo2tau", von_weizsacker_weight=1.0,
                                    positivity_weight=1.0, sobolev_weight=0.1)
-        operator = FieldOperator("chg2tau", width=8, modes=4, n_layers=2,
+        operator = FieldOperator("pseudo2tau", width=8, modes=4, n_layers=2,
                                  projection_channels=16, input_transform=source,
                                  target_transform=target, device="cpu")
         history = train(operator, dataset, epochs=4, batch_size=2, loss=loss,
@@ -536,7 +536,7 @@ class TestTraining:
 
     def test_default_loss_is_purely_supervised(self):
         """Physics weights default to zero, so the baseline is unchanged."""
-        criterion = PhysicsInformedLoss(task="ext2chg")
+        criterion = PhysicsInformedLoss(task="ext2pseudo")
         prediction = torch.randn(2, 1, 8, 8, 8)
         target = torch.randn(2, 1, 8, 8, 8)
         cell = torch.eye(3).repeat(2, 1, 1) * 5.0
@@ -563,7 +563,7 @@ class TestBundle:
             task: FieldOperator(task, width=4, modes=2, n_layers=1,
                                 projection_channels=8, device="cpu",
                                 training_resolution=24)
-            for task in ("ext2chg", "chg2tau")
+            for task in ("ext2pseudo", "pseudo2tau")
         }
 
     def test_round_trip_preserves_the_weights(self, pair, tmp_path):
@@ -580,35 +580,35 @@ class TestBundle:
         from poraque.ml import load_bundle, save_bundle
 
         path = save_bundle(str(tmp_path / "poraque_models.poraque"), pair)
-        restored = load_bundle(path, "chg2tau", device="cpu")
-        assert restored.task.name == "chg2tau"
+        restored = load_bundle(path, "pseudo2tau", device="cpu")
+        assert restored.task.name == "pseudo2tau"
         assert restored.training_resolution == 24
 
     def test_predictions_are_unchanged(self, pair, tmp_path, dataset_root):
         """The point of a checkpoint is that it predicts the same thing."""
         from poraque.ml import load_bundle, save_bundle
 
-        dataset = FieldPairDataset(dataset_root, task="ext2chg")
+        dataset = FieldPairDataset(dataset_root, task="ext2pseudo")
         source, _ = dataset.load_fields(0)
 
         path = save_bundle(str(tmp_path / "poraque_models.poraque"), pair)
-        before = pair["ext2chg"].predict(source).data
-        after = load_bundle(path, "ext2chg", device="cpu").predict(source).data
+        before = pair["ext2pseudo"].predict(source).data
+        after = load_bundle(path, "ext2pseudo", device="cpu").predict(source).data
         assert np.allclose(before, after, atol=1e-6)
 
     def test_lists_its_tasks(self, pair, tmp_path):
         from poraque.ml import bundle_tasks, save_bundle
 
         path = save_bundle(str(tmp_path / "poraque_models.poraque"), pair)
-        assert bundle_tasks(path) == ["chg2tau", "ext2chg"]
+        assert bundle_tasks(path) == ["ext2pseudo", "pseudo2tau"]
 
     def test_missing_task_names_what_is_present(self, pair, tmp_path):
         from poraque.ml import load_bundle, save_bundle
 
         path = save_bundle(str(tmp_path / "one.poraque"),
-                           {"ext2chg": pair["ext2chg"]})
-        with pytest.raises(KeyError, match="chg2tau"):
-            load_bundle(path, "chg2tau", device="cpu")
+                           {"ext2pseudo": pair["ext2pseudo"]})
+        with pytest.raises(KeyError, match="pseudo2tau"):
+            load_bundle(path, "pseudo2tau", device="cpu")
 
     def test_a_single_operator_file_is_rejected(self, pair, tmp_path):
         """
@@ -616,8 +616,8 @@ class TestBundle:
         """
         from poraque.ml import read_bundle
 
-        path = str(tmp_path / "ext2chg.poraque")
-        pair["ext2chg"].save(path)
+        path = str(tmp_path / "ext2pseudo.poraque")
+        pair["ext2pseudo"].save(path)
         with pytest.raises(ValueError, match="single-operator checkpoint"):
             read_bundle(path)
 
@@ -647,7 +647,7 @@ class TestBundle:
 
         payload = torch.load(path, map_location="cpu", weights_only=False)
         assert tuple(sorted(payload)) == tuple(sorted(CHECKPOINT_KEYS))
-        assert sorted(payload["model_state_dict"]) == ["chg2tau", "ext2chg"]
+        assert sorted(payload["model_state_dict"]) == ["ext2pseudo", "pseudo2tau"]
         assert payload["config"]["training"]["epochs"] == 7
         assert isinstance(payload["config"], dict)
         assert payload["paw_profiles"][78]["core_density"] == [3.0, 1.0]
@@ -663,15 +663,15 @@ class TestBundle:
 
         path = save_bundle(str(tmp_path / "m.poraque"), pair)
         state = torch.load(path, map_location="cpu",
-                           weights_only=False)["model_state_dict"]["ext2chg"]
+                           weights_only=False)["model_state_dict"]["ext2pseudo"]
         for key in ("model_state", "architecture", "input_transform",
                     "target_transform"):
             assert key in state
-        restored = load_bundle(path, "ext2chg", device="cpu")
+        restored = load_bundle(path, "ext2pseudo", device="cpu")
         field = torch.randn(1, 1, 8, 8, 8)
         cell = torch.eye(3).unsqueeze(0) * 4.0
         with torch.no_grad():
-            assert torch.equal(pair["ext2chg"].model(field, cell),
+            assert torch.equal(pair["ext2pseudo"].model(field, cell),
                                restored.model(field, cell))
 
     def test_the_retired_layout_is_named_and_not_read(self, pair, tmp_path):
@@ -682,8 +682,8 @@ class TestBundle:
         from poraque.ml import read_bundle
 
         path = str(tmp_path / "old.poraque")
-        torch.save({"format": "poraque-bundle-1", "tasks": ["ext2chg"],
-                    "metadata": {}, "ext2chg": pair["ext2chg"].state()}, path)
+        torch.save({"format": "poraque-bundle-1", "tasks": ["ext2pseudo"],
+                    "metadata": {}, "ext2pseudo": pair["ext2pseudo"].state()}, path)
         with pytest.raises(ValueError, match="retired poraque-bundle-1"):
             read_bundle(path)
 
@@ -700,7 +700,7 @@ class TestBackboneInference:
     def test_recovers_the_architecture(self, width, modes, layers, projection):
         from poraque.ml import infer_backbone_kwargs
 
-        operator = FieldOperator("ext2chg", width=width, modes=modes,
+        operator = FieldOperator("ext2pseudo", width=width, modes=modes,
                                  n_layers=layers,
                                  projection_channels=projection, device="cpu")
         recovered = infer_backbone_kwargs(operator.model.state_dict())
@@ -713,7 +713,7 @@ class TestBackboneInference:
         """The head wraps the backbone under a 'backbone.' prefix."""
         from poraque.ml import infer_backbone_kwargs
 
-        operator = FieldOperator("chg2tau", width=6, modes=3, n_layers=2,
+        operator = FieldOperator("pseudo2tau", width=6, modes=3, n_layers=2,
                                  projection_channels=12, pauli_residual=True,
                                  device="cpu")
         recovered = infer_backbone_kwargs(operator.model.state_dict())
@@ -722,11 +722,11 @@ class TestBackboneInference:
     def test_pauli_head_survives_a_bundle_round_trip(self, tmp_path):
         from poraque.ml import load_bundle, save_bundle
 
-        operator = FieldOperator("chg2tau", width=6, modes=3, n_layers=2,
+        operator = FieldOperator("pseudo2tau", width=6, modes=3, n_layers=2,
                                  projection_channels=12, pauli_residual=True,
                                  pauli_scale=2.5, device="cpu")
-        path = save_bundle(str(tmp_path / "m.poraque"), {"chg2tau": operator})
-        restored = load_bundle(path, "chg2tau", device="cpu")
+        path = save_bundle(str(tmp_path / "m.poraque"), {"pseudo2tau": operator})
+        restored = load_bundle(path, "pseudo2tau", device="cpu")
         assert restored.pauli_residual is True
         assert restored.pauli_scale == pytest.approx(2.5)
 
@@ -817,11 +817,120 @@ class TestOptimizerSelection:
         """End to end: the loop runs under each optimizer."""
         from poraque.ml import FieldOperator, FieldPairDataset, train
 
-        data = FieldPairDataset(dataset_root, task="ext2chg")
+        data = FieldPairDataset(dataset_root, task="ext2pseudo")
         for name in ("adamw", "adam", "sgd"):
-            operator = FieldOperator("ext2chg", width=4, modes=2, n_layers=1,
+            operator = FieldOperator("ext2pseudo", width=4, modes=2, n_layers=1,
                                      projection_channels=8, device="cpu",
                                      init_seed=0)
             history = train(operator, data, epochs=1, batch_size=1,
                             optimizer=name, scheduler=None, verbose=False)
             assert np.isfinite(history["train_loss"][-1])
+
+
+class TestAPreRenameCheckpointIsTranslated:
+    """
+    Checkpoints written before the 2026-10-11 task rename still load.
+
+    The rename was a **swap**, not a retirement: ``ext2chg`` and ``chg2tau``
+    went to the two tasks that carry a whole ``CHGCAR`` --- grid plus every
+    atom's PAW augmentation occupancies --- and the grid-only pair they used to
+    name became ``ext2pseudo`` and ``pseudo2tau``. So a stored key is no
+    evidence of which task it holds, and a translation driven by a table of
+    names would load the previous ``ext2chg`` (a plain field-to-field operator)
+    as the present one (a PAW operator with an occupancy head), or refuse it.
+
+    ``bundle_task_renames`` reads each record's own ``site`` entry instead,
+    which ``FieldOperator.state()`` leaves ``None`` for a field-to-field
+    operator and fills for one with an on-site part. These tests pin that the
+    discriminator is the record and not the key.
+    """
+
+    def _record(self, task, sited):
+        """A state record stripped to what the translation reads."""
+        site = {"layouts": {"8": [0, 1]}, "transform": None} if sited else None
+        return {"task": task, "site": site,
+                "model_class": "PAWOperatorModel" if sited else "FNO3d"}
+
+    def test_the_sited_names_move_to_the_chgcar_names(self):
+        from poraque.ml.training import bundle_task_renames
+
+        states = {"ext2paw": self._record("ext2paw", True),
+                  "paw2tau": self._record("paw2tau", True)}
+        assert bundle_task_renames(states) == {"ext2paw": "ext2chg",
+                                               "paw2tau": "chg2tau"}
+
+    def test_the_grid_only_names_move_aside_for_them(self):
+        """The half of the swap a name table would get silently wrong."""
+        from poraque.ml.training import bundle_task_renames
+
+        states = {"ext2chg": self._record("ext2chg", False),
+                  "chg2tau": self._record("chg2tau", False)}
+        assert bundle_task_renames(states) == {"ext2chg": "ext2pseudo",
+                                               "chg2tau": "pseudo2tau"}
+
+    def test_a_current_checkpoint_is_left_alone(self):
+        from poraque.ml.training import bundle_task_renames
+
+        states = {"ext2pseudo": self._record("ext2pseudo", False),
+                  "pseudo2tau": self._record("pseudo2tau", False),
+                  "ext2chg": self._record("ext2chg", True),
+                  "chg2tau": self._record("chg2tau", True)}
+        assert bundle_task_renames(states) == {}
+
+    def test_role_is_not_required_because_older_records_lack_it(self):
+        """
+        ``site["role"]`` was added after the first sited checkpoints.
+
+        The earliest ``ext2paw`` bundles in this repository carry ``layouts``
+        and ``readout_g_max`` and no ``role``, so reading ``role`` resolved
+        them as grid-only and silently renamed them to ``ext2pseudo``.
+        """
+        from poraque.ml.training import bundle_task_renames
+
+        record = {"task": "ext2paw", "model_class": "PAWOperatorModel",
+                  "site": {"layouts": {"8": [0]}, "readout_g_max": 6.0,
+                           "transform": None}}
+        assert "role" not in record["site"]
+        assert bundle_task_renames({"ext2paw": record}) == {"ext2paw": "ext2chg"}
+
+    def test_a_stored_bundle_loads_under_its_current_name(self, tmp_path):
+        """End to end: re-key a real checkpoint to the pre-rename names."""
+        from poraque.ml import bundle_tasks, load_bundle, save_bundle
+        from poraque.ml.training import FieldOperator
+
+        operators = {
+            task: FieldOperator(task, width=4, modes=2, n_layers=1,
+                                projection_channels=8, device="cpu",
+                                training_resolution=24)
+            for task in ("ext2pseudo", "pseudo2tau")
+        }
+        path = str(tmp_path / "pre_rename.poraque")
+        save_bundle(path, operators,
+                    config={"task": {"type": "ext2pseudo"}})
+
+        # Back to how the file would have been written before the rename.
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        stale = {}
+        for old, new in (("ext2pseudo", "ext2chg"),
+                         ("pseudo2tau", "chg2tau")):
+            record = dict(payload["model_state_dict"].pop(old))
+            record["task"] = new
+            stale[new] = record
+        payload["model_state_dict"] = stale
+        payload["config"]["task"]["type"] = "ext2chg"
+        torch.save(payload, path)
+
+        assert bundle_tasks(path) == ["ext2pseudo", "pseudo2tau"]
+        restored = load_bundle(path, "ext2pseudo", device="cpu")
+        assert restored.task.name == "ext2pseudo"
+        assert type(restored.model).__name__ == "FNO3d"
+        # The config travels with the file and names the task too.
+        from poraque.ml.training import read_bundle
+        assert read_bundle(path)["config"]["task"]["type"] == "ext2pseudo"
+
+    def test_a_retired_name_says_what_it_became(self):
+        from poraque.ml.tasks import RENAMED_TASKS, resolve_task
+
+        assert RENAMED_TASKS == {"ext2paw": "ext2chg", "paw2tau": "chg2tau"}
+        with pytest.raises(KeyError, match="is now 'ext2chg'"):
+            resolve_task("ext2paw")

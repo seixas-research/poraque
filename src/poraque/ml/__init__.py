@@ -11,9 +11,9 @@ Neural-operator learning between the 3D scalar fields of :mod:`poraque.fields`.
 
 Two mappings are supported (see :mod:`poraque.ml.tasks`):
 
-``ext2chg``
+``ext2pseudo``
     :math:`V_{\rm ext} \mapsto \rho` — the Hohenberg-Kohn map.
-``chg2tau``
+``pseudo2tau``
     :math:`\rho \mapsto \tau` — the kinetic energy density functional.
 
 The architecture is a Fourier Neural Operator, chosen because its convolution
@@ -26,14 +26,14 @@ Quick start::
 
     from poraque.ml import FieldPairDataset, FieldOperator, train
 
-    data = FieldPairDataset("dataset_root", task="ext2chg")
+    data = FieldPairDataset("dataset_root", task="ext2pseudo")
     train_set, val_set = data.split(0.8)
     # Fit normalizations on the training split only -- fitting before the
     # split would leak validation statistics into the transforms.
     val_set.input_transform, val_set.target_transform = \
         train_set.fit_transforms()
 
-    operator = FieldOperator("ext2chg", width=32, modes=16, n_layers=4)
+    operator = FieldOperator("ext2pseudo", width=32, modes=16, n_layers=4)
     train(operator, train_set, validation=val_set, epochs=200, batch_size=4)
 
     from poraque.fields import ExternalPotential
@@ -54,10 +54,10 @@ _LAZY = {
     "TaskSpec": "poraque.ml.tasks",
     "TASKS": "poraque.ml.tasks",
     "CHAIN": "poraque.ml.tasks",
-    "EXT_TO_PAW": "poraque.ml.tasks",
-    "resolve_task": "poraque.ml.tasks",
     "EXT_TO_CHG": "poraque.ml.tasks",
-    "CHG_TO_TAU": "poraque.ml.tasks",
+    "resolve_task": "poraque.ml.tasks",
+    "EXT_TO_PSEUDO": "poraque.ml.tasks",
+    "PSEUDO_TO_TAU": "poraque.ml.tasks",
     # data
     "FieldPairDataset": "poraque.ml.data",
     "ShapeBucketSampler": "poraque.ml.data",

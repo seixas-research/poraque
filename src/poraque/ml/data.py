@@ -199,7 +199,7 @@ class FieldPairDataset(Dataset):
     root : str or pathlib.Path
         Dataset root laid out as described in the module docstring.
     task : TaskSpec or str
-        Which mapping to serve, e.g. ``"ext2chg"`` or ``"chg2tau"``; see
+        Which mapping to serve, e.g. ``"ext2pseudo"`` or ``"pseudo2tau"``; see
         :mod:`poraque.ml.tasks`.
     input_transform, target_transform : FieldTransform, optional
         Normalizations. Use :meth:`fit_transforms` to derive them from the
@@ -250,7 +250,7 @@ class FieldPairDataset(Dataset):
         ``baseline`` so the absolute density can be reconstructed downstream.
         Accepts a library, a path to one, or ``None`` (absolute mode, the
         default). Ignored unless the task's target is a ``CHGCAR`` --- there is
-        no atomic superposition of a kinetic energy density, so ``chg2tau`` is
+        no atomic superposition of a kinetic energy density, so ``pseudo2tau`` is
         unaffected whatever is passed.
     spin : {"auto", True, False}, optional
         Whether the ``CHGCAR`` fields carry two channels
@@ -284,7 +284,7 @@ class FieldPairDataset(Dataset):
 
     A spin-polarized dataset is only meaningful where the field *is* a density.
     ``EXTCAR`` is the ionic potential, which does not depend on spin, so the
-    ``ext2chg`` task is one channel in and two out; ``chg2tau`` is two in and,
+    ``ext2pseudo`` task is one channel in and two out; ``pseudo2tau`` is two in and,
     for now, one out — :math:`\\tau` is written by VASP as a single block even
     under ``ISPIN = 2``.
     """
@@ -718,8 +718,8 @@ class FieldPairDataset(Dataset):
         r"""
         The per-atom PAW records of material ``index``, read from its density.
 
-        The target of ``ext2paw``, read from the target ``CHGCAR``, and the
-        input of ``paw2tau``, read from the input one (``TaskSpec.site_field``).
+        The target of ``ext2chg``, read from the target ``CHGCAR``, and the
+        input of ``chg2tau``, read from the input one (``TaskSpec.site_field``).
 
         What a model of the one-center terms needs besides the grid: every
         atom's augmentation occupancies, the length of each record (it depends

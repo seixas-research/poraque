@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# file: test_paw2tau.py
+# file: test_chg2tau.py
 
 # This code is part of Poraquê.
 # MIT License
@@ -7,7 +7,7 @@
 # Copyright (c) 2026 Leandro Seixas Rocha <leandro.rocha@ilum.cnpem.br>
 
 r"""
-``paw2tau``: the kinetic energy density from the pseudo-density **and** every
+``chg2tau``: the kinetic energy density from the pseudo-density **and** every
 atom's PAW occupancies.
 
 The occupancies have no grid representation, so they enter through
@@ -164,13 +164,13 @@ def dataset_root(tmp_path):
     return tmp_path
 
 
-class TestThePaw2tauOperatorTrainsAndReloads:
+class TestTheChg2tauOperatorTrainsAndReloads:
     """The task end to end: data, transform, training, checkpoint, predict."""
 
     def _operator(self, dataset):
         transform = OccupancyTransform.fit(dataset, LAYOUT, sets=1)
         operator = FieldOperator(
-            "paw2tau", input_transform=dataset.input_transform,
+            "chg2tau", input_transform=dataset.input_transform,
             target_transform=dataset.target_transform, device="cpu",
             width=4, modes=3, n_layers=1, use_coordinates=False,
             in_channels=1, out_channels=1, site_layouts=LAYOUT,
@@ -179,13 +179,13 @@ class TestThePaw2tauOperatorTrainsAndReloads:
         return operator
 
     def test_the_task_reads_the_records_from_its_input(self):
-        task = resolve_task("paw2tau")
+        task = resolve_task("chg2tau")
         assert task.site_input == "augmentation"
         assert task.site_field == "CHGCAR" == task.input_field
 
     def test_one_epoch_trains_and_the_checkpoint_predicts_the_same(
             self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="paw2tau", cache=True,
+        dataset = FieldPairDataset(dataset_root, task="chg2tau", cache=True,
                                    dtype=torch.float64)
         dataset.fit_transforms()
         operator = self._operator(dataset)
@@ -206,7 +206,7 @@ class TestThePaw2tauOperatorTrainsAndReloads:
                                    atol=1e-12)
 
     def test_predict_refuses_a_field_without_its_records(self, dataset_root):
-        dataset = FieldPairDataset(dataset_root, task="paw2tau", cache=True,
+        dataset = FieldPairDataset(dataset_root, task="chg2tau", cache=True,
                                    dtype=torch.float64)
         dataset.fit_transforms()
         operator = self._operator(dataset)

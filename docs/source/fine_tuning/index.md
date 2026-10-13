@@ -181,7 +181,7 @@ The container is a `torch.save` dictionary of exactly three entries:
 
 ```python
 checkpoint = {
-    "model_state_dict": {"ext2chg": ..., "chg2tau": ...},
+    "model_state_dict": {"ext2pseudo": ..., "pseudo2tau": ...},
     "config": {...},                       # the resolved training config
     "paw_profiles": {78: {...}, ...},      # PAW data per atomic number
 }

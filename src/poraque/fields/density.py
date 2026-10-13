@@ -203,12 +203,12 @@ class KineticEnergyDensity(ScalarField):
             Always. Read a reference ``TAUCAR``, use
             :func:`thomas_fermi_tau` / :func:`von_weizsacker_tau` for the
             orbital-free approximants, or predict one with a trained
-            ``chg2tau`` operator.
+            ``pseudo2tau`` operator.
         """
         raise NotImplementedError(
             "KineticEnergyDensity is read or predicted, not computed: use "
             "KineticEnergyDensity.read(path, grid=shared_grid), an analytic "
-            "KEDF, or a trained chg2tau operator."
+            "KEDF, or a trained pseudo2tau operator."
         )
 
 

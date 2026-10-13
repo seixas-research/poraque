@@ -201,7 +201,7 @@ def fit_pauli_scale(dataset, max_materials=8, quantile=0.5):
     Parameters
     ----------
     dataset : FieldPairDataset
-        A ``chg2tau`` dataset. Only the *training* split should be passed —
+        A ``pseudo2tau`` dataset. Only the *training* split should be passed —
         fitting on held-out material leaks information.
     max_materials : int, optional
         Number of materials to sample.
@@ -238,7 +238,7 @@ def pauli_bound_violation(dataset, max_materials=None):
     Parameters
     ----------
     dataset : FieldPairDataset
-        A ``chg2tau`` dataset.
+        A ``pseudo2tau`` dataset.
     max_materials : int, optional
         Limit the number of materials inspected.
 

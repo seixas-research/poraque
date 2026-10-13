@@ -184,12 +184,12 @@ class TestEulerLagrangeIntegration:
 
 
 class TestOperatorInterface:
-    def test_requires_a_chg2tau_operator(self):
+    def test_requires_a_pseudo2tau_operator(self):
         from poraque.ml import FieldOperator
 
-        operator = FieldOperator("ext2chg", width=8, modes=4, n_layers=1,
+        operator = FieldOperator("ext2pseudo", width=8, modes=4, n_layers=1,
                                  projection_channels=16, device="cpu")
-        with pytest.raises(ValueError, match="chg2tau"):
+        with pytest.raises(ValueError, match="pseudo2tau"):
             operator_kinetic_potential(operator, torch.rand(1, 1, 8, 8, 8),
                                        torch.eye(3).unsqueeze(0) * 6.0)
 
@@ -197,7 +197,7 @@ class TestOperatorInterface:
         from poraque.ml import FieldOperator
 
         torch.manual_seed(0)
-        operator = FieldOperator("chg2tau", width=8, modes=4, n_layers=2,
+        operator = FieldOperator("pseudo2tau", width=8, modes=4, n_layers=2,
                                  projection_channels=16, device="cpu")
         rho = torch.rand(1, 1, 12, 12, 12) * 0.3 + 0.1
         cell = torch.eye(3).unsqueeze(0) * 6.0
@@ -289,7 +289,7 @@ class TestHomogeneitySumRule:
         from poraque.ml import FieldOperator
 
         torch.manual_seed(0)
-        operator = FieldOperator("chg2tau", width=8, modes=4, n_layers=2,
+        operator = FieldOperator("pseudo2tau", width=8, modes=4, n_layers=2,
                                  projection_channels=16, device="cpu")
         rho = torch.rand(1, 1, 12, 12, 12) * 0.3 + 0.1
         cell = torch.eye(3).unsqueeze(0) * 6.0

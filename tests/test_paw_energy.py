@@ -184,7 +184,7 @@ class TestTheTorchEnergyIsTheNumpyEnergy:
 
 
 def _untrained_pt_operators(tmp_path):
-    """Small untrained ext2paw and paw2tau operators for Pt, on the CPU."""
+    """Small untrained ext2chg and chg2tau operators for Pt, on the CPU."""
     from poraque.fields.atomic import resolve_library
     from poraque.fields.vasp.augmentation import record_layout
     from poraque.ml import FieldOperator
@@ -212,13 +212,13 @@ def _untrained_pt_operators(tmp_path):
                   site_transform=transform, init_seed=0)
     torch.manual_seed(0)
     density = FieldOperator(
-        "ext2paw", in_channels=2, out_channels=2, readout_g_max=3.0,
+        "ext2chg", in_channels=2, out_channels=2, readout_g_max=3.0,
         input_transform=Channelwise([Standardize(0.0, 50.0), Asinh(0.1)]),
         target_transform=Channelwise([Asinh(0.05), Asinh(0.05)]),
         baseline=library, structure_input={"superposition": True,
                                            "elements": []}, **common)
     kinetic = FieldOperator(
-        "paw2tau", in_channels=2, out_channels=1, occupancy_channels=2,
+        "chg2tau", in_channels=2, out_channels=1, occupancy_channels=2,
         input_transform=Channelwise([Asinh(0.1), Asinh(0.1)]),
         target_transform=Asinh(5.0), **common)
     return density, kinetic
@@ -227,7 +227,7 @@ def _untrained_pt_operators(tmp_path):
 @needs_potcar
 class TestTheForcesAreTheGradientOfTheEnergy:
     """
-    Autograd through V_ext, ext2paw, paw2tau and the energy equals a central
+    Autograd through V_ext, ext2chg, chg2tau and the energy equals a central
     difference of the same energy: the forces are conservative by construction.
     Untrained operators are enough; the property is of the chain.
     """

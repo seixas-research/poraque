@@ -15,7 +15,7 @@ so.
 
 ```bash
 pip install -e ".[symbolic]"     # sympy, for LaTeX and the limit checks
-poraque-train --config configs/train.yaml --task chg2tau --symbolic
+poraque-train --config configs/train.yaml --task pseudo2tau --symbolic
 ```
 
 The extra is one package, and only for *reporting*: SymPy renders the result
@@ -34,7 +34,7 @@ That makes a poor fit informative rather than disappointing: it puts a number
 on how much of the learned map is not semi-local. A near-perfect fit would say
 the operator found nothing a GGA-level functional could not have.
 
-Only `chg2tau` is attempted. `ext2chg` is the Hohenberg–Kohn map, whose whole
+Only `pseudo2tau` is attempted. `ext2pseudo` is the Hohenberg–Kohn map, whose whole
 content is non-local — a semi-local expression for it would be meaningless
 rather than merely inaccurate.
 

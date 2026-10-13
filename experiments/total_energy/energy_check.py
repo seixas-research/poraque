@@ -34,8 +34,8 @@ from poraque.physics import EnergyCalculator
 from poraque.physics.energy import total_density
 
 records = discover_materials(CACHE)
-ext2chg = load_bundle(BUNDLE, "ext2chg", device="cpu")
-chg2tau = load_bundle(BUNDLE, "chg2tau", device="cpu")
+ext2pseudo = load_bundle(BUNDLE, "ext2pseudo", device="cpu")
+pseudo2tau = load_bundle(BUNDLE, "pseudo2tau", device="cpu")
 print(f"{len(records)} materials from {CACHE}\n")
 
 potcar = None
@@ -54,13 +54,13 @@ for record in records:
     calc = EnergyCalculator.from_potential(ext, pscore=pscore, functional="pbe")
 
     # --- the chain: V_ext -> rho -> tau. No DFT field is consumed. ---
-    rho_p = ext2chg.predict(ext)
+    rho_p = ext2pseudo.predict(ext)
     # The electron count is fixed by the pseudopotentials and is the one part
     # of the prediction that is known exactly, so it is imposed before any
     # 1e4 eV electrostatic term integrates the density. This is what the ASE
     # calculator does; not doing it here would measure a different pipeline.
     rho_p = rho_p.normalized(calc.nominal_electrons)
-    tau_p = chg2tau.predict(rho_p)
+    tau_p = pseudo2tau.predict(rho_p)
 
     ref = calc.compute(chg, tau, ext)
     pred = calc.compute(rho_p, tau_p, ext)

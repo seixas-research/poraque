@@ -96,7 +96,7 @@ command and runs from any directory::
 
     # 2. rank the structures, and check the ranking against known errors
     poraque-committee --models "models/committee_*" \
-        --task ext2chg --against logs/kfold12b.json
+        --task ext2pseudo --against logs/kfold12b.json
 
 Running this file directly — ``python scripts/poraque_committee.py`` — is
 equivalent, and needs nothing installed.
@@ -346,8 +346,8 @@ def rank(argv=None, log=None):
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--models", default="models/committee_*",
                         help="glob matching one directory or bundle per member")
-    parser.add_argument("--task", default="ext2chg",
-                        choices=["ext2chg", "chg2tau"])
+    parser.add_argument("--task", default="ext2pseudo",
+                        choices=["ext2pseudo", "pseudo2tau"])
     parser.add_argument("--cache", default="data/cache/res32",
                         help="cached dataset the members were trained on")
     parser.add_argument("--against", metavar="JSON", default=None,
@@ -389,7 +389,7 @@ def rank(argv=None, log=None):
                if siblings else "."))
 
     # This task's two fields, not the default triple. Asking for TAUCAR as
-    # well made an ext2chg dataset -- which by definition has no TAUCAR --
+    # well made an ext2pseudo dataset -- which by definition has no TAUCAR --
     # report as "no materials", so the very data the committee was trained on
     # could not be ranked.
     materials = discover_materials(args.cache, required=task.required_files)
