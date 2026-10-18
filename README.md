@@ -556,3 +556,31 @@ Poraquê is released under the [MIT License](LICENSE). Copyright © 2026 Leandro
 ## Acknowledgements
 
 We thank financial support from INCT Materials Informatics (Grant No. 406447/2022-5).
+
+### Fixed-density Harris–Foulkes evaluation
+
+An experimental `ext2chg` → Harris–Foulkes pipeline and standalone CHON
+benchmark are available in [experiments/harris](experiments/harris/README.md).
+The current backend solves a Γ-point local-pseudopotential LDA Hamiltonian;
+its energies exclude PAW nonlocal and augmentation contributions. Every Harris
+path checks the predicted density through one module,
+`poraque.physics.density_repair`, which reports negative charge and the
+defect against the POTCAR valence count and, only on request, floors and
+rescales it by one recorded global factor.
+
+The [official PAW Bloch solver](experiments/official_paw_harris/README.md) reads
+VASP-style inputs and explicitly user-provided POTCAR files at runtime. A valid
+VASP license is required; no potential data is bundled or generated. It includes generalized overlap, collinear spin, PBE gradients,
+spinor SOC and PAW one-center Harris corrections, with explicit validation limits.
+
+
+[VASP 6.6.1 benchmarking and error analysis](experiments/vasp_benchmark/README.md)
+and an optional [MPI/OpenMP/ScaLAPACK/FFTW backend](src/poraque/hpc/README.md)
+are available. Benchmark outputs include matched free-energy errors and explicit
+SCF-density diagnostics; private VASP runtime files stay outside source trees.
+
+Validated Python-versus-native profiling, MPI/thread strong and weak scaling,
+CSV/JSON reports and plotting are available through `poraque-profile` and
+`poraque-plot-profile`. See the [methodology and measured results](experiments/hpc_performance/README.md).
+The suite distinguishes portable kernel workloads from the separate full
+ext2chg/PAW energy regression and rejects timings when numerical checks fail.

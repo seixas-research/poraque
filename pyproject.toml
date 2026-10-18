@@ -47,6 +47,10 @@ poraque-active-learning = "poraque_active_learning:main"
 poraque-atoms = "poraque_atoms:main"
 poraque-vasp = "poraque_vasp:main"
 poraque-compile = "poraque_compile:main"
+poraque-bloch = "poraque_bloch:main"
+poraque-benchmark = "poraque_benchmark:main"
+poraque-profile = "poraque_profile:main"
+poraque-plot-profile = "poraque_plot_profile:main"
 poraque-mp = "poraque.data.materials_project:main"
 
 [tool.hatch.build.targets.wheel]
@@ -60,6 +64,10 @@ only-include = [
     "scripts/poraque_atoms.py",
     "scripts/poraque_vasp.py",
     "scripts/poraque_compile.py",
+    "scripts/poraque_bloch.py",
+    "scripts/poraque_benchmark.py",
+    "scripts/poraque_profile.py",
+    "scripts/poraque_plot_profile.py",
 ]
 
 # The C kernels ship as *source* and are compiled on first use into a user
@@ -70,6 +78,16 @@ only-include = [
 [tool.hatch.build.targets.wheel.force-include]
 "src/poraque/ml/_spectral.c" = "poraque/ml/_spectral.c"
 "src/poraque/fields/vasp/_codec.c" = "poraque/fields/vasp/_codec.c"
+
+"src/poraque/hpc/poraque_hpc.c" = "poraque/hpc/poraque_hpc.c"
+"src/poraque/hpc/poraque_hpc.h" = "poraque/hpc/poraque_hpc.h"
+"src/poraque/hpc/fft_mpi.c" = "poraque/hpc/fft_mpi.c"
+"src/poraque/hpc/CMakeLists.txt" = "poraque/hpc/CMakeLists.txt"
+
+# Source distributions are code-only: never include licensed runtime inputs.
+[tool.hatch.build.targets.sdist]
+include = ["src", "scripts", "pyproject.toml", "README.md", "LICENSE"]
+exclude = ["**/POTCAR", "**/POTCAR.*", "**/*.POTCAR", "**/potpaw_*"]
 
 [tool.hatch.version]
 path = "src/poraque/version.py"

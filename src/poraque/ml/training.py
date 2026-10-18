@@ -452,9 +452,10 @@ class FieldOperator:
 
         Returns
         -------
-        ScalarField or SpinDensity
+        ScalarField or SpinDensity or VectorSpinDensity
             An instance of the task's target class, in physical units. A
-            two-channel operator returns a
+            four-channel CHGCAR operator returns charge and Cartesian mx,my,mz;
+            a two-channel operator returns a
             :class:`~poraque.fields.SpinDensity` carrying
             :math:`(\\rho, m)`; a one-channel operator returns the plain field.
         """
@@ -530,6 +531,11 @@ class FieldOperator:
             return SpinDensity.from_channels(channels, field.grid,
                                              field.structure,
                                              metadata=metadata)
+
+        if channels.shape[0] == 4 and self.task.target_field == 'CHGCAR':
+            from ..fields.vector_spin import VectorSpinDensity
+            return VectorSpinDensity(channels[0], channels[1:], field.grid,
+                                     field.structure, metadata=metadata)
 
         raise ValueError(
             f"An operator with {channels.shape[0]} output channels has no "
@@ -806,7 +812,17 @@ class FieldOperator:
             structure_input=state.get("structure_input"),
             **inferred,
         )
-        operator.model.load_state_dict(state["model_state"])
+        # Early CHON bundles used British spelling for these module/buffer
+        # names. Translate names only; retain strict tensor validation and
+        # leave the archived checkpoint untouched.
+        weights = {}
+        for key, value in state["model_state"].items():
+            renamed = ".".join({"neighbours": "neighbors", "centres": "centers"}
+                               .get(part, part) for part in key.split("."))
+            if renamed in weights:
+                raise ValueError(f"Duplicate checkpoint key after migration: {renamed}")
+            weights[renamed] = value
+        operator.model.load_state_dict(weights)
         return operator
 
     @classmethod

@@ -1,0 +1,101 @@
+{
+  "backend": "Gamma local pseudopotential LDA/PW92; not PAW",
+  "settings": {
+    "models": "models/chon/chon_ext2paw_charge.poraque",
+    "potcar_dir": "data/CHON/isolated_atoms",
+    "shape": [
+      16,
+      16,
+      16
+    ],
+    "cell": 10.0,
+    "molecules": [
+      "CH4",
+      "NH3",
+      "H2O",
+      "H2CO"
+    ],
+    "device": "cpu",
+    "repair_density": true,
+    "spin_average": true,
+    "scf": false,
+    "max_scf_steps": 150,
+    "mixing": 0.15,
+    "output": "/tmp/harris_chon_final.json"
+  },
+  "model_load_seconds": 0.014219126999705622,
+  "systems": [
+    {
+      "molecule": "CH4",
+      "status": "ok",
+      "harris_ev": -217.45660843325112,
+      "band_ev": -93.75748319442815,
+      "hartree_ev": 280.9015422846266,
+      "xc_ev": -87.13391108045062,
+      "hartree_double_counting_ev": 561.8030845692532,
+      "xc_double_counting_ev": -113.95338316244359,
+      "ion_ion_ev": 130.38294496381064,
+      "pipeline_seconds": 0.13803168399954302,
+      "raw_electrons": 7.277750318703374,
+      "input_electrons": 8.0,
+      "clipped_electrons": 1.644006287728318,
+      "normalization_factor": 0.8966844034091676,
+      "eigen_residual_ev": 1.4539756849273984e-08,
+      "density_residual_e": 3.005245283174579
+    },
+    {
+      "molecule": "NH3",
+      "status": "ok",
+      "harris_ev": -312.05641880507824,
+      "band_ev": -137.41520073969204,
+      "hartree_ev": 312.12815095055697,
+      "xc_ev": -92.5654569489374,
+      "hartree_double_counting_ev": 624.2563019011139,
+      "xc_double_counting_ev": -121.1136759532786,
+      "ion_ion_ev": 108.93871388082961,
+      "pipeline_seconds": 0.3028162059999886,
+      "raw_electrons": 7.183564316020801,
+      "input_electrons": 8.0,
+      "clipped_electrons": 2.184557294248214,
+      "normalization_factor": 0.8539598793455747,
+      "eigen_residual_ev": 1.9640861732982855e-08,
+      "density_residual_e": 4.2470015228854585
+    },
+    {
+      "molecule": "H2O",
+      "status": "ok",
+      "harris_ev": -433.0566328105323,
+      "band_ev": -145.97944808230505,
+      "hartree_ev": 376.305372195159,
+      "xc_ev": -102.45687544420134,
+      "hartree_double_counting_ev": 752.610744390318,
+      "xc_double_counting_ev": -134.17602085071184,
+      "ion_ion_ev": 57.50904206042142,
+      "pipeline_seconds": 0.29078283600028954,
+      "raw_electrons": 6.330084328584622,
+      "input_electrons": 8.0,
+      "clipped_electrons": 2.7643680486676443,
+      "normalization_factor": 0.8796571435142381,
+      "eigen_residual_ev": 2.4485267342381735e-08,
+      "density_residual_e": 3.1615224733810474
+    },
+    {
+      "molecule": "H2CO",
+      "status": "ok",
+      "harris_ev": -609.7157969938004,
+      "band_ev": -246.24988576620956,
+      "hartree_ev": 597.905344772413,
+      "xc_ev": -146.75709253494725,
+      "hartree_double_counting_ev": 1195.810689544826,
+      "xc_double_counting_ev": -192.1061042731502,
+      "ion_ion_ev": 189.090421806619,
+      "pipeline_seconds": 0.19309552399954555,
+      "raw_electrons": 11.296438419850404,
+      "input_electrons": 12.000000000000002,
+      "clipped_electrons": 2.608502937006209,
+      "normalization_factor": 0.8630025608905374,
+      "eigen_residual_ev": 2.2081937397943972e-08,
+      "density_residual_e": 7.470639089765298
+    }
+  ]
+}

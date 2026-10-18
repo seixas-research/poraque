@@ -1,0 +1,282 @@
+{
+  "schema_version": 1,
+  "platform": "Linux-7.0.0-34-generic-x86_64-with-glibc2.39",
+  "python": "3.11.15 (main, Jun 11 2026, 15:20:16) [GCC 14.3.0]",
+  "numpy": "2.4.6",
+  "cpu_count": 24,
+  "affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23
+  ],
+  "cpu_model": "AMD Ryzen 9 5900X 12-Core Processor",
+  "library": "/tmp/poraque-hpc-build/libporaque_hpc.so",
+  "library_sha256": "e69e6c710eb4022165e71eff5ebb9692a2c49312f22853ba05fafcde646eb2a5",
+  "arguments": {
+    "worker": null,
+    "worker_output": null,
+    "library": "/tmp/poraque-hpc-build/libporaque_hpc.so",
+    "sizes": [
+      64,
+      128,
+      256
+    ],
+    "ranks": [
+      1,
+      2,
+      4
+    ],
+    "threads": [
+      1
+    ],
+    "ranks_per_k": [
+      1
+    ],
+    "nk": 4,
+    "mode": "both",
+    "projectors": 8,
+    "grid_size": null,
+    "block": 32,
+    "repeats": 5,
+    "warmups": 1,
+    "tolerance": 1e-08,
+    "python_threads": 1,
+    "launcher": "mpiexec --bind-to none",
+    "timeout": 600,
+    "output": "experiments/hpc_performance/production.csv",
+    "production_deck": "/tmp/poraque-vasp-inputs/0.74",
+    "models": "models/chon/chon_ext2paw_charge.poraque",
+    "potcar": "/home/leseixas/Codes/vasp/POTCARs/H/POTCAR",
+    "repair_density": true,
+    "spin_average": true,
+    "unpolarized_input": false,
+    "production_only": true
+  },
+  "runs": [],
+  "production": {
+    "kind": "ext2chg_full_PAW_single_process",
+    "initialization_s": 1.3542235360000632,
+    "eigen_error_ev": 3.552713678800501e-14,
+    "harris_error_ev": 3.552713678800501e-15,
+    "harris_python_ev": -6.365679651941243,
+    "harris_native_ev": -6.365679651941247,
+    "samples": {
+      "python": [
+        0.12398946100074681,
+        0.12414710199846013,
+        0.12480101600158378,
+        0.12461066400101117,
+        0.1252148280000256
+      ],
+      "native": [
+        0.1304372679987864,
+        0.1315328149994457,
+        0.13240825200045947,
+        0.13159280600120837,
+        0.13205043800007843
+      ]
+    },
+    "stage_samples": {
+      "python": [
+        {
+          "fft": 0.00016536200018890668,
+          "inverse_fft": 0.0004947930010530399,
+          "input_terms": 0.11444600100003299,
+          "construction": 0.002190275999964797,
+          "overlap_construction": 0.0005316139995557023,
+          "diagonalization": 0.004216769999402459,
+          "k_loop": 0.007951927998874453
+        },
+        {
+          "fft": 0.00015581200023007113,
+          "inverse_fft": 0.0004875230006291531,
+          "input_terms": 0.11444302099880588,
+          "construction": 0.0022622260003117844,
+          "overlap_construction": 0.0005343939992599189,
+          "diagonalization": 0.004288760999770602,
+          "k_loop": 0.008108539001113968
+        },
+        {
+          "fft": 0.00014620000001741573,
+          "inverse_fft": 0.0004970449990651105,
+          "input_terms": 0.11521207600162597,
+          "construction": 0.0022172459994180826,
+          "overlap_construction": 0.0005421140012913384,
+          "diagonalization": 0.004211690998999984,
+          "k_loop": 0.007980157999554649
+        },
+        {
+          "fft": 0.0001470120005251374,
+          "inverse_fft": 0.0004924429995298851,
+          "input_terms": 0.11496601500039105,
+          "construction": 0.002241046000563074,
+          "overlap_construction": 0.0005349639995984035,
+          "diagonalization": 0.0042707709999376675,
+          "k_loop": 0.008067107999522705
+        },
+        {
+          "fft": 0.0001505799991718959,
+          "inverse_fft": 0.0005248540001048241,
+          "input_terms": 0.11560266800006502,
+          "construction": 0.0021294060006766813,
+          "overlap_construction": 0.0005226730008871527,
+          "diagonalization": 0.004271351001079893,
+          "k_loop": 0.007921127000372508
+        }
+      ],
+      "native": [
+        {
+          "fft": 0.00015531999997620005,
+          "inverse_fft": 0.0005152640005690046,
+          "input_terms": 0.11404881899943575,
+          "construction": 0.002199136000854196,
+          "overlap_construction": 0.0005274539998936234,
+          "diagonalization": 0.010979270000461838,
+          "k_loop": 0.014710915998875862
+        },
+        {
+          "fft": 0.00015589100075885653,
+          "inverse_fft": 0.0005166740011190996,
+          "input_terms": 0.11518648600031156,
+          "construction": 0.0022019360003469046,
+          "overlap_construction": 0.000513454000611091,
+          "diagonalization": 0.010921429000518401,
+          "k_loop": 0.014672766999865416
+        },
+        {
+          "fft": 0.00014862099851598032,
+          "inverse_fft": 0.0004940329999953974,
+          "input_terms": 0.11592464199929964,
+          "construction": 0.002239986000859062,
+          "overlap_construction": 0.0005357940008252626,
+          "diagonalization": 0.01108973099871946,
+          "k_loop": 0.014866878000248107
+        },
+        {
+          "fft": 0.00015413099936267827,
+          "inverse_fft": 0.0004919529983453685,
+          "input_terms": 0.1151359270006651,
+          "construction": 0.0022558270011359127,
+          "overlap_construction": 0.0005155339986231411,
+          "diagonalization": 0.011064629999964382,
+          "k_loop": 0.014854237999315956
+        },
+        {
+          "fft": 0.00014674999874841888,
+          "inverse_fft": 0.0006259449983190279,
+          "input_terms": 0.11548880699956499,
+          "construction": 0.0022003660014888737,
+          "overlap_construction": 0.0005146040002728114,
+          "diagonalization": 0.011062869998568203,
+          "k_loop": 0.014787576999879093
+        }
+      ]
+    },
+    "native_internal_samples": [
+      {
+        "solve_root": 0.010054442999999968,
+        "solve_local": 0.009733270999999988,
+        "pzheevd": 0.006481616999999995,
+        "fft_total": 0.0,
+        "fft_plan": 0.0,
+        "fft_execute": 0.0,
+        "assemble": 0.0,
+        "reserved": 0.0
+      },
+      {
+        "solve_root": 0.009962102000000028,
+        "solve_local": 0.00962571000000001,
+        "pzheevd": 0.006409785999999973,
+        "fft_total": 0.0,
+        "fft_plan": 0.0,
+        "fft_execute": 0.0,
+        "assemble": 0.0,
+        "reserved": 0.0
+      },
+      {
+        "solve_root": 0.010112752999999919,
+        "solve_local": 0.009771721000000122,
+        "pzheevd": 0.0065389169999999774,
+        "fft_total": 0.0,
+        "fft_plan": 0.0,
+        "fft_execute": 0.0,
+        "assemble": 0.0,
+        "reserved": 0.0
+      },
+      {
+        "solve_root": 0.010106622999999981,
+        "solve_local": 0.009762671000000056,
+        "pzheevd": 0.006490566999999947,
+        "fft_total": 0.0,
+        "fft_plan": 0.0,
+        "fft_execute": 0.0,
+        "assemble": 0.0,
+        "reserved": 0.0
+      },
+      {
+        "solve_root": 0.010112204000000125,
+        "solve_local": 0.009742611000000068,
+        "pzheevd": 0.006437376999999911,
+        "fft_total": 0.0,
+        "fft_plan": 0.0,
+        "fft_execute": 0.0,
+        "assemble": 0.0,
+        "reserved": 0.0
+      }
+    ],
+    "speedup": 0.9469413092374284,
+    "density_diagnostics": {
+      "raw_electrons": 2.0529537108851588,
+      "clipped_electrons": 0.03371979756266323,
+      "normalization_factor": 0.9584633110561248,
+      "input_electrons": 2.0,
+      "spin_averaged": true,
+      "unpolarized_embedding": false,
+      "collinear_embedding": false
+    },
+    "deck": "/tmp/poraque-vasp-inputs/0.74",
+    "models": "models/chon/chon_ext2paw_charge.poraque",
+    "model_sha256": "77a4c8ac289b0025d1226513afe3fb9738ee515496f1bdcb5b9a24b535655747",
+    "environment": {
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1"
+    },
+    "potentials": {
+      "H": "c7c1440066f80b3689496d8a45f8df6af183c40e59b514734edddfaa6840a3be"
+    },
+    "note": "Production assembly remains Python; native full-spectrum solve vs production subset solve",
+    "process_seconds": 5.019752389000132,
+    "command": [
+      "/home/leseixas/miniconda3/envs/poraque/bin/python",
+      "-m",
+      "poraque.benchmarks.performance",
+      "--worker",
+      "/tmp/poraque-production-perf-_jz9c30p/config.json",
+      "--worker-output",
+      "/tmp/poraque-production-perf-_jz9c30p/worker.json"
+    ],
+    "stderr": "/home/leseixas/Dropbox/Repositories/seixas-research/poraque/src/poraque/ml/bloch.py:53: PotcarLicenseWarning: POTCAR is proprietary VASP data. You must hold a valid VASP license to supply and use it. Poraque does not redistribute potential data.\n  self.datasets={element:UserPawDataset.load(\n"
+  }
+}

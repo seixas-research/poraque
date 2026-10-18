@@ -764,7 +764,10 @@ class MPDataFetcher:
         gzipped, so the only reason to turn this off is another tool that
         cannot — at roughly three times the storage.
     workers : int, optional
-        Parallel S3 ``HEAD`` requests used while sizing.
+        Parallelism, one number for both pools. Left unset, sizing runs
+        ``SIZING_WORKERS`` (16) unsigned S3 ``HEAD`` requests and the
+        download runs ``DOWNLOAD_WORKERS`` (1) authenticated fetch at a time;
+        a value given applies to both.
     band_gap : tuple of float, optional
         ``(min, max)`` gap in eV. ``(0.0, 0.0)`` selects metals; passing
         ``None`` for either end leaves it open.
@@ -797,11 +800,13 @@ class MPDataFetcher:
     ...     mp.run(max_sites=8, max_size_mb=20)
     """
 
+    SIZING_WORKERS = 16
+    DOWNLOAD_WORKERS = 1
+
     def __init__(self, elements=None, api_key=None, outdir=".", compress=True,
-                 workers=16, band_gap=None, crystal_system=None,
+                 workers=None, band_gap=None, crystal_system=None,
                  is_stable=None, num_sites=None, exclude_deprecated=True,
-                 retries=4, retry_delay=2.0, log=print,
-                 download_workers=1):
+                 retries=4, retry_delay=2.0, log=print):
         if isinstance(elements, str):
             elements = elements.replace("-", " ").split()
         # No elements is not an error any more: it means *every* material the
@@ -821,16 +826,17 @@ class MPDataFetcher:
 
         self.outdir = Path(outdir).resolve()
         self.compress = bool(compress)
-        self.workers = int(workers)
-        # Separate from `workers`, which sizes the *sizing* pool: those are
+        # One number, two pools that differ in what they cost. Sizing is
         # unsigned S3 HEAD requests that transfer no payload and cost the API
         # nothing, so sixteen of them is free. A download is an authenticated
         # call against a rate-limited key that also parses a CHGCAR, so the
         # useful number is smaller -- and it is 1 by default, because what
         # bounds it is the Materials Project's per-key rate limit and that has
-        # not been measured. Opt in with `--download-workers N` and read the
-        # retry lines: backoff messages mean the limit was found.
-        self.download_workers = int(download_workers)
+        # not been measured. A value from `--workers` is used for both; read
+        # the retry lines: backoff messages mean the limit was found.
+        self.workers = None if workers is None else max(1, int(workers))
+        self.sizing_workers = self.workers or self.SIZING_WORKERS
+        self.download_workers = self.workers or self.DOWNLOAD_WORKERS
 
         self.band_gap = tuple(band_gap) if band_gap is not None else None
         self.num_sites = tuple(num_sites) if num_sites is not None else None
@@ -1244,7 +1250,7 @@ class MPDataFetcher:
         from botocore.exceptions import ClientError
 
         client = boto3.client("s3", config=Config(
-            signature_version=UNSIGNED, max_pool_connections=self.workers + 4))
+            signature_version=UNSIGNED, max_pool_connections=self.sizing_workers + 4))
 
         def head(item):
             identifier, key = item
@@ -1256,7 +1262,7 @@ class MPDataFetcher:
 
         self._section("sizes")
         self.log(f"  Reading exact sizes ({len(keys)} HEAD requests) ...")
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+        with ThreadPoolExecutor(max_workers=self.sizing_workers) as pool:
             return dict(pool.map(head, keys.items()))
 
     def estimate(self, refresh=False, sample=None, seed=0):
@@ -2033,7 +2039,7 @@ class MPDataFetcher:
         as each one lands rather than at the end.
 
         One worker is the serial path, and takes it literally --- no pool, no
-        thread, no second session --- so a run with ``--download-workers 1``
+        thread, no second session --- so a run with ``--workers 1``
         behaves exactly as this method's predecessor did and nothing about
         threading can be blamed for it.
 
@@ -2672,17 +2678,16 @@ def build_parser():
     cap.add_argument("--max-size-gb", type=float,
                      help="the same cap in GB (1 GB = 1000 MB, decimal, as "
                           "everywhere else in this report)")
-    group.add_argument("--workers", type=int, default=16,
-                       help="parallel S3 HEAD requests while sizing (these "
-                            "transfer no payload and are unauthenticated, "
-                            "which is why there are sixteen of them)")
-    group.add_argument("--download-workers", type=int, default=1,
-                       help="parallel density downloads (default: 1). Threads, "
-                            "not processes -- the work is a blocking HTTPS GET. "
-                            "Raise it to overlap transfers, and watch for "
-                            "`retrying in ...s` lines: those are the Materials "
-                            "Project's per-key rate limit, which is what "
-                            "bounds this and has not been measured here")
+    group.add_argument("--workers", type=int, default=None,
+                       help="parallelism for both sizing and downloading. "
+                            "Unset: 16 unauthenticated S3 HEAD requests while "
+                            "sizing (no payload, free) and 1 density download "
+                            "at a time. Downloads are threads, not processes "
+                            "-- a blocking HTTPS GET -- so raise it to overlap "
+                            "transfers, and watch for `retrying in ...s` "
+                            "lines: those are the Materials Project's per-key "
+                            "rate limit, which bounds it and has not been "
+                            "measured here")
     group.add_argument("--retries", type=int, default=4,
                        help="attempts per object before giving up on it; a "
                             "rate limit or a dropped connection is retried "
@@ -2765,7 +2770,6 @@ def main(argv=None):
             is_stable=True if args.stable_only else None,
             num_sites=args.num_sites, retries=args.retries,
             retry_delay=args.retry_delay, log=log,
-            download_workers=args.download_workers,
         )
     except ValueError as error:
         print(f"ERROR: {error}", file=sys.stderr)

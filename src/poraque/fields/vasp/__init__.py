@@ -15,6 +15,7 @@ structure, a density of states or a total energy.
 """
 
 from .incar import Incar
+from .kpoints import Kpoints
 from .poscar import Poscar, symbol_to_z
 from .potcar import Potcar, PotcarSingle
 from .templates import (
@@ -34,6 +35,7 @@ from .volumetric import read_structure_header, read_volumetric, write_volumetric
 
 __all__ = [
     "Incar",
+    "Kpoints",
     "Poscar",
     "Potcar",
     "PotcarSingle",

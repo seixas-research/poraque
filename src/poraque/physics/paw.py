@@ -208,8 +208,21 @@ def _vasp_ylm(directions, lmax):
     import torch
 
     values = solid_harmonics(torch.as_tensor(directions, dtype=torch.float64),
-                             lmax)
-    return [v.numpy() for v in values]
+                             min(lmax, 4))
+    result = [v.numpy() for v in values]
+    if lmax > 4:
+        from .pseudopotentials import sph_harm_y
+        directions = np.asarray(directions)
+        theta = np.arccos(directions[:, 2].clip(-1, 1))
+        phi = np.arctan2(directions[:, 1], directions[:, 0])
+        for ell in range(5, lmax + 1):
+            columns = []
+            for m in range(-ell, ell + 1):
+                harmonic = sph_harm_y(ell, abs(m), theta, phi)
+                columns.append(harmonic.real if m == 0 else
+                               np.sqrt(2)*(-1)**m*(harmonic.imag if m < 0 else harmonic.real))
+            result.append(np.column_stack(columns))
+    return result
 
 
 # ---------------------------------------------------------------------- #
@@ -229,12 +242,15 @@ class OneCenterEnergy:
         Relativistic LDA exchange, as VASP's ``TREL`` in the ``LASPH`` path.
     """
 
-    def __init__(self, setup, lasph=True, relativistic=False):
+    def __init__(self, setup, lasph=True, relativistic=False, functional='pbe'):
         from ..fields.vasp.augmentation import record_layout
 
         self.setup = setup
         self.lasph = bool(lasph)
         self.relativistic = bool(relativistic)
+        if functional not in ('lda', 'pbe'):
+            raise ValueError('PAW one-center XC must be lda or pbe')
+        self.functional = functional
         r = np.asarray(setup.grid, dtype=float)
         self.r = r
         self.weights = simpson_weights(r)
@@ -307,6 +323,8 @@ class OneCenterEnergy:
         g = radial_gradient(n, r) * AUTOA ** 4             # signed
 
         def f(density, gradient):
+            if self.functional == 'lda':
+                return lda_xc(0.5*density, 0.5*density)
             lda, corr = pbe_xc(0.5 * density, 0.5 * density,
                                0.5 * np.abs(gradient), 0.5 * np.abs(gradient),
                                np.abs(gradient))
@@ -367,6 +385,8 @@ class OneCenterEnergy:
                            0.5 * gradient * AUTOA ** 4,
                            0.5 * gradient * AUTOA ** 4,
                            gradient * AUTOA ** 4)
+        if self.functional == 'lda':
+            corr = 0.0
         return float(np.sum(4.0 * np.pi * r * r * (lda + corr) * w)
                      * ENERGY_DENSITY)
 
@@ -437,6 +457,8 @@ class OneCenterEnergy:
             lda, corr = pbe_xc(up * AUTOA ** 3, down * AUTOA ** 3,
                                g_up * AUTOA ** 4, g_dn * AUTOA ** 4,
                                g * AUTOA ** 4, relativistic=self.relativistic)
+        if self.functional == 'lda':
+            corr = 0.0
         e = (lda + corr) * ENERGY_DENSITY                       # eV/Å³
         return float(np.einsum("p,pr,r->", self.angular_weights, e, r2 * w))
 
@@ -472,6 +494,8 @@ class OneCenterEnergy:
             taylor = 0.5 * (euu * (rho_u ** 2).sum(0) + edd * (rho_d ** 2).sum(0)
                             + 2 * eud * (rho_u * rho_d).sum(0))
             energy += np.sum(r2 * taylor * w)
+        if self.functional == 'lda':
+            return float(energy)
         # Spherical gradient correction.
         dn = radial_gradient(n0, r)
         dm = radial_gradient(m0, r)

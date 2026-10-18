@@ -9,13 +9,9 @@
 """
 Reader for VASP ``INCAR`` files.
 
-Only the tags that influence the 3D field grid are interpreted
-(:attr:`Incar.encut`, :attr:`Incar.prec`, and any explicit ``NGX*``/``NGX*F``);
-every other tag is kept as a raw string so nothing is silently lost.
+Raw tag values are preserved, with typed access to mesh, electronic and
+convergence controls. Solver-specific validation lives in ElectronicSettings.
 """
-
-import re
-
 
 class Incar(dict):
     """
@@ -31,7 +27,7 @@ class Incar(dict):
         Parse INCAR contents.
 
         Handles ``!``/``#`` comments, several ``TAG = VALUE`` pairs separated by
-        semicolons on one line, and continuation-free multi-token values.
+        semicolons on one line, quoted strings and backslash continuations.
 
         Parameters
         ----------
@@ -43,11 +39,26 @@ class Incar(dict):
         Incar
         """
         incar = cls()
-        for raw_line in text.splitlines():
-            line = re.split(r"[!#]", raw_line, maxsplit=1)[0].strip()
-            if not line:
-                continue
-            for statement in line.split(";"):
+        for raw_line in text.replace('\\\n', ' ').splitlines():
+            # SYSTEM strings may contain literal semicolons/comment markers.
+            statements, current, quote = [], [], None
+            for char in raw_line:
+                if char in ('"', "'"):
+                    if quote is None:
+                        quote = char
+                    elif quote == char:
+                        quote = None
+                if quote is None and char in '!#':
+                    break
+                if quote is None and char == ';':
+                    statements.append(''.join(current))
+                    current = []
+                else:
+                    current.append(char)
+            statements.append(''.join(current))
+            if quote is not None:
+                raise ValueError('Unterminated quoted INCAR string')
+            for statement in statements:
                 if "=" not in statement:
                     continue
                 key, value = statement.split("=", 1)
@@ -68,7 +79,7 @@ class Incar(dict):
     def get_float(self, key, default=None):
         """Return tag ``key`` as ``float`` (``default`` when absent/unparsable)."""
         try:
-            return float(str(self[key]).split()[0])
+            return float(str(self[key]).split()[0].replace("D", "E").replace("d", "e"))
         except (KeyError, IndexError, ValueError):
             return default
 
@@ -76,6 +87,51 @@ class Incar(dict):
         """Return tag ``key`` as ``int`` (``default`` when absent/unparsable)."""
         value = self.get_float(key, None)
         return default if value is None else int(value)
+
+    def get_bool(self, key: str, default: bool | None = None) -> bool | None:
+        """Parse VASP/Fortran logical values without treating '.FALSE.' as true."""
+        if key not in self:
+            return default
+        value = str(self[key]).strip().strip('.').upper()
+        if value in ('T', 'TRUE'):
+            return True
+        if value in ('F', 'FALSE'):
+            return False
+        raise ValueError(f'Invalid logical {key}={self[key]}')
+
+    def numbers(self, key: str) -> list[float]:
+        """Expand numeric lists, including VASP repetition syntax (e.g. 4*0)."""
+        result = []
+        for token in str(self[key]).replace(',', ' ').split():
+            parts = token.split('*')
+            if len(parts) > 2:
+                raise ValueError(f'Invalid numeric list {key}')
+            number = float(parts[-1].replace('D', 'E').replace('d', 'e'))
+            repeat = int(parts[0]) if len(parts) == 2 else 1
+            if repeat < 0:
+                raise ValueError('Negative repetition count')
+            result.extend([number] * repeat)
+        return result
+
+    @property
+    def ismear(self) -> int:
+        """Occupation scheme; VASP's default is first-order Methfessel-Paxton."""
+        return self.get_int('ISMEAR', 1)
+
+    @property
+    def sigma(self) -> float:
+        """Smearing width in eV (VASP default 0.2)."""
+        return self.get_float('SIGMA', 0.2)
+
+    @property
+    def ediff(self) -> float:
+        """Electronic convergence threshold in eV (default 1e-4)."""
+        return self.get_float('EDIFF', 1e-4)
+
+    @property
+    def nelm(self) -> int:
+        """Maximum SCF iterations, retained as metadata for fixed-density runs."""
+        return self.get_int('NELM', 60)
 
     @property
     def encut(self):

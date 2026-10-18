@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {
+      "id": "material_001",
+      "deck_directory": "/private/benchmark_inputs/material_001",
+      "potcar": "/licensed/inputs/material_001/POTCAR"
+    }
+  ]
+}

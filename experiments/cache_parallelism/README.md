@@ -249,8 +249,8 @@ breaks. The hybrid — `srun --ntasks=<nodes>` with a pool inside each — is th
 shape that fits, and it is what exists now plus a stride.
 
 **The `poraque-mp` download is a separate question with a separate answer:**
-threads, not processes, because it is network-bound — `--download-workers`,
-default 1 because the bound is the Materials Project's per-key rate limit and
+threads, not processes, because it is network-bound — `--workers`,
+default 1 for downloads because the bound is the Materials Project's per-key rate limit and
 that is unmeasured. See the Manual's data page.
 
 **Still three scans of the same CHGCAR per material.** Fixing

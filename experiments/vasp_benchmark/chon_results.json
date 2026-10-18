@@ -1,0 +1,525 @@
+{
+  "schema": 1,
+  "scope": "Five small closed-shell molecules (H2, CH4, NH3, H2O, CO), 5 Angstrom periodic cube, Gamma only, ENCUT=300 eV (below the O/N/C POTCAR ENMAX; forced by the dense solver's 2048 plane-wave limit), ISPIN=1, Gaussian SIGMA=0.05 eV, EDIFF=1e-8, scalar PBE/LASPH, VASP 6.6.1, single thread. Runner flags: --repair-density --spin-average --diagnose-scf-density --diagnostic-repair-scf. Geometries are experimental gas-phase, not relaxed, cell and cutoff not converged. Decks and POTCARs were outside the repository.",
+  "potcar_policy": "Explicit user-provided licensed inputs; no potential data in report",
+  "runs": {
+    "chon_ext2paw_charge": {
+      "schema": 1,
+      "energy_convention": "free energy: Poraque F_Harris versus VASP TOTEN",
+      "potcar_policy": "Explicit user-provided licensed inputs; no potential data in report",
+      "resources": {
+        "threads": 1,
+        "launcher": []
+      },
+      "model_sha256": "77a4c8ac289b0025d1226513afe3fb9738ee515496f1bdcb5b9a24b535655747",
+      "cases": [
+        {
+          "id": "H2",
+          "status": "ok",
+          "natoms": 2,
+          "input_hashes": {
+            "POSCAR": "2d66767d10653e67f225f01d4218fda80c4617c14cbe6dcf8bf3efe34300f5c3",
+            "INCAR": "fad15b4303cb9ce6ad091360b321fe9f4ee300a60bbcd127155a4a6b19d6c558",
+            "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+          },
+          "potcar_sha256": "c7c1440066f80b3689496d8a45f8df6af183c40e59b514734edddfaa6840a3be",
+          "poraque": {
+            "free_ev": -6.7018778864904505,
+            "internal_ev": -6.7018778864904505,
+            "prepare_seconds": 4.779604791998281,
+            "solve_seconds": 1.168916374008404,
+            "total_seconds": 5.948521166006685,
+            "density": {
+              "repaired": true,
+              "raw_electrons": 2.043213044642517,
+              "input_electrons": 1.9999999999999998,
+              "electrons": 2.0,
+              "charge_defect": 0.04321304464251696,
+              "relative_charge_defect": 0.02160652232125848,
+              "negative_electrons": 0.03342825046982658,
+              "negative_voxel_fraction": 0.37277777777777776,
+              "minimum_raw": -0.001298145274631679,
+              "floor": 0.0,
+              "clipped_electrons": 0.03342825046982658,
+              "normalization_factor": 0.9630936284987063,
+              "spin_averaged": true,
+              "unpolarized_embedding": false,
+              "collinear_embedding": false
+            },
+            "paw_terms_ev": {
+              "one_center_energy": -2.179116429270958,
+              "one_center_double_counting": -2.1720220663031036,
+              "alpha_z": 0.07795736000000003,
+              "atomic": 24.891550767914453,
+              "hartree": 17.898495490294696,
+              "xc": -17.70471467370413,
+              "xc_double_counting": -22.75561267137316,
+              "ion_ion": 3.253014126713664
+            },
+            "max_eigen_residual_ev": 2.05049452999103e-12
+          },
+          "vasp": {
+            "free_ev": -6.78886077,
+            "internal_ev": -6.78886077,
+            "sigma_zero_ev": -6.78886077,
+            "converged": true,
+            "finished": true,
+            "version": "6.6.1",
+            "electronic_steps": 15,
+            "source": "OUTCAR",
+            "seconds": 1.1155310080066556
+          },
+          "comparison": {
+            "delta_ev": 0.08698288350954986,
+            "delta_ev_per_atom": 0.04349144175477493,
+            "absolute_error_ev": 0.08698288350954986,
+            "absolute_error_mev_per_atom": 43.491441754774925,
+            "within_chemical_accuracy": false
+          },
+          "speedup": 0.18753081259615406,
+          "scf_density_diagnostic": {
+            "status": "ok",
+            "reference_density_adjustment": {
+              "enabled": true,
+              "raw_electrons": 2.000020583878385,
+              "negative_charge_e": 0.0,
+              "charge_defect_e": 2.0583878384883292e-05,
+              "factor": 0.9999897081667305,
+              "stationary_reference_preserved": false,
+              "clipped_electrons": 0.0
+            },
+            "backend_offset_at_reference_density_ev": 0.00040115346484093095,
+            "density_and_occupancy_effect_ev": 0.08658173004493541,
+            "density_l1_electrons": 0.2793869291526023,
+            "stationarity": {
+              "linear_coefficient_ev": -0.00709578298309247,
+              "quadratic_coefficient_ev": 0.0937341039863626,
+              "fit_rms_ev": 0.0003158581218159093,
+              "observed_power": 2.3097790182060547,
+              "lambdas": [
+                0.0,
+                0.125,
+                0.25,
+                0.5,
+                1.0
+              ],
+              "energies_ev": [
+                -6.788459616535159,
+                -6.787712077460397,
+                -6.784955345878109,
+                -6.768213196708499,
+                -6.701877886490224
+              ]
+            }
+          }
+        },
+        {
+          "id": "CH4",
+          "status": "failed",
+          "natoms": 5,
+          "input_hashes": {
+            "POSCAR": "5327691f97d0a73adbc95e77197546de883243c024e6ab10ace260c0aff3a234",
+            "INCAR": "f5f5f82e955881deb10a53fa432f7f73734a2911aef0ba7ea4c577710bbbdf53",
+            "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+          },
+          "potcar_sha256": "fd1b329d76d8f21fa791adce740aa6878c608a22716f304d584b48f89bdca95e",
+          "poraque_error": "ValueError: Spin density matrix is not positive semidefinite: require n>=|m|",
+          "vasp": {
+            "free_ev": -23.5743607,
+            "internal_ev": -23.5743607,
+            "sigma_zero_ev": -23.5743607,
+            "converged": true,
+            "finished": true,
+            "version": "6.6.1",
+            "electronic_steps": 16,
+            "source": "OUTCAR",
+            "seconds": 1.8671865619980963
+          },
+          "error": "ValueError: Poraque failed; SCF energy retained without an accuracy comparison"
+        },
+        {
+          "id": "NH3",
+          "status": "failed",
+          "natoms": 4,
+          "input_hashes": {
+            "POSCAR": "331655360eba66946985d5287742258ba828a17f6b4da66bd7a58a82eab5ad75",
+            "INCAR": "f5f5f82e955881deb10a53fa432f7f73734a2911aef0ba7ea4c577710bbbdf53",
+            "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+          },
+          "potcar_sha256": "43af49d0965c96734f0b8bd71f790763a591c3fbaeb7f7a0af6774ccbd6a1716",
+          "poraque_error": "ValueError: Spin density matrix is not positive semidefinite: require n>=|m|",
+          "vasp": {
+            "free_ev": -18.95697972,
+            "internal_ev": -18.95697972,
+            "sigma_zero_ev": -18.95697972,
+            "converged": true,
+            "finished": true,
+            "version": "6.6.1",
+            "electronic_steps": 18,
+            "source": "OUTCAR",
+            "seconds": 1.8674914709990844
+          },
+          "error": "ValueError: Poraque failed; SCF energy retained without an accuracy comparison"
+        },
+        {
+          "id": "CO",
+          "status": "failed",
+          "natoms": 2,
+          "input_hashes": {
+            "POSCAR": "92856c3647bbb42bc5bb3be110ddb652093b011deb9ae2ccc571e618128933f4",
+            "INCAR": "f5f5f82e955881deb10a53fa432f7f73734a2911aef0ba7ea4c577710bbbdf53",
+            "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+          },
+          "potcar_sha256": "266f4c7c28ad1594b10a3f103db2dec69fa5d69276d333783fe45d26497d45b4",
+          "poraque_error": "ValueError: Spin density matrix is not positive semidefinite: require n>=|m|",
+          "vasp": {
+            "free_ev": -14.81059309,
+            "internal_ev": -14.81059309,
+            "sigma_zero_ev": -14.81059309,
+            "converged": true,
+            "finished": true,
+            "version": "6.6.1",
+            "electronic_steps": 16,
+            "source": "OUTCAR",
+            "seconds": 1.3669133450021036
+          },
+          "error": "ValueError: Poraque failed; SCF energy retained without an accuracy comparison"
+        },
+        {
+          "id": "H2O",
+          "status": "failed",
+          "natoms": 3,
+          "input_hashes": {
+            "POSCAR": "52a0bb2fca770026e3e55ab50c909b64165be20b0feb3d99707673c00b66420c",
+            "INCAR": "f5f5f82e955881deb10a53fa432f7f73734a2911aef0ba7ea4c577710bbbdf53",
+            "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+          },
+          "potcar_sha256": "38ee7aaee717aafda111dca7be74e93f7b19326d22eacd03ca26188dbdd10760",
+          "poraque_error": "ValueError: Spin density matrix is not positive semidefinite: require n>=|m|",
+          "vasp": {
+            "free_ev": -13.93349944,
+            "internal_ev": -13.93349944,
+            "sigma_zero_ev": -13.93349944,
+            "converged": true,
+            "finished": true,
+            "version": "6.6.1",
+            "electronic_steps": 18,
+            "source": "OUTCAR",
+            "seconds": 1.5674054630071623
+          },
+          "error": "ValueError: Poraque failed; SCF energy retained without an accuracy comparison"
+        }
+      ],
+      "summary": {
+        "attempted": 5,
+        "valid": 1,
+        "failed": 4,
+        "chemical_accuracy_mev_per_atom": 43.0,
+        "within_chemical_accuracy": 0,
+        "all_within_chemical_accuracy": false,
+        "bias_ev_per_atom": 0.04349144175477493,
+        "mae_ev_per_atom": 0.04349144175477493,
+        "rmse_ev_per_atom": 0.04349144175477493,
+        "max_abs_ev_per_atom": 0.04349144175477493,
+        "max_abs_mev_per_atom": 43.491441754774925
+      }
+    },
+    "model_CHONPS": {
+      "schema": 1,
+      "energy_convention": "free energy: Poraque F_Harris versus VASP TOTEN",
+      "potcar_policy": "Explicit user-provided licensed inputs; no potential data in report",
+      "resources": {
+        "threads": 1,
+        "launcher": []
+      },
+      "model_sha256": "234407b533106763a949970342e49171e4e5c42f58d64899101ab8c7419dde94",
+      "cases": [
+        {
+          "id": "H2",
+          "status": "ok",
+          "natoms": 2,
+          "input_hashes": {
+            "POSCAR": "2d66767d10653e67f225f01d4218fda80c4617c14cbe6dcf8bf3efe34300f5c3",
+            "INCAR": "fad15b4303cb9ce6ad091360b321fe9f4ee300a60bbcd127155a4a6b19d6c558",
+            "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+          },
+          "potcar_sha256": "c7c1440066f80b3689496d8a45f8df6af183c40e59b514734edddfaa6840a3be",
+          "poraque": {
+            "free_ev": -6.808851169981725,
+            "internal_ev": -6.808851169981725,
+            "prepare_seconds": 5.404904405993875,
+            "solve_seconds": 1.1225975270062918,
+            "total_seconds": 6.527501933000167,
+            "density": {
+              "repaired": true,
+              "raw_electrons": 2.011264914017037,
+              "input_electrons": 1.9999999999999998,
+              "electrons": 2.0,
+              "charge_defect": 0.011264914017036887,
+              "relative_charge_defect": 0.005632457008518443,
+              "negative_electrons": 5.296292497573797e-07,
+              "negative_voxel_fraction": 0.00011111111111111112,
+              "minimum_raw": -2.6791636628331617e-05,
+              "floor": 0.0,
+              "clipped_electrons": 5.296292497573797e-07,
+              "normalization_factor": 0.9943988280205007,
+              "spin_averaged": true,
+              "unpolarized_embedding": false,
+              "collinear_embedding": false
+            },
+            "paw_terms_ev": {
+              "one_center_energy": -1.9969620288579684,
+              "one_center_double_counting": -1.9923679286547236,
+              "alpha_z": 0.07795736000000003,
+              "atomic": 24.891550767914453,
+              "hartree": 19.773321224258734,
+              "xc": -18.614079185366855,
+              "xc_double_counting": -23.902115772432463,
+              "ion_ion": 3.253014126713664
+            },
+            "max_eigen_residual_ev": 8.678150907766224e-13
+          },
+          "vasp": {
+            "free_ev": -6.78886077,
+            "internal_ev": -6.78886077,
+            "sigma_zero_ev": -6.78886077,
+            "converged": true,
+            "finished": true,
+            "version": "6.6.1",
+            "electronic_steps": 15,
+            "source": "OUTCAR",
+            "seconds": 1.1158135320001747
+          },
+          "comparison": {
+            "delta_ev": -0.019990399981725027,
+            "delta_ev_per_atom": -0.009995199990862513,
+            "absolute_error_ev": 0.019990399981725027,
+            "absolute_error_mev_per_atom": 9.995199990862513,
+            "within_chemical_accuracy": true
+          },
+          "speedup": 0.17094036025621293,
+          "scf_density_diagnostic": {
+            "status": "ok",
+            "reference_density_adjustment": {
+              "enabled": true,
+              "raw_electrons": 2.000020583878361,
+              "negative_charge_e": 0.0,
+              "charge_defect_e": 2.0583878360902474e-05,
+              "factor": 0.9999897081667425,
+              "stationary_reference_preserved": false,
+              "clipped_electrons": 0.0
+            },
+            "backend_offset_at_reference_density_ev": 0.0004011534643275638,
+            "density_and_occupancy_effect_ev": -0.020391553445917587,
+            "density_l1_electrons": 0.07909122450232692,
+            "stationarity": {
+              "linear_coefficient_ev": 0.005810986918982464,
+              "quadratic_coefficient_ev": -0.026068661574428695,
+              "fit_rms_ev": 0.0005085804824469931,
+              "observed_power": 2.1084995522248966,
+              "lambdas": [
+                0.0,
+                0.125,
+                0.25,
+                0.5,
+                1.0
+              ],
+              "energies_ev": [
+                -6.788459616535673,
+                -6.788695950545962,
+                -6.789290653074554,
+                -6.791337438794218,
+                -6.80885116998159
+              ]
+            }
+          }
+        },
+        {
+          "id": "CH4",
+          "status": "failed",
+          "natoms": 5,
+          "input_hashes": {
+            "POSCAR": "5327691f97d0a73adbc95e77197546de883243c024e6ab10ace260c0aff3a234",
+            "INCAR": "f5f5f82e955881deb10a53fa432f7f73734a2911aef0ba7ea4c577710bbbdf53",
+            "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+          },
+          "potcar_sha256": "fd1b329d76d8f21fa791adce740aa6878c608a22716f304d584b48f89bdca95e",
+          "poraque_error": "ValueError: Spin density matrix is not positive semidefinite: require n>=|m|",
+          "vasp": {
+            "free_ev": -23.5743607,
+            "internal_ev": -23.5743607,
+            "sigma_zero_ev": -23.5743607,
+            "converged": true,
+            "finished": true,
+            "version": "6.6.1",
+            "electronic_steps": 16,
+            "source": "OUTCAR",
+            "seconds": 1.868296915999963
+          },
+          "error": "ValueError: Poraque failed; SCF energy retained without an accuracy comparison"
+        },
+        {
+          "id": "NH3",
+          "status": "failed",
+          "natoms": 4,
+          "input_hashes": {
+            "POSCAR": "331655360eba66946985d5287742258ba828a17f6b4da66bd7a58a82eab5ad75",
+            "INCAR": "f5f5f82e955881deb10a53fa432f7f73734a2911aef0ba7ea4c577710bbbdf53",
+            "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+          },
+          "potcar_sha256": "43af49d0965c96734f0b8bd71f790763a591c3fbaeb7f7a0af6774ccbd6a1716",
+          "poraque_error": "ValueError: Spin density matrix is not positive semidefinite: require n>=|m|",
+          "vasp": {
+            "free_ev": -18.95697972,
+            "internal_ev": -18.95697972,
+            "sigma_zero_ev": -18.95697972,
+            "converged": true,
+            "finished": true,
+            "version": "6.6.1",
+            "electronic_steps": 18,
+            "source": "OUTCAR",
+            "seconds": 1.9172200449975207
+          },
+          "error": "ValueError: Poraque failed; SCF energy retained without an accuracy comparison"
+        },
+        {
+          "id": "CO",
+          "status": "failed",
+          "natoms": 2,
+          "input_hashes": {
+            "POSCAR": "92856c3647bbb42bc5bb3be110ddb652093b011deb9ae2ccc571e618128933f4",
+            "INCAR": "f5f5f82e955881deb10a53fa432f7f73734a2911aef0ba7ea4c577710bbbdf53",
+            "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+          },
+          "potcar_sha256": "266f4c7c28ad1594b10a3f103db2dec69fa5d69276d333783fe45d26497d45b4",
+          "poraque_error": "ValueError: Spin density matrix is not positive semidefinite: require n>=|m|",
+          "vasp": {
+            "free_ev": -14.81059309,
+            "internal_ev": -14.81059309,
+            "sigma_zero_ev": -14.81059309,
+            "converged": true,
+            "finished": true,
+            "version": "6.6.1",
+            "electronic_steps": 16,
+            "source": "OUTCAR",
+            "seconds": 1.3164939749985933
+          },
+          "error": "ValueError: Poraque failed; SCF energy retained without an accuracy comparison"
+        },
+        {
+          "id": "H2O",
+          "status": "ok",
+          "natoms": 3,
+          "input_hashes": {
+            "POSCAR": "52a0bb2fca770026e3e55ab50c909b64165be20b0feb3d99707673c00b66420c",
+            "INCAR": "fad15b4303cb9ce6ad091360b321fe9f4ee300a60bbcd127155a4a6b19d6c558",
+            "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+          },
+          "potcar_sha256": "38ee7aaee717aafda111dca7be74e93f7b19326d22eacd03ca26188dbdd10760",
+          "poraque": {
+            "free_ev": -14.02847654059353,
+            "internal_ev": -14.02847654059353,
+            "prepare_seconds": 7.733256042993162,
+            "solve_seconds": 1.273846092997701,
+            "total_seconds": 9.007102135990863,
+            "density": {
+              "repaired": true,
+              "raw_electrons": 8.020583658043586,
+              "input_electrons": 8.000000000000002,
+              "electrons": 8.0,
+              "charge_defect": 0.020583658043586084,
+              "relative_charge_defect": 0.0025729572554482605,
+              "negative_electrons": 0.0,
+              "negative_voxel_fraction": 0.0,
+              "minimum_raw": 1.4381424989551306e-05,
+              "floor": 0.0,
+              "clipped_electrons": 0.0,
+              "normalization_factor": 0.9974336458640459,
+              "spin_averaged": true,
+              "unpolarized_embedding": false,
+              "collinear_embedding": false
+            },
+            "paw_terms_ev": {
+              "one_center_energy": 16.593922518773976,
+              "one_center_double_counting": 18.297718378967048,
+              "alpha_z": 1.7940103040000006,
+              "atomic": 456.0748825709146,
+              "hartree": 324.4168785185373,
+              "xc": -113.42128929843767,
+              "xc_double_counting": -147.09249472190794,
+              "ion_ion": -68.18909911336247
+            },
+            "max_eigen_residual_ev": 8.216009759448301e-13
+          },
+          "vasp": {
+            "free_ev": -13.93349944,
+            "internal_ev": -13.93349944,
+            "sigma_zero_ev": -13.93349944,
+            "converged": true,
+            "finished": true,
+            "version": "6.6.1",
+            "electronic_steps": 18,
+            "source": "OUTCAR",
+            "seconds": 1.5659771039936459
+          },
+          "comparison": {
+            "delta_ev": -0.09497710059353004,
+            "delta_ev_per_atom": -0.03165903353117668,
+            "absolute_error_ev": 0.09497710059353004,
+            "absolute_error_mev_per_atom": 31.65903353117668,
+            "within_chemical_accuracy": true
+          },
+          "speedup": 0.17386025831063526,
+          "scf_density_diagnostic": {
+            "status": "ok",
+            "reference_density_adjustment": {
+              "enabled": true,
+              "raw_electrons": 8.00004060762254,
+              "negative_charge_e": 0.0,
+              "charge_defect_e": 4.0607622539212684e-05,
+              "factor": 0.9999949240729478,
+              "stationary_reference_preserved": false,
+              "clipped_electrons": 0.0
+            },
+            "backend_offset_at_reference_density_ev": 0.0006815373464998942,
+            "density_and_occupancy_effect_ev": -0.09565863794139062,
+            "density_l1_electrons": 0.40433423246256156,
+            "stationarity": {
+              "linear_coefficient_ev": 0.005927954668377922,
+              "quadratic_coefficient_ev": -0.1015267201972031,
+              "fit_rms_ev": 0.00022980294175105925,
+              "observed_power": 2.120916265993237,
+              "lambdas": [
+                0.0,
+                0.125,
+                0.25,
+                0.5,
+                1.0
+              ],
+              "energies_ev": [
+                -13.9328179026535,
+                -13.933978315236317,
+                -13.937924024364293,
+                -13.95491575238238,
+                -14.028476540594891
+              ]
+            }
+          }
+        }
+      ],
+      "summary": {
+        "attempted": 5,
+        "valid": 2,
+        "failed": 3,
+        "chemical_accuracy_mev_per_atom": 43.0,
+        "within_chemical_accuracy": 2,
+        "all_within_chemical_accuracy": true,
+        "bias_ev_per_atom": -0.020827116761019598,
+        "mae_ev_per_atom": 0.020827116761019598,
+        "rmse_ev_per_atom": 0.02347550241193474,
+        "max_abs_ev_per_atom": 0.03165903353117668,
+        "max_abs_mev_per_atom": 31.659033531176682
+      }
+    }
+  }
+}

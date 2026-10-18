@@ -47,8 +47,23 @@ from .reference import (
     read_total_energy,
     register_energy_reader,
 )
+from .harris import HarrisEvaluator, HarrisResult
+from .density_repair import (
+    DensityDiagnostics,
+    DensityRepair,
+    inspect_density,
+    repair_density,
+    require_valid_density,
+)
 
 __all__ = [
+    "DensityDiagnostics",
+    "DensityRepair",
+    "HarrisEvaluator",
+    "HarrisResult",
+    "inspect_density",
+    "repair_density",
+    "require_valid_density",
     "XC_FUNCTIONALS",
     "EnergyComponents",
     "EnergyCalculator",

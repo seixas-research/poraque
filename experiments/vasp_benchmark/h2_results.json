@@ -1,0 +1,292 @@
+{
+  "schema": 1,
+  "energy_convention": "free energy: Poraque F_Harris versus VASP TOTEN",
+  "potcar_policy": "Explicit user-provided licensed inputs; no potential data in report",
+  "cases": [
+    {
+      "id": "H2_0.74",
+      "status": "ok",
+      "natoms": 2,
+      "input_hashes": {
+        "POSCAR": "8b6a7790ee100102c27fb84bb2dd578b017b190bce8dad008900f6253e34b39c",
+        "INCAR": "637a29acc64c0bfb4f048c8e230a2acda97eb227ce37fad9fb56598668916566",
+        "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+      },
+      "potcar_sha256": "c7c1440066f80b3689496d8a45f8df6af183c40e59b514734edddfaa6840a3be",
+      "poraque": {
+        "free_ev": -6.365679651494787,
+        "internal_ev": -6.365679651494787,
+        "prepare_seconds": 1.3995777740001358,
+        "solve_seconds": 0.40332872299950395,
+        "total_seconds": 1.8029064969996398,
+        "density": {
+          "raw_electrons": 2.0529537108851588,
+          "clipped_electrons": 0.03371979756266323,
+          "normalization_factor": 0.9584633110561248,
+          "input_electrons": 2.0,
+          "spin_averaged": true,
+          "unpolarized_embedding": false,
+          "collinear_embedding": false
+        },
+        "paw_terms_ev": {
+          "one_center_energy": -2.165653065802565,
+          "one_center_double_counting": -2.158642974850633,
+          "alpha_z": 0.07795736000000003,
+          "atomic": 22.482900735713503,
+          "hartree": 17.938387416119095,
+          "xc": -17.765594341896083,
+          "xc_double_counting": -22.855617877938474,
+          "ion_ion": 3.253014126713678
+        },
+        "max_eigen_residual_ev": 7.698518601856073e-14
+      },
+      "vasp": {
+        "free_ev": -6.55861531,
+        "internal_ev": -6.55861531,
+        "sigma_zero_ev": -6.55861531,
+        "converged": true,
+        "finished": true,
+        "version": "6.6.1",
+        "electronic_steps": 15,
+        "source": "OUTCAR",
+        "seconds": 0.818801897999947
+      },
+      "comparison": {
+        "delta_ev": 0.19293565850521333,
+        "delta_ev_per_atom": 0.09646782925260666,
+        "absolute_error_ev": 0.19293565850521333,
+        "absolute_error_mev_per_atom": 96.46782925260666
+      },
+      "speedup": 0.4541566073241071,
+      "scf_density_diagnostic": {
+        "status": "ok",
+        "reference_density_adjustment": {
+          "enabled": true,
+          "raw_electrons": 1.9995632432829156,
+          "negative_charge_e": 3.723688700170899e-09,
+          "factor": 1.0002184241954086,
+          "stationary_reference_preserved": false
+        },
+        "backend_offset_at_reference_density_ev": 0.010005391526335394,
+        "density_and_occupancy_effect_ev": 0.18293026697888237,
+        "density_l1_electrons": 0.4036311462424366,
+        "stationarity": {
+          "linear_coefficient_ev": 0.006113923801804498,
+          "quadratic_coefficient_ev": 0.17691430221538407,
+          "fit_rms_ev": 0.0004757984766727356,
+          "observed_power": 2.037290782801761,
+          "lambdas": [
+            0.0,
+            0.125,
+            0.25,
+            0.5,
+            1.0
+          ],
+          "energies_ev": [
+            -6.548609918473665,
+            -6.5460282769731934,
+            -6.53609780223105,
+            -6.500854987407438,
+            -6.365679651494783
+          ]
+        }
+      },
+      "runtime_retained_externally": true
+    },
+    {
+      "id": "H2_0.90",
+      "status": "ok",
+      "natoms": 2,
+      "input_hashes": {
+        "POSCAR": "8421ff574a4f3c09ac4fcb671536a03ad9316e67228b3f784cb7f02ab7e3fd92",
+        "INCAR": "637a29acc64c0bfb4f048c8e230a2acda97eb227ce37fad9fb56598668916566",
+        "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+      },
+      "potcar_sha256": "c7c1440066f80b3689496d8a45f8df6af183c40e59b514734edddfaa6840a3be",
+      "poraque": {
+        "free_ev": -6.662461560970822,
+        "internal_ev": -6.662461560970822,
+        "prepare_seconds": 1.2607258980006009,
+        "solve_seconds": 0.29458388700004434,
+        "total_seconds": 1.5553097850006452,
+        "density": {
+          "raw_electrons": 2.061541294091528,
+          "clipped_electrons": 0.027201370590090854,
+          "normalization_factor": 0.9575138353890302,
+          "input_electrons": 2.0,
+          "spin_averaged": true,
+          "unpolarized_embedding": false,
+          "collinear_embedding": false
+        },
+        "paw_terms_ev": {
+          "one_center_energy": -2.580774674068297,
+          "one_center_double_counting": -2.570949327885507,
+          "alpha_z": 0.07795736000000003,
+          "atomic": 22.482900735713503,
+          "hartree": 16.94553833696639,
+          "xc": -17.47945116583499,
+          "xc_double_counting": -22.475393343611238,
+          "ion_ion": -0.1379354996949877
+        },
+        "max_eigen_residual_ev": 9.950773406409862e-14
+      },
+      "vasp": {
+        "free_ev": -6.83111519,
+        "internal_ev": -6.83111519,
+        "sigma_zero_ev": -6.83111519,
+        "converged": true,
+        "finished": true,
+        "version": "6.6.1",
+        "electronic_steps": 15,
+        "source": "OUTCAR",
+        "seconds": 0.8155137489993649
+      },
+      "comparison": {
+        "delta_ev": 0.16865362902917802,
+        "delta_ev_per_atom": 0.08432681451458901,
+        "absolute_error_ev": 0.16865362902917802,
+        "absolute_error_mev_per_atom": 84.32681451458902
+      },
+      "speedup": 0.5243416821935745,
+      "scf_density_diagnostic": {
+        "status": "ok",
+        "reference_density_adjustment": {
+          "enabled": true,
+          "raw_electrons": 1.9997457969468386,
+          "negative_charge_e": 6.473374850488281e-10,
+          "factor": 1.0001271173596813,
+          "stationary_reference_preserved": false
+        },
+        "backend_offset_at_reference_density_ev": 0.001505740792297594,
+        "density_and_occupancy_effect_ev": 0.16714788823688131,
+        "density_l1_electrons": 0.4889609410092727,
+        "stationarity": {
+          "linear_coefficient_ev": 0.10847789931454302,
+          "quadratic_coefficient_ev": 0.06035218852999456,
+          "fit_rms_ev": 0.006457663080009385,
+          "observed_power": 1.6370439653020556,
+          "lambdas": [
+            0.0,
+            0.125,
+            0.25,
+            0.5,
+            1.0
+          ],
+          "energies_ev": [
+            -6.829609449207703,
+            -6.823971161504469,
+            -6.805527219964544,
+            -6.751297311354103,
+            -6.662461560970821
+          ]
+        }
+      },
+      "runtime_retained_externally": true
+    },
+    {
+      "id": "H2_1.10",
+      "status": "ok",
+      "natoms": 2,
+      "input_hashes": {
+        "POSCAR": "e7d54213535346f4308328f9bd1df659c0e8e19f4a2fc0170e89b823eae82891",
+        "INCAR": "637a29acc64c0bfb4f048c8e230a2acda97eb227ce37fad9fb56598668916566",
+        "KPOINTS": "4072ea9dcfeb8fe348fc9f3012c2cccd93179f8ef04ce3cbcb312cfe7f3b6c66"
+      },
+      "potcar_sha256": "c7c1440066f80b3689496d8a45f8df6af183c40e59b514734edddfaa6840a3be",
+      "poraque": {
+        "free_ev": -6.131532257391507,
+        "internal_ev": -6.131532257391507,
+        "prepare_seconds": 1.2418603690002783,
+        "solve_seconds": 0.29423145600048883,
+        "total_seconds": 1.5360918250007671,
+        "density": {
+          "raw_electrons": 1.985113836655116,
+          "clipped_electrons": 0.025670154764956255,
+          "normalization_factor": 0.9946369219836207,
+          "input_electrons": 2.0,
+          "spin_averaged": true,
+          "unpolarized_embedding": false,
+          "collinear_embedding": false
+        },
+        "paw_terms_ev": {
+          "one_center_energy": -2.7526359480343965,
+          "one_center_double_counting": -2.741581927881646,
+          "alpha_z": 0.07795736000000003,
+          "atomic": 22.482900735713503,
+          "hartree": 15.123332708437147,
+          "xc": -16.71165895470411,
+          "xc_double_counting": -21.444118522969223,
+          "ion_ion": -2.938729548057115
+        },
+        "max_eigen_residual_ev": 7.432306693920338e-14
+      },
+      "vasp": {
+        "free_ev": -6.28826807,
+        "internal_ev": -6.28826807,
+        "sigma_zero_ev": -6.28826807,
+        "converged": true,
+        "finished": true,
+        "version": "6.6.1",
+        "electronic_steps": 14,
+        "source": "OUTCAR",
+        "seconds": 0.7689681140000175
+      },
+      "comparison": {
+        "delta_ev": 0.15673581260849279,
+        "delta_ev_per_atom": 0.07836790630424639,
+        "absolute_error_ev": 0.15673581260849279,
+        "absolute_error_mev_per_atom": 78.36790630424639
+      },
+      "speedup": 0.5006003557109182,
+      "scf_density_diagnostic": {
+        "status": "ok",
+        "reference_density_adjustment": {
+          "enabled": true,
+          "raw_electrons": 1.9997798344737037,
+          "negative_charge_e": 0.0,
+          "factor": 1.000110094882697,
+          "stationary_reference_preserved": false
+        },
+        "backend_offset_at_reference_density_ev": 0.0119712668602725,
+        "density_and_occupancy_effect_ev": 0.14476454574822295,
+        "density_l1_electrons": 0.5467916188475808,
+        "stationarity": {
+          "linear_coefficient_ev": 0.10618511367953681,
+          "quadratic_coefficient_ev": 0.03980618163226828,
+          "fit_rms_ev": 0.00467756673299687,
+          "observed_power": 1.413455822394971,
+          "lambdas": [
+            0.0,
+            0.125,
+            0.25,
+            0.5,
+            1.0
+          ],
+          "energies_ev": [
+            -6.2762968031397275,
+            -6.268382944941395,
+            -6.252590695426774,
+            -6.2066398600853505,
+            -6.1315322573915045
+          ]
+        }
+      },
+      "runtime_retained_externally": true
+    }
+  ],
+  "summary": {
+    "attempted": 3,
+    "valid": 3,
+    "failed": 0,
+    "bias_ev_per_atom": 0.08638751669048068,
+    "mae_ev_per_atom": 0.08638751669048068,
+    "rmse_ev_per_atom": 0.08671520909544284,
+    "max_abs_ev_per_atom": 0.09646782925260666
+  },
+  "resources": {
+    "threads": 1,
+    "launcher": []
+  },
+  "model_sha256": "77a4c8ac289b0025d1226513afe3fb9738ee515496f1bdcb5b9a24b535655747",
+  "scope": "Three unconverged H2 bond-length samples, 5 Angstrom periodic cube, ENCUT=80 eV, 16^3 FFT grid, Gamma only"
+}

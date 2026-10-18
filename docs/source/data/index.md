@@ -163,20 +163,19 @@ and to specialize it on your own chemistry afterwards, gather both under one
 
 ### Fetching several densities at once
 
-The download is **one material at a time by default**, and `--download-workers`
+The download is **one material at a time by default**, and `--workers`
 raises that. It is a thread pool, not a process pool: the work is a blocking
 HTTPS GET, so the GIL is released for the part that dominates.
 
 ```bash
-poraque-mp --all --sample 200 --output data/MP --download-workers 4
+poraque-mp --all --sample 200 --output data/MP --workers 4
 ```
 
-Mind the two worker settings, which are different pools for different things:
-
-| flag | default | what it sizes |
-| --- | --- | --- |
-| `--workers` | 16 | S3 `HEAD` requests while **sizing** (`--estimate`). Unsigned, no payload, free |
-| `--download-workers` | **1** | concurrent **density downloads**: authenticated, rate-limited, and each one parses a `CHGCAR` |
+`--workers` is one number for two pools that cost different things. Left unset,
+sizing (`--estimate`) runs 16 unsigned S3 `HEAD` requests, which transfer no
+payload and are free, and the download runs **1** authenticated, rate-limited
+fetch at a time, each of which parses a `CHGCAR`. A value you give applies to
+both.
 
 Measured against mocked latency — 12 materials, 50 ms each — the pool overlaps
 transfers as advertised, with peak simultaneous requests equal to the worker

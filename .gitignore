@@ -230,3 +230,9 @@ CLAUDE.md
 HISTORY.md
 BACKUP.md
 ROADMAP.md
+DEV_PLAN.md
+
+# Proprietary runtime-only VASP potentials, including compressed variants.
+POTCAR.*
+*.POTCAR
+potpaw_*.tar*

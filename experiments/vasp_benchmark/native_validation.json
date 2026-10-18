@@ -1,0 +1,29 @@
+{
+  "harris_native_minus_scipy_ev": 4.973799150320701e-14,
+  "harris_native_eigen_residual_ev": 1.3562930479408867e-13,
+  "mpi_validation": {
+    "ranks": 4,
+    "k_groups": 2,
+    "ranks_per_group": 2,
+    "threads_per_rank": 2,
+    "matrix_dimensions": [
+      1,
+      3,
+      13
+    ],
+    "max_eigenvalue_error_ev": 6.217248937900877e-15,
+    "max_generalized_residual_ev": 1.5306626521795212e-14,
+    "max_fft_error": 2.5121479338940403e-15
+  },
+  "distributed_fftw_mpi": "not built: FFTW MPI development headers absent",
+  "blacs_2d_validation": {
+    "ranks": 4,
+    "k_groups": 1,
+    "grid": [
+      2,
+      2
+    ],
+    "max_eigenvalue_error_ev": 3.9968028886505635e-15,
+    "max_generalized_residual_ev": 1.8703543183092585e-14
+  }
+}

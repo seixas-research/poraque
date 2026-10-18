@@ -56,7 +56,7 @@ def _floats(line):
     if not tokens:
         return None
     try:
-        return [float(token) for token in tokens]
+        return [float(token.replace('D', 'E').replace('d', 'e')) for token in tokens]
     except ValueError:
         return None
 
@@ -120,6 +120,10 @@ class PawSetup:
     reciprocal: dict = field(default_factory=dict)
     compensation_radius: float = None
     error_table: tuple = None
+    projector_reciprocal: tuple = ()
+    projector_real: tuple = ()
+    projector_radii: tuple = ()
+    projector_qmax: float | None = None
 
     @property
     def element(self):
@@ -161,7 +165,7 @@ class PawSetup:
             if "TITEL" in line:
                 title = line.split("=", 1)[1].strip()
                 break
-        zval = float(_header_value(text, "ZVAL"))
+        zval = float(_header_value(text, "ZVAL").replace('D', 'E').replace('d', 'e'))
         parameters = {}
         for key in ("RCORE", "RDEP", "RDEPT", "RAUG", "RPACOR", "RMAX", "EATOM",
                     "QCUT", "QGAM", "POMASS", "EAUG", "DEXC", "LEXCH",
@@ -170,7 +174,7 @@ class PawSetup:
             if value is None:
                 continue
             try:
-                parameters[key] = float(value)
+                parameters[key] = float(value.replace('D', 'E').replace('d', 'e'))
             except ValueError:
                 parameters[key] = value
 
@@ -179,7 +183,8 @@ class PawSetup:
         ndata, step = _header_value(text, "NDATA"), None
         for line in lines:
             if line.strip().startswith("STEP") and "=" in line:
-                step = [float(v) for v in line.split("=", 1)[1].split()[:2]]
+                step = [float(v.replace('D', 'E').replace('d', 'e'))
+                        for v in line.split("=", 1)[1].split()[:2]]
                 break
         error_table = None
         end_header = next((i for i, line in enumerate(lines)
@@ -214,6 +219,7 @@ class PawSetup:
             runs.append((run_title, np.array(run_values)))
 
         reciprocal, channels, blocks = {}, [], []
+        projectors_q, projectors_r, radii, qmax = [], [], [], None
         tables, waves = {}, []
         radial, npoints, rcomp = False, None, None
         for name, values in runs:
@@ -223,10 +229,17 @@ class PawSetup:
                 continue
             if not radial:
                 if name == "Non local Part":
-                    l, nproj = int(values[0]), int(values[1])
-                    channels.extend([l] * nproj)
+                    ell, nproj = int(values[0]), int(values[1])
+                    channels.extend([ell] * nproj)
                     blocks.append(values[3:3 + nproj * nproj].reshape(nproj,
                                                                       nproj))
+                    radii.extend([float(values[2])] * nproj)
+                elif name == 'Reciprocal Space Part':
+                    projectors_q.append(values)
+                elif name == 'Real Space Part':
+                    projectors_r.append(values)
+                elif len(name.split()) == 2 and name.split()[1].upper().strip('.') in ('T', 'F'):
+                    qmax = float(name.split()[0].replace('D', 'E'))
                 elif name not in ("Reciprocal Space Part", "Real Space Part"):
                     reciprocal.setdefault(name, values)
                 continue
@@ -259,7 +272,9 @@ class PawSetup:
                    channels=channels, d0=d0, tables=tables,
                    partial_waves=list(zip(pseudo, ae)),
                    reciprocal=reciprocal, compensation_radius=rcomp,
-                   error_table=error_table)
+                   error_table=error_table, projector_reciprocal=tuple(projectors_q),
+                   projector_real=tuple(projectors_r), projector_radii=tuple(radii),
+                   projector_qmax=qmax)
 
     @classmethod
     def from_file(cls, path):
