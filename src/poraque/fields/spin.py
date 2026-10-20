@@ -80,6 +80,27 @@ def is_spin_polarized(path):
     return _text_has_second_block(path)
 
 
+def _header_grid_shape(lines, decode=False):
+    """
+    The ``NGXF NGYF NGZF`` of a ``CHGCAR``, read from where it actually is.
+
+    The POSCAR block ends at the first blank line and the grid line is the
+    first non-blank line after it (as in ``read_grid_header``). The first
+    line of three integers is NOT the grid: it is the species-count line
+    (``4 2 6`` for a three-element cell), which then never repeats, so every
+    three-element ``ISPIN = 2`` file read as unpolarized. ``lines`` is left
+    positioned just after the grid line. ``None`` if the file has no such line.
+    """
+    for line in lines:
+        if not (line.decode("ascii", "replace") if decode else line).strip():
+            break
+    for line in lines:
+        text = line.decode("ascii", "replace") if decode else line
+        if text.strip():
+            return grid_shape(text)
+    return None
+
+
 def _text_has_second_block(path):
     """
     Whether a ``CHGCAR``-format text file repeats its grid-dimension line.
@@ -109,17 +130,12 @@ def _text_has_second_block(path):
     if answer is not None:
         return answer
 
-    shape = None
     with _open_text(path) as handle:
-        for line in handle:
-            candidate = grid_shape(line)
-            if candidate is None:
-                continue
-            if shape is None:
-                shape = candidate
-            elif candidate == shape:
-                return True
-    return False
+        lines = iter(handle)
+        shape = _header_grid_shape(lines)
+        if shape is None:
+            return False
+        return any(grid_shape(line) == shape for line in lines)
 
 
 def _float_count(line):
@@ -167,11 +183,7 @@ def _second_block_by_seeking(path):
     except OSError:
         return None
     with handle:
-        shape = None
-        for raw in handle:
-            shape = grid_shape(raw.decode("ascii", "replace"))
-            if shape is not None:
-                break
+        shape = _header_grid_shape(handle, decode=True)
         if shape is None:
             return None
 

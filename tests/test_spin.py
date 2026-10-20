@@ -584,6 +584,41 @@ class TestDetectingASecondBlockIsCheap:
 
         assert is_spin_polarized(path) is False
 
+    def test_a_three_species_cell_is_not_read_as_unpolarized(
+            self, tmp_path, grid, poscar, spin_density):
+        """
+        The species-count line of a three-element cell (``4 2 6``) is three
+        positive integers, like the grid line. The detector took it for the
+        grid, never saw it repeat, and answered False for every ISPIN = 2
+        file with exactly three elements: 239 of the 785 CHONPS densities,
+        whose magnetization the cache builder then replaced with zeros.
+        """
+        import gzip
+
+        from poraque.fields.spin import _second_block_by_seeking
+
+        def three_species(path):
+            lines = path.read_text().splitlines(keepends=True)
+            coords = next(i for i, line in enumerate(lines)
+                          if line.strip()[:1] in "DdCcKk" and i > 4)
+            lines[coords - 1] = "    4    2    6\n"
+            path.write_text("".join(lines))
+
+        for name, field, expected in (
+                ("spin", spin_density, True),
+                ("plain", ChargeDensity(np.ones(grid.shape), grid, poscar),
+                 False)):
+            path = tmp_path / f"CHGCAR_{name}"
+            field.write(str(path))
+            three_species(path)
+            assert is_spin_polarized(str(path)) is expected, name
+            assert _second_block_by_seeking(str(path)) in (expected, None)
+
+            packed = tmp_path / f"CHGCAR_{name}.gz"      # the linear scan
+            with gzip.open(packed, "wt") as handle:
+                handle.write(path.read_text())
+            assert is_spin_polarized(str(packed)) is expected, name
+
     def test_the_seek_path_answers_without_reading_the_block(
             self, tmp_path, grid, poscar, spin_density):
         """
