@@ -337,19 +337,27 @@ class FieldGrid:
             np.fft.fftfreq(n, d=1.0 / n).astype(int) for n in self.shape
         )
 
-    def get_g_vectors(self):
+    def get_g_vectors(self, frequencies=None):
         """
         Cartesian reciprocal-lattice vectors of the full FFT mesh.
 
         Valid for any Bravais lattice: the integer FFT frequencies are
         projected onto the reciprocal lattice vectors.
 
+        Parameters
+        ----------
+        frequencies : tuple of array_like, optional
+            Integer ``(m1, m2, m3)`` to evaluate instead of the whole mesh,
+            e.g. the low-frequency block a downsampled grid keeps. The
+            arithmetic is the same, element for element.
+
         Returns
         -------
         tuple of numpy.ndarray
             ``(Gx, Gy, Gz)``, each of shape :attr:`shape`, in Å⁻¹.
         """
-        m1, m2, m3 = self.fft_frequencies()
+        m1, m2, m3 = (self.fft_frequencies() if frequencies is None
+                      else frequencies)
         M1, M2, M3 = np.meshgrid(m1, m2, m3, indexing="ij")
         b1, b2, b3 = self.reciprocal_cell
         gx = M1 * b1[0] + M2 * b2[0] + M3 * b3[0]
@@ -357,9 +365,9 @@ class FieldGrid:
         gz = M1 * b1[2] + M2 * b2[2] + M3 * b3[2]
         return gx, gy, gz
 
-    def get_g2(self):
-        """``|G|^2`` on the full FFT mesh, Å⁻²."""
-        gx, gy, gz = self.get_g_vectors()
+    def get_g2(self, frequencies=None):
+        """``|G|^2`` on the full FFT mesh (or on ``frequencies``), Å⁻²."""
+        gx, gy, gz = self.get_g_vectors(frequencies)
         return gx * gx + gy * gy + gz * gz
 
     def get_inverse_g2(self, g2=None):

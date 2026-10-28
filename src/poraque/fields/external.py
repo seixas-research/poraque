@@ -361,7 +361,8 @@ class ExternalPotential(ScalarField):
                            })
 
     @classmethod
-    def from_potcar_tables(cls, structure, grid, potcar, metadata=None):
+    def from_potcar_tables(cls, structure, grid, potcar, metadata=None,
+                           target=None):
         r"""
         Build the **exact** VASP local potential from the ``POTCAR`` tables.
 
@@ -387,12 +388,26 @@ class ExternalPotential(ScalarField):
         potcar : Potcar
             Must have been read with ``parse_tables=True``.
         metadata : dict, optional
+        target : FieldGrid, optional
+            A coarser grid on the same cell. The potential is then built
+            **directly on the modes that grid keeps** and returned on it,
+            which is :func:`~poraque.fields.resample.resample_field` of the
+            full-grid potential to within round-off, without ever forming the
+            full grid: on a 288³ cell, 2.6 s and 1.8 GiB become a few
+            hundredths of a second and a few MiB. The identity is exact
+            because the resampling keeps the Hermitian part of the spectrum
+            (``real`` of an inverse FFT, then a forward one), and the kept
+            block ``-k...+k`` is closed under :math:`\mathbf G \to
+            -\mathbf G`, so every term it needs is inside it.
 
         Returns
         -------
         ExternalPotential
         """
         entries = {entry.element: entry for entry in potcar}
+        if target is not None and tuple(target.shape) != tuple(grid.shape):
+            return cls._from_potcar_tables_reduced(structure, grid, potcar,
+                                                   target, metadata)
         v_g = np.zeros(grid.shape, dtype=complex)
         for symbol, atom_slice in structure.species_slices():
             element = element_of(symbol)
@@ -414,6 +429,43 @@ class ExternalPotential(ScalarField):
         }
         payload.update(metadata or {})
         return cls(data, grid, structure, metadata=payload)
+
+    @classmethod
+    def _from_potcar_tables_reduced(cls, structure, grid, potcar, target,
+                                    metadata=None):
+        """The body of :meth:`from_potcar_tables` with ``target=`` set."""
+        from .resample import retained_modes
+
+        entries = {entry.element: entry for entry in potcar}
+        keep = retained_modes(grid.shape, target.shape)
+        block = tuple(np.arange(-k, k + 1) for k in keep)
+        g2 = grid.get_g2(block)
+        v_g = np.zeros(g2.shape, dtype=complex)
+        for symbol, atom_slice in structure.species_slices():
+            element = element_of(symbol)
+            entry = entries.get(element)
+            if entry is None or entry.local_potential is None:
+                raise ValueError(
+                    f"No tabulated local potential for {element!r}. Read the "
+                    f"POTCAR with parse_tables=True."
+                )
+            v_g += _local_spectrum(grid, entry, g2) * structure_factor_at(
+                block, structure.scaled_positions[atom_slice])
+
+        # The Hermitian part: what real() of an inverse FFT keeps.
+        v_g = 0.5 * (v_g + np.conj(v_g[::-1, ::-1, ::-1]))
+        placed = np.zeros(tuple(target.shape), dtype=complex)
+        placed[np.ix_(*[b % n for b, n in zip(block, target.shape)])] = v_g
+        data = np.real(np.fft.ifftn(placed, norm="forward"))
+
+        payload = {
+            "model": "potcar",
+            "charges": {entry.element: entry.zval for entry in potcar},
+            "psgmax": {entry.element: entry.psgmax for entry in potcar},
+            "resampled_from": tuple(grid.shape),
+        }
+        payload.update(metadata or {})
+        return cls(data, target, structure, metadata=payload)
 
     @classmethod
     def compute(cls, structure, grid, charges, widths=None, model="gaussian",
@@ -543,9 +595,13 @@ def potcar_local_spectrum(grid, entry):
     numpy.ndarray
         Complex, ``grid.shape``, eV.
     """
+    return _local_spectrum(grid, entry, grid.get_g2())
+
+
+def _local_spectrum(grid, entry, g2):
+    """:func:`potcar_local_spectrum` on any array of ``|G|^2`` (same cell)."""
     from scipy.interpolate import CubicSpline
 
-    g2 = grid.get_g2()
     magnitude = np.sqrt(g2)
     inverse_g2 = grid.get_inverse_g2(g2)
     nonzero = inverse_g2 > 0
@@ -554,7 +610,7 @@ def potcar_local_spectrum(grid, entry):
     # VASP: IF (G /= 0 .AND. G < PSGMAX - PSGMAX/NPSPTS)
     limit = entry.psgmax - entry.psgmax / entry.NPSPTS
     inside = nonzero & (magnitude < limit)
-    spectrum = np.zeros(grid.shape, dtype=complex)
+    spectrum = np.zeros(g2.shape, dtype=complex)
     spectrum[inside] = (spline(magnitude[inside])
                         - 4.0 * np.pi * entry.zval
                         * COULOMB_CONSTANT_EV_ANGSTROM * inverse_g2[inside])
@@ -588,7 +644,16 @@ def structure_factor(grid, scaled_positions):
     numpy.ndarray
         Complex array of shape ``grid.shape``.
     """
-    m1, m2, m3 = grid.fft_frequencies()
+    return structure_factor_at(grid.fft_frequencies(), scaled_positions)
+
+
+def structure_factor_at(frequencies, scaled_positions):
+    """
+    :func:`structure_factor` on any integer ``(m1, m2, m3)`` frequencies, e.g.
+    the low-frequency block of a coarser grid; shape ``(len(m1), len(m2),
+    len(m3))``.
+    """
+    m1, m2, m3 = frequencies
     positions = np.atleast_2d(np.asarray(scaled_positions, dtype=float))
     phase1 = np.exp(-2j * np.pi * np.outer(positions[:, 0], m1))
     phase2 = np.exp(-2j * np.pi * np.outer(positions[:, 1], m2))
@@ -612,7 +677,7 @@ def structure_factor(grid, scaled_positions):
             total = part
         else:
             total += part
-    return total.reshape(grid.shape)
+    return total.reshape(len(m1), len(m2), len(m3))
 
 
 #: Historical private name, kept because it is used throughout this module and

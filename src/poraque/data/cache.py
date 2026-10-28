@@ -1337,9 +1337,13 @@ def _build_one(record, cache, resolution, fields, spin, remembered=None,
 
     try:
         for name in wanted:
-            field = source.read(record, name, native, spin=spin)
-            reduced_field = (resample_field(field, reduced.shape, grid=reduced)
-                             if reduced is not native else field)
+            reduced_field = (source.read_reduced(record, name, native, reduced)
+                             if reduced is not native else None)
+            if reduced_field is None:
+                field = source.read(record, name, native, spin=spin)
+                reduced_field = (resample_field(field, reduced.shape,
+                                                grid=reduced)
+                                 if reduced is not native else field)
             records = (_augmentation_for(record, reduced_field)
                        if name == "CHGCAR" else None)
 

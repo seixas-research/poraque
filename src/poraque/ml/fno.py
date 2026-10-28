@@ -296,6 +296,92 @@ def effective_modes(modes, shape, max_modes=None):
     )
 
 
+class PointwiseConv3d(nn.Conv3d):
+    r"""
+    A 1x1x1 convolution: the same parameters as :class:`torch.nn.Conv3d`, a
+    channel mixing at every voxel.
+
+    On MPS the convolution kernel is the slow way to do that: a contraction
+    over the channel axis is 1.4-3x faster fwd+bwd there (64 -> 64 at 48^3,
+    batch 4: 91 -> 49 ms; 128 -> 1: 64 -> 22 ms). On CPU ``conv3d`` is as fast
+    as any alternative measured (``einsum``, ``matmul``, ``linear`` were 1.0 to
+    4x slower), so it stays the CPU path. The weight keeps its ``(out, in, 1, 1,
+    1)`` shape, so checkpoints, :class:`~poraque.ml.lora.LoRAConv3d` and
+    ``isinstance(..., nn.Conv3d)`` are unaffected.
+    """
+
+    def __init__(self, in_channels, out_channels, bias=True):
+        super().__init__(in_channels, out_channels, kernel_size=1, bias=bias)
+
+    def forward(self, x):
+        if x.device.type != "mps":
+            return super().forward(x)
+        y = torch.einsum("oi,bixyz->boxyz",
+                         self.weight.view(self.out_channels, self.in_channels),
+                         x)
+        if self.bias is not None:
+            y = y + self.bias.view(1, -1, 1, 1, 1)
+        return y
+
+
+def truncated_rfftn(x, m1, m2, m3):
+    r"""
+    The retained block of ``rfftn(x, norm="forward")``, without the rest.
+
+    A spectral layer keeps ``m_i`` modes of ``N_i``, so transforming all
+    ``N^3`` points of every axis and slicing afterwards spends most of the work
+    on coefficients it throws away. The transform is separable: take the real
+    FFT along z and keep ``m3`` of it, then the FFT along y of that much
+    smaller array and keep ``m2``, then along x and keep ``m1``. Only the
+    first stage touches the full grid. The result is element for element the
+    block ``[head_1; tail_1] x [head_2; tail_2] x [:m3]`` of the full
+    transform (to round-off), 1.5-1.6x faster at 48^3 with 8 modes on CPU and
+    MPS, and the backward pass is the adjoint of the same short chain.
+
+    Returns
+    -------
+    torch.Tensor
+        Complex ``(B, C, 2 m1, 2 m2, m3)``: axis 2 holds frequencies
+        ``0..m1-1`` then ``-m1..-1``, axis 3 likewise, axis 4 ``0..m3-1``.
+        ``m1 <= N1 // 2`` and ``m2 <= N2 // 2`` (:func:`effective_modes`), so
+        the head and the tail never overlap.
+    """
+    block = torch.fft.rfft(x, dim=-1, norm="forward")[..., :m3]
+    block = torch.fft.fft(block, dim=-2, norm="forward")
+    block = torch.cat([block[..., :m2, :], block[..., -m2:, :]], dim=-2)
+    block = torch.fft.fft(block, dim=-3, norm="forward")
+    return torch.cat([block[..., :m1, :, :], block[..., -m1:, :, :]], dim=-3)
+
+
+def padded_irfftn(block, shape):
+    r"""
+    Inverse of :func:`truncated_rfftn`'s layout: ``irfftn`` of the block
+    zero-padded to ``shape``, without building the padded spectrum.
+
+    The block is inverted along x first (``2 m1 -> N1`` rows, still only
+    ``2 m2`` columns wide), then along y, and only the last stage, the complex
+    to real transform along z, runs on the full grid. The z half-spectrum is zero-padded
+    to ``N3 // 2 + 1`` here. Unnormalized (``norm="forward"``), as the layers
+    use it.
+    """
+    nx, ny, nz = shape
+    batch, channels, rows, columns, m3 = block.shape
+    m1, m2 = rows // 2, columns // 2
+    wide = block.new_zeros(batch, channels, nx, columns, m3)
+    wide[:, :, :m1] = block[:, :, :m1]
+    wide[:, :, nx - m1:] = block[:, :, m1:]
+    wide = torch.fft.ifft(wide, dim=-3, norm="forward")
+    full = block.new_zeros(batch, channels, nx, ny, m3)
+    full[:, :, :, :m2] = wide[:, :, :, :m2]
+    full[:, :, :, ny - m2:] = wide[:, :, :, m2:]
+    full = torch.fft.ifft(full, dim=-2, norm="forward")
+    # Padded here, to the `N3 // 2 + 1` half-spectrum `irfft` expects, rather
+    # than left to `irfft`: MPS pads a 5-D tensor through a slow generic path.
+    half = full.new_zeros(batch, channels, nx, ny, nz // 2 + 1)
+    half[..., :m3] = full
+    return torch.fft.irfft(half, n=nz, dim=-1, norm="forward")
+
+
 class SpectralConv3d(nn.Module):
     r"""
     Learned multiplication of the lowest Fourier modes.
@@ -387,34 +473,33 @@ class SpectralConv3d(nn.Module):
         m1, m2, m3 = self.effective_modes((nx, ny, nz), max_modes)
 
         # norm="forward" -> resolution-invariant Fourier-series coefficients.
-        x_ft = torch.fft.rfftn(x, dim=(-3, -2, -1), norm="forward")
-
-        # `x_ft.dtype`, not a literal `torch.cfloat`: `rfftn` of a float64
-        # input gives ComplexDouble, so a hard-coded ComplexFloat accumulator
-        # made `model.double()` fail outright with "expected scalar type
-        # ComplexDouble but found ComplexFloat" -- the whole double-precision
-        # path was unreachable.
+        # Only the retained block is ever transformed (`truncated_rfftn`).
+        # Its dtype follows the input's: a float64 input gives ComplexDouble,
+        # so a hard-coded ComplexFloat accumulator made `model.double()` fail
+        # outright with "expected scalar type ComplexDouble but found
+        # ComplexFloat" -- the whole double-precision path was unreachable.
+        x_ft = truncated_rfftn(x, m1, m2, m3)
         out_ft = torch.zeros(
-            batch, self.out_channels, nx, ny, nz // 2 + 1,
+            batch, self.out_channels, 2 * m1, 2 * m2, m3,
             dtype=x_ft.dtype, device=x.device,
         )
 
-        # The four low-frequency corners of the (axis-0, axis-1) plane.
+        # The four low-frequency corners of the (axis-0, axis-1) plane, in the
+        # block's own layout: head then tail on each of the two axes.
         corners = (
             (slice(None, m1), slice(None, m2), 0),
-            (slice(None, m1), slice(ny - m2, None), 1),
-            (slice(nx - m1, None), slice(None, m2), 2),
-            (slice(nx - m1, None), slice(ny - m2, None), 3),
+            (slice(None, m1), slice(m2, None), 1),
+            (slice(m1, None), slice(None, m2), 2),
+            (slice(m1, None), slice(m2, None), 3),
         )
         for slice_1, slice_2, index in corners:
-            out_ft[:, :, slice_1, slice_2, :m3] = complex_contract(
+            out_ft[:, :, slice_1, slice_2] = complex_contract(
                 _SPECTRAL_EQUATION,
-                x_ft[:, :, slice_1, slice_2, :m3],
+                x_ft[:, :, slice_1, slice_2],
                 self.weight[index, :, :, :m1, :m2, :m3],
             )
 
-        return torch.fft.irfftn(out_ft, s=(nx, ny, nz), dim=(-3, -2, -1),
-                                norm="forward")
+        return padded_irfftn(out_ft, (nx, ny, nz))
 
     def extra_repr(self):
         return (f"in_channels={self.in_channels}, "
@@ -840,20 +925,12 @@ class RadialSpectralConv3d(nn.Module):
         batch, _, nx, ny, nz = x.shape
         m1, m2, m3 = self.effective_modes((nx, ny, nz), max_modes)
 
-        x_ft = torch.fft.rfftn(x, dim=(-3, -2, -1), norm="forward")
-        head_1, tail_1 = slice(None, m1), slice(nx - m1, None)
-        head_2, tail_2 = slice(None, m2), slice(ny - m2, None)
-
         # One contiguous block of the retained modes, ordered to match
-        # `_mode_frequencies`. `effective_modes` caps m1 at nx//2 and m2 at
-        # ny//2, so the head and tail slices never overlap and no coefficient
+        # `_mode_frequencies`, transformed on its own: `truncated_rfftn`
+        # never forms the other modes. `effective_modes` caps m1 at nx//2 and
+        # m2 at ny//2, so the head and tail never overlap and no coefficient
         # is gathered twice.
-        block = torch.cat([
-            torch.cat([x_ft[:, :, head_1, head_2, :m3],
-                       x_ft[:, :, head_1, tail_2, :m3]], dim=-2),
-            torch.cat([x_ft[:, :, tail_1, head_2, :m3],
-                       x_ft[:, :, tail_1, tail_2, :m3]], dim=-2),
-        ], dim=-3)
+        block = truncated_rfftn(x, m1, m2, m3)
 
         if basis is None:
             basis = self.radial_basis(cell, (m1, m2, m3), x.device, x.dtype)
@@ -888,17 +965,7 @@ class RadialSpectralConv3d(nn.Module):
             torch.einsum("bixyz,ior->borxyz", imaginary, weight), basis)
         out_block = torch.complex(out_real, out_imaginary)
 
-        out_ft = torch.zeros(
-            batch, self.out_channels, nx, ny, nz // 2 + 1,
-            dtype=x_ft.dtype, device=x.device,
-        )
-        out_ft[:, :, head_1, head_2, :m3] = out_block[:, :, :m1, :m2, :]
-        out_ft[:, :, head_1, tail_2, :m3] = out_block[:, :, :m1, m2:, :]
-        out_ft[:, :, tail_1, head_2, :m3] = out_block[:, :, m1:, :m2, :]
-        out_ft[:, :, tail_1, tail_2, :m3] = out_block[:, :, m1:, m2:, :]
-
-        return torch.fft.irfftn(out_ft, s=(nx, ny, nz), dim=(-3, -2, -1),
-                                norm="forward")
+        return padded_irfftn(out_block, (nx, ny, nz))
 
     def extra_repr(self):
         return (f"in_channels={self.in_channels}, "
@@ -1191,7 +1258,7 @@ class FNOBlock(nn.Module):
                                                  **(radial_kwargs or {}))
         else:
             self.spectral = SpectralConv3d(channels, channels, modes)
-        self.pointwise = nn.Conv3d(channels, channels, kernel_size=1)
+        self.pointwise = PointwiseConv3d(channels, channels)
         self.norm = nn.GroupNorm(_group_count(channels, n_groups), channels)
         self.film = FiLM(embedding_dim, channels) if embedding_dim else None
         self.activation = ACTIVATIONS[activation]()
@@ -1415,7 +1482,7 @@ class FNO3d(nn.Module):
         conditioning = embedding_dim if cell_conditioning else 0
 
         lifting_channels = self.in_channels + (3 if use_coordinates else 0)
-        self.lift = nn.Conv3d(lifting_channels, self.width, kernel_size=1)
+        self.lift = PointwiseConv3d(lifting_channels, self.width)
         radial_kwargs = {"n_radial": self.n_radial, "g_basis": self.g_basis,
                          "spherical_cutoff": self.spherical_cutoff}
         self.blocks = nn.ModuleList([
@@ -1425,9 +1492,9 @@ class FNO3d(nn.Module):
             for _ in range(int(n_layers))
         ])
         self.project = nn.Sequential(
-            nn.Conv3d(self.width, projection_channels, kernel_size=1),
+            PointwiseConv3d(self.width, projection_channels),
             ACTIVATIONS[self.projection_activation](),
-            nn.Conv3d(projection_channels, self.out_channels, kernel_size=1),
+            PointwiseConv3d(projection_channels, self.out_channels),
         )
 
     # ------------------------------------------------------------------ #

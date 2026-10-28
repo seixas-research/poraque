@@ -56,6 +56,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from .fno import PointwiseConv3d
+
 #: Latent channels read at each atom, beside the predicted density itself.
 READOUT_CHANNELS = 4
 
@@ -551,7 +553,7 @@ class PAWOperatorModel(nn.Module):
                         for channels in self.layouts.values())
         self.readout = SiteReadout(self.g_max, self.lmax)
         self.neighbors = NeighborExpansion(self.lmax, minimum=neighbor_min)
-        self.reduce = nn.Conv3d(backbone.width, READOUT_CHANNELS, kernel_size=1)
+        self.reduce = PointwiseConv3d(backbone.width, READOUT_CHANNELS)
 
         read = (READOUT_CHANNELS + backbone.out_channels) * self.readout.size
         inputs = {L: read + self.neighbors.size

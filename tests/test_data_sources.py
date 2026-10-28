@@ -757,6 +757,70 @@ class TestPotcarLibrary:
         assert potential.metadata["derived_from"] == "density geometry + POTCAR library"
         assert source.potential_model() == "tabulated"
 
+    def test_v_ext_built_on_the_kept_modes_equals_the_resampled_one(
+            self, tmp_path, potcar_library):
+        """
+        The cache builder asks for V_ext straight on the downsampled grid
+        (``read_reduced``) instead of forming it on the native grid and
+        truncating it: 2.6 s and 1.8 GiB on a 288^3 cell. It is the same field
+        -- the resampling keeps the Hermitian part of the spectrum, and the
+        kept block is closed under G -> -G -- so the two agree to round-off.
+        """
+        from poraque.fields.resample import downsampled_grid, resample_field
+
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             shape=(16, 16, 20), element="Pt")
+        source = resolve_source(archive, potcar_dir=potcar_library)
+        record = source.discover()[0]
+        native = source.grid(record)
+        reduced = downsampled_grid(native, 10)
+        assert reduced.shape != native.shape
+
+        direct = source.read_reduced(record, "EXTCAR", native, reduced)
+        resampled = resample_field(source.read(record, "EXTCAR", native),
+                                   reduced.shape, grid=reduced)
+
+        assert direct.grid is reduced
+        assert direct.metadata["resampled_from"] == tuple(native.shape)
+        assert np.abs(direct.data - resampled.data).max() \
+            < 1e-12 * np.abs(resampled.data).max()
+
+    def test_a_skew_cell_gives_the_same_field_both_ways(self, tmp_path,
+                                                        potcar_library):
+        """The Nyquist planes of a skew cell are not Hermitian; none is kept."""
+        from poraque.fields.resample import resample_field
+        from poraque.fields.vasp.potcar import Potcar
+
+        cell = np.array([[5.0, 0.0, 0.0], [1.5, 5.5, 0.0], [0.7, -0.9, 6.0]])
+        grid = FieldGrid((16, 16, 18), cell)
+        reduced = FieldGrid((10, 10, 12), cell)
+        structure = Poscar(cell=cell, symbols=["Pt"], counts=[2],
+                           scaled_positions=[[0.1, 0.2, 0.3],
+                                             [0.6, 0.55, 0.8]])
+        potcar = Potcar.from_file(os.path.join(potcar_library, "Pt", "POTCAR"),
+                                parse_tables=True)
+
+        full = ExternalPotential.from_potcar_tables(structure, grid, potcar)
+        direct = ExternalPotential.from_potcar_tables(structure, grid, potcar,
+                                                      target=reduced)
+        resampled = resample_field(full, reduced.shape, grid=reduced)
+
+        assert np.abs(direct.data - resampled.data).max() \
+            < 1e-12 * np.abs(resampled.data).max()
+
+    def test_the_model_potential_declines_the_direct_route(self, tmp_path):
+        """Only the tabulated sum can be built on the kept modes."""
+        from poraque.fields.resample import downsampled_grid
+
+        archive = write_bulk(tmp_path / "chgcar", identifiers=("mp-1",),
+                             element="Pt")
+        source = resolve_source(archive, charges=CHARGES)
+        record = source.discover()[0]
+        native = source.grid(record)
+
+        assert source.read_reduced(record, "EXTCAR", native,
+                                   downsampled_grid(native, 8)) is None
+
     def test_the_two_constructions_genuinely_differ(self, tmp_path,
                                                     potcar_library):
         """

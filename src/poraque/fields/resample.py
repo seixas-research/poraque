@@ -44,6 +44,26 @@ import numpy as np
 from .grid import FieldGrid
 
 
+def retained_modes(source_shape, target_shape):
+    """
+    Highest frequency kept per axis when ``source_shape`` is truncated to
+    ``target_shape``: modes ``-k ... +k``, the Nyquist row dropped.
+
+    The one place the rule lives, so a caller that builds a field *directly*
+    on the retained block (:meth:`ExternalPotential.from_potcar_tables
+    <poraque.fields.external.ExternalPotential.from_potcar_tables>` with
+    ``target=``) keeps exactly the modes :func:`spectral_resample` would.
+    """
+    keep = [min(int(source_shape[i]), int(target_shape[i])) // 2 - 1
+            for i in range(3)]
+    if any(k < 1 for k in keep):
+        raise ValueError(
+            f"Cannot resample {tuple(source_shape)} -> {tuple(target_shape)}: "
+            f"at least one axis has too few modes."
+        )
+    return tuple(keep)
+
+
 def spectral_resample(data, shape):
     """
     Resample a periodic field onto a different grid by Fourier truncation.
@@ -81,12 +101,7 @@ def spectral_resample(data, shape):
 
     # Highest frequency safely representable on *both* grids, per axis. The
     # -1 drops the Nyquist row, keeping the retained block conjugate-symmetric.
-    keep = [min(source_shape[i], target_shape[i]) // 2 - 1 for i in range(3)]
-    if any(k < 1 for k in keep):
-        raise ValueError(
-            f"Cannot resample {source_shape} -> {target_shape}: at least one "
-            f"axis has too few modes."
-        )
+    keep = retained_modes(source_shape, target_shape)
 
     # Positive and negative frequency blocks, copied by absolute frequency so
     # each coefficient lands on the same physical G in the target.

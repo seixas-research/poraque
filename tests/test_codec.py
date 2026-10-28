@@ -73,6 +73,34 @@ class TestTheReaderMatchesThePythonPath:
             expected.view(np.uint64).tolist()
         assert end == len(text.rstrip())        # just past the last token
 
+    def test_the_fast_path_agrees_with_float_on_every_shape_of_token(self):
+        """
+        Fixed-width ``E`` tokens skip ``strtod`` (Clinger's exact path), so
+        they are checked against ``float()`` across the edges of that path:
+        11 to 17 digits (past 15 it must fall back), exponents either side of
+        the |k| <= 22 limit, both signs, a lone sign-less exponent, zeros.
+        """
+        rng = np.random.default_rng(7)
+        tokens = []
+        for _ in range(20000):
+            digits = int(rng.integers(1, 18))
+            mantissa = "".join(str(d) for d in rng.integers(0, 10, digits))
+            point = int(rng.integers(0, digits + 1))
+            body = mantissa[:point] + "." + mantissa[point:]
+            sign = ["", "-", "+"][int(rng.integers(0, 3))]
+            exponent = int(rng.integers(-40, 41))
+            tokens.append(f"{sign}{body}E{exponent:+03d}")
+        tokens += ["0.00000000000E+00", "-0.00000000000E+00",
+                   "0.10000000000E+01", "-.18801803874E-03",
+                   "0.99999999999E+22", "1E5", "1.E5", ".5E1"]
+        text = (" ".join(tokens) + "\n").encode()
+        parsed = np.empty(len(tokens))
+        count, _, bad = codec.parse_into(text, 0, len(text), parsed, 0)
+        expected = np.array([float(t) for t in tokens])
+        assert count == len(tokens) and not bad
+        assert parsed.view(np.uint64).tolist() == \
+            expected.view(np.uint64).tolist()
+
     def test_a_three_digit_exponent_is_read(self):
         """Fortran drops the letter: ``0.50000000000-299``."""
         text = b" 0.50000000000-299 -.12345678901+105\n"

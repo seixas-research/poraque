@@ -467,6 +467,17 @@ class MaterialSource(ABC):
 
         return tuple(_peek_shape(self.reference_file(record)))
 
+    def read_reduced(self, record, name, grid, reduced):
+        """
+        One field already on the coarser ``reduced`` grid, or ``None``.
+
+        A source that can build a field straight on the modes the downsampling
+        keeps, without forming it on the native ``grid`` first, returns it
+        here; the cache builder then skips the read and the resampling. The
+        default declines, and the caller reads and resamples as before.
+        """
+        return None
+
     @abstractmethod
     def read(self, record, name, grid, spin=False):
         """
@@ -1044,6 +1055,32 @@ class CalculationSource(MaterialSource):
             return self.charges or None
         except (ValueError, OSError):
             return None
+
+    def read_reduced(self, record, name, grid, reduced):
+        """
+        V_ext built directly on ``reduced``'s modes, for the tabulated route.
+
+        Only where the potential is the exact ``POTCAR``-table sum from the
+        ``potcar_dir`` library and no blur is configured (a blur acts on the
+        native grid, before the truncation); every other case returns ``None``
+        and takes the read-then-resample path, whose result this one equals to
+        round-off.
+        """
+        if (name != "EXTCAR" or self.options.get("gaussian_blur")
+                or reduced is grid
+                or os.path.exists(os.path.join(record.directory, "POTCAR"))):
+            return None
+        structure = self.geometry(record)
+        potcar = self.library_potcar(structure)
+        if potcar is None:
+            return None
+        reader = self._reader(record.directory)
+        return ExternalPotential.from_potcar_tables(
+            structure, grid, potcar, target=reduced,
+            metadata={"code": reader.code, "source": str(record.directory),
+                      "derived_from": "density geometry + POTCAR library",
+                      "potcar_dir": str(self.options["potcar_dir"])},
+        )
 
     def read(self, record, name, grid, spin=False):
         if name == "EXTCAR":
