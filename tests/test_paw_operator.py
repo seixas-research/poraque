@@ -326,6 +326,42 @@ class TestTheReadoutIsAPropertyOfTheFieldNotTheGrid:
                 np.testing.assert_allclose(ours[L][:, L + m].numpy(), expected,
                                            atol=1e-12)
 
+    def test_f_channel_elements_get_harmonics_to_L6_in_the_same_convention(self):
+        """
+        An f x f pair writes L up to 6. L = 5 and 6 come from a recurrence, not
+        explicit blocks, so they are pinned to scipy exactly as L <= 4 is, and
+        the whole set is orthonormal on the sphere.
+        """
+        from scipy.special import sph_harm_y
+        from poraque.ml.paw import MAX_L
+
+        assert MAX_L == 6
+        rng = np.random.default_rng(3)
+        u = rng.normal(size=(100, 3))
+        u /= np.linalg.norm(u, axis=1, keepdims=True)
+        ours = solid_harmonics(torch.tensor(u), 6)
+        theta, phi = np.arccos(u[:, 2]), np.arctan2(u[:, 1], u[:, 0])
+        for L in range(7):
+            for m in range(-L, L + 1):
+                c = sph_harm_y(L, abs(m), theta, phi)
+                expected = (c.real if m == 0 else np.sqrt(2) * (-1) ** m
+                            * (c.real if m > 0 else c.imag))
+                np.testing.assert_allclose(ours[L][:, L + m].numpy(), expected,
+                                           atol=1e-12, err_msg=f"L={L} m={m}")
+        n = 100000
+        i = torch.arange(n, dtype=torch.float64) + 0.5
+        angle = math.pi * (1 + 5 ** 0.5) * i
+        cos = 1 - 2 * i / n
+        sin = (1 - cos ** 2).sqrt()
+        sphere = torch.stack([sin * torch.cos(angle), sin * torch.sin(angle), cos], -1)
+        every = torch.cat(solid_harmonics(sphere, 6), -1)
+        gram = (every.T @ every) * (4 * math.pi / n)
+        assert float((gram - torch.eye(gram.shape[0], dtype=torch.float64)).abs().max()) < 1e-5
+
+    def test_beyond_L6_is_refused(self):
+        with pytest.raises(ValueError, match="up to L = 6"):
+            solid_harmonics(torch.zeros(1, 3), 7)
+
 
 # ===================================================================== #
 # Equivariance

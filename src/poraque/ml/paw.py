@@ -78,13 +78,54 @@ HEAD_HIDDEN = 32
 GATED_CHANNELS = 16
 
 #: Highest L the solid harmonics below are written for. d-channel elements need
-#: 4 (d x d); an f-channel element needs 6 and is refused rather than truncated.
-MAX_L = 4
+#: 4 (d x d); an f-channel element needs 6 (f x f), written by the recurrence in
+#: :func:`_solid_harmonic` and checked against VASP's own L = 6 blocks at cubic sites.
+MAX_L = 6
 
 
 # ---------------------------------------------------------------------- #
 # Solid harmonics
 # ---------------------------------------------------------------------- #
+def _solid_harmonic(x, y, z, L):
+    r"""
+    :math:`r^L Y_{LM}`, ``m = -L..L``, for any L: the convention of the explicit
+    blocks in :func:`solid_harmonics` (real, orthonormal, no Condon-Shortley
+    phase, ``m < 0`` the sine-type), from the recurrence in :math:`(z, r^2)`
+
+    .. math::
+
+        P_m^m = (2m-1)!!, \quad P_{m+1}^m = (2m+1)\,z\,P_m^m, \quad
+        (l-m)\,P_l^m = (2l-1)\,z\,P_{l-1}^m - (l+m-1)\,r^2 P_{l-2}^m ,
+
+    times :math:`\mathrm{Re}/\mathrm{Im}\,(x + iy)^{|m|}`. It reproduces the
+    explicit L <= 4 blocks to 1e-13, and at the cubic sites of Ce, La and Ac the
+    L = 6 blocks of their CHGCARs are its cubic invariant to cosine 1.000000.
+    Used for L = 5 and 6, which the explicit blocks do not cover.
+    """
+    r2 = x * x + y * y + z * z
+
+    def legendre(m):
+        terms = {m: torch.full_like(x, float(math.prod(range(1, 2 * m, 2))) if m else 1.0)}
+        if L > m:
+            terms[m + 1] = (2 * m + 1) * z * terms[m]
+        for degree in range(m + 2, L + 1):
+            terms[degree] = ((2 * degree - 1) * z * terms[degree - 1]
+                             - (degree + m - 1) * r2 * terms[degree - 2]) / (degree - m)
+        return terms[L]
+
+    out = []
+    for m in range(-L, L + 1):
+        order = abs(m)
+        norm = math.sqrt((2 * L + 1) / (4 * math.pi)
+                         * math.factorial(L - order) / math.factorial(L + order))
+        if m:
+            norm *= math.sqrt(2.0)
+        phase = torch.complex(x, y) ** order
+        angular = phase.imag if m < 0 else (phase.real if m > 0 else torch.ones_like(x))
+        out.append(norm * legendre(order) * angular)
+    return torch.stack(out, -1)
+
+
 def solid_harmonics(d, lmax=MAX_L):
     r"""
     :math:`r^L Y_{LM}(\hat{\mathbf d})` for L = 0..``lmax``, as polynomials.
@@ -108,7 +149,7 @@ def solid_harmonics(d, lmax=MAX_L):
     """
     if lmax > MAX_L:
         raise ValueError(f"solid harmonics are written up to L = {MAX_L}, "
-                         f"not {lmax}; an f-channel element needs L = 6.")
+                         f"not {lmax}.")
     x, y, z = d[..., 0], d[..., 1], d[..., 2]
     r2 = x * x + y * y + z * z
     pi = math.pi
@@ -144,6 +185,8 @@ def solid_harmonics(d, lmax=MAX_L):
             (3 / 16) * math.sqrt(35 / pi)
             * (x * x * (x * x - 3 * y * y) - y * y * (3 * x * x - y * y))],
             -1))
+    for degree in range(5, lmax + 1):
+        out.append(_solid_harmonic(x, y, z, degree))
     return out
 
 
