@@ -536,9 +536,13 @@ class FieldPairDataset(Dataset):
 
         Notes
         -----
-        Cached per material regardless of the ``cache`` flag. It is one FFT and
+        Cached per material while the ``cache`` flag is on. It is one FFT and
         a structure factor, the structure never changes, and recomputing it
-        every epoch would be the single most wasteful thing in the loop.
+        every epoch would be the single most wasteful thing in the loop. With
+        the flag off the dataset is declared too large for memory, and a
+        float64 grid per material is as large as the fields themselves (about
+        41 GB for the 55,939 Materials Project structures: a 48 GB job was
+        killed by it), so it is recomputed (about 13 ms) instead of kept.
         """
         if self.baseline is None or self.task.target_field != "CHGCAR":
             return None
@@ -550,7 +554,8 @@ class FieldPairDataset(Dataset):
         target = self.load_fields(index)[1]
         values = atomic_superposition(target.structure, target.grid,
                                       self.baseline).data
-        self._baselines[index] = values
+        if self.cache:
+            self._baselines[index] = values
         return values
 
     def target_values(self, index):

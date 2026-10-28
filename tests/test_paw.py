@@ -324,6 +324,24 @@ class TestDeltaDensityMode:
         assert "baseline" in sample
         assert sample["baseline"].shape == sample["target_physical"].shape
 
+    def test_an_uncached_dataset_keeps_no_baseline_grids(self, cache, library):
+        """
+        `cache=False` declares the set too large for memory. A float64 grid per
+        material kept anyway is the whole set's size again: 55,939 Materials
+        Project structures held ~41 GB of them and a 48 GB job was killed.
+        """
+        uncached = FieldPairDataset(cache, task="ext2pseudo", baseline=library,
+                                    cache=False)
+        again = [uncached.baseline_for(0), uncached.baseline_for(0)]
+        _ = uncached[0]
+        assert uncached._baselines == {}
+        assert np.array_equal(again[0], again[1])
+
+        cached = FieldPairDataset(cache, task="ext2pseudo", baseline=library,
+                                  cache=True)
+        assert np.array_equal(cached.baseline_for(0), again[0])
+        assert 0 in cached._baselines
+
     def test_absolute_mode_carries_none(self, cache):
         assert "baseline" not in FieldPairDataset(cache, task="ext2pseudo")[0]
 
